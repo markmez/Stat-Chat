@@ -7,10 +7,17 @@ final class AppState {
     var isLoading = false
     var currentStreamingText = ""
     var showAPIKeySetup = false
+    var searchHistory: [String] = []
 
     private let queryEngine = QueryEngine()
+    private let historyKey = "searchHistory"
+    private let maxHistoryItems = 50
 
     var hasAPIKey: Bool = KeychainHelper.load() != nil
+
+    init() {
+        searchHistory = UserDefaults.standard.stringArray(forKey: historyKey) ?? []
+    }
 
     func refreshAPIKeyStatus() {
         hasAPIKey = KeychainHelper.load() != nil
@@ -19,6 +26,8 @@ final class AppState {
     func sendQuestion(_ question: String) {
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+
+        addToSearchHistory(trimmed)
 
         messages.append(Message(role: .user, content: trimmed))
         isLoading = true
@@ -49,5 +58,23 @@ final class AppState {
         messages.removeAll()
         currentStreamingText = ""
         queryEngine.clearHistory()
+    }
+
+    private func addToSearchHistory(_ query: String) {
+        // Remove duplicate if it exists
+        searchHistory.removeAll { $0.lowercased() == query.lowercased() }
+        // Insert at front
+        searchHistory.insert(query, at: 0)
+        // Cap size
+        if searchHistory.count > maxHistoryItems {
+            searchHistory = Array(searchHistory.prefix(maxHistoryItems))
+        }
+        // Persist
+        UserDefaults.standard.set(searchHistory, forKey: historyKey)
+    }
+
+    func clearSearchHistory() {
+        searchHistory.removeAll()
+        UserDefaults.standard.removeObject(forKey: historyKey)
     }
 }

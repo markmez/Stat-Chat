@@ -125,17 +125,17 @@ struct ResultsView: View {
                         Image(systemName: "baseball.fill")
                             .font(.system(size: 6))
                             .foregroundStyle(lightBlue)
-                            .offset(x: 6, y: -5)
+                            .offset(x: 7.5, y: -7.5)
 
                         Image(systemName: "baseball.fill")
                             .font(.system(size: 4.5))
                             .foregroundStyle(lightBlue.opacity(0.7))
-                            .offset(x: -7, y: -4)
+                            .offset(x: -6.5, y: -6.5)
 
                         Image(systemName: "baseball.fill")
                             .font(.system(size: 5))
                             .foregroundStyle(lightBlue.opacity(0.85))
-                            .offset(x: 5, y: 6)
+                            .offset(x: 6.5, y: 6.5)
                     }
                 }
             }
