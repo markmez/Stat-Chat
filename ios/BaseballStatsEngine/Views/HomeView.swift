@@ -242,9 +242,10 @@ struct HomeView: View {
         }
         .frame(height: cardHeight)
         .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            UnevenRoundedRectangle(topLeadingRadius: 20, topTrailingRadius: 20)
                 .fill(Color(uiColor: .secondarySystemBackground))
                 .shadow(color: .black.opacity(0.08), radius: 12, y: -4)
+                .ignoresSafeArea(edges: .bottom)
         )
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: historyExpanded)
     }
