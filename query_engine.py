@@ -157,11 +157,23 @@ ANSWER_GENERATION_PROMPT = """You are a knowledgeable baseball analyst. Given a 
 
 Rules:
 - Be conversational but accurate. You're talking to a baseball fan.
-- Make stats impossible to miss. Put key numbers on their own line or in a clear format — never bury them in the middle of a sentence.
-- When presenting a slash line, always label it: ".322/.458/.701 (AVG/OBP/SLG)". Never show bare slash lines without identifying what each number is.
-- For single-player questions: lead with the stat they asked for, prominently displayed. Add one sentence of context at most.
-- For lists, leaderboards, or "top N" questions: return a clean numbered list. Each line: rank, player name, team, and the relevant stat(s). No commentary between entries — just the list. You can add a one-line note at the end if something is truly notable.
-- For comparisons: use a side-by-side format with each player's stats on their own line.
+- STAT GRID FORMAT: When your answer includes 3 or more stats for a player, or stats for multiple players, present them in a stat grid block. Wrap the grid in [STATGRID] and [/STATGRID] tags. Use HEADER: for column names and ROW: for each player. Separate values with commas. Example:
+
+[STATGRID]
+HEADER: G, AB, H, HR, RBI, AVG, OBP, SLG, OPS
+ROW: 158, 526, 169, 58, 144, .322, .458, .701, 1.159
+[/STATGRID]
+
+For single-player grids, do NOT include the player name in the ROW — it's already in your commentary. For comparisons or leaderboards with multiple players, start each ROW with the player name. For leaderboards, include a Rank column:
+
+[STATGRID]
+HEADER: Rank, Player, HR
+ROW: 1, Aaron Judge (NYY), 58
+ROW: 2, Shohei Ohtani (LAD), 54
+[/STATGRID]
+
+Only include stats relevant to the question — don't dump every column. Commentary text goes OUTSIDE the [STATGRID] block, before or after it.
+- For simple single-stat answers (e.g., "Judge hit 58 home runs"), just state the number — no grid needed.
 - If the results are empty, say you don't have data for that query and suggest what might work.
 - Keep answers short. Resist the urge to narrate or editorialize.
 - Don't mention SQL or databases — just answer naturally as if you looked it up.
@@ -174,7 +186,14 @@ You'll receive pre-detected streak segments for a player's season, identified by
 
 Rules:
 - CRITICAL: Only present the type of streak the user asked about. If they asked about cold streaks or slumps, ONLY discuss cold data. If they asked about hot streaks, ONLY discuss hot data. Do NOT mention or present the opposite type at all — no "on the flip side", no "conversely", no bonus hot streak info on a cold streak question. If the question is general ("any streaks?"), show the full picture.
-- Present each streak clearly with EXACT dates, number of games, and key stats (slash line labeled as AVG/OBP/SLG, plus HR). Always use the specific dates and numbers from the data — never paraphrase dates vaguely like "mid April" when you have exact dates.
+- Present each streak's stats in a stat grid block using [STATGRID] and [/STATGRID] tags. Always use the EXACT dates and numbers from the data — never paraphrase dates vaguely like "mid April" when you have exact dates. Example:
+
+[STATGRID]
+HEADER: Dates, Games, AVG, OBP, SLG, OPS, HR
+ROW: Sept 13 – Sept 28, 12, .360, .469, .760, 1.229, 5
+[/STATGRID]
+
+Commentary and context go OUTSIDE the grid block.
 - Label streaks in plain language: "hot streak", "cold stretch", "slump", "dominant run", etc.
 - IMPORTANT: "hot" and "cold" are defined relative to THAT PLAYER'S own season average, NOT league average or any absolute threshold. A player with a .650 season OPS can still have hot streaks (periods where they hit well above their own .650 norm) and cold streaks (periods well below it). Never reference absolute OPS thresholds like ".750" or ".800" — everything is relative to the individual.
 - If only one segment is returned covering the whole season (labeled "average"), this means no major performance shifts were detected. BUT you may also receive "SENSITIVE STREAK FALLBACK" data showing subtler stretches. When this fallback data is present:

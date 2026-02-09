@@ -41,6 +41,32 @@
 - `hasAPIKey` must be a stored property (not computed) for SwiftUI reactivity
 - `INFOPLIST_KEY_UILaunchScreen_Generation: YES` required in project.yml to avoid iPhone 7 layout
 
+### Differentiators vs. General LLMs (ChatGPT, Gemini, Claude direct)
+
+**Current moat (built today):**
+- **Guaranteed accuracy** — every number from SQL against a real DB, never hallucinated. LLMs still get stats wrong ~5% of the time; fans notice.
+- **Streak detection** — strongest differentiator. Game-log-level change-point analysis (PELT) finds hot/cold stretches no LLM can surface from memory.
+- **Complex filtered queries** — "Top 10 in OPS with 400+ PA" requires precise SQL filtering, not approximate memory recall.
+- **Platoon splits** — vs LHP/RHP data is niche enough that LLMs are unreliable on it.
+- **Consistency** — same question, same correct answer every time.
+
+**Commoditizing (LLMs are catching up):**
+- Simple stat lookups ("How many HR did Judge hit?") — LLMs are mostly right from training data now
+- Basic comparisons and context
+- ChatGPT with browsing / Gemini can pull current stats from the web
+
+**High-impact features to widen the gap:**
+| Feature | Why it matters | Status |
+|---------|---------------|--------|
+| **Pitching stats** | Doubles addressable questions | NOT STARTED |
+| **Historical data (1871+)** | LLMs get increasingly wrong the further back you go | Pipeline ready, needs data pull |
+| **Statcast data** (exit velo, launch angle, sprint speed) | LLMs are terrible at this; rich analytical queries | NOT STARTED (2025+ only) |
+| **Situational splits** (home/away, by month, RISP) | Beyond platoon; LLMs can't do this reliably | NOT STARTED |
+| **Predictive/pace features** ("on pace for X") | Unique analytical value, not just lookup | NOT STARTED |
+| **Real-time/current season freshness** | LLM training data lags; pipeline can be near-real-time | Partial (2024-2025 loaded) |
+
+**Strategic positioning:** The value proposition is shifting from "I can look up stats" (commoditizing) to "I can *analyze* baseball data in ways even the best LLMs can't" (the database + analysis layer is the moat, not the NL interface).
+
 ### Commercial Data Strategy (for production/commercial release)
 Current dev sources (FanGraphs/pybaseball) are NOT licensed for commercial use. Swap to Lahman (free) + Retrosheet (free) for historical, plus a paid provider for in-season data. Only `pull_stats.py` changes when swapping sources.
 

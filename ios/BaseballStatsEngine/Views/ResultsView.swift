@@ -38,7 +38,8 @@ struct ResultsView: View {
                                     ResultCard(
                                         message: message,
                                         isFirstUser: message.id == visibleMessages.first(where: { $0.role == .user })?.id,
-                                        onBack: { dismiss() }
+                                        onBack: { dismiss() },
+                                        isStreaming: appState.isLoading && message.id == visibleMessages.last?.id
                                     )
                                     .id(message.id)
                                 }
