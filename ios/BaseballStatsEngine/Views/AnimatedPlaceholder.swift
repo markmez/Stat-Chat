@@ -16,7 +16,7 @@ struct AnimatedPlaceholder: View {
         } label: {
             Text(queries[currentIndex])
                 .font(.system(.subheadline, design: .rounded))
-                .foregroundStyle(.white.opacity(0.25))
+                .foregroundStyle(.tertiary)
                 .opacity(opacity)
                 .lineLimit(1)
         }

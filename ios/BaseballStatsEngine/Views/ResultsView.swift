@@ -2,10 +2,14 @@ import SwiftUI
 
 struct ResultsView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
     @State private var inputText = ""
     @FocusState private var isInputFocused: Bool
     @State private var resultsContentHeight: CGFloat = 0
     let initialQuestion: String
+
+    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
     private var visibleMessages: [Message] {
         appState.messages.filter { !$0.content.isEmpty || $0.role == .user }
@@ -23,7 +27,7 @@ struct ResultsView: View {
             let inline = fitsInline(in: available)
 
             ZStack {
-                Color(red: 0.06, green: 0.07, blue: 0.12)
+                Color(uiColor: .systemBackground)
                     .ignoresSafeArea()
 
                 VStack(spacing: 0) {
@@ -31,8 +35,12 @@ struct ResultsView: View {
                         ScrollView {
                             VStack(spacing: 20) {
                                 ForEach(visibleMessages) { message in
-                                    ResultCard(message: message)
-                                        .id(message.id)
+                                    ResultCard(
+                                        message: message,
+                                        isFirstUser: message.id == visibleMessages.first(where: { $0.role == .user })?.id,
+                                        onBack: { dismiss() }
+                                    )
+                                    .id(message.id)
                                 }
 
                                 if appState.isLoading && appState.currentStreamingText.isEmpty {
@@ -78,24 +86,58 @@ struct ResultsView: View {
                     // When results are too tall, pin input at the bottom
                     if !appState.isLoading && !inline {
                         inputAndSuggestions
-                            .background(Color(red: 0.06, green: 0.07, blue: 0.12))
+                            .background(Color(uiColor: .systemBackground))
                             .overlay(
                                 Rectangle()
                                     .frame(height: 0.5)
-                                    .foregroundStyle(.white.opacity(0.08)),
+                                    .foregroundStyle(Color(uiColor: .separator).opacity(0.3)),
                                 alignment: .top
                             )
                     }
                 }
             }
         }
+        .navigationBarBackButtonHidden(true)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarBackground(.automatic, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Text("StatChat")
-                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.6))
+                HStack(spacing: 6) {
+                    Text("StatChat")
+                        .font(.system(.subheadline, weight: .semibold))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [lightBlue, deepBlue],
+                                startPoint: .leading, endPoint: .trailing
+                            )
+                        )
+
+                    ZStack {
+                        Image(systemName: "sparkle")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [lightBlue, deepBlue],
+                                    startPoint: .topLeading, endPoint: .bottomTrailing
+                                )
+                            )
+
+                        Image(systemName: "baseball.fill")
+                            .font(.system(size: 6))
+                            .foregroundStyle(lightBlue)
+                            .offset(x: 6, y: -5)
+
+                        Image(systemName: "baseball.fill")
+                            .font(.system(size: 4.5))
+                            .foregroundStyle(lightBlue.opacity(0.7))
+                            .offset(x: -7, y: -4)
+
+                        Image(systemName: "baseball.fill")
+                            .font(.system(size: 5))
+                            .foregroundStyle(lightBlue.opacity(0.85))
+                            .offset(x: 5, y: 6)
+                    }
+                }
             }
         }
         .onAppear {
@@ -113,15 +155,14 @@ struct ResultsView: View {
             HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.3))
+                    .foregroundStyle(lightBlue)
 
                 TextField("", text: $inputText, prompt:
                     Text("Ask a follow-up or a new question")
-                        .foregroundStyle(.white.opacity(0.3))
+                        .foregroundStyle(Color(uiColor: .placeholderText))
                 )
                 .font(.system(.body, design: .rounded))
-                .foregroundStyle(.white)
-                .tint(.white)
+                .foregroundStyle(.primary)
                 .focused($isInputFocused)
                 .onSubmit { sendQuestion() }
 
@@ -129,16 +170,16 @@ struct ResultsView: View {
                     Button(action: sendQuestion) {
                         Image(systemName: "arrow.right.circle.fill")
                             .font(.system(size: 22))
-                            .foregroundStyle(.white.opacity(0.7))
+                            .foregroundStyle(lightBlue)
                     }
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
             .overlay(
                 RoundedRectangle(cornerRadius: 14)
-                    .stroke(.white.opacity(0.08), lineWidth: 0.5)
+                    .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 0.5)
             )
             .padding(.horizontal, 16)
 

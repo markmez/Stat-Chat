@@ -14,7 +14,7 @@ struct StatChatApp: App {
                 }
             }
             .environment(appState)
-            .preferredColorScheme(.dark)
+            .tint(Color(red: 0.1, green: 0.25, blue: 0.7))
         }
     }
 }

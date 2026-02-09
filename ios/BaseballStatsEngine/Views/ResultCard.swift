@@ -2,6 +2,10 @@ import SwiftUI
 
 struct ResultCard: View {
     let message: Message
+    var isFirstUser: Bool = false
+    var onBack: (() -> Void)? = nil
+
+    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
 
     var body: some View {
         switch message.role {
@@ -16,19 +20,29 @@ struct ResultCard: View {
         }
     }
 
-    // User question — minimal, just the query text
+    // User question — with back chevron on the first one
     private var userQuery: some View {
-        HStack {
+        HStack(alignment: .top, spacing: 10) {
+            if isFirstUser, let onBack {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(Color(red: 0.45, green: 0.7, blue: 1.0))
+                }
+                .padding(.top, 2)
+            }
+
             Text(message.content)
                 .font(.system(.title3, design: .rounded, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(.primary)
+
             Spacer()
         }
         .padding(.horizontal, 20)
         .padding(.top, 4)
     }
 
-    // Answer — rich card with translucent background
+    // Answer — rich card with subtle background
     private var answerCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             if message.content.isEmpty {
@@ -38,7 +52,7 @@ struct ResultCard: View {
             } else {
                 Text(LocalizedStringKey(message.content))
                     .font(.system(.body, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .foregroundStyle(.primary.opacity(0.85))
                     .textSelection(.enabled)
                     .lineSpacing(3)
             }
@@ -47,10 +61,10 @@ struct ResultCard: View {
         .padding(18)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(.white.opacity(0.06))
+                .fill(Color(uiColor: .secondarySystemBackground))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
-                        .stroke(.white.opacity(0.08), lineWidth: 0.5)
+                        .stroke(Color(uiColor: .separator).opacity(0.2), lineWidth: 0.5)
                 )
         )
         .padding(.horizontal, 16)

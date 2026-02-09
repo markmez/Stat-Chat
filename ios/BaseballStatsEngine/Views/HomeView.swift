@@ -6,33 +6,60 @@ struct HomeView: View {
     @State private var navigateToResults = false
     @State private var initialQuestion = ""
 
+    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
+
     var body: some View {
         ZStack {
-            // Gradient background
-            LinearGradient(
-                colors: [Color(red: 0.06, green: 0.07, blue: 0.12),
-                         Color(red: 0.08, green: 0.05, blue: 0.14)],
-                startPoint: .top, endPoint: .bottom
-            )
-            .ignoresSafeArea()
+            Color(uiColor: .systemBackground)
+                .ignoresSafeArea()
 
             VStack(spacing: 0) {
                 Spacer()
 
-                // Wordmark
+                // Logo + Wordmark — inline
                 VStack(spacing: 6) {
-                    Text("StatChat")
-                        .font(.system(size: 42, weight: .bold, design: .rounded))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [.white, .white.opacity(0.7)],
-                                startPoint: .leading, endPoint: .trailing
+                    HStack(spacing: 12) {
+                        Text("StatChat")
+                            .font(.system(size: 42, weight: .bold))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [lightBlue, deepBlue],
+                                    startPoint: .leading, endPoint: .trailing
+                                )
                             )
-                        )
 
-                    Text("MLB stats, answered instantly")
+                        // AI diamond center + 3 baseballs around it
+                        ZStack {
+                            Image(systemName: "sparkle")
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        colors: [lightBlue, deepBlue],
+                                        startPoint: .topLeading, endPoint: .bottomTrailing
+                                    )
+                                )
+
+                            Image(systemName: "baseball.fill")
+                                .font(.system(size: 14))
+                                .foregroundStyle(lightBlue)
+                                .offset(x: 14, y: -11)
+
+                            Image(systemName: "baseball.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(lightBlue.opacity(0.7))
+                                .offset(x: -17, y: -10)
+
+                            Image(systemName: "baseball.fill")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(lightBlue.opacity(0.85))
+                                .offset(x: 12, y: 13)
+                        }
+                    }
+
+                    Text("Baseball stats, answered instantly")
                         .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(.secondary)
                 }
                 .padding(.bottom, 36)
 
@@ -40,17 +67,16 @@ struct HomeView: View {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(lightBlue)
                         .padding(.top, 2)
 
                     TextField("", text: $questionText, prompt:
                         Text("Ask anything...")
-                            .foregroundStyle(.white.opacity(0.3)),
+                            .foregroundStyle(Color(uiColor: .placeholderText)),
                         axis: .vertical
                     )
                     .font(.system(.body, design: .rounded))
-                    .foregroundStyle(.white)
-                    .tint(.white)
+                    .foregroundStyle(.primary)
                     .lineLimit(1...10)
                     .onSubmit { submitQuestion() }
 
@@ -60,7 +86,7 @@ struct HomeView: View {
                         } label: {
                             Image(systemName: "arrow.right.circle.fill")
                                 .font(.system(size: 24))
-                                .foregroundStyle(.white.opacity(0.8))
+                                .foregroundStyle(lightBlue)
                         }
                         .padding(.top, 2)
                     }
@@ -68,10 +94,10 @@ struct HomeView: View {
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
                 .frame(minHeight: 120, alignment: .top)
-                .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
-                        .stroke(.white.opacity(0.1), lineWidth: 1)
+                        .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 1)
                 )
                 .padding(.horizontal, 24)
 
@@ -97,11 +123,11 @@ struct HomeView: View {
                     APIKeySetupView(isInitialSetup: false)
                 } label: {
                     Image(systemName: "gearshape")
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(.secondary)
                 }
             }
         }
-        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarBackground(.automatic, for: .navigationBar)
     }
 
     private func submitQuestion() {

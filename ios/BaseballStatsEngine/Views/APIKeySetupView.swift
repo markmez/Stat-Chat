@@ -9,9 +9,11 @@ struct APIKeySetupView: View {
 
     let isInitialSetup: Bool
 
+    private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
+
     var body: some View {
         ZStack {
-            Color(red: 0.06, green: 0.07, blue: 0.12)
+            Color(uiColor: .systemBackground)
                 .ignoresSafeArea()
 
             VStack(spacing: 28) {
@@ -20,31 +22,30 @@ struct APIKeySetupView: View {
                 VStack(spacing: 10) {
                     Image(systemName: "key.fill")
                         .font(.system(size: 36))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(lightBlue.opacity(0.6))
 
                     Text("API Key")
                         .font(.system(.title2, design: .rounded, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.primary)
 
                     Text("Enter your Anthropic API key.\nStored in the iOS Keychain.")
                         .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
 
                 SecureField("", text: $apiKeyText, prompt:
                     Text("sk-ant-...")
-                        .foregroundStyle(.white.opacity(0.25))
+                        .foregroundStyle(.tertiary)
                 )
                 .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.white)
-                .tint(.white)
+                .foregroundStyle(.primary)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
-                .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(.white.opacity(0.1), lineWidth: 0.5)
+                        .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 0.5)
                 )
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
@@ -62,11 +63,7 @@ struct APIKeySetupView: View {
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(.white.opacity(0.15), lineWidth: 0.5)
-                        )
+                        .background(lightBlue, in: RoundedRectangle(cornerRadius: 12))
                 }
                 .padding(.horizontal, 24)
                 .disabled(apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -88,7 +85,7 @@ struct APIKeySetupView: View {
         }
         .navigationTitle(isInitialSetup ? "" : "Settings")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarBackground(.automatic, for: .navigationBar)
     }
 
     private func saveKey() {
