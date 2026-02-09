@@ -1,0 +1,27 @@
+# Xcode
+ios/**/xcuserdata/
+ios/**/*.xcworkspace/
+ios/DerivedData/
+ios/BaseballStatsEngine.xcodeproj/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Environment
+.env

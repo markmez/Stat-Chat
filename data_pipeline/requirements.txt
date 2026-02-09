@@ -1,0 +1,2 @@
+pybaseball>=2.3.0
+anthropic>=0.40.0
