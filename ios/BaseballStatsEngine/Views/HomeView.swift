@@ -136,16 +136,6 @@ struct HomeView: View {
         .navigationDestination(isPresented: $navigateToResults) {
             ResultsView(initialQuestion: initialQuestion)
         }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink {
-                    APIKeySetupView(isInitialSetup: false)
-                } label: {
-                    Image(systemName: "gearshape")
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
         .toolbarBackground(.automatic, for: .navigationBar)
     }
 
@@ -174,6 +164,14 @@ struct HomeView: View {
                         }
                         .font(.system(.caption, weight: .medium))
                         .foregroundStyle(.secondary)
+                    }
+
+                    NavigationLink {
+                        APIKeySetupView(isInitialSetup: false)
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.tertiary)
                     }
                 }
                 .padding(.horizontal, 20)

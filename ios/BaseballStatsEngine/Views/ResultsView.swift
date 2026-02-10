@@ -103,40 +103,42 @@ struct ResultsView: View {
         .toolbarBackground(.automatic, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                HStack(spacing: 6) {
-                    Text("StatChat")
-                        .font(.system(.subheadline, weight: .semibold))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [lightBlue, deepBlue],
-                                startPoint: .leading, endPoint: .trailing
-                            )
-                        )
-
-                    ZStack {
-                        Image(systemName: "sparkle")
-                            .font(.system(size: 12, weight: .bold))
+                Button { dismiss() } label: {
+                    HStack(spacing: 6) {
+                        Text("StatChat")
+                            .font(.system(.subheadline, weight: .semibold))
                             .foregroundStyle(
                                 LinearGradient(
                                     colors: [lightBlue, deepBlue],
-                                    startPoint: .topLeading, endPoint: .bottomTrailing
+                                    startPoint: .leading, endPoint: .trailing
                                 )
                             )
 
-                        Image(systemName: "baseball.fill")
-                            .font(.system(size: 6))
-                            .foregroundStyle(lightBlue)
-                            .offset(x: 7.5, y: -7.5)
+                        ZStack {
+                            Image(systemName: "sparkle")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        colors: [lightBlue, deepBlue],
+                                        startPoint: .topLeading, endPoint: .bottomTrailing
+                                    )
+                                )
 
-                        Image(systemName: "baseball.fill")
-                            .font(.system(size: 4.5))
-                            .foregroundStyle(lightBlue.opacity(0.7))
-                            .offset(x: -6.5, y: -6.5)
+                            Image(systemName: "baseball.fill")
+                                .font(.system(size: 6))
+                                .foregroundStyle(lightBlue)
+                                .offset(x: 7.5, y: -7.5)
 
-                        Image(systemName: "baseball.fill")
-                            .font(.system(size: 5))
-                            .foregroundStyle(lightBlue.opacity(0.85))
-                            .offset(x: 6.5, y: 6.5)
+                            Image(systemName: "baseball.fill")
+                                .font(.system(size: 4.5))
+                                .foregroundStyle(lightBlue.opacity(0.7))
+                                .offset(x: -6.5, y: -6.5)
+
+                            Image(systemName: "baseball.fill")
+                                .font(.system(size: 5))
+                                .foregroundStyle(lightBlue.opacity(0.85))
+                                .offset(x: 6.5, y: 6.5)
+                        }
                     }
                 }
             }
