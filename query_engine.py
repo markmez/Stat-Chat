@@ -150,7 +150,7 @@ Rules:
 - Format numbers nicely: use ROUND() for decimals, PRINTF() for batting averages (3 decimal places).
 - For "league leaders" or "top" queries, use ORDER BY ... DESC LIMIT 10 unless a specific number is requested.
 - For leaderboard/ranking queries on rate stats (AVG, OBP, SLG, OPS, ISO, BABIP), add a minimum plate appearances filter: WHERE plate_appearances >= 400 for a full season, or >= 200 for partial/current seasons. This avoids small sample size noise. Counting stats (HR, RBI, SB, etc.) don't need this filter.
-- When the user asks for a player's "stats" without specifying a year, use UNION ALL to return (1) their most recent season row AND (2) a career totals row aggregated across all available seasons. For career totals, SUM the counting stats and recalculate rate stats from sums (e.g., CAST(SUM(hits) AS REAL)/SUM(at_bats) for AVG). Use 'Career' as the season value. Only include the career row if the player has more than one season of data.
+- When the user asks for a player's "stats" without specifying a year, use UNION ALL to return (1) their most recent season row AND (2) a career totals row. IMPORTANT: Wrap the first SELECT in a subquery since SQLite does not allow ORDER BY/LIMIT before UNION ALL. Example pattern: SELECT * FROM (SELECT ... ORDER BY s.season DESC LIMIT 1) UNION ALL SELECT ... For career totals, SUM the counting stats and recalculate rate stats from sums (e.g., CAST(SUM(hits) AS REAL)/SUM(at_bats) for AVG). Use 'Career' as the season value. Only include the career row if the player has more than one season of data.
 - For questions about stats we don't have data for, return SELECT 'NO_DATA' as answer.
 """
 
