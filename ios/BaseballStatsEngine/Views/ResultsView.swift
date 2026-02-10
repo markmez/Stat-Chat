@@ -46,9 +46,8 @@ struct ResultsView: View {
 
                                 if appState.isLoading && appState.currentStreamingText.isEmpty {
                                     LoadingIndicator()
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.horizontal, 20)
-                                        .padding(.top, 4)
+                                        .frame(maxWidth: .infinity, alignment: .center)
+                                        .padding(.top, 12)
                                         .id("loading")
                                 }
                             }
@@ -99,6 +98,18 @@ struct ResultsView: View {
             }
         }
         .navigationBarBackButtonHidden(true)
+        .gesture(
+            DragGesture()
+                .onChanged { _ in }  // enables interactivePop below
+        )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 20, coordinateSpace: .global)
+                .onEnded { value in
+                    if value.startLocation.x < 40 && value.translation.width > 80 {
+                        dismiss()
+                    }
+                }
+        )
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.automatic, for: .navigationBar)
         .toolbar {

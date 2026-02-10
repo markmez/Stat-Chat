@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		20D0946EF09755C58A946C8A /* ResultCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56A2A2E05C215D0A3ADAAAAD /* ResultCard.swift */; };
 		27359D246F5CF799D5EF74CA /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6788FF565D12FAFC3C30AD38 /* HomeView.swift */; };
+		27E8F31F18C8C0D76DE297ED /* LaunchAnimationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECFC73592230A429A6330F03 /* LaunchAnimationView.swift */; };
+		2EB618AB46A9AAA35344A5EA /* StatDefinitions.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2804060A7E9E5D9265E19EB /* StatDefinitions.swift */; };
 		345576D5B8C92C14734E83D3 /* Message.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10EA680000C9537C1C20EC2A /* Message.swift */; };
 		407B6D9C1E8862FAC51F5974 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4226E2C31DC9E6684B0CD953 /* AppState.swift */; };
 		455928344195A5334455240E /* ResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD18464AB4C998AEF89D1ADC /* ResultsView.swift */; };
@@ -50,6 +52,8 @@
 		A161890890E908E9407731BF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C78343C60140872060772B21 /* StatGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatGridView.swift; sourceTree = "<group>"; };
 		CD18464AB4C998AEF89D1ADC /* ResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsView.swift; sourceTree = "<group>"; };
+		E2804060A7E9E5D9265E19EB /* StatDefinitions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatDefinitions.swift; sourceTree = "<group>"; };
+		ECFC73592230A429A6330F03 /* LaunchAnimationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAnimationView.swift; sourceTree = "<group>"; };
 		FB9F66CC0E8964519268C478 /* baseball_stats.db */ = {isa = PBXFileReference; path = baseball_stats.db; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -119,6 +123,7 @@
 				7E985281B8BE082A2E1958F3 /* PromptStore.swift */,
 				943AE7BE6B2B432404F957B5 /* QueryEngine.swift */,
 				485259BB61F2E56F43AA82C1 /* SQLSanitizer.swift */,
+				E2804060A7E9E5D9265E19EB /* StatDefinitions.swift */,
 				12ED36FBBADEE2968B59C872 /* StatGridParser.swift */,
 			);
 			path = Services;
@@ -130,6 +135,7 @@
 				7CB091836D4207BE27DEBA70 /* AnimatedPlaceholder.swift */,
 				4A03BB555AC13F877616BC08 /* APIKeySetupView.swift */,
 				6788FF565D12FAFC3C30AD38 /* HomeView.swift */,
+				ECFC73592230A429A6330F03 /* LaunchAnimationView.swift */,
 				8CBC668CB3B717109518A293 /* LoadingIndicator.swift */,
 				56A2A2E05C215D0A3ADAAAAD /* ResultCard.swift */,
 				CD18464AB4C998AEF89D1ADC /* ResultsView.swift */,
@@ -217,6 +223,7 @@
 				725F4CA20FCDCC9874494AA9 /* DatabaseService.swift in Sources */,
 				27359D246F5CF799D5EF74CA /* HomeView.swift in Sources */,
 				8D83356C0253272F8502ABEA /* KeychainHelper.swift in Sources */,
+				27E8F31F18C8C0D76DE297ED /* LaunchAnimationView.swift in Sources */,
 				544EBC4B31BC8B80788EE870 /* LoadingIndicator.swift in Sources */,
 				345576D5B8C92C14734E83D3 /* Message.swift in Sources */,
 				C3F79295CCAFADF7A2760CA1 /* PromptStore.swift in Sources */,
@@ -225,6 +232,7 @@
 				455928344195A5334455240E /* ResultsView.swift in Sources */,
 				ADDD8C0C367AE8A5F619DBF1 /* SQLSanitizer.swift in Sources */,
 				9313A9F47DEDBCBF443DE969 /* SampleQuery.swift in Sources */,
+				2EB618AB46A9AAA35344A5EA /* StatDefinitions.swift in Sources */,
 				6DA656C612FFFC98992595AE /* StatGridParser.swift in Sources */,
 				9FA34A551A1BB60CF2DCADBB /* StatGridView.swift in Sources */,
 			);

@@ -3,6 +3,8 @@ import SwiftUI
 struct StatGridView: View {
     let grid: StatGridParser.StatGrid
 
+    @State private var selectedStat: String? = nil
+
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
 
     /// Max columns per row before splitting into stacked rows
@@ -29,6 +31,13 @@ struct StatGridView: View {
 
     /// Split a row's values to match header chunks
     private func valueChunks(for row: StatGridParser.StatGrid.Row) -> [[String]] { chunk(row.values) }
+
+    /// Map a chunk index + column index back to the header abbreviation
+    private func headerForColumn(chunkIdx: Int, colIdx: Int) -> String? {
+        let globalIdx = chunkIdx * maxPerRow + colIdx
+        guard globalIdx < grid.headers.count else { return nil }
+        return grid.headers[globalIdx]
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -57,11 +66,15 @@ struct StatGridView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             if showHeaders {
                                 HStack(spacing: 0) {
-                                    ForEach(Array(headers.enumerated()), id: \.offset) { _, header in
+                                    ForEach(Array(headers.enumerated()), id: \.offset) { colIdx, header in
                                         Text(header)
                                             .font(.system(.caption2, design: .monospaced, weight: .semibold))
                                             .foregroundStyle(.secondary)
                                             .frame(width: columnWidth, alignment: .center)
+                                            .contentShape(Rectangle())
+                                            .onTapGesture {
+                                                selectedStat = header
+                                            }
                                     }
                                 }
                                 .padding(.horizontal, 6)
@@ -69,11 +82,17 @@ struct StatGridView: View {
 
                             if chunkIdx < vChunks.count {
                                 HStack(spacing: 0) {
-                                    ForEach(Array(vChunks[chunkIdx].enumerated()), id: \.offset) { _, value in
+                                    ForEach(Array(vChunks[chunkIdx].enumerated()), id: \.offset) { colIdx, value in
                                         Text(value)
                                             .font(.system(.callout, design: .monospaced, weight: .medium))
                                             .foregroundStyle(.primary)
                                             .frame(width: columnWidth, alignment: .center)
+                                            .contentShape(Rectangle())
+                                            .onTapGesture {
+                                                if let header = headerForColumn(chunkIdx: chunkIdx, colIdx: colIdx) {
+                                                    selectedStat = header
+                                                }
+                                            }
                                     }
                                 }
                                 .padding(.horizontal, 6)
@@ -93,6 +112,33 @@ struct StatGridView: View {
                         .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 0.5)
                 )
         )
+        .overlay {
+            if let stat = selectedStat, let definition = StatDefinitions.lookup(stat) {
+                ZStack {
+                    // Dismiss background
+                    Color.black.opacity(0.01)
+                        .onTapGesture { selectedStat = nil }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(stat)
+                            .font(.system(.headline, design: .rounded, weight: .bold))
+                            .foregroundStyle(.primary)
+                        Text(definition)
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: 280, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(.ultraThinMaterial)
+                            .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                    )
+                }
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: selectedStat)
     }
 }
 

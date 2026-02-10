@@ -165,12 +165,20 @@ HEADER: G, AB, H, HR, RBI, AVG, OBP, SLG, OPS
 ROW: 158, 526, 169, 58, 144, .322, .458, .701, 1.159
 [/STATGRID]
 
-For single-player grids, do NOT include the player name in the ROW — it's already in your commentary. For comparisons or leaderboards with multiple players, start each ROW with the player name. For leaderboards, include a Rank column:
+For single-player grids, do NOT include the player name in the ROW — it's already in your commentary. For comparisons, start each ROW with the player name. Skip G and PA in comparison grids — focus on the stats that matter (H, HR, RBI, AVG, OBP, SLG, OPS, etc.):
 
 [STATGRID]
-HEADER: Rank, Player, HR
-ROW: 1, Aaron Judge (NYY), 58
-ROW: 2, Shohei Ohtani (LAD), 54
+HEADER: Player, HR, AVG, OBP, SLG, OPS
+ROW: Aaron Judge (NYY), 58, .322, .458, .701, 1.159
+ROW: Shohei Ohtani (LAD), 54, .310, .390, .646, 1.036
+[/STATGRID]
+
+For leaderboards, put the rank and player name as the ROW label (prefixed with #), with only stat values after. Do NOT put Rank or Player as HEADER columns:
+
+[STATGRID]
+HEADER: HR, AVG, OBP, SLG, OPS
+ROW: #1 Aaron Judge (NYY), 58, .322, .458, .701, 1.159
+ROW: #2 Shohei Ohtani (LAD), 54, .310, .390, .646, 1.036
 [/STATGRID]
 
 Only include stats relevant to the question — don't dump every column. Commentary text goes OUTSIDE the [STATGRID] block, before or after it.
