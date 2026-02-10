@@ -16,6 +16,8 @@ targets:
           - "Resources/**"
       - path: BaseballStatsEngine/Resources/baseball_stats.db
         buildPhase: resources
+      - path: BaseballStatsEngine/Resources/Assets.xcassets
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.statchat.app

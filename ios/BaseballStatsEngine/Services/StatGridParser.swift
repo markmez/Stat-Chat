@@ -98,6 +98,13 @@ enum StatGridParser {
     /// Check if a string looks like a stat value (number, rate stat, or rank)
     private static func looksLikeStat(_ value: String) -> Bool {
         guard let first = value.first else { return false }
-        return first.isNumber || first == "." || first == "-"
+        if first.isNumber {
+            // A 4-digit year (1870–2099) is a label, not a stat
+            if value.count == 4, let num = Int(value), (1870...2099).contains(num) {
+                return false
+            }
+            return true
+        }
+        return first == "." || first == "-"
     }
 }

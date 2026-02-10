@@ -68,10 +68,12 @@ struct ResultCard: View {
                     case .statGrid(let grid):
                         StatGridView(grid: grid)
                             .padding(.horizontal, 6)
+                            .padding(.vertical, 6)
 
                     case .partialGrid(let content):
                         PartialStatGridView(content: content)
                             .padding(.horizontal, 6)
+                            .padding(.vertical, 6)
                     }
                 }
             }

@@ -150,6 +150,7 @@ Rules:
 - Format numbers nicely: use ROUND() for decimals, PRINTF() for batting averages (3 decimal places).
 - For "league leaders" or "top" queries, use ORDER BY ... DESC LIMIT 10 unless a specific number is requested.
 - For leaderboard/ranking queries on rate stats (AVG, OBP, SLG, OPS, ISO, BABIP), add a minimum plate appearances filter: WHERE plate_appearances >= 400 for a full season, or >= 200 for partial/current seasons. This avoids small sample size noise. Counting stats (HR, RBI, SB, etc.) don't need this filter.
+- When the user asks for a player's "stats" without specifying a year, use UNION ALL to return (1) their most recent season row AND (2) a career totals row aggregated across all available seasons. For career totals, SUM the counting stats and recalculate rate stats from sums (e.g., CAST(SUM(hits) AS REAL)/SUM(at_bats) for AVG). Use 'Career' as the season value. Only include the career row if the player has more than one season of data.
 - For questions about stats we don't have data for, return SELECT 'NO_DATA' as answer.
 """
 
@@ -173,6 +174,13 @@ ROW: 2, Shohei Ohtani (LAD), 54
 [/STATGRID]
 
 Only include stats relevant to the question — don't dump every column. Commentary text goes OUTSIDE the [STATGRID] block, before or after it.
+- When results include both a specific season and a "Career" row, start each ROW with the year or "Career" as a label — just like player names in comparisons. Do NOT put year/season as a stat column in the HEADER. Example:
+
+[STATGRID]
+HEADER: G, AB, H, HR, RBI, AVG, OBP, SLG, OPS
+ROW: 2024, 157, 550, 168, 30, 87, .305, .395, .538, .933
+ROW: Career, 500, 1800, 550, 100, 250, .306, .390, .535, .925
+[/STATGRID]
 - For simple single-stat answers (e.g., "Judge hit 58 home runs"), just state the number — no grid needed.
 - If the results are empty, say you don't have data for that query and suggest what might work.
 - Keep answers short. Resist the urge to narrate or editorialize.
