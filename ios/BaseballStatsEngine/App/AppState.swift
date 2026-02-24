@@ -12,6 +12,7 @@ final class AppState {
     private let queryEngine = QueryEngine()
     private let historyKey = "searchHistory"
     private let maxHistoryItems = 50
+    private var currentQueryTask: Task<Void, Never>?
 
     var hasAPIKey: Bool = KeychainHelper.load() != nil
 
@@ -38,30 +39,36 @@ final class AppState {
         messages.append(Message(role: .assistant, content: ""))
         let streamingIndex = messages.count - 1
 
-        Task {
+        currentQueryTask = Task {
             do {
                 _ = try await queryEngine.ask(trimmed) { [self] chunk in
+                    guard !Task.isCancelled, streamingIndex < messages.count else { return }
                     currentStreamingText += chunk
                     messages[streamingIndex] = Message(role: .assistant, content: currentStreamingText)
                 }
+                guard !Task.isCancelled else { return }
                 isLoading = false
                 currentStreamingText = ""
             } catch {
+                guard !Task.isCancelled else { return }
                 isLoading = false
                 currentStreamingText = ""
-                // Replace the empty placeholder with the error
+                guard streamingIndex < messages.count else { return }
                 messages[streamingIndex] = Message(role: .error, content: error.localizedDescription)
             }
         }
     }
 
     func clearConversation() {
+        currentQueryTask?.cancel()
+        currentQueryTask = nil
         messages.removeAll()
+        isLoading = false
         currentStreamingText = ""
         queryEngine.clearHistory()
     }
 
-    private func addToSearchHistory(_ query: String) {
+    func addToSearchHistory(_ query: String) {
         // Remove duplicate if it exists
         searchHistory.removeAll { $0.lowercased() == query.lowercased() }
         // Insert at front

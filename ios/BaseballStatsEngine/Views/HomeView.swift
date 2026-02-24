@@ -3,9 +3,10 @@ import SwiftUI
 struct HomeView: View {
     @Environment(AppState.self) private var appState
     @State private var questionText = ""
-    @State private var navigateToResults = false
-    @State private var initialQuestion = ""
     @State private var historyExpanded = false
+    @State private var path = NavigationPath()
+    @State private var suggestedPlayers: [String] = []
+    @State private var pendingQuery: String?
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
@@ -19,7 +20,23 @@ struct HomeView: View {
         historyExpanded ? expandedHeight : peekHeight
     }
 
+    /// Wrapper types for value-based navigationDestination
+    private struct ResultsDestination: Hashable { let question: String }
+    private struct PlayerCardDestination: Hashable { let name: String }
+
     var body: some View {
+        NavigationStack(path: $path) {
+            mainContent
+                .navigationDestination(for: ResultsDestination.self) { dest in
+                    ResultsView(initialQuestion: dest.question)
+                }
+                .navigationDestination(for: PlayerCardDestination.self) { dest in
+                    PlayerCardView(playerName: dest.name)
+                }
+        }
+    }
+
+    private var mainContent: some View {
         ZStack(alignment: .bottom) {
             Color(uiColor: .systemBackground)
                 .ignoresSafeArea()
@@ -112,11 +129,17 @@ struct HomeView: View {
                 )
                 .padding(.horizontal, 24)
 
-                // Sample queries
-                AnimatedPlaceholder { query in
-                    questionText = query
+                // "Did you mean?" or sample queries
+                if !suggestedPlayers.isEmpty {
+                    didYouMeanCard
+                        .padding(.top, 14)
+                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                } else {
+                    AnimatedPlaceholder { query in
+                        questionText = query
+                    }
+                    .padding(.top, 20)
                 }
-                .padding(.top, 20)
 
                 Spacer()
 
@@ -133,9 +156,6 @@ struct HomeView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(isPresented: $navigateToResults) {
-            ResultsView(initialQuestion: initialQuestion)
-        }
         .toolbarBackground(.automatic, for: .navigationBar)
     }
 
@@ -198,10 +218,15 @@ struct HomeView: View {
             // History items
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(Array(appState.searchHistory.enumerated()), id: \.offset) { _, query in
+                    ForEach(appState.searchHistory, id: \.self) { query in
                         Button {
-                            initialQuestion = query
-                            navigateToResults = true
+                            let q = query  // capture before mutation
+                            appState.addToSearchHistory(q)
+                            if let playerName = PlayerNameMatcher.matchPlayer(q) {
+                                path.append(PlayerCardDestination(name: playerName))
+                            } else {
+                                path.append(ResultsDestination(question: q))
+                            }
                         } label: {
                             HStack(spacing: 12) {
                                 Image(systemName: "clock.arrow.circlepath")
@@ -248,11 +273,76 @@ struct HomeView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: historyExpanded)
     }
 
+    @ViewBuilder
+    private var didYouMeanCard: some View {
+        if let query = pendingQuery, !suggestedPlayers.isEmpty {
+            VStack(spacing: 6) {
+                Text("Did you mean:")
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(.secondary)
+
+                ForEach(suggestedPlayers, id: \.self) { name in
+                    Button {
+                        let n = name
+                        withAnimation { suggestedPlayers = []; pendingQuery = nil }
+                        appState.addToSearchHistory(n)
+                        path.append(PlayerCardDestination(name: n))
+                    } label: {
+                        Text(name)
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(deepBlue)
+                    }
+                }
+
+                Button {
+                    let q = query
+                    withAnimation { suggestedPlayers = []; pendingQuery = nil }
+                    appState.addToSearchHistory(q)
+                    path.append(ResultsDestination(question: q))
+                } label: {
+                    (Text("Or search \"")
+                        .foregroundStyle(.secondary)
+                     + Text(query)
+                        .foregroundStyle(lightBlue)
+                     + Text("\"")
+                        .foregroundStyle(.secondary))
+                        .font(.system(.subheadline, design: .rounded))
+                }
+            }
+            .padding(.vertical, 14)
+            .padding(.horizontal, 20)
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 0.5)
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+
     private func submitQuestion() {
         let trimmed = questionText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        initialQuestion = trimmed
         questionText = ""
-        navigateToResults = true
+        suggestedPlayers = []
+        pendingQuery = nil
+
+        // Direct-to-profile shortcut: skip Claude if input is just a player name
+        if let playerName = PlayerNameMatcher.matchPlayer(trimmed) {
+            appState.addToSearchHistory(trimmed)
+            path.append(PlayerCardDestination(name: playerName))
+        } else {
+            let fuzzyMatches = PlayerNameMatcher.fuzzyMatch(trimmed)
+            if !fuzzyMatches.isEmpty {
+                // Don't add misspelling to history — the correction or "search anyway" will
+                withAnimation(.easeOut(duration: 0.25)) {
+                    suggestedPlayers = fuzzyMatches
+                    pendingQuery = trimmed
+                }
+            } else {
+                appState.addToSearchHistory(trimmed)
+                path.append(ResultsDestination(question: trimmed))
+            }
+        }
     }
 }

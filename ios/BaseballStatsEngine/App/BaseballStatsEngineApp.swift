@@ -8,15 +8,13 @@ struct StatChatApp: App {
     var body: some Scene {
         WindowGroup {
             ZStack {
-                NavigationStack {
-                    if appState.hasAPIKey {
-                        HomeView()
-                    } else {
+                if appState.hasAPIKey {
+                    HomeView()
+                } else {
+                    NavigationStack {
                         APIKeySetupView(isInitialSetup: true)
                     }
                 }
-                .environment(appState)
-                .tint(Color(red: 0.1, green: 0.25, blue: 0.7))
 
                 if showLaunch {
                     LaunchAnimationView {
@@ -28,6 +26,8 @@ struct StatChatApp: App {
                     .zIndex(1)
                 }
             }
+            .environment(appState)
+            .tint(Color(red: 0.1, green: 0.25, blue: 0.7))
         }
     }
 }

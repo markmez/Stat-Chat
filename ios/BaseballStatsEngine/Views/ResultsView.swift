@@ -217,6 +217,14 @@ struct ResultsView: View {
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !appState.isLoading else { return }
         inputText = ""
+
+        // Direct-to-profile shortcut: skip Claude if input is just a player name
+        if let playerName = PlayerNameMatcher.matchPlayer(trimmed) {
+            appState.addToSearchHistory(trimmed)
+            selectedPlayerName = playerName
+            return
+        }
+
         appState.sendQuestion(trimmed)
     }
 }

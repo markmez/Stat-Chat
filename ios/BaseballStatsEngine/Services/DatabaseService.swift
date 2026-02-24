@@ -23,7 +23,7 @@ final class DatabaseService {
         let rows: [[String]]
     }
 
-    func execute(sql: String) throws -> QueryResult {
+    func execute(sql: String, maxRows: Int = 50) throws -> QueryResult {
         var statement: OpaquePointer?
 
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -50,7 +50,7 @@ final class DatabaseService {
                 }
             }
             rows.append(row)
-            if rows.count >= 50 { break }
+            if maxRows > 0 && rows.count >= maxRows { break }
         }
 
         return QueryResult(columns: columns, rows: rows)

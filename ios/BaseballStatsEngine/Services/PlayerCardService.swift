@@ -400,7 +400,7 @@ enum PlayerCardService {
         guard let result = try? db.execute(sql: sql),
               let row = result.rows.first,
               let val = Int(row[0]) else { return 162 }
-        return val
+        return min(val, 162)
     }
 
     // MARK: - Helpers
