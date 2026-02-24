@@ -67,6 +67,124 @@ enum PlayerCardService {
         )
     }
 
+    // MARK: - Comparison builder
+
+    /// Build a structured comparison response for two players (current season + career).
+    /// Returns a string with [STATGRID] blocks that StatGridParser can parse.
+    static func buildComparison(player1: String, player2: String) -> String {
+        let header = "HEADER: " + allHeaders.joined(separator: ", ")
+
+        // Fetch current season (latest year) for each player
+        let season1 = fetchLatestSeasonRow(name: player1)
+        let season2 = fetchLatestSeasonRow(name: player2)
+
+        // Fetch career totals for each player
+        let career1 = fetchCareerRow(name: player1)
+        let career2 = fetchCareerRow(name: player2)
+
+        let info1 = fetchPlayerInfo(name: player1)
+        let info2 = fetchPlayerInfo(name: player2)
+        let label1 = "\(info1?.name ?? player1) (\(info1?.team ?? ""))"
+        let label2 = "\(info2?.name ?? player2) (\(info2?.team ?? ""))"
+
+        var parts: [String] = []
+
+        // Current season grid
+        if let s1 = season1, let s2 = season2 {
+            let year = s1.year
+            parts.append("\(year) Season:\n")
+            parts.append("[STATGRID]")
+            parts.append(header)
+            parts.append("ROW: \(label1), \(s1.values.joined(separator: ", "))")
+            parts.append("ROW: \(label2), \(s2.values.joined(separator: ", "))")
+            parts.append("[/STATGRID]")
+        }
+
+        // Career grid (only if multi-season data exists for at least one)
+        if let c1 = career1, let c2 = career2 {
+            parts.append("\nCareer:\n")
+            parts.append("[STATGRID]")
+            parts.append(header)
+            parts.append("ROW: \(label1), \(c1.joined(separator: ", "))")
+            parts.append("ROW: \(label2), \(c2.joined(separator: ", "))")
+            parts.append("[/STATGRID]")
+        }
+
+        if parts.isEmpty {
+            return "I don't have enough data to compare these two players."
+        }
+
+        return parts.joined(separator: "\n")
+    }
+
+    /// Fetch the latest season's 24 formatted stat values for a player.
+    private static func fetchLatestSeasonRow(name: String) -> (year: Int, values: [String])? {
+        let sql = """
+            SELECT s.season,
+                   s.games, s.plate_appearances, s.at_bats, s.runs, s.hits,
+                   s.doubles, s.triples, s.home_runs, s.rbi, s.stolen_bases, s.caught_stealing,
+                   s.walks, s.intentional_walks, s.strikeouts, s.hit_by_pitch, s.sacrifice_flies,
+                   s.batting_avg, s.obp, s.slg, s.ops, s.iso, s.babip, s.wrc_plus, s.war
+            FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            ORDER BY s.season DESC
+            LIMIT 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              let year = Int(row[0]) else { return nil }
+
+        let values = Array(row[1...24])
+        let formatted = formatValues(headers: allHeaders, values: values)
+        return (year, formatted)
+    }
+
+    /// Fetch career aggregate 24 formatted stat values for a player.
+    private static func fetchCareerRow(name: String) -> [String]? {
+        let sql = """
+            SELECT SUM(s.games), SUM(s.plate_appearances), SUM(s.at_bats),
+                   SUM(s.runs), SUM(s.hits), SUM(s.doubles), SUM(s.triples),
+                   SUM(s.home_runs), SUM(s.rbi), SUM(s.stolen_bases), SUM(s.caught_stealing),
+                   SUM(s.walks), SUM(s.intentional_walks), SUM(s.strikeouts),
+                   SUM(s.hit_by_pitch), SUM(s.sacrifice_flies),
+                   ROUND(CAST(SUM(s.hits) AS REAL) / NULLIF(SUM(s.at_bats), 0), 3),
+                   ROUND((CAST(SUM(s.hits) + SUM(s.walks) + SUM(s.hit_by_pitch) AS REAL) /
+                          NULLIF(SUM(s.at_bats) + SUM(s.walks) + SUM(s.hit_by_pitch) + SUM(s.sacrifice_flies), 0)), 3),
+                   ROUND(CAST(SUM(s.hits - s.doubles - s.triples - s.home_runs) +
+                              2 * SUM(s.doubles) + 3 * SUM(s.triples) + 4 * SUM(s.home_runs) AS REAL) /
+                          NULLIF(SUM(s.at_bats), 0), 3),
+                   ROUND(CAST(SUM(s.hits - s.doubles - s.triples - s.home_runs) +
+                              2 * SUM(s.doubles) + 3 * SUM(s.triples) + 4 * SUM(s.home_runs) AS REAL) /
+                          NULLIF(SUM(s.at_bats), 0) -
+                          CAST(SUM(s.hits) AS REAL) / NULLIF(SUM(s.at_bats), 0), 3),
+                   ROUND(CAST(SUM(s.hits) - SUM(s.home_runs) AS REAL) /
+                          NULLIF(SUM(s.at_bats) - SUM(s.strikeouts) - SUM(s.home_runs) + SUM(s.sacrifice_flies), 0), 3),
+                   ROUND(AVG(s.wrc_plus)),
+                   ROUND(SUM(s.war), 1)
+            FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            HAVING COUNT(DISTINCT s.season) > 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first else { return nil }
+
+        // row has 22 values (no OPS — need to compute and insert)
+        let headersNoOPS = allHeaders.filter { $0 != "OPS" }
+        var formatted = formatValues(headers: headersNoOPS, values: row)
+
+        // Insert OPS after SLG (index 18)
+        if formatted.count >= 19 {
+            let obp = Double(formatted[17]) ?? 0
+            let slg = Double(formatted[18]) ?? 0
+            let ops = String(format: "%.3f", obp + slg)
+            formatted.insert(ops, at: 19)
+        }
+
+        return formatted
+    }
+
     // MARK: - Player info
 
     private static func fetchPlayerInfo(name: String) -> (name: String, team: String)? {

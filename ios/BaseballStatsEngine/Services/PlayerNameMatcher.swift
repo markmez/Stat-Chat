@@ -47,6 +47,43 @@ enum PlayerNameMatcher {
         return nil
     }
 
+    /// Detect comparison queries like "compare Judge and Ohtani" or "Judge vs Ohtani".
+    /// Returns two canonical player names if both resolve unambiguously.
+    static func parseComparison(_ input: String) -> (String, String)? {
+        var cleaned = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Strip common prefixes
+        for prefix in ["how do ", "how does ", "compare "] {
+            if cleaned.hasPrefix(prefix) {
+                cleaned = String(cleaned.dropFirst(prefix.count))
+                break
+            }
+        }
+
+        // Strip trailing " compare" (from "how does X compare to Y")
+        if cleaned.hasSuffix(" compare") {
+            cleaned = String(cleaned.dropLast(" compare".count))
+        }
+
+        // Try splitting on delimiters (longer first to avoid partial matches)
+        let delimiters = [" compared to ", " versus ", " vs. ", " vs ", " and ", " to ", " with "]
+        for delimiter in delimiters {
+            guard let range = cleaned.range(of: delimiter) else { continue }
+            let part1 = String(cleaned[cleaned.startIndex..<range.lowerBound])
+                .trimmingCharacters(in: .whitespaces)
+            let part2 = String(cleaned[range.upperBound...])
+                .trimmingCharacters(in: .whitespaces)
+
+            guard !part1.isEmpty, !part2.isEmpty,
+                  let name1 = matchPlayer(part1),
+                  let name2 = matchPlayer(part2),
+                  name1 != name2 else { continue }
+            return (name1, name2)
+        }
+
+        return nil
+    }
+
     /// Find closest player names within edit distance threshold (for "did you mean?" suggestions).
     /// Returns multiple names when a last-name fuzzy match is ambiguous.
     static func fuzzyMatch(_ input: String) -> [String] {

@@ -76,8 +76,9 @@ struct ResultsView: View {
                             resultsContentHeight = height
                         }
                         .onChange(of: appState.messages.count) {
-                            // Scroll to the latest user question so it's visible at the top
-                            if let latestUser = visibleMessages.last(where: { $0.role == .user }) {
+                            // Scroll to the latest user question — but only for follow-ups, not the initial query
+                            let userMessages = visibleMessages.filter { $0.role == .user }
+                            if userMessages.count > 1, let latestUser = userMessages.last {
                                 withAnimation(.easeOut(duration: 0.2)) {
                                     proxy.scrollTo(latestUser.id, anchor: .top)
                                 }

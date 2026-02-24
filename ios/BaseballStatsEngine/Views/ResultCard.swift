@@ -77,7 +77,7 @@ struct ResultCard: View {
                         }
 
                     case .statGrid(let grid):
-                        StatGridView(grid: grid, onPlayerTap: onPlayerTap, compactHeaders: StatGridView.summaryHeaders)
+                        StatGridView(grid: grid, onPlayerTap: onPlayerTap)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 6)
 

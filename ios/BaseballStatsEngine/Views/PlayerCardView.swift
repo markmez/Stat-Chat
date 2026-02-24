@@ -56,7 +56,7 @@ struct PlayerCardView: View {
 
                         // Current season
                         if let current = card.seasons.first {
-                            sectionView(title: "\(String(current.year)) Season", grid: current.stats, compact: true)
+                            sectionView(title: "\(String(current.year)) Season", grid: current.stats)
 
                             // Projected stats for current season
                             // TODO: Only show when teamGames < 162 (mid-season)
@@ -75,7 +75,7 @@ struct PlayerCardView: View {
 
                         // Career totals
                         if let career = card.careerTotals {
-                            sectionView(title: "Career", grid: career, compact: true)
+                            sectionView(title: "Career", grid: career)
                         }
 
                         // Prior seasons — expandable in place
@@ -109,7 +109,7 @@ struct PlayerCardView: View {
 
                                     if isExpanded {
                                         VStack(alignment: .leading, spacing: 16) {
-                                            StatGridView(grid: season.stats, compactHeaders: StatGridView.summaryHeaders)
+                                            StatGridView(grid: season.stats)
                                                 .padding(.horizontal, 6)
 
                                             if let splits = season.platoonSplits {
@@ -258,7 +258,7 @@ struct PlayerCardView: View {
             }
             .padding(.horizontal, 20)
 
-            StatGridView(grid: projected, compactHeaders: StatGridView.summaryHeaders)
+            StatGridView(grid: projected)
                 .padding(.horizontal, 6)
         }
     }

@@ -290,6 +290,11 @@ final class QueryEngine {
         }
     }
 
+    /// Inject a Q&A pair into history (for locally-handled queries like comparisons)
+    func injectHistory(question: String, answer: String) {
+        addToHistory(question: question, answer: answer)
+    }
+
     func clearHistory() {
         history.removeAll()
     }

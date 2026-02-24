@@ -31,6 +31,16 @@ final class AppState {
 
         addToSearchHistory(trimmed)
 
+        // Intercept comparison queries — build response from DB, skip Claude
+        if let (p1, p2) = PlayerNameMatcher.parseComparison(trimmed) {
+            let response = PlayerCardService.buildComparison(player1: p1, player2: p2)
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            // Inject into query engine history so Claude has context for follow-ups
+            queryEngine.injectHistory(question: trimmed, answer: "Compared \(p1) and \(p2). \(response)")
+            return
+        }
+
         messages.append(Message(role: .user, content: trimmed))
         isLoading = true
         currentStreamingText = ""

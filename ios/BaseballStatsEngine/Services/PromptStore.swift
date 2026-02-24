@@ -167,34 +167,54 @@ enum PromptStore {
     - For questions about stats we don't have data for, return SELECT 'NO_DATA' as answer.
     """
 
+    static let standardHeader = "G, PA, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP, SF, AVG, OBP, SLG, OPS, ISO, BABIP, wRC+, WAR"
+
     static let answerGenerationPrompt = """
     You are a knowledgeable baseball analyst. Given a user's question, the SQL that was run, and the results, provide a clear, concise answer.
 
     Rules:
     - Be conversational but accurate. You're talking to a baseball fan.
     - STAT GRID FORMAT: When your answer includes 3 or more stats for a player, or stats for multiple players, present them in a stat grid block. Wrap the grid in [STATGRID] and [/STATGRID] tags. Use HEADER: for column names and ROW: for each player. Separate values with commas.
-    - FULL STAT ORDER: When showing a player's full stats (single player, comparisons, or year/career rows), always include all 24 stats in this exact order:
+    - MANDATORY HEADER: Every stat grid MUST use this exact header line with all 24 stats. Copy it verbatim — never shorten or rearrange:
 
-    HEADER: G, PA, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP, SF, AVG, OBP, SLG, OPS, ISO, BABIP, wRC+, WAR
+    HEADER: \(standardHeader)
 
-    The app's UI will automatically show a compact 7-stat summary (G, AB, AVG, OBP, SLG, OPS, HR) with a "More" button to expand. So always send the full 24 stats — the UI handles compacting.
+    This is not optional. Every [STATGRID] block must start with this exact HEADER line. The app's UI handles layout and display.
 
-    Example for a single player's full stats:
+    SINGLE PLAYER — do NOT include the player name in the ROW:
 
     [STATGRID]
-    HEADER: G, PA, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP, SF, AVG, OBP, SLG, OPS, ISO, BABIP, wRC+, WAR
+    HEADER: \(standardHeader)
     ROW: 158, 683, 526, 122, 169, 28, 0, 58, 144, 3, 2, 133, 16, 171, 8, 3, .322, .458, .701, 1.159, .379, .326, 223, 11.2
     [/STATGRID]
 
-    For single-player grids, do NOT include the player name in the ROW — it's already in your commentary. For comparisons, start each ROW with the player name:
+    COMPARISONS — use TWO grids: current season first, then career (if multi-season data exists). Start each ROW with the player name. Do NOT show every individual past season — only current season and career totals:
+
+    Current season:
 
     [STATGRID]
-    HEADER: G, PA, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP, SF, AVG, OBP, SLG, OPS, ISO, BABIP, wRC+, WAR
-    ROW: Aaron Judge (NYY), 158, 683, 526, 122, 169, 28, 0, 58, 144, 3, 2, 133, 16, 171, 8, 3, .322, .458, .701, 1.159, .379, .326, 223, 11.2
+    HEADER: \(standardHeader)
+    ROW: Aaron Judge (NYY), 152, 679, 517, 137, 225, 53, 0, 58, 144, 3, 2, 133, 16, 171, 8, 3, .331, .457, .688, 1.144, .357, .356, 204, 10.1
     ROW: Shohei Ohtani (LAD), 159, 731, 636, 134, 197, 38, 7, 54, 130, 59, 4, 81, 7, 162, 8, 6, .310, .390, .646, 1.036, .336, .327, 190, 9.1
     [/STATGRID]
 
-    For leaderboards, put the rank and player name as the ROW label (prefixed with #), with only stat values after. Do NOT put Rank or Player as HEADER columns. Leaderboards should be concise — include only stats relevant to the question (no need for all 24):
+    Career:
+
+    [STATGRID]
+    HEADER: \(standardHeader)
+    ROW: Aaron Judge (NYY), 500, 2600, 1800, 400, 550, 100, 5, 200, 500, 20, 10, 650, 50, 700, 30, 15, .306, .390, .535, .925, .229, .310, 175, 40.5
+    ROW: Shohei Ohtani (LAD), 400, 2100, 1700, 350, 500, 90, 10, 180, 420, 100, 20, 300, 20, 500, 25, 12, .294, .370, .570, .940, .276, .320, 165, 35.0
+    [/STATGRID]
+
+    YEAR/CAREER for a single player — start each ROW with the year or "Career" as a label:
+
+    [STATGRID]
+    HEADER: \(standardHeader)
+    ROW: 2024, 158, 683, 526, 122, 169, 28, 0, 58, 144, 3, 2, 133, 16, 171, 8, 3, .322, .458, .701, 1.159, .379, .326, 223, 11.2
+    ROW: Career, 500, 2600, 1800, 400, 550, 100, 5, 200, 500, 20, 10, 650, 50, 700, 30, 15, .306, .390, .535, .925, .229, .310, 175, 40.5
+    [/STATGRID]
+
+    LEADERBOARDS — the only exception where you may use fewer columns. Include only stats relevant to the question. Put the rank and player name as the ROW label (prefixed with #). Do NOT put Rank or Player as HEADER columns:
 
     [STATGRID]
     HEADER: AB, H, HR, AVG, OBP, SLG, OPS
@@ -203,13 +223,6 @@ enum PromptStore {
     [/STATGRID]
 
     Commentary text goes OUTSIDE the [STATGRID] block, before or after it.
-    - When results include both a specific season and a "Career" row, start each ROW with the year or "Career" as a label — just like player names in comparisons. Do NOT put year/season as a stat column in the HEADER. Use full 24 stats:
-
-    [STATGRID]
-    HEADER: G, PA, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP, SF, AVG, OBP, SLG, OPS, ISO, BABIP, wRC+, WAR
-    ROW: 2024, 158, 683, 526, 122, 169, 28, 0, 58, 144, 3, 2, 133, 16, 171, 8, 3, .322, .458, .701, 1.159, .379, .326, 223, 11.2
-    ROW: Career, 500, 2600, 1800, 400, 550, 100, 5, 200, 500, 20, 10, 650, 50, 700, 30, 15, .306, .390, .535, .925, .229, .310, 175, 40.5
-    [/STATGRID]
     - For simple single-stat answers (e.g., "Judge hit 58 home runs"), just state the number — no grid needed.
     - If the results are empty, say you don't have data for that query and suggest what might work.
     - Keep answers short. Resist the urge to narrate or editorialize.
