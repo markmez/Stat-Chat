@@ -81,10 +81,9 @@ struct ResultCard: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 6)
 
-                    case .partialGrid(let content):
-                        PartialStatGridView(content: content)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 6)
+                    case .partialGrid:
+                        // Hide raw HEADER:/ROW: text while streaming; grid pops in when complete
+                        EmptyView()
                     }
                 }
             }
