@@ -135,6 +135,14 @@ final class QueryEngine {
         if usedFallback || rows.count == 1 {
             if let fallbackText = findSensitiveStreaks(rows: rows, columns: columns) {
                 streakData += "\n\n" + fallbackText
+            } else if let firstRow = rows.first {
+                // Tier 3: sliding window over game logs
+                let pidIdx = columns.firstIndex(of: "player_id") ?? 1
+                let sIdx = columns.firstIndex(of: "season") ?? 2
+                if pidIdx < firstRow.count, sIdx < firstRow.count,
+                   let windowText = findSlidingWindowStreaks(playerId: firstRow[pidIdx], season: firstRow[sIdx]) {
+                    streakData += "\n\n" + windowText
+                }
             }
         }
 
@@ -159,6 +167,14 @@ final class QueryEngine {
         if allStreaks.rows.count == 1 {
             if let fallbackText = findSensitiveStreaks(rows: allStreaks.rows, columns: allStreaks.columns) {
                 streakData += "\n\n" + fallbackText
+            } else if let firstRow = allStreaks.rows.first {
+                // Tier 3: sliding window over game logs
+                let pidIdx = allStreaks.columns.firstIndex(of: "player_id") ?? 1
+                let sIdx = allStreaks.columns.firstIndex(of: "season") ?? 2
+                if pidIdx < firstRow.count, sIdx < firstRow.count,
+                   let windowText = findSlidingWindowStreaks(playerId: firstRow[pidIdx], season: firstRow[sIdx]) {
+                    streakData += "\n\n" + windowText
+                }
             }
         }
 
@@ -258,6 +274,125 @@ final class QueryEngine {
             )
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// Tier 3 fallback: sliding window over game logs to find best/worst stretch (7-30 games).
+    /// Used when both precomputed streaks and sensitive streaks return nothing.
+    private func findSlidingWindowStreaks(playerId: String, season: String) -> String? {
+        let sql = """
+            SELECT date, at_bats, hits, home_runs, walks, strikeouts,
+                   doubles, triples, obp, slg
+            FROM game_batting_logs
+            WHERE player_id = '\(playerId)' AND season = \(season)
+            ORDER BY date
+            """
+        guard let result = try? database.execute(sql: sql, maxRows: 0),
+              result.rows.count >= 7 else { return nil }
+
+        let games = result.rows
+
+        // Compute season OPS from all game logs
+        var totalAB = 0, totalH = 0, totalBB = 0, totalHBP = 0, totalSF = 0
+        var totalDoubles = 0, totalTriples = 0, totalHR = 0
+        for g in games {
+            let ab = Int(g[1]) ?? 0
+            let h = Int(g[2]) ?? 0
+            let hr = Int(g[3]) ?? 0
+            let bb = Int(g[4]) ?? 0
+            let doubles = Int(g[6]) ?? 0
+            let triples = Int(g[7]) ?? 0
+            totalAB += ab; totalH += h; totalHR += hr; totalBB += bb
+            totalDoubles += doubles; totalTriples += triples
+        }
+        let seasonOBP = totalAB + totalBB > 0
+            ? Double(totalH + totalBB) / Double(totalAB + totalBB) : 0
+        let seasonSLG = totalAB > 0
+            ? Double(totalH - totalDoubles - totalTriples - totalHR + 2 * totalDoubles + 3 * totalTriples + 4 * totalHR) / Double(totalAB) : 0
+        let seasonOPS = seasonOBP + seasonSLG
+
+        struct Window {
+            let startIdx: Int
+            let endIdx: Int
+            let ops: Double
+            let ab: Int
+            let hits: Int
+            let hr: Int
+            let bb: Int
+            let so: Int
+            let avg: Double
+            let obp: Double
+            let slg: Double
+        }
+
+        var best: Window?
+        var worst: Window?
+
+        for windowSize in 7...min(30, games.count) {
+            for start in 0...(games.count - windowSize) {
+                let end = start + windowSize - 1
+                var wAB = 0, wH = 0, wHR = 0, wBB = 0, wSO = 0
+                var wDoubles = 0, wTriples = 0
+                for i in start...end {
+                    let g = games[i]
+                    wAB += Int(g[1]) ?? 0
+                    wH += Int(g[2]) ?? 0
+                    wHR += Int(g[3]) ?? 0
+                    wBB += Int(g[4]) ?? 0
+                    wSO += Int(g[5]) ?? 0
+                    wDoubles += Int(g[6]) ?? 0
+                    wTriples += Int(g[7]) ?? 0
+                }
+                guard wAB > 0 else { continue }
+                let wOBP = Double(wH + wBB) / Double(wAB + wBB)
+                let wSLG = Double(wH - wDoubles - wTriples - wHR + 2 * wDoubles + 3 * wTriples + 4 * wHR) / Double(wAB)
+                let wOPS = wOBP + wSLG
+                let wAVG = Double(wH) / Double(wAB)
+
+                let w = Window(startIdx: start, endIdx: end, ops: wOPS,
+                               ab: wAB, hits: wH, hr: wHR, bb: wBB, so: wSO,
+                               avg: wAVG, obp: wOBP, slg: wSLG)
+
+                if best == nil || wOPS > best!.ops { best = w }
+                if worst == nil || wOPS < worst!.ops { worst = w }
+            }
+        }
+
+        guard let hottest = best, let coldest = worst else { return nil }
+
+        // Only report if there's meaningful deviation from season average
+        let hotDelta = hottest.ops - seasonOPS
+        let coldDelta = seasonOPS - coldest.ops
+        guard hotDelta > 0.05 || coldDelta > 0.05 else { return nil }
+
+        func fmt(_ v: Double, _ places: Int = 3) -> String {
+            String(format: "%.\(places)f", v)
+        }
+
+        var lines = ["SLIDING WINDOW ANALYSIS (best/worst 7-30 game stretches from game logs):"]
+        lines.append("Player season OPS: \(fmt(seasonOPS))")
+
+        if hotDelta > 0.05 {
+            let startDate = games[hottest.startIdx][0]
+            let endDate = games[hottest.endIdx][0]
+            let numGames = hottest.endIdx - hottest.startIdx + 1
+            lines.append(
+                "Hottest stretch: \(startDate) to \(endDate) (\(numGames) games) — " +
+                "\(fmt(hottest.avg))/\(fmt(hottest.obp))/\(fmt(hottest.slg)) (\(fmt(hottest.ops)) OPS), " +
+                "\(hottest.hr) HR, \(hottest.hits) H in \(hottest.ab) AB"
+            )
+        }
+        if coldDelta > 0.05 {
+            let startDate = games[coldest.startIdx][0]
+            let endDate = games[coldest.endIdx][0]
+            let numGames = coldest.endIdx - coldest.startIdx + 1
+            lines.append(
+                "Coldest stretch: \(startDate) to \(endDate) (\(numGames) games) — " +
+                "\(fmt(coldest.avg))/\(fmt(coldest.obp))/\(fmt(coldest.slg)) (\(fmt(coldest.ops)) OPS), " +
+                "\(coldest.hr) HR, \(coldest.hits) H in \(coldest.ab) AB"
+            )
+        }
+
+        return lines.count > 2 ? lines.joined(separator: "\n") : nil
     }
 
     // MARK: - Helpers

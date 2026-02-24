@@ -10,6 +10,7 @@ struct StatGridView: View {
 
     @State private var selectedStat: String? = nil
     @State private var isExpanded = false
+    @State private var showProjection = false
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
 
@@ -18,6 +19,35 @@ struct StatGridView: View {
 
     /// Uniform column width — same for every column across all rows so they align in a true grid
     private let columnWidth: CGFloat = 50
+
+    /// Whether this grid looks like streak data (date-range labels, has G + rate stats, no PA)
+    private var isStreakGrid: Bool {
+        let headers = Set(grid.headers)
+        let hasG = headers.contains("G")
+        let rateHits = ["AVG", "OBP", "SLG", "OPS"].filter { headers.contains($0) }.count
+        let hasPA = headers.contains("PA")
+        let hasDateLabel = grid.rows.contains { $0.label.contains("\u{2013}") || $0.label.contains("–") }
+        return hasG && rateHits >= 2 && !hasPA && hasDateLabel
+    }
+
+    private static let countingStats: Set<String> = ["G", "AB", "H", "BB", "SO", "HR"]
+
+    /// Project a streak row's values to a 162-game pace
+    static func projectTo162(headers: [String], values: [String]) -> [String] {
+        guard let gIdx = headers.firstIndex(of: "G"),
+              gIdx < values.count,
+              let numGames = Double(values[gIdx]),
+              numGames > 0 else { return values }
+
+        let scale = 162.0 / numGames
+        return zip(headers, values).map { header, value in
+            if header == "Perf" { return "—" }
+            if countingStats.contains(header), let raw = Double(value) {
+                return String(Int((raw * scale).rounded()))
+            }
+            return value
+        }
+    }
 
     /// Whether compact mode is active (compactHeaders provided and grid has more columns than compact set)
     private var isCompactAvailable: Bool {
@@ -161,7 +191,53 @@ struct StatGridView: View {
                     }
                 }
                 .padding(.top, row.label.isEmpty && index == 0 ? 10 : 4)
-                .padding(.bottom, 10)
+                .padding(.bottom, showProjection ? 4 : 10)
+
+                // Projected 162-game pace row
+                if showProjection && isStreakGrid {
+                    let projValues = Self.projectTo162(headers: displayHeaders, values: isCompactAvailable && !isExpanded ? compactValues(for: row) : row.values)
+                    let projChunks = chunk(projValues)
+                    let hChunksProj = displayHeaderChunks
+
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("162-game pace")
+                            .font(.system(.caption, design: .rounded, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.top, 6)
+                            .padding(.bottom, 2)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(projChunks.enumerated()), id: \.offset) { chunkIdx, vals in
+                                if chunkIdx < hChunksProj.count {
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        // Repeat headers so projected values are labeled
+                                        HStack(spacing: 0) {
+                                            ForEach(Array(hChunksProj[chunkIdx].enumerated()), id: \.offset) { _, header in
+                                                Text(header)
+                                                    .font(.system(.caption2, design: .monospaced, weight: .semibold))
+                                                    .foregroundStyle(.secondary.opacity(0.6))
+                                                    .frame(width: columnWidth, alignment: .center)
+                                            }
+                                        }
+                                        .padding(.horizontal, 6)
+
+                                        HStack(spacing: 0) {
+                                            ForEach(Array(vals.enumerated()), id: \.offset) { _, value in
+                                                Text(value)
+                                                    .font(.system(.callout, design: .monospaced, weight: .medium))
+                                                    .foregroundStyle(.secondary)
+                                                    .frame(width: columnWidth, alignment: .center)
+                                            }
+                                        }
+                                        .padding(.horizontal, 6)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.bottom, 10)
+                }
             }
 
             // More / Less toggle
@@ -175,6 +251,26 @@ struct StatGridView: View {
                         Text(isExpanded ? "Less" : "More")
                             .font(.system(.caption, design: .rounded, weight: .medium))
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Streak projection toggle
+            if isStreakGrid {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showProjection.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(showProjection ? "Hide Projection" : "Project Over 162 Game Season")
+                            .font(.system(.caption, design: .rounded, weight: .medium))
+                        Image(systemName: showProjection ? "chevron.up" : "chevron.down")
                             .font(.system(size: 9, weight: .semibold))
                     }
                     .foregroundStyle(.secondary)
