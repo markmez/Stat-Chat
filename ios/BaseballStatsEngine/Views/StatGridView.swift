@@ -3,8 +3,13 @@ import SwiftUI
 struct StatGridView: View {
     let grid: StatGridParser.StatGrid
     var onPlayerTap: ((String) -> Void)? = nil
+    var compactHeaders: [String]? = nil
+
+    /// 1-line summary: the 7 key batting stats shown when compact
+    static let summaryHeaders = ["G", "AB", "AVG", "OBP", "SLG", "OPS", "HR"]
 
     @State private var selectedStat: String? = nil
+    @State private var isExpanded = false
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
 
@@ -13,6 +18,39 @@ struct StatGridView: View {
 
     /// Uniform column width — same for every column across all rows so they align in a true grid
     private let columnWidth: CGFloat = 50
+
+    /// Whether compact mode is active (compactHeaders provided and grid has more columns than compact set)
+    private var isCompactAvailable: Bool {
+        guard let compact = compactHeaders else { return false }
+        return grid.headers.count > compact.count
+    }
+
+    /// Headers to display — compact subset or full grid
+    private var displayHeaders: [String] {
+        if isCompactAvailable && !isExpanded {
+            return compactIndices.map { grid.headers[$0] }
+        }
+        return grid.headers
+    }
+
+    /// Indices into grid.headers that match compactHeaders (preserving compact order, skipping missing)
+    private var compactIndices: [Int] {
+        guard let compact = compactHeaders else { return [] }
+        var indices: [Int] = []
+        for header in compact {
+            if let idx = grid.headers.firstIndex(of: header) {
+                indices.append(idx)
+            }
+        }
+        return indices
+    }
+
+    /// Filter a row's values to only the compact columns
+    private func compactValues(for row: StatGridParser.StatGrid.Row) -> [String] {
+        compactIndices.compactMap { idx in
+            idx < row.values.count ? row.values[idx] : nil
+        }
+    }
 
     /// Split an array into chunks of maxPerRow
     private func chunk<T>(_ array: [T]) -> [[T]] {
@@ -27,17 +65,23 @@ struct StatGridView: View {
         return result
     }
 
-    /// Split headers into chunks that fit without scrolling
-    private var headerChunks: [[String]] { chunk(grid.headers) }
+    /// Headers chunked for display
+    private var displayHeaderChunks: [[String]] { chunk(displayHeaders) }
 
-    /// Split a row's values to match header chunks
-    private func valueChunks(for row: StatGridParser.StatGrid.Row) -> [[String]] { chunk(row.values) }
+    /// Values for a row, chunked for display
+    private func displayValueChunks(for row: StatGridParser.StatGrid.Row) -> [[String]] {
+        if isCompactAvailable && !isExpanded {
+            return chunk(compactValues(for: row))
+        }
+        return chunk(row.values)
+    }
 
     /// Map a chunk index + column index back to the header abbreviation
     private func headerForColumn(chunkIdx: Int, colIdx: Int) -> String? {
+        let headers = displayHeaders
         let globalIdx = chunkIdx * maxPerRow + colIdx
-        guard globalIdx < grid.headers.count else { return nil }
-        return grid.headers[globalIdx]
+        guard globalIdx < headers.count else { return nil }
+        return headers[globalIdx]
     }
 
     var body: some View {
@@ -73,8 +117,8 @@ struct StatGridView: View {
                 }
 
                 // Stacked stat rows
-                let hChunks = headerChunks
-                let vChunks = valueChunks(for: row)
+                let hChunks = displayHeaderChunks
+                let vChunks = displayValueChunks(for: row)
                 let showHeaders = index == 0 || !row.label.isEmpty
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -118,6 +162,26 @@ struct StatGridView: View {
                 }
                 .padding(.top, row.label.isEmpty && index == 0 ? 10 : 4)
                 .padding(.bottom, 10)
+            }
+
+            // More / Less toggle
+            if isCompactAvailable {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(isExpanded ? "Less" : "More")
+                            .font(.system(.caption, design: .rounded, weight: .medium))
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
+                }
+                .buttonStyle(.plain)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

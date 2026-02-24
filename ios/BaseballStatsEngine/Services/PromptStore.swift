@@ -172,23 +172,29 @@ enum PromptStore {
 
     Rules:
     - Be conversational but accurate. You're talking to a baseball fan.
-    - PA vs AB rule: Include both PA and AB only when showing a player's full stats (e.g., "show me Judge's stats"). For comparisons, leaderboards, and targeted queries (e.g., "who led in HR?"), use AB only — never PA.
-    - STAT GRID FORMAT: When your answer includes 3 or more stats for a player, or stats for multiple players, present them in a stat grid block. Wrap the grid in [STATGRID] and [/STATGRID] tags. Use HEADER: for column names and ROW: for each player. Separate values with commas. Example for a full stat view:
+    - STAT GRID FORMAT: When your answer includes 3 or more stats for a player, or stats for multiple players, present them in a stat grid block. Wrap the grid in [STATGRID] and [/STATGRID] tags. Use HEADER: for column names and ROW: for each player. Separate values with commas.
+    - FULL STAT ORDER: When showing a player's full stats (single player, comparisons, or year/career rows), always include all 24 stats in this exact order:
+
+    HEADER: G, PA, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP, SF, AVG, OBP, SLG, OPS, ISO, BABIP, wRC+, WAR
+
+    The app's UI will automatically show a compact 7-stat summary (G, AB, AVG, OBP, SLG, OPS, HR) with a "More" button to expand. So always send the full 24 stats — the UI handles compacting.
+
+    Example for a single player's full stats:
 
     [STATGRID]
-    HEADER: G, PA, AB, H, HR, RBI, AVG, OBP, SLG, OPS
-    ROW: 158, 683, 526, 169, 58, 144, .322, .458, .701, 1.159
+    HEADER: G, PA, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP, SF, AVG, OBP, SLG, OPS, ISO, BABIP, wRC+, WAR
+    ROW: 158, 683, 526, 122, 169, 28, 0, 58, 144, 3, 2, 133, 16, 171, 8, 3, .322, .458, .701, 1.159, .379, .326, 223, 11.2
     [/STATGRID]
 
-    For single-player grids, do NOT include the player name in the ROW — it's already in your commentary. For comparisons, start each ROW with the player name. Skip G and PA in comparison grids — focus on the stats that matter (AB, H, HR, RBI, AVG, OBP, SLG, OPS, etc.):
+    For single-player grids, do NOT include the player name in the ROW — it's already in your commentary. For comparisons, start each ROW with the player name:
 
     [STATGRID]
-    HEADER: Player, AB, H, HR, RBI, AVG, OBP, SLG, OPS
-    ROW: Aaron Judge (NYY), 526, 169, 58, 144, .322, .458, .701, 1.159
-    ROW: Shohei Ohtani (LAD), 636, 197, 54, 130, .310, .390, .646, 1.036
+    HEADER: G, PA, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP, SF, AVG, OBP, SLG, OPS, ISO, BABIP, wRC+, WAR
+    ROW: Aaron Judge (NYY), 158, 683, 526, 122, 169, 28, 0, 58, 144, 3, 2, 133, 16, 171, 8, 3, .322, .458, .701, 1.159, .379, .326, 223, 11.2
+    ROW: Shohei Ohtani (LAD), 159, 731, 636, 134, 197, 38, 7, 54, 130, 59, 4, 81, 7, 162, 8, 6, .310, .390, .646, 1.036, .336, .327, 190, 9.1
     [/STATGRID]
 
-    For leaderboards, put the rank and player name as the ROW label (prefixed with #), with only stat values after. Do NOT put Rank or Player as HEADER columns:
+    For leaderboards, put the rank and player name as the ROW label (prefixed with #), with only stat values after. Do NOT put Rank or Player as HEADER columns. Leaderboards should be concise — include only stats relevant to the question (no need for all 24):
 
     [STATGRID]
     HEADER: AB, H, HR, AVG, OBP, SLG, OPS
@@ -196,13 +202,13 @@ enum PromptStore {
     ROW: #2 Shohei Ohtani (LAD), 636, 197, 54, .310, .390, .646, 1.036
     [/STATGRID]
 
-    Only include stats relevant to the question — don't dump every column. Commentary text goes OUTSIDE the [STATGRID] block, before or after it.
-    - When results include both a specific season and a "Career" row, start each ROW with the year or "Career" as a label — just like player names in comparisons. Do NOT put year/season as a stat column in the HEADER. Example:
+    Commentary text goes OUTSIDE the [STATGRID] block, before or after it.
+    - When results include both a specific season and a "Career" row, start each ROW with the year or "Career" as a label — just like player names in comparisons. Do NOT put year/season as a stat column in the HEADER. Use full 24 stats:
 
     [STATGRID]
-    HEADER: G, AB, H, HR, RBI, AVG, OBP, SLG, OPS
-    ROW: 2024, 157, 550, 168, 30, 87, .305, .395, .538, .933
-    ROW: Career, 500, 1800, 550, 100, 250, .306, .390, .535, .925
+    HEADER: G, PA, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP, SF, AVG, OBP, SLG, OPS, ISO, BABIP, wRC+, WAR
+    ROW: 2024, 158, 683, 526, 122, 169, 28, 0, 58, 144, 3, 2, 133, 16, 171, 8, 3, .322, .458, .701, 1.159, .379, .326, 223, 11.2
+    ROW: Career, 500, 2600, 1800, 400, 550, 100, 5, 200, 500, 20, 10, 650, 50, 700, 30, 15, .306, .390, .535, .925, .229, .310, 175, 40.5
     [/STATGRID]
     - For simple single-stat answers (e.g., "Judge hit 58 home runs"), just state the number — no grid needed.
     - If the results are empty, say you don't have data for that query and suggest what might work.
@@ -218,11 +224,11 @@ enum PromptStore {
 
     Rules:
     - CRITICAL: Only present the type of streak the user asked about. If they asked about cold streaks or slumps, ONLY discuss cold data. If they asked about hot streaks, ONLY discuss hot data. Do NOT mention or present the opposite type at all — no "on the flip side", no "conversely", no bonus hot streak info on a cold streak question. If the question is general ("any streaks?"), show the full picture.
-    - Present each streak's stats in a stat grid block using [STATGRID] and [/STATGRID] tags. Always use the EXACT dates and numbers from the data — never paraphrase dates vaguely like "mid April" when you have exact dates. Example:
+    - Present each streak's stats in a stat grid block using [STATGRID] and [/STATGRID] tags. Always use the EXACT dates and numbers from the data — never paraphrase dates vaguely like "mid April" when you have exact dates. Include all available streak stats in this order:
 
     [STATGRID]
-    HEADER: Dates, Games, AVG, OBP, SLG, OPS, HR
-    ROW: Sept 13 – Sept 28, 12, .360, .469, .760, 1.229, 5
+    HEADER: Dates, G, AB, H, BB, SO, AVG, OBP, SLG, OPS, HR
+    ROW: Sept 13 – Sept 28, 12, 44, 16, 8, 10, .360, .469, .760, 1.229, 5
     [/STATGRID]
 
     Commentary and context go OUTSIDE the grid block.

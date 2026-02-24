@@ -56,7 +56,7 @@ struct PlayerCardView: View {
 
                         // Current season
                         if let current = card.seasons.first {
-                            sectionView(title: "\(String(current.year)) Season", grid: current.stats)
+                            sectionView(title: "\(String(current.year)) Season", grid: current.stats, compact: true)
 
                             // Projected stats for current season
                             // TODO: Only show when teamGames < 162 (mid-season)
@@ -64,18 +64,18 @@ struct PlayerCardView: View {
 
                             // Current season platoon splits
                             if let splits = current.platoonSplits {
-                                sectionView(title: "Platoon Splits", grid: splits)
+                                sectionView(title: "Platoon Splits", grid: splits, compact: true)
                             }
 
                             // Current season streaks
                             if let streaks = current.streaks {
-                                sectionView(title: "Notable Streaks", grid: streaks)
+                                sectionView(title: "Notable Streaks", grid: streaks, compact: true)
                             }
                         }
 
                         // Career totals
                         if let career = card.careerTotals {
-                            sectionView(title: "Career", grid: career)
+                            sectionView(title: "Career", grid: career, compact: true)
                         }
 
                         // Prior seasons — expandable in place
@@ -109,15 +109,15 @@ struct PlayerCardView: View {
 
                                     if isExpanded {
                                         VStack(alignment: .leading, spacing: 16) {
-                                            StatGridView(grid: season.stats)
+                                            StatGridView(grid: season.stats, compactHeaders: StatGridView.summaryHeaders)
                                                 .padding(.horizontal, 6)
 
                                             if let splits = season.platoonSplits {
-                                                sectionView(title: "Platoon Splits", grid: splits)
+                                                sectionView(title: "Platoon Splits", grid: splits, compact: true)
                                             }
 
                                             if let streaks = season.streaks {
-                                                sectionView(title: "Notable Streaks", grid: streaks)
+                                                sectionView(title: "Notable Streaks", grid: streaks, compact: true)
                                             }
                                         }
                                         .padding(.bottom, 8)
@@ -212,14 +212,14 @@ struct PlayerCardView: View {
         }
     }
 
-    private func sectionView(title: String, grid: StatGridParser.StatGrid) -> some View {
+    private func sectionView(title: String, grid: StatGridParser.StatGrid, compact: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.system(.headline, design: .rounded, weight: .semibold))
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 20)
 
-            StatGridView(grid: grid)
+            StatGridView(grid: grid, compactHeaders: compact ? StatGridView.summaryHeaders : nil)
                 .padding(.horizontal, 6)
         }
     }
@@ -258,7 +258,7 @@ struct PlayerCardView: View {
             }
             .padding(.horizontal, 20)
 
-            StatGridView(grid: projected)
+            StatGridView(grid: projected, compactHeaders: StatGridView.summaryHeaders)
                 .padding(.horizontal, 6)
         }
     }

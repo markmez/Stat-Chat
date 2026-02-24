@@ -199,8 +199,10 @@ enum PlayerCardService {
 
     private static func fetchPlatoonSplitsForSeason(name: String, season: Int) -> StatGridParser.StatGrid? {
         let sql = """
-            SELECT ps.split, ps.plate_appearances, ps.batting_avg, ps.obp, ps.slg, ps.ops,
-                   ps.home_runs, ps.wrc_plus
+            SELECT ps.split, ps.plate_appearances, ps.at_bats, ps.hits,
+                   ps.doubles, ps.triples, ps.home_runs, ps.rbi,
+                   ps.walks, ps.strikeouts,
+                   ps.batting_avg, ps.obp, ps.slg, ps.ops, ps.iso, ps.babip, ps.wrc_plus
             FROM platoon_splits ps
             JOIN players p ON ps.player_id = p.player_id
             WHERE p.name LIKE '%\(sanitize(name))%' AND ps.season = \(season)
@@ -209,7 +211,7 @@ enum PlayerCardService {
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else { return nil }
 
-        let headers = ["PA", "AVG", "OBP", "SLG", "OPS", "HR", "wRC+"]
+        let headers = ["PA", "AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP", "wRC+"]
         var rows: [StatGridParser.StatGrid.Row] = []
         for row in result.rows.prefix(2) {
             let splitLabel = row[0] == "vs_LHP" ? "vs LHP" : "vs RHP"
@@ -226,7 +228,8 @@ enum PlayerCardService {
     private static func fetchStreaksForSeason(name: String, season: Int) -> StatGridParser.StatGrid? {
         var sql = """
             SELECT st.start_date, st.end_date, st.num_games, st.performance,
-                   st.batting_avg, st.ops, st.home_runs
+                   st.at_bats, st.hits, st.walks, st.strikeouts,
+                   st.batting_avg, st.obp, st.slg, st.ops, st.home_runs
             FROM streaks st
             JOIN players p ON st.player_id = p.player_id
             WHERE p.name LIKE '%\(sanitize(name))%' AND st.season = \(season) AND st.performance != 'average'
@@ -237,7 +240,8 @@ enum PlayerCardService {
         if result == nil || result!.rows.isEmpty {
             sql = """
                 SELECT ss.start_date, ss.end_date, ss.num_games, ss.performance,
-                       ss.batting_avg, ss.ops, ss.home_runs
+                       ss.at_bats, ss.hits, ss.walks, ss.strikeouts,
+                       ss.batting_avg, ss.obp, ss.slg, ss.ops, ss.home_runs
                 FROM streaks_sensitive ss
                 JOIN players p ON ss.player_id = p.player_id
                 WHERE p.name LIKE '%\(sanitize(name))%' AND ss.season = \(season) AND ss.performance != 'average'
@@ -248,7 +252,7 @@ enum PlayerCardService {
 
         guard let result, !result.rows.isEmpty else { return nil }
 
-        let headers = ["Games", "AVG", "OPS", "HR", "Perf"]
+        let headers = ["G", "AB", "H", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "HR", "Perf"]
         var rows: [StatGridParser.StatGrid.Row] = []
         for row in result.rows.prefix(4) {
             let startDate = formatDate(row[0])
@@ -256,12 +260,18 @@ enum PlayerCardService {
             let label = "\(startDate) \u{2013} \(endDate)"
             let games = row[2]
             let performance = row[3].capitalized
-            let avg = formatRate(row[4])
-            let ops = formatRate(row[5])
-            let hr = row[6]
+            let ab = row[4]
+            let hits = row[5]
+            let walks = row[6]
+            let so = row[7]
+            let avg = formatRate(row[8])
+            let obp = formatRate(row[9])
+            let slg = formatRate(row[10])
+            let ops = formatRate(row[11])
+            let hr = row[12]
             rows.append(StatGridParser.StatGrid.Row(
                 label: label,
-                values: [games, avg, ops, hr, performance]
+                values: [games, ab, hits, walks, so, avg, obp, slg, ops, hr, performance]
             ))
         }
 
@@ -273,8 +283,10 @@ enum PlayerCardService {
 
     private static func fetchPlatoonSplits(name: String) -> StatGridParser.StatGrid? {
         let sql = """
-            SELECT ps.split, ps.plate_appearances, ps.batting_avg, ps.obp, ps.slg, ps.ops,
-                   ps.home_runs, ps.wrc_plus
+            SELECT ps.split, ps.plate_appearances, ps.at_bats, ps.hits,
+                   ps.doubles, ps.triples, ps.home_runs, ps.rbi,
+                   ps.walks, ps.strikeouts,
+                   ps.batting_avg, ps.obp, ps.slg, ps.ops, ps.iso, ps.babip, ps.wrc_plus
             FROM platoon_splits ps
             JOIN players p ON ps.player_id = p.player_id
             WHERE p.name LIKE '%\(sanitize(name))%'
@@ -283,7 +295,7 @@ enum PlayerCardService {
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else { return nil }
 
-        let headers = ["PA", "AVG", "OBP", "SLG", "OPS", "HR", "wRC+"]
+        let headers = ["PA", "AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP", "wRC+"]
 
         // Take only the most recent season's splits (first 2 rows max)
         var rows: [StatGridParser.StatGrid.Row] = []
@@ -306,7 +318,8 @@ enum PlayerCardService {
         // Try primary streaks table first, then fallback to sensitive
         var sql = """
             SELECT st.start_date, st.end_date, st.num_games, st.performance,
-                   st.batting_avg, st.ops, st.home_runs
+                   st.at_bats, st.hits, st.walks, st.strikeouts,
+                   st.batting_avg, st.obp, st.slg, st.ops, st.home_runs
             FROM streaks st
             JOIN players p ON st.player_id = p.player_id
             WHERE p.name LIKE '%\(sanitize(name))%' AND st.performance != 'average'
@@ -318,7 +331,8 @@ enum PlayerCardService {
         if result == nil || result!.rows.isEmpty {
             sql = """
                 SELECT ss.start_date, ss.end_date, ss.num_games, ss.performance,
-                       ss.batting_avg, ss.ops, ss.home_runs
+                       ss.at_bats, ss.hits, ss.walks, ss.strikeouts,
+                       ss.batting_avg, ss.obp, ss.slg, ss.ops, ss.home_runs
                 FROM streaks_sensitive ss
                 JOIN players p ON ss.player_id = p.player_id
                 WHERE p.name LIKE '%\(sanitize(name))%' AND ss.performance != 'average'
@@ -329,7 +343,7 @@ enum PlayerCardService {
 
         guard let result, !result.rows.isEmpty else { return nil }
 
-        let headers = ["Games", "AVG", "OPS", "HR", "Perf"]
+        let headers = ["G", "AB", "H", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "HR", "Perf"]
         var rows: [StatGridParser.StatGrid.Row] = []
         for row in result.rows.prefix(4) {
             let startDate = formatDate(row[0])
@@ -337,12 +351,18 @@ enum PlayerCardService {
             let label = "\(startDate) \u{2013} \(endDate)"
             let games = row[2]
             let performance = row[3].capitalized
-            let avg = formatRate(row[4])
-            let ops = formatRate(row[5])
-            let hr = row[6]
+            let ab = row[4]
+            let hits = row[5]
+            let walks = row[6]
+            let so = row[7]
+            let avg = formatRate(row[8])
+            let obp = formatRate(row[9])
+            let slg = formatRate(row[10])
+            let ops = formatRate(row[11])
+            let hr = row[12]
             rows.append(StatGridParser.StatGrid.Row(
                 label: label,
-                values: [games, avg, ops, hr, performance]
+                values: [games, ab, hits, walks, so, avg, obp, slg, ops, hr, performance]
             ))
         }
 
