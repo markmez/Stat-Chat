@@ -135,8 +135,16 @@ struct HomeView: View {
                         .padding(.top, 14)
                         .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 } else {
-                    AnimatedPlaceholder { query in
-                        questionText = query
+                    VStack(spacing: 12) {
+                        Text("Search for player stats by full or last name,\nor ask any question about stats, such as:")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+
+                        AnimatedPlaceholder { query in
+                            questionText = query
+                        }
                     }
                     .padding(.top, 20)
                 }
@@ -202,18 +210,6 @@ struct HomeView: View {
                     historyExpanded.toggle()
                 }
             }
-            .gesture(
-                DragGesture(minimumDistance: 10)
-                    .onEnded { value in
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            if value.translation.height < -30 {
-                                historyExpanded = true
-                            } else if value.translation.height > 30 {
-                                historyExpanded = false
-                            }
-                        }
-                    }
-            )
 
             // History items
             ScrollView {
@@ -264,6 +260,32 @@ struct HomeView: View {
             .scrollDisabled(!historyExpanded)
         }
         .frame(height: cardHeight)
+        .contentShape(Rectangle())
+        .highPriorityGesture(
+            historyExpanded ? nil :
+            DragGesture(minimumDistance: 8)
+                .onEnded { value in
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        if value.translation.height < -20 {
+                            historyExpanded = true
+                        } else if value.translation.height > 20 {
+                            historyExpanded = false
+                        }
+                    }
+                }
+        )
+        .simultaneousGesture(
+            historyExpanded ?
+            DragGesture(minimumDistance: 8)
+                .onEnded { value in
+                    if value.translation.height > 40 {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            historyExpanded = false
+                        }
+                    }
+                }
+            : nil
+        )
         .background(
             UnevenRoundedRectangle(topLeadingRadius: 20, topTrailingRadius: 20)
                 .fill(Color(uiColor: .secondarySystemBackground))
