@@ -6,6 +6,7 @@ struct ResultsView: View {
     @State private var inputText = ""
     @FocusState private var isInputFocused: Bool
     @State private var resultsContentHeight: CGFloat = 0
+    @State private var selectedPlayerName: String? = nil
     let initialQuestion: String
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
@@ -39,7 +40,8 @@ struct ResultsView: View {
                                         message: message,
                                         isFirstUser: message.id == visibleMessages.first(where: { $0.role == .user })?.id,
                                         onBack: { dismiss() },
-                                        isStreaming: appState.isLoading && message.id == visibleMessages.last?.id
+                                        isStreaming: appState.isLoading && message.id == visibleMessages.last?.id,
+                                        onPlayerTap: { name in selectedPlayerName = name }
                                     )
                                     .id(message.id)
                                 }
@@ -153,6 +155,12 @@ struct ResultsView: View {
                     }
                 }
             }
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { selectedPlayerName != nil },
+            set: { if !$0 { selectedPlayerName = nil } }
+        )) {
+            PlayerCardView(playerName: selectedPlayerName ?? "")
         }
         .onAppear {
             if appState.messages.isEmpty && !initialQuestion.isEmpty {

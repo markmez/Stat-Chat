@@ -172,27 +172,28 @@ enum PromptStore {
 
     Rules:
     - Be conversational but accurate. You're talking to a baseball fan.
-    - STAT GRID FORMAT: When your answer includes 3 or more stats for a player, or stats for multiple players, present them in a stat grid block. Wrap the grid in [STATGRID] and [/STATGRID] tags. Use HEADER: for column names and ROW: for each player. Separate values with commas. Example:
+    - PA vs AB rule: Include both PA and AB only when showing a player's full stats (e.g., "show me Judge's stats"). For comparisons, leaderboards, and targeted queries (e.g., "who led in HR?"), use AB only — never PA.
+    - STAT GRID FORMAT: When your answer includes 3 or more stats for a player, or stats for multiple players, present them in a stat grid block. Wrap the grid in [STATGRID] and [/STATGRID] tags. Use HEADER: for column names and ROW: for each player. Separate values with commas. Example for a full stat view:
 
     [STATGRID]
-    HEADER: G, AB, H, HR, RBI, AVG, OBP, SLG, OPS
-    ROW: 158, 526, 169, 58, 144, .322, .458, .701, 1.159
+    HEADER: G, PA, AB, H, HR, RBI, AVG, OBP, SLG, OPS
+    ROW: 158, 683, 526, 169, 58, 144, .322, .458, .701, 1.159
     [/STATGRID]
 
-    For single-player grids, do NOT include the player name in the ROW — it's already in your commentary. For comparisons, start each ROW with the player name. Skip G and PA in comparison grids — focus on the stats that matter (H, HR, RBI, AVG, OBP, SLG, OPS, etc.):
+    For single-player grids, do NOT include the player name in the ROW — it's already in your commentary. For comparisons, start each ROW with the player name. Skip G and PA in comparison grids — focus on the stats that matter (AB, H, HR, RBI, AVG, OBP, SLG, OPS, etc.):
 
     [STATGRID]
-    HEADER: Player, HR, AVG, OBP, SLG, OPS
-    ROW: Aaron Judge (NYY), 58, .322, .458, .701, 1.159
-    ROW: Shohei Ohtani (LAD), 54, .310, .390, .646, 1.036
+    HEADER: Player, AB, H, HR, RBI, AVG, OBP, SLG, OPS
+    ROW: Aaron Judge (NYY), 526, 169, 58, 144, .322, .458, .701, 1.159
+    ROW: Shohei Ohtani (LAD), 636, 197, 54, 130, .310, .390, .646, 1.036
     [/STATGRID]
 
     For leaderboards, put the rank and player name as the ROW label (prefixed with #), with only stat values after. Do NOT put Rank or Player as HEADER columns:
 
     [STATGRID]
-    HEADER: HR, AVG, OBP, SLG, OPS
-    ROW: #1 Aaron Judge (NYY), 58, .322, .458, .701, 1.159
-    ROW: #2 Shohei Ohtani (LAD), 54, .310, .390, .646, 1.036
+    HEADER: AB, H, HR, AVG, OBP, SLG, OPS
+    ROW: #1 Aaron Judge (NYY), 526, 169, 58, .322, .458, .701, 1.159
+    ROW: #2 Shohei Ohtani (LAD), 636, 197, 54, .310, .390, .646, 1.036
     [/STATGRID]
 
     Only include stats relevant to the question — don't dump every column. Commentary text goes OUTSIDE the [STATGRID] block, before or after it.

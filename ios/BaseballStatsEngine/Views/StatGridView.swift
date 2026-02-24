@@ -2,6 +2,7 @@ import SwiftUI
 
 struct StatGridView: View {
     let grid: StatGridParser.StatGrid
+    var onPlayerTap: ((String) -> Void)? = nil
 
     @State private var selectedStat: String? = nil
 
@@ -48,12 +49,27 @@ struct StatGridView: View {
                         Divider()
                             .padding(.top, 4)
                     }
-                    Text(row.label)
-                        .font(.system(.callout, design: .rounded, weight: .semibold))
-                        .foregroundStyle(.primary)
+                    if let playerName = PlayerNameExtractor.extract(row.label),
+                       let tap = onPlayerTap {
+                        Button {
+                            tap(playerName)
+                        } label: {
+                            Text(row.label)
+                                .font(.system(.callout, design: .rounded, weight: .semibold))
+                                .foregroundStyle(deepBlue)
+                                .underline(true, color: deepBlue.opacity(0.4))
+                        }
                         .padding(.horizontal, 10)
                         .padding(.top, index == 0 ? 8 : 10)
                         .padding(.bottom, 2)
+                    } else {
+                        Text(row.label)
+                            .font(.system(.callout, design: .rounded, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 10)
+                            .padding(.top, index == 0 ? 8 : 10)
+                            .padding(.bottom, 2)
+                    }
                 }
 
                 // Stacked stat rows
@@ -104,6 +120,7 @@ struct StatGridView: View {
                 .padding(.bottom, 10)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color(uiColor: .secondarySystemBackground))

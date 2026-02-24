@@ -17,6 +17,7 @@ final class AppState {
 
     init() {
         searchHistory = UserDefaults.standard.stringArray(forKey: historyKey) ?? []
+        PlayerNameMatcher.load()
     }
 
     func refreshAPIKeyStatus() {

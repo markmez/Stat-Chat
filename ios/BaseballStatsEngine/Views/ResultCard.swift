@@ -5,6 +5,7 @@ struct ResultCard: View {
     var isFirstUser: Bool = false
     var onBack: (() -> Void)? = nil
     var isStreaming: Bool = false
+    var onPlayerTap: ((String) -> Void)? = nil
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
 
@@ -57,16 +58,26 @@ struct ResultCard: View {
                     case .text(let text):
                         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                         if !trimmed.isEmpty {
-                            Text(LocalizedStringKey(trimmed))
+                            Text(LocalizedStringKey(PlayerNameMatcher.addLinks(to: trimmed)))
                                 .font(.system(.body, design: .rounded))
                                 .foregroundStyle(.primary.opacity(0.85))
+                                .tint(deepBlue)
                                 .textSelection(.enabled)
                                 .lineSpacing(3)
                                 .padding(.horizontal, 20)
+                                .environment(\.openURL, OpenURLAction { url in
+                                    if url.scheme == "statchat",
+                                       url.host == "player",
+                                       let name = url.pathComponents.dropFirst().first?.removingPercentEncoding {
+                                        onPlayerTap?(name)
+                                        return .handled
+                                    }
+                                    return .systemAction
+                                })
                         }
 
                     case .statGrid(let grid):
-                        StatGridView(grid: grid)
+                        StatGridView(grid: grid, onPlayerTap: onPlayerTap)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 6)
 
