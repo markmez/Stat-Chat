@@ -226,7 +226,7 @@ struct ResultsView: View {
             return
         }
 
-        appState.sendQuestion(trimmed)
+        appState.sendQuestion(trimmed, followUpContext: initialQuestion)
     }
 }
 

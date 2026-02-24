@@ -25,11 +25,16 @@ final class AppState {
         hasAPIKey = KeychainHelper.load() != nil
     }
 
-    func sendQuestion(_ question: String) {
+    func sendQuestion(_ question: String, followUpContext: String? = nil) {
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        addToSearchHistory(trimmed)
+        // For follow-ups, store with context prefix if the question looks contextual
+        if let context = followUpContext, looksContextual(trimmed) {
+            addToSearchHistory("\(context) → \(trimmed)")
+        } else {
+            addToSearchHistory(trimmed)
+        }
 
         // Intercept comparison queries — build response from DB, skip Claude
         if let (p1, p2) = PlayerNameMatcher.parseComparison(trimmed) {
@@ -94,5 +99,32 @@ final class AppState {
     func clearSearchHistory() {
         searchHistory.removeAll()
         UserDefaults.standard.removeObject(forKey: historyKey)
+    }
+
+    /// Heuristic: does this question need prior context to make sense?
+    /// Short questions without player names or standalone openers are contextual.
+    private func looksContextual(_ question: String) -> Bool {
+        let lower = question.lowercased()
+        let words = lower.split(separator: " ")
+
+        // Long questions are likely self-contained
+        if words.count >= 8 { return false }
+
+        // Contains a recognized player name → standalone
+        for i in 0..<words.count {
+            if PlayerNameMatcher.matchPlayer(String(words[i])) != nil { return false }
+            if i + 1 < words.count {
+                let pair = "\(words[i]) \(words[i + 1])"
+                if PlayerNameMatcher.matchPlayer(pair) != nil { return false }
+            }
+        }
+
+        // Starts with standalone question patterns
+        let standaloneStarters = ["who ", "how many ", "top ", "list ", "compare ", "rank "]
+        for starter in standaloneStarters {
+            if lower.hasPrefix(starter) { return false }
+        }
+
+        return true
     }
 }
