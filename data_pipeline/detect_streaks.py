@@ -322,8 +322,141 @@ def detect_sensitive_streaks(conn):
     print(f"Done! Detected {total_sensitive} sensitive streak segments.")
 
 
+# --- Tier 3: Sliding window best/worst stretches ---
+
+SLIDING_WINDOW_SIZES = [10, 12, 15, 7]  # Try these window sizes, prefer longer
+SLIDING_MIN_DEVIATION = 0.15  # Segment OPS must deviate >= 15% from season average
+
+
+def create_streaks_sliding_table(conn):
+    """Create the streaks_sliding table for Tier 3 sliding window fallback."""
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS streaks_sliding (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            num_games INTEGER NOT NULL,
+            batting_avg REAL,
+            obp REAL,
+            slg REAL,
+            ops REAL,
+            home_runs INTEGER,
+            hits INTEGER,
+            at_bats INTEGER,
+            walks INTEGER,
+            strikeouts INTEGER,
+            performance TEXT,
+            season_ops REAL,
+            FOREIGN KEY (player_id) REFERENCES players(player_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_streaks_slid_player ON streaks_sliding(player_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_streaks_slid_player_season ON streaks_sliding(player_id, season)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_streaks_slid_performance ON streaks_sliding(performance)")
+    conn.commit()
+
+
+def find_best_worst_windows(games, season_ops):
+    """Slide windows across the season and find the hottest and coldest stretches."""
+    best = None  # (ops, start_idx, end_idx, window_size)
+    worst = None
+
+    for window_size in SLIDING_WINDOW_SIZES:
+        if len(games) < window_size:
+            continue
+
+        for start in range(len(games) - window_size + 1):
+            end = start + window_size
+            stats = compute_segment_stats(games, start, end)
+            seg_ops = stats["ops"]
+
+            if best is None or seg_ops > best[0]:
+                best = (seg_ops, start, end, window_size)
+            if worst is None or seg_ops < worst[0]:
+                worst = (seg_ops, start, end, window_size)
+
+    return best, worst
+
+
+def detect_sliding_streaks(conn):
+    """Third pass: sliding window for player-seasons with no useful data in Tier 1 or 2.
+
+    Finds the single hottest and coldest N-game stretches by brute-force scanning.
+    """
+    create_streaks_sliding_table(conn)
+    cursor = conn.cursor()
+
+    # Clear existing
+    cursor.execute("DELETE FROM streaks_sliding")
+    conn.commit()
+
+    # Find player-seasons with single segment in Tier 1 AND no useful Tier 2 data
+    cursor.execute("""
+        SELECT t1.player_id, t1.season FROM (
+            SELECT player_id, season FROM streaks
+            GROUP BY player_id, season HAVING COUNT(*) = 1
+        ) t1
+        WHERE NOT EXISTS (
+            SELECT 1 FROM streaks_sensitive ss
+            WHERE ss.player_id = t1.player_id AND ss.season = t1.season
+                AND ss.performance <> 'average'
+        )
+    """)
+    no_streak_players = cursor.fetchall()
+    print(f"Running sliding window streak detection for {len(no_streak_players)} player-seasons...")
+
+    total_sliding = 0
+    for i, (player_id, season) in enumerate(no_streak_players):
+        games = get_game_logs(conn, player_id, season)
+        if len(games) < MIN_SEGMENT_SIZE * 2:
+            continue
+
+        ops_signal = compute_game_ops(games)
+        season_ops = float(np.mean(ops_signal))
+        if season_ops == 0:
+            continue
+
+        best, worst = find_best_worst_windows(games, season_ops)
+
+        for streak_data, label in [(best, "hot"), (worst, "cold")]:
+            if streak_data is None:
+                continue
+            seg_ops, start_idx, end_idx, _ = streak_data
+            deviation = abs(seg_ops - season_ops) / season_ops
+            if deviation < SLIDING_MIN_DEVIATION:
+                continue
+
+            stats = compute_segment_stats(games, start_idx, end_idx)
+
+            cursor.execute("""
+                INSERT INTO streaks_sliding (
+                    player_id, season, start_date, end_date, num_games,
+                    batting_avg, obp, slg, ops, home_runs,
+                    hits, at_bats, walks, strikeouts, performance, season_ops
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                player_id, season, stats["start_date"], stats["end_date"],
+                stats["num_games"], stats["batting_avg"], stats["obp"],
+                stats["slg"], stats["ops"], stats["home_runs"],
+                stats["hits"], stats["at_bats"], stats["walks"],
+                stats["strikeouts"], label, round(season_ops, 3),
+            ))
+            total_sliding += 1
+
+        if (i + 1) % 100 == 0:
+            conn.commit()
+            print(f"  Processed {i + 1}/{len(no_streak_players)} player-seasons ({total_sliding} sliding streaks)...")
+
+    conn.commit()
+    print(f"Done! Detected {total_sliding} sliding window streak segments.")
+
+
 if __name__ == "__main__":
     conn = sqlite3.connect(DB_PATH)
     detect_all_streaks(conn)
     detect_sensitive_streaks(conn)
+    detect_sliding_streaks(conn)
     conn.close()

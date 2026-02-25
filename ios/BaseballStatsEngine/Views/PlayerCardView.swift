@@ -59,7 +59,22 @@ struct PlayerCardView: View {
 
                         // Current season
                         if let current = card.seasons.first {
-                            sectionView(title: "\(String(current.year)) Season", grid: current.stats)
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("\(String(current.year)) Season")
+                                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                    .padding(.horizontal, 20)
+
+                                if let teamLabel = seasonTeamLabel(teamStr: current.team, headerTeam: card.team) {
+                                    Text(teamLabel)
+                                        .font(.system(.subheadline, design: .rounded))
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 20)
+                                }
+
+                                StatGridView(grid: current.stats)
+                                    .padding(.horizontal, 6)
+                            }
 
                             // Projected stats for current season
                             // TODO: Only show when teamGames < 162 (mid-season)
@@ -72,7 +87,7 @@ struct PlayerCardView: View {
 
                             // Current season streaks
                             if let streaks = current.streaks {
-                                sectionView(title: "Notable Streaks", grid: streaks, compact: true)
+                                sectionView(title: "Notable Hot Streaks", grid: streaks, compact: true)
                             }
                         }
 
@@ -112,15 +127,24 @@ struct PlayerCardView: View {
 
                                     if isExpanded {
                                         VStack(alignment: .leading, spacing: 16) {
-                                            StatGridView(grid: season.stats)
-                                                .padding(.horizontal, 6)
+                                            VStack(alignment: .leading, spacing: 8) {
+                                                if let teamLabel = seasonTeamLabel(teamStr: season.team, headerTeam: card.team) {
+                                                    Text(teamLabel)
+                                                        .font(.system(.subheadline, design: .rounded))
+                                                        .foregroundStyle(.secondary)
+                                                        .padding(.horizontal, 20)
+                                                }
+
+                                                StatGridView(grid: season.stats)
+                                                    .padding(.horizontal, 6)
+                                            }
 
                                             if let splits = season.platoonSplits {
                                                 sectionView(title: "Platoon Splits", grid: splits, compact: true)
                                             }
 
                                             if let streaks = season.streaks {
-                                                sectionView(title: "Notable Streaks", grid: streaks, compact: true)
+                                                sectionView(title: "Notable Hot Streaks", grid: streaks, compact: true)
                                             }
                                         }
                                         .padding(.bottom, 8)
@@ -318,5 +342,17 @@ struct PlayerCardView: View {
             headers: headers,
             rows: [StatGridParser.StatGrid.Row(label: "", values: projected)]
         )
+    }
+
+    /// Returns a team label for a season, or nil if the team matches the header (no context needed).
+    private func seasonTeamLabel(teamStr: String, headerTeam: String) -> String? {
+        let isMultiTeam = teamStr.contains("/")
+        let lastTeam = teamStr.split(separator: "/").last.map(String.init) ?? teamStr
+        let isDifferentTeam = lastTeam != headerTeam
+
+        if isMultiTeam || isDifferentTeam {
+            return PlayerCardService.teamDisplayName(teamStr)
+        }
+        return nil
     }
 }

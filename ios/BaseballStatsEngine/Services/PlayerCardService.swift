@@ -51,7 +51,15 @@ enum PlayerCardService {
         let splits = fetchPlatoonSplits(name: name)
         let streakGrid = fetchStreaks(name: name)
 
-        let fullTeam = teamFullName(team)
+        // Use most recent season's team for header (players.team can be stale)
+        let headerTeam: String
+        if let latestSeason = seasons.first {
+            let parts = latestSeason.team.split(separator: "/")
+            headerTeam = String(parts.last ?? Substring(team))
+        } else {
+            headerTeam = team
+        }
+        let fullTeam = teamFullName(headerTeam)
 
         // Parse birthdate and compute dynamic age
         var birthDate: Date?
@@ -70,7 +78,7 @@ enum PlayerCardService {
 
         return PlayerCard(
             name: displayName,
-            team: team,
+            team: headerTeam,
             fullTeamName: fullTeam,
             age: dynamicAge,
             birthdate: birthDate,
@@ -362,51 +370,67 @@ enum PlayerCardService {
 
     private static func fetchStreaksForSeason(name: String, season: Int) -> StatGridParser.StatGrid? {
         var sql = """
-            SELECT st.start_date, st.end_date, st.num_games, st.performance,
+            SELECT st.start_date, st.end_date, st.num_games,
                    st.at_bats, st.hits, st.walks, st.strikeouts,
                    st.batting_avg, st.obp, st.slg, st.ops, st.home_runs
             FROM streaks st
             JOIN players p ON st.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND st.season = \(season) AND st.performance != 'average'
-            ORDER BY st.start_date
+            WHERE p.name LIKE '%\(sanitize(name))%' AND st.season = \(season) AND st.performance = 'hot'
+            ORDER BY st.ops DESC
             """
         var result = try? db.execute(sql: sql)
 
-        if result == nil || result!.rows.isEmpty {
+        // Fall back to sensitive streaks if no useful data:
+        // - no hot rows at all, OR
+        // - only a single streak (spans entire season, not insightful)
+        if result == nil || result!.rows.isEmpty || result!.rows.count == 1 {
             sql = """
-                SELECT ss.start_date, ss.end_date, ss.num_games, ss.performance,
+                SELECT ss.start_date, ss.end_date, ss.num_games,
                        ss.at_bats, ss.hits, ss.walks, ss.strikeouts,
                        ss.batting_avg, ss.obp, ss.slg, ss.ops, ss.home_runs
                 FROM streaks_sensitive ss
                 JOIN players p ON ss.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%' AND ss.season = \(season) AND ss.performance != 'average'
-                ORDER BY ss.start_date
+                WHERE p.name LIKE '%\(sanitize(name))%' AND ss.season = \(season) AND ss.performance = 'hot'
+                ORDER BY ss.ops DESC
+                """
+            result = try? db.execute(sql: sql)
+        }
+
+        // Tier 3: sliding window fallback
+        if result == nil || result!.rows.isEmpty {
+            sql = """
+                SELECT sl.start_date, sl.end_date, sl.num_games,
+                       sl.at_bats, sl.hits, sl.walks, sl.strikeouts,
+                       sl.batting_avg, sl.obp, sl.slg, sl.ops, sl.home_runs
+                FROM streaks_sliding sl
+                JOIN players p ON sl.player_id = p.player_id
+                WHERE p.name LIKE '%\(sanitize(name))%' AND sl.season = \(season) AND sl.performance = 'hot'
+                ORDER BY sl.ops DESC
                 """
             result = try? db.execute(sql: sql)
         }
 
         guard let result, !result.rows.isEmpty else { return nil }
 
-        let headers = ["G", "AB", "H", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "HR", "Perf"]
+        let headers = ["G", "AB", "H", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "HR"]
         var rows: [StatGridParser.StatGrid.Row] = []
         for row in result.rows.prefix(4) {
             let startDate = formatDate(row[0])
             let endDate = formatDate(row[1])
             let label = "\(startDate) \u{2013} \(endDate)"
             let games = row[2]
-            let performance = row[3].capitalized
-            let ab = row[4]
-            let hits = row[5]
-            let walks = row[6]
-            let so = row[7]
-            let avg = formatRate(row[8])
-            let obp = formatRate(row[9])
-            let slg = formatRate(row[10])
-            let ops = formatRate(row[11])
-            let hr = row[12]
+            let ab = row[3]
+            let hits = row[4]
+            let walks = row[5]
+            let so = row[6]
+            let avg = formatRate(row[7])
+            let obp = formatRate(row[8])
+            let slg = formatRate(row[9])
+            let ops = formatRate(row[10])
+            let hr = row[11]
             rows.append(StatGridParser.StatGrid.Row(
                 label: label,
-                values: [games, ab, hits, walks, so, avg, obp, slg, ops, hr, performance]
+                values: [games, ab, hits, walks, so, avg, obp, slg, ops, hr]
             ))
         }
 
@@ -452,52 +476,65 @@ enum PlayerCardService {
     private static func fetchStreaks(name: String) -> StatGridParser.StatGrid? {
         // Try primary streaks table first, then fallback to sensitive
         var sql = """
-            SELECT st.start_date, st.end_date, st.num_games, st.performance,
+            SELECT st.start_date, st.end_date, st.num_games,
                    st.at_bats, st.hits, st.walks, st.strikeouts,
                    st.batting_avg, st.obp, st.slg, st.ops, st.home_runs
             FROM streaks st
             JOIN players p ON st.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND st.performance != 'average'
-            ORDER BY st.season DESC, st.start_date
+            WHERE p.name LIKE '%\(sanitize(name))%' AND st.performance = 'hot'
+            ORDER BY st.season DESC, st.ops DESC
             """
         var result = try? db.execute(sql: sql)
 
-        // Fallback to sensitive streaks if no hot/cold found
-        if result == nil || result!.rows.isEmpty {
+        // Fallback to sensitive streaks if no useful data or single whole-season streak
+        if result == nil || result!.rows.isEmpty || result!.rows.count == 1 {
             sql = """
-                SELECT ss.start_date, ss.end_date, ss.num_games, ss.performance,
+                SELECT ss.start_date, ss.end_date, ss.num_games,
                        ss.at_bats, ss.hits, ss.walks, ss.strikeouts,
                        ss.batting_avg, ss.obp, ss.slg, ss.ops, ss.home_runs
                 FROM streaks_sensitive ss
                 JOIN players p ON ss.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%' AND ss.performance != 'average'
-                ORDER BY ss.season DESC, ss.start_date
+                WHERE p.name LIKE '%\(sanitize(name))%' AND ss.performance = 'hot'
+                ORDER BY ss.season DESC, ss.ops DESC
+                """
+            result = try? db.execute(sql: sql)
+        }
+
+        // Tier 3: sliding window fallback
+        if result == nil || result!.rows.isEmpty {
+            sql = """
+                SELECT sl.start_date, sl.end_date, sl.num_games,
+                       sl.at_bats, sl.hits, sl.walks, sl.strikeouts,
+                       sl.batting_avg, sl.obp, sl.slg, sl.ops, sl.home_runs
+                FROM streaks_sliding sl
+                JOIN players p ON sl.player_id = p.player_id
+                WHERE p.name LIKE '%\(sanitize(name))%' AND sl.performance = 'hot'
+                ORDER BY sl.season DESC, sl.ops DESC
                 """
             result = try? db.execute(sql: sql)
         }
 
         guard let result, !result.rows.isEmpty else { return nil }
 
-        let headers = ["G", "AB", "H", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "HR", "Perf"]
+        let headers = ["G", "AB", "H", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "HR"]
         var rows: [StatGridParser.StatGrid.Row] = []
         for row in result.rows.prefix(4) {
             let startDate = formatDate(row[0])
             let endDate = formatDate(row[1])
             let label = "\(startDate) \u{2013} \(endDate)"
             let games = row[2]
-            let performance = row[3].capitalized
-            let ab = row[4]
-            let hits = row[5]
-            let walks = row[6]
-            let so = row[7]
-            let avg = formatRate(row[8])
-            let obp = formatRate(row[9])
-            let slg = formatRate(row[10])
-            let ops = formatRate(row[11])
-            let hr = row[12]
+            let ab = row[3]
+            let hits = row[4]
+            let walks = row[5]
+            let so = row[6]
+            let avg = formatRate(row[7])
+            let obp = formatRate(row[8])
+            let slg = formatRate(row[9])
+            let ops = formatRate(row[10])
+            let hr = row[11]
             rows.append(StatGridParser.StatGrid.Row(
                 label: label,
-                values: [games, ab, hits, walks, so, avg, obp, slg, ops, hr, performance]
+                values: [games, ab, hits, walks, so, avg, obp, slg, ops, hr]
             ))
         }
 
@@ -612,5 +649,14 @@ enum PlayerCardService {
             "ATH": "Oakland Athletics",
         ]
         return teams[abbreviation] ?? abbreviation
+    }
+
+    /// Expand a team string that may contain "/" for multi-team seasons (e.g., "MIA/NYA" → "Miami Marlins / New York Yankees")
+    static func teamDisplayName(_ teamStr: String) -> String {
+        let parts = teamStr.split(separator: "/")
+        if parts.count > 1 {
+            return parts.map { teamFullName(String($0)) }.joined(separator: " / ")
+        }
+        return teamFullName(teamStr)
     }
 }

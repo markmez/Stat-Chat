@@ -323,7 +323,7 @@ def load_players_and_season_stats(conn, start_season, end_season):
 
             # Aggregate by player ID across all games in the season
             agg = batting.groupby("id").agg(
-                team=("team", "last"),
+                team=("team", lambda x: "/".join(dict.fromkeys(x))),
                 games=("id", "count"),
                 pa=("b_pa", "sum"),
                 ab=("b_ab", "sum"),
@@ -342,6 +342,9 @@ def load_players_and_season_stats(conn, start_season, end_season):
                 ibb=("b_iw", "sum"),
                 sh=("b_sh", "sum"),
             ).reset_index()
+
+            # Clear stale rows for this season (team strings may have changed)
+            cursor.execute("DELETE FROM season_batting_stats WHERE season = ?", (season,))
 
             season_rows = 0
             for _, row in agg.iterrows():
@@ -387,6 +390,18 @@ def load_players_and_season_stats(conn, start_season, end_season):
             print(f"  {season}: {season_rows} season stat rows")
 
         time.sleep(0.5)
+
+    # Update players.team to most recent team (last component if multi-team like "MIA/NYA" → "NYA")
+    cursor.execute("""
+        SELECT player_id, team FROM season_batting_stats
+        WHERE (player_id, season) IN (
+            SELECT player_id, MAX(season) FROM season_batting_stats GROUP BY player_id
+        )
+    """)
+    for pid, team_str in cursor.fetchall():
+        current_team = team_str.split("/")[-1] if "/" in team_str else team_str
+        cursor.execute("UPDATE players SET team = ? WHERE player_id = ?", (current_team, pid))
+    conn.commit()
 
     print(f"  Loaded {total_players} players, {total_stats} season stat rows total")
 
