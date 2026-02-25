@@ -8,6 +8,9 @@ struct PlayerCardView: View {
     @State private var isLoading = true
     @State private var expandedSeasons: Set<Int> = []
     @State private var projectionMode: ProjectionMode = .fullSeason
+    @State private var formSliderGameNumber: Int? = nil  // nil = auto-detected, represents "last N games"
+    @State private var gameLogs: [GameLog]? = nil
+    @State private var formProjectionMode: FormProjectionMode = .pace
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
@@ -15,6 +18,11 @@ struct PlayerCardView: View {
     enum ProjectionMode: String, CaseIterable {
         case fullSeason = "162 games"
         case gamesMissed = "Account for games missed"
+    }
+
+    enum FormProjectionMode: String, CaseIterable {
+        case pace = "162-Game Pace"
+        case forecast = "Season Forecast"
     }
 
     var body: some View {
@@ -76,9 +84,13 @@ struct PlayerCardView: View {
                                     .padding(.horizontal, 6)
                             }
 
-                            // Projected stats for current season
-                            // TODO: Only show when teamGames < 162 (mid-season)
-                            projectedStatsSection(season: current)
+                            // Current form section (includes projection when present)
+                            if current.currentForm != nil {
+                                currentFormSection(season: current)
+                            } else {
+                                // Projected stats only when no current form (hot streak has its own projection)
+                                projectedStatsSection(season: current)
+                            }
 
                             // Current season platoon splits
                             if let splits = current.platoonSplits {
@@ -261,6 +273,273 @@ struct PlayerCardView: View {
         }
     }
 
+    private func currentFormSection(season: SeasonData) -> some View {
+        guard let form = season.currentForm else { return AnyView(EmptyView()) }
+
+        // Slider controls "last N games" — convert to game number for recompute
+        let numGamesShown = formSliderGameNumber ?? form.numGames
+        let effectiveGameNumber = form.totalSeasonGames - numGamesShown + 1
+        let (formGrid, formNumGames, formStartDate) = recomputeFormStats(
+            season: season, fromGameNumber: effectiveGameNumber
+        )
+
+        let formattedDate = PlayerCardService.formatDateShort(formStartDate)
+
+        let hasRemainingGames = season.teamGames < 162
+        let availableModes: [FormProjectionMode] = hasRemainingGames
+            ? FormProjectionMode.allCases
+            : [.pace]
+
+        return AnyView(VStack(alignment: .leading, spacing: 8) {
+            Text("Current Hot Streak")
+                .font(.system(.headline, design: .rounded, weight: .semibold))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 20)
+
+            VStack(alignment: .leading, spacing: 12) {
+                // Subtitle + slider
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Since \(formattedDate) (\(formNumGames) games)")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 14)
+
+                    Slider(
+                        value: Binding<Double>(
+                            get: { Double(numGamesShown) },
+                            set: { newValue in
+                                formSliderGameNumber = max(10, min(Int(newValue.rounded()), form.totalSeasonGames))
+                            }
+                        ),
+                        in: 10...Double(max(form.totalSeasonGames, 11)),
+                        step: 1
+                    )
+                    .tint(deepBlue)
+                    .padding(.horizontal, 14)
+                }
+                .onAppear {
+                    if gameLogs == nil {
+                        gameLogs = PlayerCardService.fetchGameLogsForSeason(
+                            name: playerName, season: season.year
+                        )
+                    }
+                }
+
+                StatGridView(grid: formGrid)
+
+                // Divider between streak stats and projection
+                Rectangle()
+                    .fill(Color(uiColor: .separator).opacity(0.3))
+                    .frame(height: 1)
+                    .padding(.horizontal, 14)
+
+                // Projection tabs
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 0) {
+                        ForEach(availableModes, id: \.self) { mode in
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    formProjectionMode = mode
+                                }
+                            } label: {
+                                Text(mode.rawValue)
+                                    .font(.system(.caption, design: .rounded, weight: .medium))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(formProjectionMode == mode
+                                                  ? deepBlue.opacity(0.12)
+                                                  : Color.clear)
+                                    )
+                                    .foregroundStyle(formProjectionMode == mode ? deepBlue : .secondary)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 14)
+
+                    let projectedGrid = buildFormProjection(
+                        season: season, formGrid: formGrid, formNumGames: formNumGames,
+                        effectiveGameNumber: effectiveGameNumber
+                    )
+                    StatGridView(grid: projectedGrid)
+                }
+            }
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(uiColor: .secondarySystemBackground))
+            )
+            .padding(.horizontal, 6)
+        })
+    }
+
+    /// Recompute form stats from game logs starting at a given game number.
+    /// Falls back to precomputed data if game logs aren't loaded yet.
+    private func recomputeFormStats(
+        season: SeasonData, fromGameNumber: Int
+    ) -> (grid: StatGridParser.StatGrid, numGames: Int, startDate: String) {
+        guard let form = season.currentForm else {
+            return (StatGridParser.StatGrid(headers: [], rows: []), 0, "")
+        }
+
+        // If game logs are loaded and slider has been moved, recompute
+        if let logs = gameLogs, !logs.isEmpty {
+            let startIdx = max(0, fromGameNumber - 1) // 1-indexed to 0-indexed
+            let slice = Array(logs[startIdx...])
+            guard !slice.isEmpty else {
+                return (form.stats, form.numGames, form.formStartDate)
+            }
+
+            var totalAB = 0, totalH = 0, total2B = 0, total3B = 0, totalHR = 0
+            var totalR = 0, totalRBI = 0, totalBB = 0, totalSO = 0, totalPA = 0
+            for g in slice {
+                totalAB += g.atBats; totalH += g.hits
+                total2B += g.doubles; total3B += g.triples; totalHR += g.homeRuns
+                totalR += g.runs; totalRBI += g.rbi
+                totalBB += g.walks; totalSO += g.strikeouts; totalPA += g.plateAppearances
+            }
+
+            let avg = totalAB > 0 ? Double(totalH) / Double(totalAB) : 0
+            let obp = totalPA > 0 ? Double(totalH + totalBB) / Double(totalPA) : 0
+            let tb = (totalH - total2B - total3B - totalHR) + 2 * total2B + 3 * total3B + 4 * totalHR
+            let slg = totalAB > 0 ? Double(tb) / Double(totalAB) : 0
+            let ops = obp + slg
+
+            func fmtRate(_ v: Double) -> String {
+                let s = String(format: "%.3f", v)
+                return s.hasPrefix("0.") ? String(s.dropFirst()) : s
+            }
+
+            let headers = ["G", "AB", "R", "H", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+            let values = [
+                String(slice.count), String(totalAB), String(totalR), String(totalH),
+                String(totalHR), String(totalRBI), String(totalBB), String(totalSO),
+                fmtRate(avg), fmtRate(obp), fmtRate(slg), fmtRate(ops)
+            ]
+            let grid = StatGridParser.StatGrid(
+                headers: headers,
+                rows: [StatGridParser.StatGrid.Row(label: "", values: values)]
+            )
+            return (grid, slice.count, slice.first?.date ?? form.formStartDate)
+        }
+
+        // Fall back to precomputed data
+        return (form.stats, form.numGames, form.formStartDate)
+    }
+
+    /// Build a 162-game projection from current form stats.
+    /// - pace: Pure extrapolation — streak stats * 162 / streakGames
+    /// - forecast: Pre-streak actuals + remaining games at streak pace (mid-season only)
+    private func buildFormProjection(
+        season: SeasonData, formGrid: StatGridParser.StatGrid, formNumGames: Int,
+        effectiveGameNumber: Int
+    ) -> StatGridParser.StatGrid {
+        guard formNumGames > 0 else { return formGrid }
+
+        let headers = formGrid.headers
+        let values = formGrid.rows.first?.values ?? []
+        let countingStats: Set<String> = ["G", "AB", "R", "H", "HR", "RBI", "BB", "SO"]
+
+        // Parse form counting values from the grid
+        var formCounting: [String: Double] = [:]
+        for (idx, header) in headers.enumerated() {
+            if countingStats.contains(header), idx < values.count, let v = Double(values[idx]) {
+                formCounting[header] = v
+            }
+        }
+
+        func fmtRate(_ v: Double) -> String {
+            let s = String(format: "%.3f", v)
+            return s.hasPrefix("0.") ? String(s.dropFirst()) : s
+        }
+
+        func rateStatsFrom(counting: [String: Double]) -> [String: String] {
+            let ab = counting["AB"] ?? 0
+            let h = counting["H"] ?? 0
+            let bb = counting["BB"] ?? 0
+            let hr = counting["HR"] ?? 0
+            // Estimate 2B/3B from season ratios for SLG
+            let seasonAB = season.countingValues["AB"] ?? 1
+            let ratio2B = seasonAB > 0 ? (season.countingValues["2B"] ?? 0) / seasonAB : 0
+            let ratio3B = seasonAB > 0 ? (season.countingValues["3B"] ?? 0) / seasonAB : 0
+            let est2B = ab * ratio2B
+            let est3B = ab * ratio3B
+            let avg = ab > 0 ? h / ab : 0
+            let pa = ab + bb
+            let obp = pa > 0 ? (h + bb) / pa : 0
+            let tb = (h - est2B - est3B - hr) + 2 * est2B + 3 * est3B + 4 * hr
+            let slg = ab > 0 ? tb / ab : 0
+            return ["AVG": fmtRate(avg), "OBP": fmtRate(obp),
+                    "SLG": fmtRate(slg), "OPS": fmtRate(obp + slg)]
+        }
+
+        switch formProjectionMode {
+        case .pace:
+            // Pure extrapolation: streak stats * 162 / streakGames
+            var projected: [String] = []
+            for (idx, header) in headers.enumerated() {
+                guard idx < values.count else { break }
+                if countingStats.contains(header) {
+                    let raw = formCounting[header] ?? 0
+                    let proj = raw * 162.0 / Double(formNumGames)
+                    projected.append(String(Int(proj.rounded())))
+                } else {
+                    projected.append(values[idx])
+                }
+            }
+            return StatGridParser.StatGrid(
+                headers: headers,
+                rows: [StatGridParser.StatGrid.Row(label: "", values: projected)]
+            )
+
+        case .forecast:
+            // Pre-streak actuals + remaining games filled at streak pace
+            let remaining = max(0, 162 - season.teamGames)
+
+            // Compute pre-streak stats from game logs (slider-aware)
+            var preStreakCounting: [String: Double] = [:]
+            if let logs = gameLogs, !logs.isEmpty {
+                let preStreakEnd = max(0, effectiveGameNumber - 1) // 1-indexed
+                let preSlice = logs.prefix(preStreakEnd)
+                var ab = 0, h = 0, hr = 0, r = 0, rbi = 0, bb = 0, so = 0
+                for g in preSlice {
+                    ab += g.atBats; h += g.hits; hr += g.homeRuns
+                    r += g.runs; rbi += g.rbi; bb += g.walks; so += g.strikeouts
+                }
+                preStreakCounting = [
+                    "G": Double(preSlice.count), "AB": Double(ab), "H": Double(h),
+                    "HR": Double(hr), "R": Double(r), "RBI": Double(rbi),
+                    "BB": Double(bb), "SO": Double(so)
+                ]
+            }
+
+            // Blended = pre-streak + streak + (remaining / streakGames) * streak
+            var blended: [String: Double] = [:]
+            for stat in countingStats {
+                let pre = preStreakCounting[stat] ?? 0
+                let form = formCounting[stat] ?? 0
+                blended[stat] = pre + form + (Double(remaining) / Double(formNumGames)) * form
+            }
+
+            let rates = rateStatsFrom(counting: blended)
+            var projected: [String] = []
+            for header in headers {
+                if countingStats.contains(header) {
+                    projected.append(String(Int((blended[header] ?? 0).rounded())))
+                } else if let rate = rates[header] {
+                    projected.append(rate)
+                } else {
+                    projected.append("--")
+                }
+            }
+            return StatGridParser.StatGrid(
+                headers: headers,
+                rows: [StatGridParser.StatGrid.Row(label: "", values: projected)]
+            )
+        }
+    }
+
     private func projectedStatsSection(season: SeasonData) -> some View {
         let projected = buildProjectedGrid(season: season)
 
@@ -303,7 +582,6 @@ struct PlayerCardView: View {
     private func buildProjectedGrid(season: SeasonData) -> StatGridParser.StatGrid {
         let countingStats = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "SB", "CS",
                              "BB", "IBB", "SO", "HBP"]
-        let rateStats: Set<String> = ["AVG", "OBP", "SLG", "OPS", "OPS+", "ISO", "BABIP"]
 
         let divisor: Double
         switch projectionMode {

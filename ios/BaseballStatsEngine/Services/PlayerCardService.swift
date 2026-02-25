@@ -1,5 +1,29 @@
 import Foundation
 
+struct CurrentFormData: Sendable {
+    let formStartDate: String       // "2024-06-12"
+    let formStartGameNumber: Int    // 1-indexed
+    let totalSeasonGames: Int
+    let numGames: Int
+    let stats: StatGridParser.StatGrid
+    let countingValues: [String: Double]        // Form period counting stats
+    let seasonCountingValues: [String: Double]  // Full season counting stats (for blended projection)
+}
+
+struct GameLog: Sendable {
+    let date: String
+    let atBats: Int
+    let hits: Int
+    let doubles: Int
+    let triples: Int
+    let homeRuns: Int
+    let runs: Int
+    let rbi: Int
+    let walks: Int
+    let strikeouts: Int
+    let plateAppearances: Int
+}
+
 struct SeasonData: Sendable {
     let year: Int
     let team: String
@@ -11,6 +35,7 @@ struct SeasonData: Sendable {
     let countingValues: [String: Double]
     let platoonSplits: StatGridParser.StatGrid?
     let streaks: StatGridParser.StatGrid?
+    let currentForm: CurrentFormData?
 }
 
 struct PlayerCard: Sendable {
@@ -270,14 +295,15 @@ enum PlayerCardService {
             // Get team max games for this team+season
             let teamGames = fetchTeamGames(team: team, season: year)
 
-            // Per-season splits and streaks
+            // Per-season splits, streaks, and current form
             let splits = fetchPlatoonSplitsForSeason(name: name, season: year)
             let streakGrid = fetchStreaksForSeason(name: name, season: year)
+            let currentForm = fetchCurrentFormForSeason(name: name, season: year)
 
             seasons.append(SeasonData(
                 year: year, team: team, age: age, games: games, teamGames: teamGames,
                 stats: grid, countingValues: counting,
-                platoonSplits: splits, streaks: streakGrid
+                platoonSplits: splits, streaks: streakGrid, currentForm: currentForm
             ))
         }
 
@@ -380,10 +406,8 @@ enum PlayerCardService {
             """
         var result = try? db.execute(sql: sql)
 
-        // Fall back to sensitive streaks if no useful data:
-        // - no hot rows at all, OR
-        // - only a single streak (spans entire season, not insightful)
-        if result == nil || result!.rows.isEmpty || result!.rows.count == 1 {
+        // Fall back to sensitive streaks if no hot rows at all
+        if result == nil || result!.rows.isEmpty {
             sql = """
                 SELECT ss.start_date, ss.end_date, ss.num_games,
                        ss.at_bats, ss.hits, ss.walks, ss.strikeouts,
@@ -438,6 +462,170 @@ enum PlayerCardService {
         return StatGridParser.StatGrid(headers: headers, rows: rows)
     }
 
+    // MARK: - Current hot streak (chat response builder)
+
+    /// Build a structured response for "how has X been playing lately?" queries.
+    /// Returns a string with a [STATGRID] block — no Claude call needed.
+    static func buildCurrentHotStreak(name: String) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        // Find the most recent season with current form data
+        let sql = """
+            SELECT cf.season, cf.form_start_date, cf.form_start_game_number,
+                   cf.total_season_games, cf.num_games,
+                   cf.at_bats, cf.hits, cf.home_runs, cf.runs, cf.rbi,
+                   cf.walks, cf.strikeouts,
+                   cf.batting_avg, cf.obp, cf.slg, cf.ops,
+                   s.batting_avg, s.obp, s.slg, s.ops
+            FROM current_form cf
+            JOIN players p ON cf.player_id = p.player_id
+            LEFT JOIN season_batting_stats s ON cf.player_id = s.player_id AND cf.season = s.season
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            ORDER BY cf.season DESC
+            LIMIT 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              row.count >= 20 else { return nil }
+
+        let season = row[0]
+        let startDate = formatDate(row[1])
+        let startGameNum = row[2]
+        let totalGames = row[3]
+        let numGames = Int(row[4]) ?? 0
+        let ab = row[5], h = row[6], hr = row[7], r = row[8], rbi = row[9]
+        let bb = row[10], so = row[11]
+        let avg = formatRate(row[12]), obp = formatRate(row[13])
+        let slg = formatRate(row[14]), ops = formatRate(row[15])
+        let seasonAvg = formatRate(row[16]), seasonOps = formatRate(row[19])
+
+        var parts: [String] = []
+        parts.append("\(displayName) has been on fire over the last \(numGames) games (since \(startDate)):\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: G, AB, R, H, HR, RBI, BB, SO, AVG, OBP, SLG, OPS")
+        parts.append("FORM: \(displayName), \(season), \(startGameNum), \(totalGames)")
+        parts.append("ROW: \(numGames), \(ab), \(r), \(h), \(hr), \(rbi), \(bb), \(so), \(avg), \(obp), \(slg), \(ops)")
+        parts.append("[/STATGRID]")
+
+        // Brief comparison to full season
+        parts.append("\nThat's up from his \(season) season line of \(seasonAvg)/\(seasonOps) (AVG/OPS).")
+
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - Current form
+
+    static func fetchCurrentFormForSeason(name: String, season: Int) -> CurrentFormData? {
+        let sql = """
+            SELECT cf.form_start_date, cf.form_start_game_number, cf.total_season_games, cf.num_games,
+                   cf.at_bats, cf.hits, cf.doubles, cf.triples, cf.home_runs,
+                   cf.runs, cf.rbi, cf.walks, cf.strikeouts, cf.plate_appearances,
+                   cf.batting_avg, cf.obp, cf.slg, cf.ops, cf.iso,
+                   cf.season_at_bats, cf.season_hits, cf.season_doubles, cf.season_triples,
+                   cf.season_home_runs, cf.season_runs, cf.season_rbi,
+                   cf.season_walks, cf.season_strikeouts, cf.season_plate_appearances
+            FROM current_form cf
+            JOIN players p ON cf.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND cf.season = \(season)
+            LIMIT 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              row.count >= 28 else { return nil }
+
+        let formStartDate = row[0]
+        let formStartGameNumber = Int(row[1]) ?? 1
+        let totalSeasonGames = Int(row[2]) ?? 0
+        let numGames = Int(row[3]) ?? 0
+
+        // Form counting stats (indices 4-13)
+        let formAB = Int(row[4]) ?? 0
+        let formH = Int(row[5]) ?? 0
+        let formDoubles = Int(row[6]) ?? 0
+        let formTriples = Int(row[7]) ?? 0
+        let formHR = Int(row[8]) ?? 0
+        let formR = Int(row[9]) ?? 0
+        let formRBI = Int(row[10]) ?? 0
+        let formBB = Int(row[11]) ?? 0
+        let formSO = Int(row[12]) ?? 0
+        // PA at index 13
+
+        // Rate stats (indices 14-18)
+        let avg = formatRate(row[14])
+        let obp = formatRate(row[15])
+        let slg = formatRate(row[16])
+        let ops = formatRate(row[17])
+
+        let formHeaders = ["G", "AB", "R", "H", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        let formValues = [
+            String(numGames), String(formAB), String(formR), String(formH),
+            String(formHR), String(formRBI), String(formBB), String(formSO),
+            avg, obp, slg, ops
+        ]
+        let grid = StatGridParser.StatGrid(
+            headers: formHeaders,
+            rows: [StatGridParser.StatGrid.Row(label: "", values: formValues)]
+        )
+
+        let countingValues: [String: Double] = [
+            "G": Double(numGames), "AB": Double(formAB), "R": Double(formR),
+            "H": Double(formH), "2B": Double(formDoubles), "3B": Double(formTriples),
+            "HR": Double(formHR), "RBI": Double(formRBI),
+            "BB": Double(formBB), "SO": Double(formSO)
+        ]
+
+        // Season counting stats (indices 19-27)
+        let seasonCountingValues: [String: Double] = [
+            "AB": Double(Int(row[19]) ?? 0), "H": Double(Int(row[20]) ?? 0),
+            "2B": Double(Int(row[21]) ?? 0), "3B": Double(Int(row[22]) ?? 0),
+            "HR": Double(Int(row[23]) ?? 0), "R": Double(Int(row[24]) ?? 0),
+            "RBI": Double(Int(row[25]) ?? 0), "BB": Double(Int(row[26]) ?? 0),
+            "SO": Double(Int(row[27]) ?? 0)
+        ]
+
+        return CurrentFormData(
+            formStartDate: formStartDate,
+            formStartGameNumber: formStartGameNumber,
+            totalSeasonGames: totalSeasonGames,
+            numGames: numGames,
+            stats: grid,
+            countingValues: countingValues,
+            seasonCountingValues: seasonCountingValues
+        )
+    }
+
+    // MARK: - Game logs for slider
+
+    static func fetchGameLogsForSeason(name: String, season: Int) -> [GameLog] {
+        let sql = """
+            SELECT g.date, g.at_bats, g.hits, g.doubles, g.triples, g.home_runs,
+                   g.runs, g.rbi, g.walks, g.strikeouts, g.plate_appearances
+            FROM game_batting_logs g
+            JOIN players p ON g.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND g.season = \(season)
+            ORDER BY g.date ASC
+            """
+        guard let result = try? db.execute(sql: sql, maxRows: 0) else { return [] }
+        return result.rows.compactMap { row -> GameLog? in
+            guard row.count >= 11 else { return nil }
+            return GameLog(
+                date: row[0],
+                atBats: Int(row[1]) ?? 0,
+                hits: Int(row[2]) ?? 0,
+                doubles: Int(row[3]) ?? 0,
+                triples: Int(row[4]) ?? 0,
+                homeRuns: Int(row[5]) ?? 0,
+                runs: Int(row[6]) ?? 0,
+                rbi: Int(row[7]) ?? 0,
+                walks: Int(row[8]) ?? 0,
+                strikeouts: Int(row[9]) ?? 0,
+                plateAppearances: Int(row[10]) ?? 0
+            )
+        }
+    }
+
     // MARK: - Platoon splits (all seasons)
 
     private static func fetchPlatoonSplits(name: String) -> StatGridParser.StatGrid? {
@@ -486,8 +674,8 @@ enum PlayerCardService {
             """
         var result = try? db.execute(sql: sql)
 
-        // Fallback to sensitive streaks if no useful data or single whole-season streak
-        if result == nil || result!.rows.isEmpty || result!.rows.count == 1 {
+        // Fallback to sensitive streaks if no hot rows at all
+        if result == nil || result!.rows.isEmpty {
             sql = """
                 SELECT ss.start_date, ss.end_date, ss.num_games,
                        ss.at_bats, ss.hits, ss.walks, ss.strikeouts,
@@ -600,6 +788,11 @@ enum PlayerCardService {
                           "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"]
         guard month >= 1 && month <= 12 else { return dateString }
         return "\(monthNames[month]) \(day)"
+    }
+
+    /// Public date formatter for use in views (e.g., "Jun 12")
+    static func formatDateShort(_ dateString: String) -> String {
+        formatDate(dateString)
     }
 
     private static func formatValues(headers: [String], values: [String]) -> [String] {

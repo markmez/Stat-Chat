@@ -2,13 +2,27 @@ import Foundation
 
 enum StatGridParser {
 
-    struct StatGrid {
+    struct StatGrid: Sendable {
         let headers: [String]
         let rows: [Row]
+        let formMetadata: FormMetadata?
 
-        struct Row {
+        struct Row: Sendable {
             let label: String
             let values: [String]
+        }
+
+        struct FormMetadata: Sendable {
+            let playerName: String
+            let season: Int
+            let autoDetectedGameNumber: Int
+            let totalGames: Int
+        }
+
+        init(headers: [String], rows: [Row], formMetadata: FormMetadata? = nil) {
+            self.headers = headers
+            self.rows = rows
+            self.formMetadata = formMetadata
         }
     }
 
@@ -66,6 +80,7 @@ enum StatGridParser {
 
         var headers: [String] = []
         var rows: [StatGrid.Row] = []
+        var formMetadata: StatGrid.FormMetadata?
 
         for line in lines {
             if line.hasPrefix("HEADER:") {
@@ -81,6 +96,19 @@ enum StatGridParser {
                 } else {
                     rows.append(StatGrid.Row(label: parts[0], values: Array(parts.dropFirst())))
                 }
+            } else if line.hasPrefix("FORM:") {
+                // Parse FORM: Player Name, season, autoDetectedGameNumber, totalGames
+                let formContent = String(line.dropFirst("FORM:".count))
+                let parts = formContent.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                if parts.count >= 4,
+                   let season = Int(parts[1]),
+                   let gameNum = Int(parts[2]),
+                   let total = Int(parts[3]) {
+                    formMetadata = StatGrid.FormMetadata(
+                        playerName: parts[0], season: season,
+                        autoDetectedGameNumber: gameNum, totalGames: total
+                    )
+                }
             }
         }
 
@@ -92,7 +120,7 @@ enum StatGridParser {
             ? Array(headers.dropFirst())
             : headers
 
-        return StatGrid(headers: finalHeaders, rows: rows)
+        return StatGrid(headers: finalHeaders, rows: rows, formMetadata: formMetadata)
     }
 
     /// Check if a string looks like a stat value (number, rate stat, or rank)

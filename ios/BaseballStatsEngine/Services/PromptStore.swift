@@ -100,6 +100,18 @@ enum PromptStore {
     - performance (TEXT) — "hot", "cold", or "average" relative to the player's overall season
     - season_ops (REAL) — the player's overall season OPS for context
 
+    ### current_form
+    Precomputed "current form" for each player-season — the stats from the last detected performance shift to the end of the season. Useful for "how is this player doing lately?" questions.
+    - player_id (TEXT) — references players table
+    - season (INTEGER) — year
+    - form_start_date (TEXT) — date when the current form period starts (YYYY-MM-DD)
+    - form_start_game_number (INTEGER) — 1-indexed game number where the form starts
+    - total_season_games (INTEGER) — total games in the player's season
+    - num_games (INTEGER) — number of games in the form period
+    - at_bats, hits, doubles, triples, home_runs, runs, rbi, walks, strikeouts, plate_appearances (INTEGER) — form period counting stats
+    - batting_avg, obp, slg, ops, iso (REAL) — form period rate stats
+    - season_at_bats, season_hits, season_doubles, season_triples, season_home_runs, season_runs, season_rbi, season_walks, season_strikeouts, season_plate_appearances (INTEGER) — full season counting stats for comparison
+
     ## Currently Available Data
     - Season batting stats from 1898 to present (aggregated from Retrosheet game logs)
     - OPS+ for every player-season (league-adjusted, no park factors — 100 = average)
@@ -128,6 +140,7 @@ enum PromptStore {
     Types:
     - "simple_lookup": Standard stat questions, leaderboards, comparisons. Anything about counting stats, averages, splits, or player comparisons.
     - "streak_finder": Questions about hot streaks, cold streaks, slumps, when a player was on fire, best/worst stretches, performance over time within a season.
+    - "current_form": Questions about how a player is doing lately, right now, recently, their current form, current stretch, or whether they are hot/cold RIGHT NOW. This is about the present, not historical streaks.
     - "stat_explanation": Questions asking what a stat means, how it's calculated, or why it matters. "Explain OPS+", "What is WAR?", "How is BABIP calculated?", "What does wRC+ measure?"
 
     Return ONLY valid JSON, nothing else. Examples:
@@ -137,6 +150,10 @@ enum PromptStore {
     - "When was Judge on a hot streak?" → {"type": "streak_finder"}
     - "Did Ohtani have any slumps in 2024?" → {"type": "streak_finder"}
     - "What was Judge's best stretch in 2024?" → {"type": "streak_finder"}
+    - "How has Judge been playing lately?" → {"type": "current_form"}
+    - "What's Soto's current form?" → {"type": "current_form"}
+    - "Is Ohtani hot right now?" → {"type": "current_form"}
+    - "How is Judge doing recently?" → {"type": "current_form"}
     - "How did Judge do against lefties?" → {"type": "simple_lookup"}
     - "Explain OPS+" → {"type": "stat_explanation"}
     - "What is WAR?" → {"type": "stat_explanation"}
@@ -237,6 +254,31 @@ enum PromptStore {
     - Keep answers short. Resist the urge to narrate or editorialize.
     - Don't mention SQL or databases — just answer naturally as if you looked it up.
     - If the result is 'OFF_TOPIC', politely redirect: "I'm a baseball stats engine — ask me about player stats!"
+    """
+
+    static let currentFormAnswerPrompt = """
+    You are a knowledgeable baseball analyst describing a player's current hot streak — the hottest recent stretch of games to end their season.
+
+    You'll receive the player's current hot streak data (the most impressive recent slice ending at their last game) and their full season stats for comparison.
+
+    Rules:
+    - Lead with "Since [date] ([N] games):" and an enthusiastic characterization (e.g., "Judge has been on an absolute tear", "Soto has been locked in", "has been scorching").
+    - Present the stats in a stat grid with a FORM metadata line for slider support:
+
+    [STATGRID]
+    HEADER: G, AB, R, H, HR, RBI, BB, SO, AVG, OBP, SLG, OPS
+    FORM: Aaron Judge, 2025, 135, 151
+    ROW: 17, 55, 18, 24, 9, 19, 12, 11, .436, .537, .982, 1.521
+    [/STATGRID]
+
+    The FORM line format is: FORM: Player Name, season, autoDetectedGameNumber, totalSeasonGames
+    (autoDetectedGameNumber = totalSeasonGames - numGamesInStreak + 1)
+
+    - Briefly compare the streak to their full-season stats: emphasize the upswing (e.g., "up from his season .290 average" or "OPS well above his .850 season mark").
+    - If the counting stats extrapolate to impressive 162-game pace numbers, mention them.
+    - Never mention PELT, change-point detection, algorithms, or technical methodology.
+    - Keep it concise — 3-5 sentences of commentary max, plus the stat grid.
+    - Be an optimistic fan — this is about showing what the player is doing RIGHT NOW at their best.
     """
 
     static let streakAnswerPrompt = """

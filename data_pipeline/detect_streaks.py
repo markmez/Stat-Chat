@@ -76,6 +76,19 @@ def get_game_logs(conn, player_id, season):
     return cursor.fetchall()
 
 
+def get_game_logs_extended(conn, player_id, season):
+    """Get game logs with runs and rbi for current form detection."""
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT date, at_bats, hits, doubles, triples, home_runs,
+               walks, strikeouts, plate_appearances, runs, rbi
+        FROM game_batting_logs
+        WHERE player_id = ? AND season = ?
+        ORDER BY date ASC
+    """, (player_id, season))
+    return cursor.fetchall()
+
+
 def compute_game_ops(games):
     """Compute per-game OPS values from game log rows."""
     ops_values = []
@@ -140,6 +153,52 @@ def compute_segment_stats(games, start_idx, end_idx):
         "at_bats": total_ab,
         "walks": total_bb,
         "strikeouts": total_so,
+    }
+
+
+def compute_segment_stats_extended(games, start_idx, end_idx):
+    """Compute aggregate stats for a segment, including runs, rbi, PA.
+
+    Uses extended game logs (with runs and rbi columns at indices 9, 10).
+    """
+    segment = games[start_idx:end_idx]
+    total_ab = sum(g[1] or 0 for g in segment)
+    total_h = sum(g[2] or 0 for g in segment)
+    total_2b = sum(g[3] or 0 for g in segment)
+    total_3b = sum(g[4] or 0 for g in segment)
+    total_hr = sum(g[5] or 0 for g in segment)
+    total_bb = sum(g[6] or 0 for g in segment)
+    total_so = sum(g[7] or 0 for g in segment)
+    total_pa = sum(g[8] or 0 for g in segment)
+    total_runs = sum(g[9] or 0 for g in segment)
+    total_rbi = sum(g[10] or 0 for g in segment)
+
+    avg = total_h / total_ab if total_ab > 0 else 0
+    obp = (total_h + total_bb) / total_pa if total_pa > 0 else 0
+    tb = (total_h - total_2b - total_3b - total_hr) + 2 * total_2b + 3 * total_3b + 4 * total_hr
+    slg = tb / total_ab if total_ab > 0 else 0
+    ops = obp + slg
+    iso = slg - avg
+
+    return {
+        "start_date": segment[0][0],
+        "end_date": segment[-1][0],
+        "num_games": len(segment),
+        "at_bats": total_ab,
+        "hits": total_h,
+        "doubles": total_2b,
+        "triples": total_3b,
+        "home_runs": total_hr,
+        "runs": total_runs,
+        "rbi": total_rbi,
+        "walks": total_bb,
+        "strikeouts": total_so,
+        "plate_appearances": total_pa,
+        "batting_avg": round(avg, 3),
+        "obp": round(obp, 3),
+        "slg": round(slg, 3),
+        "ops": round(ops, 3),
+        "iso": round(iso, 3),
     }
 
 
@@ -454,9 +513,169 @@ def detect_sliding_streaks(conn):
     print(f"Done! Detected {total_sliding} sliding window streak segments.")
 
 
+# --- Current Form detection ---
+
+CURRENT_FORM_MIN_GAMES = 14   # Minimum games for a player-season to be eligible
+CURRENT_FORM_MIN_SLICE = 10   # Minimum games in the form slice
+CURRENT_FORM_MAX_SLICE = 60   # Maximum games to scan back
+
+
+def create_current_form_table(conn):
+    """Create the current_form table."""
+    cursor = conn.cursor()
+    cursor.execute("DROP TABLE IF EXISTS current_form")
+    cursor.execute("""
+        CREATE TABLE current_form (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            form_start_date TEXT NOT NULL,
+            form_start_game_number INTEGER NOT NULL,
+            total_season_games INTEGER NOT NULL,
+            num_games INTEGER NOT NULL,
+            at_bats INTEGER,
+            hits INTEGER,
+            doubles INTEGER,
+            triples INTEGER,
+            home_runs INTEGER,
+            runs INTEGER,
+            rbi INTEGER,
+            walks INTEGER,
+            strikeouts INTEGER,
+            plate_appearances INTEGER,
+            batting_avg REAL,
+            obp REAL,
+            slg REAL,
+            ops REAL,
+            iso REAL,
+            season_at_bats INTEGER,
+            season_hits INTEGER,
+            season_doubles INTEGER,
+            season_triples INTEGER,
+            season_home_runs INTEGER,
+            season_runs INTEGER,
+            season_rbi INTEGER,
+            season_walks INTEGER,
+            season_strikeouts INTEGER,
+            season_plate_appearances INTEGER,
+            FOREIGN KEY (player_id) REFERENCES players(player_id),
+            UNIQUE(player_id, season)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_current_form_player ON current_form(player_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_current_form_player_season ON current_form(player_id, season)")
+    conn.commit()
+
+
+def detect_current_form(conn):
+    """Detect current form for all player-seasons.
+
+    Algorithm: find the hottest tail slice — the start point (from the end
+    of the season backwards) that maximizes OPS. This is "optimistic fan"
+    mode: what recent stretch makes this player look best?
+
+    Scans slice lengths from CURRENT_FORM_MIN_SLICE to CURRENT_FORM_MAX_SLICE
+    and picks the one with the highest OPS.
+    """
+    create_current_form_table(conn)
+    cursor = conn.cursor()
+
+    player_seasons = get_player_seasons(conn)
+    print(f"Detecting current form for {len(player_seasons)} player-seasons...")
+
+    total_forms = 0
+    for i, (player_id, season) in enumerate(player_seasons):
+        games = get_game_logs_extended(conn, player_id, season)
+        if len(games) < CURRENT_FORM_MIN_GAMES:
+            continue
+
+        # Find the tail slice with the highest OPS
+        best_start_idx = None
+        best_ops = -1.0
+        max_slice = min(CURRENT_FORM_MAX_SLICE, len(games))
+
+        for slice_len in range(CURRENT_FORM_MIN_SLICE, max_slice + 1):
+            start_idx = len(games) - slice_len
+            # Compute OPS for this tail slice
+            total_ab = 0
+            total_h = 0
+            total_2b = 0
+            total_3b = 0
+            total_hr = 0
+            total_bb = 0
+            total_pa = 0
+            for g in games[start_idx:]:
+                ab = g[1] or 0
+                h = g[2] or 0
+                total_ab += ab
+                total_h += h
+                total_2b += g[3] or 0
+                total_3b += g[4] or 0
+                total_hr += g[5] or 0
+                total_bb += g[6] or 0
+                total_pa += g[8] or 0
+
+            if total_ab > 0 and total_pa > 0:
+                tb = (total_h - total_2b - total_3b - total_hr) + 2 * total_2b + 3 * total_3b + 4 * total_hr
+                slg = tb / total_ab
+                obp = (total_h + total_bb) / total_pa
+                ops = obp + slg
+            else:
+                ops = 0.0
+
+            if ops > best_ops:
+                best_ops = ops
+                best_start_idx = start_idx
+
+        form_start_idx = best_start_idx if best_start_idx is not None else max(0, len(games) - CURRENT_FORM_MIN_SLICE)
+
+        # Compute form stats
+        form_stats = compute_segment_stats_extended(games, form_start_idx, len(games))
+        season_stats = compute_segment_stats_extended(games, 0, len(games))
+
+        # form_start_game_number is 1-indexed
+        form_start_game_number = form_start_idx + 1
+
+        cursor.execute("""
+            INSERT INTO current_form (
+                player_id, season, form_start_date, form_start_game_number,
+                total_season_games, num_games,
+                at_bats, hits, doubles, triples, home_runs,
+                runs, rbi, walks, strikeouts, plate_appearances,
+                batting_avg, obp, slg, ops, iso,
+                season_at_bats, season_hits, season_doubles, season_triples,
+                season_home_runs, season_runs, season_rbi,
+                season_walks, season_strikeouts, season_plate_appearances
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            player_id, season, form_stats["start_date"], form_start_game_number,
+            len(games), form_stats["num_games"],
+            form_stats["at_bats"], form_stats["hits"], form_stats["doubles"],
+            form_stats["triples"], form_stats["home_runs"],
+            form_stats["runs"], form_stats["rbi"], form_stats["walks"],
+            form_stats["strikeouts"], form_stats["plate_appearances"],
+            form_stats["batting_avg"], form_stats["obp"], form_stats["slg"],
+            form_stats["ops"], form_stats["iso"],
+            season_stats["at_bats"], season_stats["hits"], season_stats["doubles"],
+            season_stats["triples"], season_stats["home_runs"],
+            season_stats["runs"], season_stats["rbi"], season_stats["walks"],
+            season_stats["strikeouts"], season_stats["plate_appearances"],
+        ))
+        total_forms += 1
+
+        if (i + 1) % 100 == 0:
+            conn.commit()
+            print(f"  Processed {i + 1}/{len(player_seasons)} player-seasons ({total_forms} forms)...")
+
+    conn.commit()
+    print(f"Done! Detected current form for {total_forms} player-seasons.")
+
+
 if __name__ == "__main__":
     conn = sqlite3.connect(DB_PATH)
     detect_all_streaks(conn)
     detect_sensitive_streaks(conn)
     detect_sliding_streaks(conn)
+    detect_current_form(conn)
     conn.close()

@@ -21,6 +21,8 @@ final class QueryEngine {
         if routeJSON.contains("stat_explanation") {
             let stream = anthropic.explainStat(question: question, history: history)
             fullAnswer = try await collectStream(stream, onChunk: onChunk)
+        } else if routeJSON.contains("current_form") {
+            fullAnswer = try await handleCurrentFormQuery(question: question, onChunk: onChunk)
         } else if routeJSON.contains("streak_finder") {
             fullAnswer = try await handleStreakQuery(question: question, onChunk: onChunk)
         } else {
@@ -87,6 +89,96 @@ final class QueryEngine {
             )
         }
 
+        return try await collectStream(stream, onChunk: onChunk)
+    }
+
+    // MARK: - Current form query path
+
+    private func handleCurrentFormQuery(
+        question: String,
+        onChunk: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
+        // Generate SQL to extract the player name (reuse the SQL generator)
+        let sql = try await anthropic.generateSQL(question: question, history: history)
+
+        // Extract player name from the generated SQL
+        guard let nameRange = sql.range(of: #"LIKE\s+'%([^%]+)%'"#, options: .regularExpression),
+              let innerRange = sql[nameRange].range(of: #"'%([^%]+)%'"#, options: .regularExpression) else {
+            // Fall back to standard SQL query if we can't extract a name
+            return try await handleSQLQuery(question: question, onChunk: onChunk)
+        }
+        let nameSlice = sql[innerRange]
+        let playerName = String(nameSlice)
+            .replacingOccurrences(of: "'%", with: "")
+            .replacingOccurrences(of: "%'", with: "")
+
+        // Extract season (default to most recent)
+        let seasonPattern = #"season\s*=\s*(\d{4})"#
+        var season = "2025"
+        if let seasonRange = sql.range(of: seasonPattern, options: .regularExpression) {
+            let match = sql[seasonRange]
+            if let digitRange = match.range(of: #"\d{4}"#, options: .regularExpression) {
+                season = String(match[digitRange])
+            }
+        }
+
+        // Query current_form table
+        let formSQL = """
+            SELECT cf.form_start_date, cf.form_start_game_number, cf.total_season_games, cf.num_games,
+                   cf.at_bats, cf.hits, cf.doubles, cf.triples, cf.home_runs,
+                   cf.runs, cf.rbi, cf.walks, cf.strikeouts, cf.plate_appearances,
+                   cf.batting_avg, cf.obp, cf.slg, cf.ops, cf.iso,
+                   cf.season_at_bats, cf.season_hits, cf.season_doubles, cf.season_triples,
+                   cf.season_home_runs, cf.season_runs, cf.season_rbi,
+                   cf.season_walks, cf.season_strikeouts, cf.season_plate_appearances,
+                   p.name
+            FROM current_form cf
+            JOIN players p ON cf.player_id = p.player_id
+            WHERE p.name LIKE '%\(playerName)%' AND cf.season = \(season)
+            LIMIT 1
+            """
+
+        let formResult: DatabaseService.QueryResult
+        do {
+            formResult = try database.execute(sql: formSQL)
+        } catch {
+            return try await handleSQLQuery(question: question, onChunk: onChunk)
+        }
+
+        guard let row = formResult.rows.first, row.count >= 29 else {
+            // No current form data — fall back to regular query
+            return try await handleSQLQuery(question: question, onChunk: onChunk)
+        }
+
+        // Also fetch season stats for comparison
+        let seasonSQL = """
+            SELECT s.games, s.at_bats, s.runs, s.hits, s.home_runs, s.rbi,
+                   s.walks, s.strikeouts, s.batting_avg, s.obp, s.slg, s.ops
+            FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name LIKE '%\(playerName)%' AND s.season = \(season)
+            LIMIT 1
+            """
+        let seasonResult = try? database.execute(sql: seasonSQL)
+        let seasonRow = seasonResult?.rows.first
+
+        // Build form data text for Claude
+        let resolvedName = row[28]
+        var formDataText = "Player: \(resolvedName)\n"
+        formDataText += "Season: \(season)\n"
+        formDataText += "Form start date: \(row[0])\n"
+        formDataText += "Form start game number: \(row[1]) (1-indexed)\n"
+        formDataText += "Total season games: \(row[2])\n"
+        formDataText += "Form period games: \(row[3])\n"
+        formDataText += "Form stats: \(row[3]) G, \(row[4]) AB, \(row[9]) R, \(row[5]) H, \(row[8]) HR, \(row[10]) RBI, \(row[11]) BB, \(row[12]) SO, \(row[14]) AVG, \(row[15]) OBP, \(row[16]) SLG, \(row[17]) OPS\n"
+
+        if let sRow = seasonRow, sRow.count >= 12 {
+            formDataText += "\nFull season stats: \(sRow[0]) G, \(sRow[1]) AB, \(sRow[2]) R, \(sRow[3]) H, \(sRow[4]) HR, \(sRow[5]) RBI, \(sRow[6]) BB, \(sRow[7]) SO, \(sRow[8]) AVG, \(sRow[9]) OBP, \(sRow[10]) SLG, \(sRow[11]) OPS\n"
+        }
+
+        let stream = anthropic.describeCurrentForm(
+            question: question, formData: formDataText, history: history
+        )
         return try await collectStream(stream, onChunk: onChunk)
     }
 

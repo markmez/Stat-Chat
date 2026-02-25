@@ -72,6 +72,18 @@ final class AnthropicService: Sendable {
         )
     }
 
+    func describeCurrentForm(
+        question: String, formData: String,
+        history: [(String, String)]
+    ) -> AsyncThrowingStream<String, Error> {
+        let content = "Question: \(question)\n\nCurrent form data:\n\(formData)"
+        return streamAPI(
+            system: PromptStore.currentFormAnswerPrompt,
+            messages: buildMessages(content: content, history: history),
+            maxTokens: 1024
+        )
+    }
+
     func explainStat(
         question: String,
         history: [(String, String)]

@@ -112,6 +112,18 @@ Precomputed sensitive streaks for players who had NO change points in the primar
 - performance (TEXT) — "hot", "cold", or "average" relative to the player's overall season
 - season_ops (REAL) — the player's overall season OPS for context
 
+### current_form
+Precomputed "current form" for each player-season — the stats from the last detected performance shift to the end of the season. Useful for "how is this player doing lately?" questions.
+- player_id (TEXT) — references players table
+- season (INTEGER) — year
+- form_start_date (TEXT) — date when the current form period starts (YYYY-MM-DD)
+- form_start_game_number (INTEGER) — 1-indexed game number where the form starts
+- total_season_games (INTEGER) — total games in the player's season
+- num_games (INTEGER) — number of games in the form period
+- at_bats, hits, doubles, triples, home_runs, runs, rbi, walks, strikeouts, plate_appearances (INTEGER) — form period counting stats
+- batting_avg, obp, slg, ops, iso (REAL) — form period rate stats
+- season_at_bats, season_hits, season_doubles, season_triples, season_home_runs, season_runs, season_rbi, season_walks, season_strikeouts, season_plate_appearances (INTEGER) — full season counting stats for comparison
+
 ## Currently Available Data
 - Season batting stats from 1898 to present (aggregated from Retrosheet game logs)
 - OPS+ for every player-season (league-adjusted, no park factors — 100 = average)
@@ -120,6 +132,7 @@ Precomputed sensitive streaks for players who had NO change points in the primar
 - Platoon splits (vs LHP and vs RHP) from 1969 to present (Retrosheet retrosplits)
 - Precomputed streak segments for players with sufficient game logs (streaks table)
 - Sensitive fallback streaks for players with no dramatic shifts (streaks_sensitive table)
+- Current form data for each player-season (current_form table) — form period stats from last performance shift to end of season
 - Note: wRC+ and WAR columns exist but are NULL. Use ops_plus for league-adjusted offense instead.
 
 ## Important Notes

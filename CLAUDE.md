@@ -9,9 +9,9 @@
 ### Data Pipeline (Retrosheet-native)
 - `data_pipeline/pull_stats.py` — pulls ALL data from Retrosheet: season stats (aggregated from game logs), game-level batting logs, platoon splits (via Chadwick Bureau retrosplits), and player bio data (birthdate, bats, throws from `biodata.zip`). **2024-2025 data loaded** (2,925 players, 1,799 with bio data, 2,924 season stat rows, 142,822 game log rows for ALL players, 2,602 platoon split rows).
 - `data_pipeline/pull_stats_fangraphs.py` — OLD FanGraphs pipeline, preserved for reference only. NOT used.
-- `data_pipeline/detect_streaks.py` — change-point detection using ruptures PELT on per-game OPS. **2,347 streak segments** (Tier 1) + **1,258 sensitive streaks** (Tier 2).
-- `baseball_stats.db` — SQLite DB (24MB), 7 tables: `players` (with `birthdate`, `bats`, `throws`), `season_batting_stats`, `league_averages`, `platoon_splits`, `game_batting_logs`, `streaks`, `streaks_sensitive`. Uses Retrosheet player IDs (e.g., `judga001`). OPS+ computed for all player-seasons. Team abbreviations use Retrosheet format (NYA, LAN, CHA, etc.).
-- `schema_description.py` — plain-English schema description for Claude's system prompt (all 6 tables)
+- `data_pipeline/detect_streaks.py` — change-point detection using ruptures PELT on per-game OPS. **2,347 streak segments** (Tier 1) + **1,258 sensitive streaks** (Tier 2) + **2,137 current form entries**. Also detects "current form" — the stats from the last performance shift to end of season.
+- `baseball_stats.db` — SQLite DB, 9 tables: `players` (with `birthdate`, `bats`, `throws`), `season_batting_stats`, `league_averages`, `platoon_splits`, `game_batting_logs`, `streaks`, `streaks_sensitive`, `streaks_sliding`, `current_form`. Uses Retrosheet player IDs (e.g., `judga001`). OPS+ computed for all player-seasons. Team abbreviations use Retrosheet format (NYA, LAN, CHA, etc.).
+- `schema_description.py` — plain-English schema description for Claude's system prompt (all tables)
 - `query_engine.py` — full pipeline: text-to-SQL → answer generation. Data-source agnostic.
 - `cli_poc.py` — interactive terminal CLI.
 - `data_pipeline/requirements.txt` — anthropic, requests, pandas (pybaseball removed)
@@ -29,6 +29,13 @@
 - **Fallback flow**: streaks table → if single "average" segment → query `streaks_sensitive`.
 - **Data source agnostic**: PELT only needs game-level batting logs.
 
+### Current Form detection
+- **`current_form` table**: 2,137 entries. Stores the "current form" for each player-season — stats from the last PELT change point to end of season.
+- **Algorithm**: PELT penalty=3 → take last change point. If none, try penalty=1.5. If still none, default to last 30 games (or half season if <60 games). Minimum 7-game slice.
+- **Player card**: "Current Form" section with stat grid, interactive slider (recomputes from game logs), and two projection modes (form pace, blended).
+- **Chat**: `current_form` query route for "how is X doing lately?" questions. Claude returns stat grid with FORM: metadata line for slider support.
+- **StatGridView**: Detects FORM: metadata in parsed grids and shows slider + projection toggle in chat responses too.
+
 ### iOS App (Phase 3 — StatChat)
 - **Location**: `ios/`
 - **Xcode project**: Generated via XcodeGen (`project.yml`), iOS 17.0+, Swift 6, zero dependencies
@@ -39,7 +46,7 @@
 - **Database**: 24MB `baseball_stats.db` bundled in Resources (read-only)
 - **Stat grid**: 21 stats (G through BABIP, PA and SF excluded for compact 3-row display). Career rows show "--" for OPS+ (multi-season weighting not implemented).
 - **Player card bio**: Dynamic age computed from birthdate (updates on player's birthday). Header shows handedness (Bats R / Throws R). About section shows birth date.
-- **Query routing**: `simple_lookup`, `streak_finder`, `stat_explanation` — Claude classifies, then dispatches
+- **Query routing**: `simple_lookup`, `streak_finder`, `current_form`, `stat_explanation` — Claude classifies, then dispatches
 - **ResultsView layout**: Follow-up input hidden during loading, appears inline below short results or pinned to bottom for long results
 
 ### Key technical notes

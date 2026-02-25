@@ -84,6 +84,39 @@ enum PlayerNameMatcher {
         return nil
     }
 
+    /// Detect current hot streak queries like "how has Judge been playing lately?" or "is Ohtani hot right now?"
+    /// Returns the canonical player name if one resolves unambiguously.
+    static func parseCurrentForm(_ input: String) -> String? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Check for trigger phrases
+        let triggers = [
+            "lately", "recently", "right now", "current form", "current streak",
+            "hot streak", "hot right now", "been playing", "been doing",
+            "doing lately", "doing recently", "playing lately", "playing recently",
+            "been hitting", "hitting lately", "on fire", "heating up", "locked in",
+            "how is", "how has", "how's"
+        ]
+        guard triggers.contains(where: { lower.contains($0) }) else { return nil }
+
+        // Try to find a player name in the input
+        // First try: exact match against known full names (word-boundary aware)
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) {
+                return name
+            }
+        }
+
+        // Second try: last name match (word-boundary aware to avoid "rea" in "streak", etc.)
+        for (lastName, players) in lastNameIndex {
+            if containsWord(lastName, in: lower) && players.count == 1 {
+                return players[0]
+            }
+        }
+
+        return nil
+    }
+
     /// Find closest player names within edit distance threshold (for "did you mean?" suggestions).
     /// Returns multiple names when a last-name fuzzy match is ambiguous.
     static func fuzzyMatch(_ input: String) -> [String] {
@@ -127,6 +160,14 @@ enum PlayerNameMatcher {
         }
 
         return []
+    }
+
+    /// Check if `word` appears in `text` as a whole word (not a substring of another word).
+    private static func containsWord(_ word: String, in text: String) -> Bool {
+        guard let range = text.range(of: word) else { return false }
+        let before = range.lowerBound == text.startIndex || !text[text.index(before: range.lowerBound)].isLetter
+        let after = range.upperBound == text.endIndex || !text[range.upperBound].isLetter
+        return before && after
     }
 
     private static func editDistance(_ a: String, _ b: String) -> Int {

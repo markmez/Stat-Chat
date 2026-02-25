@@ -11,6 +11,9 @@ struct StatGridView: View {
     @State private var selectedStat: String? = nil
     @State private var isExpanded = false
     @State private var showProjection = false
+    @State private var formSliderGameNumber: Int? = nil
+    @State private var formGameLogs: [GameLog]? = nil
+    @State private var formShowProjection = false
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
 
@@ -30,7 +33,46 @@ struct StatGridView: View {
         return hasG && rateHits >= 2 && !hasPA && hasDateLabel
     }
 
-    private static let countingStats: Set<String> = ["G", "AB", "H", "BB", "SO", "HR"]
+    private static let countingStats: Set<String> = ["G", "AB", "R", "H", "BB", "SO", "HR", "RBI"]
+
+    /// Recompute form stats from game logs starting at a given game number.
+    static func recomputeFromLogs(_ logs: [GameLog], fromGameNumber: Int) -> StatGridParser.StatGrid? {
+        let startIdx = max(0, fromGameNumber - 1)
+        guard startIdx < logs.count else { return nil }
+        let slice = Array(logs[startIdx...])
+        guard !slice.isEmpty else { return nil }
+
+        var totalAB = 0, totalH = 0, total2B = 0, total3B = 0, totalHR = 0
+        var totalR = 0, totalRBI = 0, totalBB = 0, totalSO = 0, totalPA = 0
+        for g in slice {
+            totalAB += g.atBats; totalH += g.hits
+            total2B += g.doubles; total3B += g.triples; totalHR += g.homeRuns
+            totalR += g.runs; totalRBI += g.rbi
+            totalBB += g.walks; totalSO += g.strikeouts; totalPA += g.plateAppearances
+        }
+
+        let avg = totalAB > 0 ? Double(totalH) / Double(totalAB) : 0
+        let obp = totalPA > 0 ? Double(totalH + totalBB) / Double(totalPA) : 0
+        let tb = (totalH - total2B - total3B - totalHR) + 2 * total2B + 3 * total3B + 4 * totalHR
+        let slg = totalAB > 0 ? Double(tb) / Double(totalAB) : 0
+        let ops = obp + slg
+
+        func fmtRate(_ v: Double) -> String {
+            let s = String(format: "%.3f", v)
+            return s.hasPrefix("0.") ? String(s.dropFirst()) : s
+        }
+
+        let headers = ["G", "AB", "R", "H", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        let values = [
+            String(slice.count), String(totalAB), String(totalR), String(totalH),
+            String(totalHR), String(totalRBI), String(totalBB), String(totalSO),
+            fmtRate(avg), fmtRate(obp), fmtRate(slg), fmtRate(ops)
+        ]
+        return StatGridParser.StatGrid(
+            headers: headers,
+            rows: [StatGridParser.StatGrid.Row(label: "", values: values)]
+        )
+    }
 
     /// Project a streak row's values to a 162-game pace
     static func projectTo162(headers: [String], values: [String]) -> [String] {
@@ -278,6 +320,148 @@ struct StatGridView: View {
                     .padding(.bottom, 10)
                 }
                 .buttonStyle(.plain)
+            }
+
+            // Chat form slider (when FORM: metadata is present)
+            if let meta = grid.formMetadata {
+                let effectiveGameNumber = formSliderGameNumber ?? meta.autoDetectedGameNumber
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Game \(effectiveGameNumber)")
+                            .font(.system(.caption, design: .rounded, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("Game \(meta.totalGames)")
+                            .font(.system(.caption, design: .rounded, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Slider(
+                        value: Binding<Double>(
+                            get: { Double(effectiveGameNumber) },
+                            set: { newValue in
+                                formSliderGameNumber = max(1, min(Int(newValue.rounded()), meta.totalGames - 6))
+                            }
+                        ),
+                        in: 1...Double(max(meta.totalGames - 6, 2)),
+                        step: 1
+                    )
+                    .tint(deepBlue)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+                .onAppear {
+                    if formGameLogs == nil {
+                        formGameLogs = PlayerCardService.fetchGameLogsForSeason(
+                            name: meta.playerName, season: meta.season
+                        )
+                    }
+                }
+
+                // Show recomputed stats if slider moved
+                if let logs = formGameLogs, formSliderGameNumber != nil {
+                    let recomputed = Self.recomputeFromLogs(logs, fromGameNumber: effectiveGameNumber)
+                    if let reGrid = recomputed {
+                        VStack(alignment: .leading, spacing: 1) {
+                            let rHeaders = chunk(reGrid.headers)
+                            let rValues = chunk(reGrid.rows.first?.values ?? [])
+                            ForEach(Array(rHeaders.enumerated()), id: \.offset) { chunkIdx, hdrs in
+                                VStack(alignment: .leading, spacing: 1) {
+                                    HStack(spacing: 0) {
+                                        ForEach(Array(hdrs.enumerated()), id: \.offset) { _, header in
+                                            Text(header)
+                                                .font(.system(.caption2, design: .monospaced, weight: .semibold))
+                                                .foregroundStyle(.secondary.opacity(0.6))
+                                                .frame(width: columnWidth, alignment: .center)
+                                        }
+                                    }
+                                    .padding(.horizontal, 6)
+
+                                    if chunkIdx < rValues.count {
+                                        HStack(spacing: 0) {
+                                            ForEach(Array(rValues[chunkIdx].enumerated()), id: \.offset) { _, value in
+                                                Text(value)
+                                                    .font(.system(.callout, design: .monospaced, weight: .medium))
+                                                    .foregroundStyle(.secondary)
+                                                    .frame(width: columnWidth, alignment: .center)
+                                            }
+                                        }
+                                        .padding(.horizontal, 6)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.bottom, 10)
+                    }
+                }
+
+                // Form projection toggle
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        formShowProjection.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(formShowProjection ? "Hide 162-Game Pace" : "Show 162-Game Pace")
+                            .font(.system(.caption, design: .rounded, weight: .medium))
+                        Image(systemName: formShowProjection ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, formShowProjection ? 4 : 10)
+                }
+                .buttonStyle(.plain)
+
+                if formShowProjection {
+                    let sourceValues = {
+                        if let logs = formGameLogs, let slider = formSliderGameNumber,
+                           let reGrid = Self.recomputeFromLogs(logs, fromGameNumber: slider) {
+                            return (reGrid.headers, reGrid.rows.first?.values ?? [])
+                        }
+                        return (grid.headers, grid.rows.first?.values ?? [])
+                    }()
+                    let projValues = Self.projectTo162(headers: sourceValues.0, values: sourceValues.1)
+                    let projChunks = chunk(projValues)
+                    let projHeaders = chunk(sourceValues.0)
+
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("162-game pace")
+                            .font(.system(.caption, design: .rounded, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 2)
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(projChunks.enumerated()), id: \.offset) { chunkIdx, vals in
+                                if chunkIdx < projHeaders.count {
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        HStack(spacing: 0) {
+                                            ForEach(Array(projHeaders[chunkIdx].enumerated()), id: \.offset) { _, header in
+                                                Text(header)
+                                                    .font(.system(.caption2, design: .monospaced, weight: .semibold))
+                                                    .foregroundStyle(.secondary.opacity(0.6))
+                                                    .frame(width: columnWidth, alignment: .center)
+                                            }
+                                        }
+                                        .padding(.horizontal, 6)
+
+                                        HStack(spacing: 0) {
+                                            ForEach(Array(vals.enumerated()), id: \.offset) { _, value in
+                                                Text(value)
+                                                    .font(.system(.callout, design: .monospaced, weight: .medium))
+                                                    .foregroundStyle(.secondary)
+                                                    .frame(width: columnWidth, alignment: .center)
+                                            }
+                                        }
+                                        .padding(.horizontal, 6)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.bottom, 10)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
