@@ -101,18 +101,7 @@ struct ResultsView: View {
             }
         }
         .navigationBarBackButtonHidden(true)
-        .gesture(
-            DragGesture()
-                .onChanged { _ in }  // enables interactivePop below
-        )
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 20, coordinateSpace: .global)
-                .onEnded { value in
-                    if value.startLocation.x < 40 && value.translation.width > 80 {
-                        dismiss()
-                    }
-                }
-        )
+        .swipeBack()
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.automatic, for: .navigationBar)
         .toolbar {

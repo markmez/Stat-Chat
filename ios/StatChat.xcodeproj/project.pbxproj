@@ -31,6 +31,7 @@
 		C3F79295CCAFADF7A2760CA1 /* PromptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E985281B8BE082A2E1958F3 /* PromptStore.swift */; };
 		C6AFE0FAA7DB998AE525AE05 /* AnimatedPlaceholder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CB091836D4207BE27DEBA70 /* AnimatedPlaceholder.swift */; };
 		CF3CEAA23B7269C2790901C8 /* QueryEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943AE7BE6B2B432404F957B5 /* QueryEngine.swift */; };
+		F1227A844E80C4AEF7A632A1 /* SwipeBackGesture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46EE2001B470FD5EC03920D6 /* SwipeBackGesture.swift */; };
 		F41238CACD8719488CD332C1 /* baseball_stats.db in Resources */ = {isa = PBXBuildFile; fileRef = FB9F66CC0E8964519268C478 /* baseball_stats.db */; };
 		FAFF627F6602E8C85EC410E5 /* APIKeySetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A03BB555AC13F877616BC08 /* APIKeySetupView.swift */; };
 /* End PBXBuildFile section */
@@ -42,6 +43,7 @@
 		1EC01A2500177D3B3A0CF048 /* SampleQuery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleQuery.swift; sourceTree = "<group>"; };
 		322E2B73CF90D427F012E146 /* PlayerNameExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerNameExtractor.swift; sourceTree = "<group>"; };
 		4226E2C31DC9E6684B0CD953 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		46EE2001B470FD5EC03920D6 /* SwipeBackGesture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeBackGesture.swift; sourceTree = "<group>"; };
 		485259BB61F2E56F43AA82C1 /* SQLSanitizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLSanitizer.swift; sourceTree = "<group>"; };
 		4A03BB555AC13F877616BC08 /* APIKeySetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIKeySetupView.swift; sourceTree = "<group>"; };
 		56A2A2E05C215D0A3ADAAAAD /* ResultCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultCard.swift; sourceTree = "<group>"; };
@@ -152,6 +154,7 @@
 				56A2A2E05C215D0A3ADAAAAD /* ResultCard.swift */,
 				CD18464AB4C998AEF89D1ADC /* ResultsView.swift */,
 				C78343C60140872060772B21 /* StatGridView.swift */,
+				46EE2001B470FD5EC03920D6 /* SwipeBackGesture.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -251,6 +254,7 @@
 				2EB618AB46A9AAA35344A5EA /* StatDefinitions.swift in Sources */,
 				6DA656C612FFFC98992595AE /* StatGridParser.swift in Sources */,
 				9FA34A551A1BB60CF2DCADBB /* StatGridView.swift in Sources */,
+				F1227A844E80C4AEF7A632A1 /* SwipeBackGesture.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

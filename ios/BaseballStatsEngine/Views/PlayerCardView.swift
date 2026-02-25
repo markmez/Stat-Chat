@@ -247,14 +247,7 @@ struct PlayerCardView: View {
                 }
             }
         }
-        .gesture(
-            DragGesture(minimumDistance: 20, coordinateSpace: .global)
-                .onEnded { value in
-                    if value.startLocation.x < 40 && value.translation.width > 80 {
-                        dismiss()
-                    }
-                }
-        )
+        .swipeBack()
         .task {
             playerCard = await PlayerCardService.fetch(name: playerName)
             isLoading = false
