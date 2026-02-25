@@ -466,6 +466,98 @@ enum PlayerCardService {
 
     /// Build a structured response for "how has X been playing lately?" queries.
     /// Returns a string with a [STATGRID] block — no Claude call needed.
+    /// Build a structured season summary for chat (bypasses Claude).
+    /// Returns STATGRID blocks for the season stats, splits, and streaks.
+    static func buildSeasonSummary(name: String, season: Int) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        // Fetch season stats
+        let sql = """
+            SELECT s.team, s.games, s.at_bats, s.runs, s.hits,
+                   s.doubles, s.triples, s.home_runs, s.rbi, s.stolen_bases, s.caught_stealing,
+                   s.walks, s.intentional_walks, s.strikeouts, s.hit_by_pitch,
+                   s.batting_avg, s.obp, s.slg, s.ops, s.ops_plus, s.iso, s.babip
+            FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND s.season = \(season)
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              row.count >= 22 else { return nil }
+
+        let team = teamFullName(row[0])
+        let values = Array(row[1...21])  // games through babip
+        let formatted = formatValues(headers: allHeaders, values: values)
+
+        var parts: [String] = []
+
+        // Header text
+        parts.append("**\(displayName)** — \(season) Season (\(team))\n")
+
+        // Season stat grid
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + allHeaders.joined(separator: ", "))
+        parts.append("ROW: " + formatted.joined(separator: ", "))
+        parts.append("[/STATGRID]")
+
+        // Platoon splits
+        let splitsSql = """
+            SELECT ps.split_type,
+                   ps.at_bats, ps.hits, ps.doubles, ps.triples, ps.home_runs,
+                   ps.walks, ps.strikeouts,
+                   ps.batting_avg, ps.obp, ps.slg, ps.ops
+            FROM platoon_splits ps
+            JOIN players p ON ps.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND ps.season = \(season)
+            ORDER BY ps.split_type
+            """
+        if let splitsResult = try? db.execute(sql: splitsSql), !splitsResult.rows.isEmpty {
+            parts.append("\n[STATGRID]")
+            parts.append("HEADER: AB, H, 2B, 3B, HR, BB, SO, AVG, OBP, SLG, OPS")
+            for sRow in splitsResult.rows {
+                let label = sRow[0] == "vs_LHP" ? "vs LHP" : "vs RHP"
+                let sValues = Array(sRow[1...])
+                let sFormatted = formatValues(
+                    headers: ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"],
+                    values: sValues
+                )
+                parts.append("ROW \(label): " + sFormatted.joined(separator: ", "))
+            }
+            parts.append("[/STATGRID]")
+        }
+
+        // Hot streaks
+        let streaksSql = """
+            SELECT start_date, end_date, num_games,
+                   batting_avg, obp, slg, ops, home_runs, hits, at_bats, walks, strikeouts
+            FROM streaks
+            JOIN players p ON streaks.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND streaks.season = \(season)
+              AND performance = 'hot'
+            ORDER BY ops DESC
+            LIMIT 3
+            """
+        if let streaksResult = try? db.execute(sql: streaksSql), !streaksResult.rows.isEmpty {
+            parts.append("\n**Notable Hot Streaks**\n")
+            parts.append("[STATGRID]")
+            parts.append("HEADER: G, AB, H, BB, SO, AVG, OBP, SLG, OPS, HR")
+            for sRow in streaksResult.rows {
+                let startDate = formatDate(sRow[0])
+                let endDate = formatDate(sRow[1])
+                let label = "\(startDate) \u{2013} \(endDate)"
+                let g = sRow[2]
+                let avg = formatRate(sRow[3]), obpVal = formatRate(sRow[4])
+                let slgVal = formatRate(sRow[5]), opsVal = formatRate(sRow[6])
+                let hr = sRow[7], h = sRow[8], ab = sRow[9], bb = sRow[10], so = sRow[11]
+                parts.append("ROW \(label): \(g), \(ab), \(h), \(bb), \(so), \(avg), \(obpVal), \(slgVal), \(opsVal), \(hr)")
+            }
+            parts.append("[/STATGRID]")
+        }
+
+        return parts.joined(separator: "\n")
+    }
+
     static func buildCurrentHotStreak(name: String) -> String? {
         let info = fetchPlayerInfo(name: name)
         let displayName = info?.name ?? name

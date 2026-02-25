@@ -8,6 +8,30 @@ struct StatGridView: View {
     /// 1-line summary: the 7 key batting stats shown when compact
     static let summaryHeaders = ["G", "AB", "AVG", "OBP", "SLG", "OPS", "HR"]
 
+    /// Grid with all-empty columns removed (columns where every row is "--" or empty)
+    private var filteredGrid: StatGridParser.StatGrid {
+        let headers = grid.headers
+        guard !headers.isEmpty, !grid.rows.isEmpty else { return grid }
+
+        // Find columns where ALL rows have "--" or are empty
+        var emptyColumns = Set<Int>()
+        for idx in headers.indices {
+            let allEmpty = grid.rows.allSatisfy { row in
+                idx >= row.values.count || row.values[idx] == "--" || row.values[idx].isEmpty
+            }
+            if allEmpty { emptyColumns.insert(idx) }
+        }
+
+        guard !emptyColumns.isEmpty else { return grid }
+
+        let keptHeaders = headers.enumerated().compactMap { emptyColumns.contains($0.offset) ? nil : $0.element }
+        let keptRows = grid.rows.map { row in
+            let keptValues = row.values.enumerated().compactMap { emptyColumns.contains($0.offset) ? nil : $0.element }
+            return StatGridParser.StatGrid.Row(label: row.label, values: keptValues)
+        }
+        return StatGridParser.StatGrid(headers: keptHeaders, rows: keptRows, formMetadata: grid.formMetadata)
+    }
+
     @State private var selectedStat: String? = nil
     @State private var isExpanded = false
     @State private var showProjection = false
@@ -25,11 +49,11 @@ struct StatGridView: View {
 
     /// Whether this grid looks like streak data (date-range labels, has G + rate stats, no PA)
     private var isStreakGrid: Bool {
-        let headers = Set(grid.headers)
+        let headers = Set(filteredGrid.headers)
         let hasG = headers.contains("G")
         let rateHits = ["AVG", "OBP", "SLG", "OPS"].filter { headers.contains($0) }.count
         let hasPA = headers.contains("PA")
-        let hasDateLabel = grid.rows.contains { $0.label.contains("\u{2013}") || $0.label.contains("–") }
+        let hasDateLabel = filteredGrid.rows.contains { $0.label.contains("\u{2013}") || $0.label.contains("–") }
         return hasG && rateHits >= 2 && !hasPA && hasDateLabel
     }
 
@@ -94,35 +118,38 @@ struct StatGridView: View {
     /// Whether compact mode is active (compactHeaders provided and grid has more columns than compact set)
     private var isCompactAvailable: Bool {
         guard let compact = compactHeaders else { return false }
-        return grid.headers.count > compact.count
+        return filteredGrid.headers.count > compact.count
     }
 
     /// Headers to display — compact subset or full grid
     private var displayHeaders: [String] {
         if isCompactAvailable && !isExpanded {
-            return compactIndices.map { grid.headers[$0] }
+            return compactIndices.map { filteredGrid.headers[$0] }
         }
-        return grid.headers
+        return filteredGrid.headers
     }
 
-    /// Indices into grid.headers that match compactHeaders (preserving compact order, skipping missing)
+    /// Indices into filteredGrid.headers that match compactHeaders (preserving compact order, skipping missing)
     private var compactIndices: [Int] {
         guard let compact = compactHeaders else { return [] }
         var indices: [Int] = []
         for header in compact {
-            if let idx = grid.headers.firstIndex(of: header) {
+            if let idx = filteredGrid.headers.firstIndex(of: header) {
                 indices.append(idx)
             }
         }
         return indices
     }
 
-    /// Filter a row's values to only the compact columns
+    /// Filter a row's values to only the compact columns (from filteredGrid)
     private func compactValues(for row: StatGridParser.StatGrid.Row) -> [String] {
         compactIndices.compactMap { idx in
             idx < row.values.count ? row.values[idx] : nil
         }
     }
+
+    /// Filtered rows for iteration
+    private var displayRows: [StatGridParser.StatGrid.Row] { filteredGrid.rows }
 
     /// Split an array into chunks of maxPerRow
     private func chunk<T>(_ array: [T]) -> [[T]] {
@@ -158,7 +185,7 @@ struct StatGridView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(grid.rows.enumerated()), id: \.offset) { index, row in
+            ForEach(Array(displayRows.enumerated()), id: \.offset) { index, row in
                 // Label above (player name, date range, etc.)
                 if !row.label.isEmpty {
                     if index > 0 {
@@ -419,7 +446,7 @@ struct StatGridView: View {
                            let reGrid = Self.recomputeFromLogs(logs, fromGameNumber: slider) {
                             return (reGrid.headers, reGrid.rows.first?.values ?? [])
                         }
-                        return (grid.headers, grid.rows.first?.values ?? [])
+                        return (filteredGrid.headers, displayRows.first?.values ?? [])
                     }()
                     let projValues = Self.projectTo162(headers: sourceValues.0, values: sourceValues.1)
                     let projChunks = chunk(projValues)

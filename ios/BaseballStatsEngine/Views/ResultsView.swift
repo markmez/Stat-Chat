@@ -41,7 +41,13 @@ struct ResultsView: View {
                                         isFirstUser: message.id == visibleMessages.first(where: { $0.role == .user })?.id,
                                         onBack: { dismiss() },
                                         isStreaming: appState.isLoading && message.id == visibleMessages.last?.id,
-                                        onPlayerTap: { name in selectedPlayerName = name }
+                                        onPlayerTap: { name in
+                                            if appState.pendingDisambiguation != nil {
+                                                appState.resolveDisambiguation(with: name)
+                                            } else {
+                                                selectedPlayerName = name
+                                            }
+                                        }
                                     )
                                     .id(message.id)
                                 }

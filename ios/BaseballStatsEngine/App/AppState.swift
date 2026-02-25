@@ -8,6 +8,8 @@ final class AppState {
     var currentStreamingText = ""
     var showAPIKeySetup = false
     var searchHistory: [String] = []
+    /// Stores (originalQuery, ambiguousLastName) when disambiguation is pending
+    var pendingDisambiguation: (query: String, lastName: String)?
 
     private let queryEngine = QueryEngine()
     private let historyKey = "searchHistory"
@@ -54,6 +56,31 @@ final class AppState {
             return
         }
 
+        // Intercept season lookup queries — build response from DB, skip Claude
+        if let (playerName, season) = PlayerNameMatcher.parseSeasonLookup(trimmed),
+           let response = PlayerCardService.buildSeasonSummary(name: playerName, season: season) {
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            queryEngine.injectHistory(question: trimmed, answer: response)
+            return
+        }
+
+        // Ambiguous last name — show "Did you mean?" with tappable player links
+        if let candidates = PlayerNameMatcher.findAmbiguousPlayers(trimmed) {
+            // Find which last name was ambiguous
+            let lower = trimmed.lowercased()
+            let ambiguousLast = PlayerNameMatcher.lastNameIndex.first(where: { key, players in
+                players.count > 1 && PlayerNameMatcher.containsWord(key, in: lower)
+            })?.key ?? ""
+
+            pendingDisambiguation = (query: trimmed, lastName: ambiguousLast)
+            let links = candidates.map { "[\($0)](statchat://player/\($0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? $0))" }
+            let response = "Multiple players match that name. Did you mean:\n\n" + links.joined(separator: "\n\n")
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            return
+        }
+
         messages.append(Message(role: .user, content: trimmed))
         isLoading = true
         currentStreamingText = ""
@@ -80,6 +107,36 @@ final class AppState {
                 messages[streamingIndex] = Message(role: .error, content: error.localizedDescription)
             }
         }
+    }
+
+    func resolveDisambiguation(with fullName: String) {
+        guard let pending = pendingDisambiguation else { return }
+
+        // Replace the ambiguous last name with the full name in the original query
+        let correctedQuery: String
+        if pending.lastName.isEmpty {
+            correctedQuery = fullName
+        } else {
+            // Case-insensitive replacement of the ambiguous last name with the full name
+            let lower = pending.query.lowercased()
+            if let range = lower.range(of: pending.lastName) {
+                var result = pending.query
+                let startIdx = pending.query.index(pending.query.startIndex, offsetBy: lower.distance(from: lower.startIndex, to: range.lowerBound))
+                let endIdx = pending.query.index(startIdx, offsetBy: pending.lastName.count)
+                result.replaceSubrange(startIdx..<endIdx, with: fullName)
+                correctedQuery = result
+            } else {
+                correctedQuery = pending.query
+            }
+        }
+
+        // Remove the disambiguation messages (user question + "Did you mean?" response)
+        if messages.count >= 2 {
+            messages.removeLast(2)
+        }
+
+        pendingDisambiguation = nil
+        sendQuestion(correctedQuery)
     }
 
     func clearConversation() {

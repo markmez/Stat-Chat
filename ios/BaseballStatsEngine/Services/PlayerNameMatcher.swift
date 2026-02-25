@@ -117,6 +117,65 @@ enum PlayerNameMatcher {
         return nil
     }
 
+    /// Detect season lookup queries like "How did Judge do last year?" or "Soto 2024 stats".
+    /// Returns (canonicalName, season) if the query is a general season stats lookup.
+    static func parseSeasonLookup(_ input: String) -> (name: String, season: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Determine the "current" year from the DB (max season)
+        let db = DatabaseService()
+        let currentYear: Int = {
+            if let result = try? db.execute(sql: "SELECT MAX(season) FROM season_batting_stats"),
+               let row = result.rows.first, let year = Int(row[0]) {
+                return year
+            }
+            return 2025
+        }()
+
+        // Detect target season first (needed for disambiguation)
+        var targetSeason: Int?
+        if let range = lower.range(of: "20[2][0-9]", options: .regularExpression),
+           let year = Int(lower[range]) {
+            targetSeason = year
+        } else {
+            let relativePatterns: [(patterns: [String], offset: Int)] = [
+                (["this year", "this season", "doing this", "current season"], 0),
+                (["last year", "last season", "previous season", "prior season"], -1),
+                (["two years ago", "2 years ago"], -2),
+                (["three years ago", "3 years ago"], -3),
+            ]
+            for (patterns, offset) in relativePatterns {
+                if patterns.contains(where: { lower.contains($0) }) {
+                    targetSeason = currentYear + offset
+                    break
+                }
+            }
+        }
+        guard let season = targetSeason else { return nil }
+
+        // Find a player name — try full name first
+        var playerName: String?
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) {
+                playerName = name
+                break
+            }
+        }
+
+        // Try last name — unambiguous only
+        if playerName == nil {
+            for (lastName, players) in lastNameIndex {
+                if containsWord(lastName, in: lower) && players.count == 1 {
+                    playerName = players[0]
+                    break
+                }
+            }
+        }
+
+        guard let name = playerName else { return nil }
+        return (name, season)
+    }
+
     /// Find closest player names within edit distance threshold (for "did you mean?" suggestions).
     /// Returns multiple names when a last-name fuzzy match is ambiguous.
     static func fuzzyMatch(_ input: String) -> [String] {
@@ -162,8 +221,26 @@ enum PlayerNameMatcher {
         return []
     }
 
+    /// If the input contains an ambiguous last name (matches multiple players), return those player names.
+    static func findAmbiguousPlayers(_ input: String) -> [String]? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // If a full name matches, it's not ambiguous
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) { return nil }
+        }
+
+        // Check for ambiguous last names
+        for (lastName, players) in lastNameIndex {
+            if containsWord(lastName, in: lower) && players.count > 1 {
+                return players
+            }
+        }
+        return nil
+    }
+
     /// Check if `word` appears in `text` as a whole word (not a substring of another word).
-    private static func containsWord(_ word: String, in text: String) -> Bool {
+    static func containsWord(_ word: String, in text: String) -> Bool {
         guard let range = text.range(of: word) else { return false }
         let before = range.lowerBound == text.startIndex || !text[text.index(before: range.lowerBound)].isLetter
         let after = range.upperBound == text.endIndex || !text[range.upperBound].isLetter
