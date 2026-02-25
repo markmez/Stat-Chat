@@ -624,7 +624,8 @@ enum PlayerCardService {
                    cf.at_bats, cf.hits, cf.home_runs, cf.runs, cf.rbi,
                    cf.walks, cf.strikeouts,
                    cf.batting_avg, cf.obp, cf.slg, cf.ops,
-                   s.batting_avg, s.obp, s.slg, s.ops
+                   s.batting_avg, s.obp, s.slg, s.ops,
+                   s.team
             FROM current_form cf
             JOIN players p ON cf.player_id = p.player_id
             LEFT JOIN season_batting_stats s ON cf.player_id = s.player_id AND cf.season = s.season
@@ -634,7 +635,7 @@ enum PlayerCardService {
             """
         guard let result = try? db.execute(sql: sql),
               let row = result.rows.first,
-              row.count >= 20 else { return nil }
+              row.count >= 21 else { return nil }
 
         let season = row[0]
         let startDate = formatDate(row[1])
@@ -646,13 +647,16 @@ enum PlayerCardService {
         let avg = formatRate(row[12]), obp = formatRate(row[13])
         let slg = formatRate(row[14]), ops = formatRate(row[15])
         let seasonAvg = formatRate(row[16]), seasonOps = formatRate(row[19])
+        let team = row[20]
+
+        let teamGames = fetchTeamGames(team: team, season: Int(season) ?? 0)
 
         var parts: [String] = []
         parts.append("\(displayName) has been on fire over the last \(numGames) games (since \(startDate)):\n")
 
         parts.append("[STATGRID]")
         parts.append("HEADER: G, AB, R, H, HR, RBI, BB, SO, AVG, OBP, SLG, OPS")
-        parts.append("FORM: \(displayName), \(season), \(startGameNum), \(totalGames)")
+        parts.append("FORM: \(displayName), \(season), \(startGameNum), \(totalGames), \(teamGames)")
         parts.append("ROW: \(numGames), \(ab), \(r), \(h), \(hr), \(rbi), \(bb), \(so), \(avg), \(obp), \(slg), \(ops)")
         parts.append("[/STATGRID]")
 

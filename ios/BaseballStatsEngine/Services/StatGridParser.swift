@@ -17,6 +17,7 @@ enum StatGridParser {
             let season: Int
             let autoDetectedGameNumber: Int
             let totalGames: Int
+            let teamGames: Int
         }
 
         init(headers: [String], rows: [Row], formMetadata: FormMetadata? = nil) {
@@ -105,16 +106,18 @@ enum StatGridParser {
                 guard !parts.isEmpty else { continue }
                 rows.append(StatGrid.Row(label: label, values: parts))
             } else if line.hasPrefix("FORM:") {
-                // Parse FORM: Player Name, season, autoDetectedGameNumber, totalGames
+                // Parse FORM: Player Name, season, autoDetectedGameNumber, totalGames[, teamGames]
                 let formContent = String(line.dropFirst("FORM:".count))
                 let parts = formContent.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
                 if parts.count >= 4,
                    let season = Int(parts[1]),
                    let gameNum = Int(parts[2]),
                    let total = Int(parts[3]) {
+                    let tGames = parts.count >= 5 ? (Int(parts[4]) ?? total) : total
                     formMetadata = StatGrid.FormMetadata(
                         playerName: parts[0], season: season,
-                        autoDetectedGameNumber: gameNum, totalGames: total
+                        autoDetectedGameNumber: gameNum, totalGames: total,
+                        teamGames: tGames
                     )
                 }
             }
