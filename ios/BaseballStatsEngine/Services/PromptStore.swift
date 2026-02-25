@@ -8,9 +8,12 @@ enum PromptStore {
     ## Tables
 
     ### players
-    - player_id (TEXT, primary key) — unique FanGraphs ID
+    - player_id (TEXT, primary key) — unique player ID (Retrosheet format, e.g., "judga001")
     - name (TEXT) — player's full name (e.g., "Aaron Judge")
-    - team (TEXT) — most recent team abbreviation (e.g., "NYY", "LAD")
+    - team (TEXT) — most recent team abbreviation (e.g., "NYA", "LAN") — uses Retrosheet abbreviations
+    - birthdate (TEXT) — date of birth in YYYY-MM-DD format (e.g., "1992-04-26")
+    - bats (TEXT) — batting hand: "R" (right), "L" (left), or "B" (both/switch-hitter)
+    - throws (TEXT) — throwing hand: "R" (right) or "L" (left)
 
     ### season_batting_stats
     - player_id (TEXT) — references players table
@@ -39,8 +42,12 @@ enum PromptStore {
     - ops (REAL) — on-base plus slugging (OPS)
     - iso (REAL) — isolated power (ISO = SLG - AVG)
     - babip (REAL) — batting average on balls in play (BABIP)
-    - wrc_plus (INTEGER) — weighted runs created plus (wRC+), league-adjusted (100 = average)
-    - war (REAL) — wins above replacement (WAR, FanGraphs version)
+    - ops_plus (INTEGER) — OPS+ (OPS adjusted for league average). 100 = league average, >100 is above average. Use this for league-adjusted offense.
+
+    ### league_averages
+    Per-season league-wide batting averages.
+    - season (INTEGER, primary key) — year
+    - league_avg, league_obp, league_slg, league_ops, league_iso, league_babip (REAL) — league-wide rate stats
 
     ### platoon_splits
     - player_id (TEXT) — references players table
@@ -61,7 +68,6 @@ enum PromptStore {
     - ops (REAL) — OPS
     - iso (REAL) — isolated power
     - babip (REAL) — BABIP
-    - wrc_plus (INTEGER) — wRC+
 
     ### game_batting_logs
     - player_id (TEXT) — references players table
@@ -95,20 +101,23 @@ enum PromptStore {
     - season_ops (REAL) — the player's overall season OPS for context
 
     ## Currently Available Data
-    - 2024 and 2025 seasons
-    - Platoon splits (vs LHP and vs RHP) for both seasons
-    - Game-level batting logs for qualified batters (400+ PA)
-    - Precomputed streak segments for qualified batters (streaks table)
+    - Season batting stats from 1898 to present (aggregated from Retrosheet game logs)
+    - OPS+ for every player-season (league-adjusted, no park factors — 100 = average)
+    - League-wide averages per season (league_averages table)
+    - Game-level batting logs from 1898 to present — all players, not limited to qualified batters
+    - Platoon splits (vs LHP and vs RHP) from 1969 to present (Retrosheet retrosplits)
+    - Precomputed streak segments for players with sufficient game logs (streaks table)
     - Sensitive fallback streaks for players with no dramatic shifts (streaks_sensitive table)
 
     ## Important Notes
     - Player names are stored as full names: "Aaron Judge", "Shohei Ohtani", etc.
     - Use LIKE with '%' for fuzzy name matching when the user gives a partial name
-    - Team abbreviations: NYY, LAD, BOS, ATL, HOU, etc.
-    - For rate stats (AVG, OBP, SLG, OPS), use the precomputed columns rather than calculating from raw counts
+    - Team abbreviations use Retrosheet format: NYA (Yankees), NYN (Mets), LAN (Dodgers), CHN (Cubs), CHA (White Sox), SLN (Cardinals), SFN (Giants), SDN (Padres), TBA (Rays), KCA (Royals), ANA (Angels), WAS (Nationals), etc.
+    - For rate stats (AVG, OBP, SLG, OPS, OPS+), use the precomputed columns rather than calculating from raw counts
+    - For OPS+ leaderboards, apply the same PA minimums as other rate stats (>=400 full season, >=200 partial)
     - For counting stats (HR, RBI, etc.), use the integer columns directly
-    - wRC+ of 100 is league average; higher is better
-    - WAR: 0-1 = replacement level, 2-3 = solid starter, 4-5 = all-star, 6+ = MVP caliber
+    - Platoon splits are only available for 1969 and later. If the user asks about splits for earlier years, let them know.
+    - Some historical stats (IBB, SF, HBP) may be NULL or 0 for very old seasons (pre-1955)
     - For split queries (vs lefties/righties), JOIN with platoon_splits using split = 'vs_LHP' or split = 'vs_RHP'
     - If the user says "last year" or "last season", assume 2024. If they say "this year" or "this season", assume 2025.
     """
@@ -162,12 +171,12 @@ enum PromptStore {
     - Always alias tables: players AS p, season_batting_stats AS s.
     - Format numbers nicely: use ROUND() for decimals, PRINTF() for batting averages (3 decimal places).
     - For "league leaders" or "top" queries, use ORDER BY ... DESC LIMIT 10 unless a specific number is requested.
-    - For leaderboard/ranking queries on rate stats (AVG, OBP, SLG, OPS, ISO, BABIP), add a minimum plate appearances filter: WHERE plate_appearances >= 400 for a full season, or >= 200 for partial/current seasons. Counting stats (HR, RBI, SB, etc.) don't need this filter.
+    - For leaderboard/ranking queries on rate stats (AVG, OBP, SLG, OPS, OPS+, ISO, BABIP), add a minimum plate appearances filter: WHERE plate_appearances >= 400 for a full season, or >= 200 for partial/current seasons. Counting stats (HR, RBI, SB, etc.) don't need this filter.
     - When the user asks for a player's "stats" without specifying a year, use UNION ALL to return (1) their most recent season row AND (2) a career totals row. IMPORTANT: Wrap the first SELECT in a subquery since SQLite does not allow ORDER BY/LIMIT before UNION ALL. Example pattern: SELECT * FROM (SELECT ... ORDER BY s.season DESC LIMIT 1) UNION ALL SELECT ... For career totals, SUM the counting stats and recalculate rate stats from sums (e.g., CAST(SUM(hits) AS REAL)/SUM(at_bats) for AVG). Use 'Career' as the season value. Only include the career row if the player has more than one season of data.
     - For questions about stats we don't have data for, return SELECT 'NO_DATA' as answer.
     """
 
-    static let standardHeader = "G, PA, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP, SF, AVG, OBP, SLG, OPS, ISO, BABIP, wRC+, WAR"
+    static let standardHeader = "G, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP, AVG, OBP, SLG, OPS, OPS+, ISO, BABIP"
 
     static let answerGenerationPrompt = """
     You are a knowledgeable baseball analyst. Given a user's question, the SQL that was run, and the results, provide a clear, concise answer.
@@ -175,7 +184,7 @@ enum PromptStore {
     Rules:
     - Be conversational but accurate. You're talking to a baseball fan.
     - STAT GRID FORMAT: When your answer includes 3 or more stats for a player, or stats for multiple players, present them in a stat grid block. Wrap the grid in [STATGRID] and [/STATGRID] tags. Use HEADER: for column names and ROW: for each player. Separate values with commas.
-    - MANDATORY HEADER: Every stat grid MUST use this exact header line with all 24 stats. Copy it verbatim — never shorten or rearrange:
+    - MANDATORY HEADER: Every stat grid MUST use this exact header line with all 21 stats. Copy it verbatim — never shorten or rearrange:
 
     HEADER: \(standardHeader)
 
@@ -185,7 +194,7 @@ enum PromptStore {
 
     [STATGRID]
     HEADER: \(standardHeader)
-    ROW: 158, 683, 526, 122, 169, 28, 0, 58, 144, 3, 2, 133, 16, 171, 8, 3, .322, .458, .701, 1.159, .379, .326, 223, 11.2
+    ROW: 158, 526, 122, 169, 28, 0, 58, 144, 3, 2, 133, 16, 171, 8, .322, .458, .701, 1.159, 223, .379, .326
     [/STATGRID]
 
     COMPARISONS — use TWO grids: current season first, then career (if multi-season data exists). Start each ROW with the player name. Do NOT show every individual past season — only current season and career totals:
@@ -194,24 +203,24 @@ enum PromptStore {
 
     [STATGRID]
     HEADER: \(standardHeader)
-    ROW: Aaron Judge (NYY), 152, 679, 517, 137, 225, 53, 0, 58, 144, 3, 2, 133, 16, 171, 8, 3, .331, .457, .688, 1.144, .357, .356, 204, 10.1
-    ROW: Shohei Ohtani (LAD), 159, 731, 636, 134, 197, 38, 7, 54, 130, 59, 4, 81, 7, 162, 8, 6, .310, .390, .646, 1.036, .336, .327, 190, 9.1
+    ROW: Aaron Judge (NYY), 152, 517, 137, 225, 53, 0, 58, 144, 3, 2, 133, 16, 171, 8, .331, .457, .688, 1.144, 223, .357, .356
+    ROW: Shohei Ohtani (LAD), 159, 636, 134, 197, 38, 7, 54, 130, 59, 4, 81, 7, 162, 8, .310, .390, .646, 1.036, 190, .336, .327
     [/STATGRID]
 
-    Career:
+    Career (use "--" for OPS+ since career OPS+ requires multi-season weighting):
 
     [STATGRID]
     HEADER: \(standardHeader)
-    ROW: Aaron Judge (NYY), 500, 2600, 1800, 400, 550, 100, 5, 200, 500, 20, 10, 650, 50, 700, 30, 15, .306, .390, .535, .925, .229, .310, 175, 40.5
-    ROW: Shohei Ohtani (LAD), 400, 2100, 1700, 350, 500, 90, 10, 180, 420, 100, 20, 300, 20, 500, 25, 12, .294, .370, .570, .940, .276, .320, 165, 35.0
+    ROW: Aaron Judge (NYY), 500, 1800, 400, 550, 100, 5, 200, 500, 20, 10, 650, 50, 700, 30, .306, .390, .535, .925, --, .229, .310
+    ROW: Shohei Ohtani (LAD), 400, 1700, 350, 500, 90, 10, 180, 420, 100, 20, 300, 20, 500, 25, .294, .370, .570, .940, --, .276, .320
     [/STATGRID]
 
     YEAR/CAREER for a single player — start each ROW with the year or "Career" as a label:
 
     [STATGRID]
     HEADER: \(standardHeader)
-    ROW: 2024, 158, 683, 526, 122, 169, 28, 0, 58, 144, 3, 2, 133, 16, 171, 8, 3, .322, .458, .701, 1.159, .379, .326, 223, 11.2
-    ROW: Career, 500, 2600, 1800, 400, 550, 100, 5, 200, 500, 20, 10, 650, 50, 700, 30, 15, .306, .390, .535, .925, .229, .310, 175, 40.5
+    ROW: 2024, 158, 526, 122, 169, 28, 0, 58, 144, 3, 2, 133, 16, 171, 8, .322, .458, .701, 1.159, 223, .379, .326
+    ROW: Career, 500, 1800, 400, 550, 100, 5, 200, 500, 20, 10, 650, 50, 700, 30, .306, .390, .535, .925, --, .229, .310
     [/STATGRID]
 
     LEADERBOARDS — the only exception where you may use fewer columns. Include only stats relevant to the question. Put the rank and player name as the ROW label (prefixed with #). Do NOT put Rank or Player as HEADER columns:

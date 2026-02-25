@@ -41,11 +41,14 @@ struct PlayerCardView: View {
                                     .font(.system(.title2, design: .rounded, weight: .bold))
                                     .foregroundStyle(.primary)
 
-                                // Full team name + age
+                                // Full team name + age + handedness
                                 HStack(spacing: 0) {
                                     Text(card.fullTeamName)
                                     if let age = card.age {
                                         Text("  \u{00B7}  Age \(age)")
+                                    }
+                                    if let bats = card.bats, let throws_ = card.throws_ {
+                                        Text("  \u{00B7}  Bats \(bats) / Throws \(throws_)")
                                     }
                                 }
                                 .font(.system(.subheadline, design: .rounded))
@@ -127,25 +130,35 @@ struct PlayerCardView: View {
                         }
 
                         // Bio
-                        if let bio = card.bio {
+                        if card.bio != nil || card.birthdate != nil {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("About")
                                     .font(.system(.headline, design: .rounded, weight: .semibold))
                                     .foregroundStyle(.primary)
                                     .padding(.horizontal, 20)
 
-                                Text(bio)
-                                    .font(.system(.body, design: .rounded))
-                                    .foregroundStyle(.primary.opacity(0.85))
-                                    .lineSpacing(3)
-                                    .padding(.horizontal, 20)
-                                    .padding(.vertical, 12)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .fill(Color(uiColor: .secondarySystemBackground))
-                                    )
-                                    .padding(.horizontal, 6)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    if let birthdate = card.birthdate {
+                                        Text("Born: \(birthdate, format: .dateTime.month(.wide).day().year())")
+                                            .font(.system(.subheadline, design: .rounded, weight: .medium))
+                                            .foregroundStyle(.primary.opacity(0.9))
+                                    }
+
+                                    if let bio = card.bio {
+                                        Text(bio)
+                                            .font(.system(.body, design: .rounded))
+                                            .foregroundStyle(.primary.opacity(0.85))
+                                            .lineSpacing(3)
+                                    }
+                                }
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color(uiColor: .secondarySystemBackground))
+                                )
+                                .padding(.horizontal, 6)
                             }
                         }
                     }
@@ -264,9 +277,9 @@ struct PlayerCardView: View {
     }
 
     private func buildProjectedGrid(season: SeasonData) -> StatGridParser.StatGrid {
-        let countingStats = ["G", "PA", "AB", "R", "H", "2B", "3B", "HR", "RBI", "SB", "CS",
-                             "BB", "IBB", "SO", "HBP", "SF"]
-        let rateStats: Set<String> = ["AVG", "OBP", "SLG", "OPS", "ISO", "BABIP", "wRC+", "WAR"]
+        let countingStats = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "SB", "CS",
+                             "BB", "IBB", "SO", "HBP"]
+        let rateStats: Set<String> = ["AVG", "OBP", "SLG", "OPS", "OPS+", "ISO", "BABIP"]
 
         let divisor: Double
         switch projectionMode {
@@ -295,11 +308,6 @@ struct PlayerCardView: View {
                 let raw = season.countingValues[header] ?? 0
                 let proj = raw * 162.0 / divisor
                 projected.append(String(Int(proj.rounded())))
-            } else if header == "WAR" {
-                // WAR projects like counting stats but with 1 decimal
-                let raw = season.countingValues["WAR"] ?? 0
-                let proj = raw * 162.0 / divisor
-                projected.append(String(format: "%.1f", proj))
             } else {
                 // Rate stats stay as-is
                 projected.append(original)

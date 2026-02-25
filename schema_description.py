@@ -3,12 +3,18 @@
 SCHEMA_DESCRIPTION = """
 You have access to a SQLite database with MLB batting statistics.
 
+Data sources: Retrosheet (retrosheet.org) for season stats, game logs, and platoon splits.
+Platoon splits via Chadwick Bureau retrosplits (Open Database License).
+
 ## Tables
 
 ### players
-- player_id (TEXT, primary key) — unique FanGraphs ID
+- player_id (TEXT, primary key) — unique player ID (Retrosheet format, e.g., "judga001")
 - name (TEXT) — player's full name (e.g., "Aaron Judge")
-- team (TEXT) — most recent team abbreviation (e.g., "NYY", "LAD")
+- team (TEXT) — most recent team abbreviation (e.g., "NYA", "LAN") — uses Retrosheet abbreviations
+- birthdate (TEXT) — date of birth in YYYY-MM-DD format (e.g., "1992-04-26"). Use this to compute age dynamically.
+- bats (TEXT) — batting hand: "R" (right), "L" (left), or "B" (both/switch-hitter)
+- throws (TEXT) — throwing hand: "R" (right) or "L" (left)
 
 ### season_batting_stats
 - player_id (TEXT) — references players table
@@ -37,10 +43,12 @@ You have access to a SQLite database with MLB batting statistics.
 - ops (REAL) — on-base plus slugging (OPS)
 - iso (REAL) — isolated power (ISO = SLG - AVG)
 - babip (REAL) — batting average on balls in play (BABIP)
-- wrc_plus (INTEGER) — weighted runs created plus (wRC+), league-adjusted (100 = average)
-- war (REAL) — wins above replacement (WAR, FanGraphs version)
+- ops_plus (INTEGER) — OPS+ (OPS adjusted for league average). 100 = league average, >100 is above average. Computed as 100 * (player_OBP / league_OBP + player_SLG / league_SLG - 1). No park factors. Use this instead of wRC+ for league-adjusted offense.
+- wrc_plus (INTEGER) — weighted runs created plus (wRC+). Always NULL (not available from Retrosheet). Use ops_plus instead.
+- war (REAL) — wins above replacement (WAR). Always NULL (not available from Retrosheet). Column kept for compatibility.
 
 ### platoon_splits
+Available for seasons 1969 and later.
 - player_id (TEXT) — references players table
 - season (INTEGER) — year
 - split (TEXT) — either "vs_LHP" (vs left-handed pitchers) or "vs_RHP" (vs right-handed pitchers)
@@ -59,15 +67,27 @@ You have access to a SQLite database with MLB batting statistics.
 - ops (REAL) — OPS
 - iso (REAL) — isolated power
 - babip (REAL) — BABIP
-- wrc_plus (INTEGER) — wRC+
+- wrc_plus (INTEGER) — NULL (not available from this data source)
 
 ### game_batting_logs
+Available for seasons 1898 and later.
 - player_id (TEXT) — references players table
 - season (INTEGER) — year
 - date (TEXT) — game date in YYYY-MM-DD format
-- opponent (TEXT) — opponent team abbreviation
+- opponent (TEXT) — opponent team abbreviation (may be NULL)
 - plate_appearances, at_bats, hits, doubles, triples, home_runs, runs, rbi, walks, strikeouts (INTEGER)
 - batting_avg, obp, slg, ops (REAL) — per-game rates
+
+### league_averages
+Per-season league-wide batting averages, computed from all players in season_batting_stats.
+- season (INTEGER, primary key) — year
+- total_pa, total_ab, total_hits, total_doubles, total_triples, total_hr, total_bb, total_hbp, total_sf, total_so (INTEGER) — league-wide counting totals
+- league_avg (REAL) — league batting average
+- league_obp (REAL) — league on-base percentage
+- league_slg (REAL) — league slugging percentage
+- league_ops (REAL) — league OPS
+- league_iso (REAL) — league isolated power
+- league_babip (REAL) — league BABIP
 
 ### streaks
 Precomputed performance streaks detected via change-point analysis. Each row is a continuous stretch of games where a player's performance was consistent.
@@ -93,20 +113,24 @@ Precomputed sensitive streaks for players who had NO change points in the primar
 - season_ops (REAL) — the player's overall season OPS for context
 
 ## Currently Available Data
-- 2024 and 2025 seasons
-- Platoon splits (vs LHP and vs RHP) for both seasons
-- Game-level batting logs for qualified batters (400+ PA)
-- Precomputed streak segments for qualified batters (streaks table)
+- Season batting stats from 1898 to present (aggregated from Retrosheet game logs)
+- OPS+ for every player-season (league-adjusted, no park factors — 100 = average)
+- League-wide averages per season (league_averages table)
+- Game-level batting logs from 1898 to present (Retrosheet) — all players, not limited to qualified batters
+- Platoon splits (vs LHP and vs RHP) from 1969 to present (Retrosheet retrosplits)
+- Precomputed streak segments for players with sufficient game logs (streaks table)
 - Sensitive fallback streaks for players with no dramatic shifts (streaks_sensitive table)
+- Note: wRC+ and WAR columns exist but are NULL. Use ops_plus for league-adjusted offense instead.
 
 ## Important Notes
 - Player names are stored as full names: "Aaron Judge", "Shohei Ohtani", etc.
 - Use LIKE with '%' for fuzzy name matching when the user gives a partial name
-- Team abbreviations: NYY, LAD, BOS, ATL, HOU, etc.
-- For rate stats (AVG, OBP, SLG, OPS), use the precomputed columns rather than calculating from raw counts
+- Team abbreviations use Retrosheet format: NYA (Yankees), NYN (Mets), LAN (Dodgers), CHN (Cubs), CHA (White Sox), SLN (Cardinals), SFN (Giants), SDN (Padres), TBA (Rays), KCA (Royals), ANA (Angels), WAS (Nationals), etc.
+- For rate stats (AVG, OBP, SLG, OPS, OPS+), use the precomputed columns rather than calculating from raw counts
+- For OPS+ leaderboards, apply the same PA minimums as other rate stats (>=400 full season, >=200 partial)
 - For counting stats (HR, RBI, etc.), use the integer columns directly
-- wRC+ of 100 is league average; higher is better
-- WAR: 0-1 = replacement level, 2-3 = solid starter, 4-5 = all-star, 6+ = MVP caliber
 - For split queries (vs lefties/righties), JOIN with platoon_splits using split = 'vs_LHP' or split = 'vs_RHP'
+- Platoon splits are only available for 1969 and later. If the user asks about splits for earlier years, let them know.
+- Some historical stats (IBB, SF, HBP) may be NULL or 0 for very old seasons (pre-1955)
 - If the user says "last year" or "last season", assume 2024. If they say "this year" or "this season", assume 2025.
 """

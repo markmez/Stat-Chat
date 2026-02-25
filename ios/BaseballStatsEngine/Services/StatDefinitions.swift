@@ -27,6 +27,7 @@ enum StatDefinitions {
         "OBP": "On-base percentage — how often a batter reaches base. League average is around .320.",
         "SLG": "Slugging percentage — total bases divided by at bats. Measures power. League average is around .400.",
         "OPS": "On-base plus slugging — OBP + SLG combined. Quick measure of overall hitting. .800+ is very good, .900+ is elite.",
+        "OPS+": "OPS adjusted for league average. 100 = league average hitter, 150+ is elite. Lets you compare across different seasons.",
         "ISO": "Isolated power — SLG minus AVG. Measures extra-base hit ability. .200+ is strong power.",
         "BABIP": "Batting average on balls in play — AVG excluding home runs and strikeouts. League average is around .300. Extreme values often regress.",
 

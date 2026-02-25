@@ -7,7 +7,7 @@ struct SeasonData: Sendable {
     let games: Int
     let teamGames: Int
     let stats: StatGridParser.StatGrid
-    /// Raw counting stat values (G, PA, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP, SF) + WAR
+    /// Raw counting stat values (G, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP)
     let countingValues: [String: Double]
     let platoonSplits: StatGridParser.StatGrid?
     let streaks: StatGridParser.StatGrid?
@@ -18,6 +18,9 @@ struct PlayerCard: Sendable {
     let team: String
     let fullTeamName: String
     let age: Int?
+    let birthdate: Date?
+    let bats: String?
+    let throws_: String?
     let seasons: [SeasonData]
     let careerTotals: StatGridParser.StatGrid?
     let platoonSplits: StatGridParser.StatGrid?
@@ -30,11 +33,11 @@ enum PlayerCardService {
 
     private static let db = DatabaseService()
 
-    // All 24 stats in conventional order
+    // All 21 stats in conventional order (PA and SF excluded for compact 3-row display)
     private static let allHeaders = [
-        "G", "PA", "AB", "R", "H", "2B", "3B", "HR", "RBI", "SB", "CS",
-        "BB", "IBB", "SO", "HBP", "SF",
-        "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP", "wRC+", "WAR"
+        "G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "SB", "CS",
+        "BB", "IBB", "SO", "HBP",
+        "AVG", "OBP", "SLG", "OPS", "OPS+", "ISO", "BABIP"
     ]
 
     static func fetch(name: String) async -> PlayerCard {
@@ -48,8 +51,19 @@ enum PlayerCardService {
         let splits = fetchPlatoonSplits(name: name)
         let streakGrid = fetchStreaks(name: name)
 
-        let currentAge = seasons.first?.age
         let fullTeam = teamFullName(team)
+
+        // Parse birthdate and compute dynamic age
+        var birthDate: Date?
+        var dynamicAge: Int?
+        if let bdString = playerInfo?.birthdate {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd"
+            if let date = fmt.date(from: bdString) {
+                birthDate = date
+                dynamicAge = Calendar.current.dateComponents([.year], from: date, to: Date()).year
+            }
+        }
 
         // Bio is async (network) — runs after SQL is done
         let bio = await fetchWikipediaBio(name: displayName)
@@ -58,7 +72,10 @@ enum PlayerCardService {
             name: displayName,
             team: team,
             fullTeamName: fullTeam,
-            age: currentAge,
+            age: dynamicAge,
+            birthdate: birthDate,
+            bats: playerInfo?.bats,
+            throws_: playerInfo?.throws_,
             seasons: seasons,
             careerTotals: career,
             platoonSplits: splits,
@@ -117,14 +134,14 @@ enum PlayerCardService {
         return parts.joined(separator: "\n")
     }
 
-    /// Fetch the latest season's 24 formatted stat values for a player.
+    /// Fetch the latest season's 21 formatted stat values for a player.
     private static func fetchLatestSeasonRow(name: String) -> (year: Int, values: [String])? {
         let sql = """
             SELECT s.season,
-                   s.games, s.plate_appearances, s.at_bats, s.runs, s.hits,
+                   s.games, s.at_bats, s.runs, s.hits,
                    s.doubles, s.triples, s.home_runs, s.rbi, s.stolen_bases, s.caught_stealing,
-                   s.walks, s.intentional_walks, s.strikeouts, s.hit_by_pitch, s.sacrifice_flies,
-                   s.batting_avg, s.obp, s.slg, s.ops, s.iso, s.babip, s.wrc_plus, s.war
+                   s.walks, s.intentional_walks, s.strikeouts, s.hit_by_pitch,
+                   s.batting_avg, s.obp, s.slg, s.ops, s.ops_plus, s.iso, s.babip
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
             WHERE p.name LIKE '%\(sanitize(name))%'
@@ -135,19 +152,19 @@ enum PlayerCardService {
               let row = result.rows.first,
               let year = Int(row[0]) else { return nil }
 
-        let values = Array(row[1...24])
+        let values = Array(row[1...21])
         let formatted = formatValues(headers: allHeaders, values: values)
         return (year, formatted)
     }
 
-    /// Fetch career aggregate 24 formatted stat values for a player.
+    /// Fetch career aggregate 21 formatted stat values for a player.
     private static func fetchCareerRow(name: String) -> [String]? {
         let sql = """
-            SELECT SUM(s.games), SUM(s.plate_appearances), SUM(s.at_bats),
+            SELECT SUM(s.games), SUM(s.at_bats),
                    SUM(s.runs), SUM(s.hits), SUM(s.doubles), SUM(s.triples),
                    SUM(s.home_runs), SUM(s.rbi), SUM(s.stolen_bases), SUM(s.caught_stealing),
                    SUM(s.walks), SUM(s.intentional_walks), SUM(s.strikeouts),
-                   SUM(s.hit_by_pitch), SUM(s.sacrifice_flies),
+                   SUM(s.hit_by_pitch),
                    ROUND(CAST(SUM(s.hits) AS REAL) / NULLIF(SUM(s.at_bats), 0), 3),
                    ROUND((CAST(SUM(s.hits) + SUM(s.walks) + SUM(s.hit_by_pitch) AS REAL) /
                           NULLIF(SUM(s.at_bats) + SUM(s.walks) + SUM(s.hit_by_pitch) + SUM(s.sacrifice_flies), 0)), 3),
@@ -159,9 +176,7 @@ enum PlayerCardService {
                           NULLIF(SUM(s.at_bats), 0) -
                           CAST(SUM(s.hits) AS REAL) / NULLIF(SUM(s.at_bats), 0), 3),
                    ROUND(CAST(SUM(s.hits) - SUM(s.home_runs) AS REAL) /
-                          NULLIF(SUM(s.at_bats) - SUM(s.strikeouts) - SUM(s.home_runs) + SUM(s.sacrifice_flies), 0), 3),
-                   ROUND(AVG(s.wrc_plus)),
-                   ROUND(SUM(s.war), 1)
+                          NULLIF(SUM(s.at_bats) - SUM(s.strikeouts) - SUM(s.home_runs) + SUM(s.sacrifice_flies), 0), 3)
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
             WHERE p.name LIKE '%\(sanitize(name))%'
@@ -170,16 +185,17 @@ enum PlayerCardService {
         guard let result = try? db.execute(sql: sql),
               let row = result.rows.first else { return nil }
 
-        // row has 22 values (no OPS — need to compute and insert)
-        let headersNoOPS = allHeaders.filter { $0 != "OPS" }
-        var formatted = formatValues(headers: headersNoOPS, values: row)
+        // row has 19 values: 14 counting + 5 rate (no OPS or OPS+)
+        let headersNoOPSGroup = allHeaders.filter { $0 != "OPS" && $0 != "OPS+" }
+        var formatted = formatValues(headers: headersNoOPSGroup, values: row)
 
-        // Insert OPS after SLG (index 18)
-        if formatted.count >= 19 {
-            let obp = Double(formatted[17]) ?? 0
-            let slg = Double(formatted[18]) ?? 0
+        // Insert OPS after SLG (index 16), then OPS+ after OPS
+        if formatted.count >= 17 {
+            let obp = Double(formatted[15]) ?? 0
+            let slg = Double(formatted[16]) ?? 0
             let ops = String(format: "%.3f", obp + slg)
-            formatted.insert(ops, at: 19)
+            formatted.insert(ops, at: 17)
+            formatted.insert("--", at: 18) // Career OPS+ not computed
         }
 
         return formatted
@@ -187,16 +203,19 @@ enum PlayerCardService {
 
     // MARK: - Player info
 
-    private static func fetchPlayerInfo(name: String) -> (name: String, team: String)? {
+    private static func fetchPlayerInfo(name: String) -> (name: String, team: String, birthdate: String?, bats: String?, throws_: String?)? {
         let sql = """
-            SELECT p.name, p.team FROM players p
+            SELECT p.name, p.team, p.birthdate, p.bats, p.throws FROM players p
             WHERE p.name LIKE '%\(sanitize(name))%'
             LIMIT 1
             """
         guard let result = try? db.execute(sql: sql),
               let row = result.rows.first,
               row.count >= 2 else { return nil }
-        return (row[0], row[1])
+        let birthdate = row.count > 2 && !row[2].isEmpty ? row[2] : nil
+        let bats = row.count > 3 && !row[3].isEmpty ? row[3] : nil
+        let throws_ = row.count > 4 && !row[4].isEmpty ? row[4] : nil
+        return (row[0], row[1], birthdate, bats, throws_)
     }
 
     // MARK: - All seasons
@@ -204,10 +223,10 @@ enum PlayerCardService {
     private static func fetchAllSeasons(name: String) -> [SeasonData] {
         let sql = """
             SELECT s.season, s.team, s.age,
-                   s.games, s.plate_appearances, s.at_bats, s.runs, s.hits,
+                   s.games, s.at_bats, s.runs, s.hits,
                    s.doubles, s.triples, s.home_runs, s.rbi, s.stolen_bases, s.caught_stealing,
-                   s.walks, s.intentional_walks, s.strikeouts, s.hit_by_pitch, s.sacrifice_flies,
-                   s.batting_avg, s.obp, s.slg, s.ops, s.iso, s.babip, s.wrc_plus, s.war
+                   s.walks, s.intentional_walks, s.strikeouts, s.hit_by_pitch,
+                   s.batting_avg, s.obp, s.slg, s.ops, s.ops_plus, s.iso, s.babip
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
             WHERE p.name LIKE '%\(sanitize(name))%'
@@ -215,9 +234,9 @@ enum PlayerCardService {
             """
         guard let result = try? db.execute(sql: sql) else { return [] }
 
-        // Counting stat keys matching columns 3-18 (games through sacrifice_flies) + war at column 26
-        let countingKeys = ["G", "PA", "AB", "R", "H", "2B", "3B", "HR", "RBI", "SB", "CS",
-                            "BB", "IBB", "SO", "HBP", "SF"]
+        // Counting stat keys matching columns 3-16 (games through hit_by_pitch)
+        let countingKeys = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "SB", "CS",
+                            "BB", "IBB", "SO", "HBP"]
 
         var seasons: [SeasonData] = []
         for row in result.rows {
@@ -226,8 +245,8 @@ enum PlayerCardService {
             let age = Int(row[2]) ?? 0
             let games = Int(row[3]) ?? 0
 
-            // Columns 3-26 map to allHeaders (24 stats)
-            let values = Array(row[3...26])
+            // Columns 3-23 map to allHeaders (21 stats)
+            let values = Array(row[3...23])
             let formatted = formatValues(headers: allHeaders, values: values)
             let grid = StatGridParser.StatGrid(
                 headers: allHeaders,
@@ -239,7 +258,6 @@ enum PlayerCardService {
             for (i, key) in countingKeys.enumerated() {
                 counting[key] = Double(row[3 + i]) ?? 0
             }
-            counting["WAR"] = Double(row[26]) ?? 0
 
             // Get team max games for this team+season
             let teamGames = fetchTeamGames(team: team, season: year)
@@ -263,11 +281,11 @@ enum PlayerCardService {
     private static func fetchCareerTotals(name: String) -> StatGridParser.StatGrid? {
         let sql = """
             SELECT COUNT(DISTINCT s.season),
-                   SUM(s.games), SUM(s.plate_appearances), SUM(s.at_bats),
+                   SUM(s.games), SUM(s.at_bats),
                    SUM(s.runs), SUM(s.hits), SUM(s.doubles), SUM(s.triples),
                    SUM(s.home_runs), SUM(s.rbi), SUM(s.stolen_bases), SUM(s.caught_stealing),
                    SUM(s.walks), SUM(s.intentional_walks), SUM(s.strikeouts),
-                   SUM(s.hit_by_pitch), SUM(s.sacrifice_flies),
+                   SUM(s.hit_by_pitch),
                    ROUND(CAST(SUM(s.hits) AS REAL) / NULLIF(SUM(s.at_bats), 0), 3),
                    ROUND((CAST(SUM(s.hits) + SUM(s.walks) + SUM(s.hit_by_pitch) AS REAL) /
                           NULLIF(SUM(s.at_bats) + SUM(s.walks) + SUM(s.hit_by_pitch) + SUM(s.sacrifice_flies), 0)), 3),
@@ -279,9 +297,7 @@ enum PlayerCardService {
                           NULLIF(SUM(s.at_bats), 0) -
                           CAST(SUM(s.hits) AS REAL) / NULLIF(SUM(s.at_bats), 0), 3),
                    ROUND(CAST(SUM(s.hits) - SUM(s.home_runs) AS REAL) /
-                          NULLIF(SUM(s.at_bats) - SUM(s.strikeouts) - SUM(s.home_runs) + SUM(s.sacrifice_flies), 0), 3),
-                   ROUND(AVG(s.wrc_plus)),
-                   ROUND(SUM(s.war), 1)
+                          NULLIF(SUM(s.at_bats) - SUM(s.strikeouts) - SUM(s.home_runs) + SUM(s.sacrifice_flies), 0), 3)
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
             WHERE p.name LIKE '%\(sanitize(name))%'
@@ -291,20 +307,21 @@ enum PlayerCardService {
               let row = result.rows.first else { return nil }
 
         let seasons = row[0]
-        // row[1..16] = counting stats (G through SF)
-        // row[17..19] = AVG, OBP, SLG
-        // row[20] = ISO, row[21] = BABIP, row[22] = wRC+, row[23] = WAR
-        // We need to insert OPS (OBP + SLG) between SLG and ISO
-        var values = Array(row.dropFirst())
-        let formatted = formatValues(headers: allHeaders.filter { $0 != "OPS" }, values: values)
+        // row[1..14] = counting stats (G through HBP, no PA or SF)
+        // row[15..17] = AVG, OBP, SLG
+        // row[18] = ISO, row[19] = BABIP
+        // We need to insert OPS (OBP + SLG) and OPS+ ("--") between SLG and ISO
+        let values = Array(row.dropFirst())
+        let formatted = formatValues(headers: allHeaders.filter { $0 != "OPS" && $0 != "OPS+" }, values: values)
 
-        // Insert computed OPS after SLG (index 18 in the 23-element array = position after SLG in formatted)
+        // Insert computed OPS after SLG (index 16), then OPS+ after OPS
         var withOPS = formatted
-        if withOPS.count >= 19 {
-            let obp = Double(withOPS[17]) ?? 0
-            let slg = Double(withOPS[18]) ?? 0
+        if withOPS.count >= 17 {
+            let obp = Double(withOPS[15]) ?? 0
+            let slg = Double(withOPS[16]) ?? 0
             let ops = String(format: "%.3f", obp + slg)
-            withOPS.insert(ops, at: 19)
+            withOPS.insert(ops, at: 17)
+            withOPS.insert("--", at: 18) // Career OPS+ not computed
         }
 
         return StatGridParser.StatGrid(
@@ -320,7 +337,7 @@ enum PlayerCardService {
             SELECT ps.split, ps.plate_appearances, ps.at_bats, ps.hits,
                    ps.doubles, ps.triples, ps.home_runs, ps.rbi,
                    ps.walks, ps.strikeouts,
-                   ps.batting_avg, ps.obp, ps.slg, ps.ops, ps.iso, ps.babip, ps.wrc_plus
+                   ps.batting_avg, ps.obp, ps.slg, ps.ops, ps.iso, ps.babip
             FROM platoon_splits ps
             JOIN players p ON ps.player_id = p.player_id
             WHERE p.name LIKE '%\(sanitize(name))%' AND ps.season = \(season)
@@ -329,7 +346,7 @@ enum PlayerCardService {
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else { return nil }
 
-        let headers = ["PA", "AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP", "wRC+"]
+        let headers = ["PA", "AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
         var rows: [StatGridParser.StatGrid.Row] = []
         for row in result.rows.prefix(2) {
             let splitLabel = row[0] == "vs_LHP" ? "vs LHP" : "vs RHP"
@@ -404,7 +421,7 @@ enum PlayerCardService {
             SELECT ps.split, ps.plate_appearances, ps.at_bats, ps.hits,
                    ps.doubles, ps.triples, ps.home_runs, ps.rbi,
                    ps.walks, ps.strikeouts,
-                   ps.batting_avg, ps.obp, ps.slg, ps.ops, ps.iso, ps.babip, ps.wrc_plus
+                   ps.batting_avg, ps.obp, ps.slg, ps.ops, ps.iso, ps.babip
             FROM platoon_splits ps
             JOIN players p ON ps.player_id = p.player_id
             WHERE p.name LIKE '%\(sanitize(name))%'
@@ -413,7 +430,7 @@ enum PlayerCardService {
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else { return nil }
 
-        let headers = ["PA", "AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP", "wRC+"]
+        let headers = ["PA", "AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
 
         // Take only the most recent season's splits (first 2 rows max)
         var rows: [StatGridParser.StatGrid.Row] = []
@@ -552,13 +569,7 @@ enum PlayerCardService {
         let rateStats: Set<String> = ["AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
         var formatted: [String] = []
         for (idx, value) in values.enumerated() {
-            if idx < headers.count && headers[idx] == "wRC+" {
-                if let num = Double(value) {
-                    formatted.append(String(Int(num.rounded())))
-                } else {
-                    formatted.append(value)
-                }
-            } else if idx < headers.count && rateStats.contains(headers[idx]) {
+            if idx < headers.count && rateStats.contains(headers[idx]) {
                 formatted.append(formatRate(value))
             } else {
                 formatted.append(value)
@@ -569,6 +580,7 @@ enum PlayerCardService {
 
     private static func teamFullName(_ abbreviation: String) -> String {
         let teams: [String: String] = [
+            // Standard abbreviations
             "ARI": "Arizona Diamondbacks", "ATL": "Atlanta Braves",
             "BAL": "Baltimore Orioles", "BOS": "Boston Red Sox",
             "CHC": "Chicago Cubs", "CHW": "Chicago White Sox",
@@ -589,6 +601,15 @@ enum PlayerCardService {
             "SF": "San Francisco Giants", "TB": "Tampa Bay Rays",
             "WSH": "Washington Nationals", "CWS": "Chicago White Sox",
             "LAE": "Los Angeles Angels",
+            // Retrosheet abbreviations
+            "NYA": "New York Yankees", "NYN": "New York Mets",
+            "CHN": "Chicago Cubs", "CHA": "Chicago White Sox",
+            "SLN": "St. Louis Cardinals", "SFN": "San Francisco Giants",
+            "SDN": "San Diego Padres", "LAN": "Los Angeles Dodgers",
+            "TBA": "Tampa Bay Rays", "KCA": "Kansas City Royals",
+            "ANA": "Los Angeles Angels", "WAS": "Washington Nationals",
+            "FLO": "Florida Marlins", "MON": "Montreal Expos",
+            "ATH": "Oakland Athletics",
         ]
         return teams[abbreviation] ?? abbreviation
     }
