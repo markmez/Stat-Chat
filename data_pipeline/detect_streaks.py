@@ -441,9 +441,11 @@ def find_best_worst_windows(games, season_ops):
 
 
 def detect_sliding_streaks(conn):
-    """Third pass: sliding window for player-seasons with no useful data in Tier 1 or 2.
+    """Third pass: sliding window gap-filler for player-seasons missing hot or cold data.
 
-    Finds the single hottest and coldest N-game stretches by brute-force scanning.
+    For each player-season, checks if hot and/or cold streaks exist in Tier 1 or 2.
+    If either is missing, runs a brute-force sliding window to find the best/worst
+    N-game stretches and fills the gap.
     """
     create_streaks_sliding_table(conn)
     cursor = conn.cursor()
@@ -452,23 +454,30 @@ def detect_sliding_streaks(conn):
     cursor.execute("DELETE FROM streaks_sliding")
     conn.commit()
 
-    # Find player-seasons with single segment in Tier 1 AND no useful Tier 2 data
-    cursor.execute("""
-        SELECT t1.player_id, t1.season FROM (
-            SELECT player_id, season FROM streaks
-            GROUP BY player_id, season HAVING COUNT(*) = 1
-        ) t1
-        WHERE NOT EXISTS (
-            SELECT 1 FROM streaks_sensitive ss
-            WHERE ss.player_id = t1.player_id AND ss.season = t1.season
-                AND ss.performance <> 'average'
-        )
-    """)
-    no_streak_players = cursor.fetchall()
-    print(f"Running sliding window streak detection for {len(no_streak_players)} player-seasons...")
+    player_seasons = get_player_seasons(conn)
+    print(f"Running sliding window gap-fill for {len(player_seasons)} player-seasons...")
 
     total_sliding = 0
-    for i, (player_id, season) in enumerate(no_streak_players):
+    skipped = 0
+    for i, (player_id, season) in enumerate(player_seasons):
+        # Check which performance types are already covered by T1 or T2
+        cursor.execute("""
+            SELECT DISTINCT performance FROM (
+                SELECT performance FROM streaks
+                WHERE player_id = ? AND season = ? AND performance IN ('hot', 'cold')
+                UNION ALL
+                SELECT performance FROM streaks_sensitive
+                WHERE player_id = ? AND season = ? AND performance IN ('hot', 'cold')
+            )
+        """, (player_id, season, player_id, season))
+        existing = {row[0] for row in cursor.fetchall()}
+
+        needs_hot = 'hot' not in existing
+        needs_cold = 'cold' not in existing
+        if not needs_hot and not needs_cold:
+            skipped += 1
+            continue
+
         games = get_game_logs(conn, player_id, season)
         if len(games) < MIN_SEGMENT_SIZE * 2:
             continue
@@ -480,8 +489,8 @@ def detect_sliding_streaks(conn):
 
         best, worst = find_best_worst_windows(games, season_ops)
 
-        for streak_data, label in [(best, "hot"), (worst, "cold")]:
-            if streak_data is None:
+        for streak_data, label, needed in [(best, "hot", needs_hot), (worst, "cold", needs_cold)]:
+            if not needed or streak_data is None:
                 continue
             seg_ops, start_idx, end_idx, _ = streak_data
             deviation = abs(seg_ops - season_ops) / season_ops
@@ -505,12 +514,12 @@ def detect_sliding_streaks(conn):
             ))
             total_sliding += 1
 
-        if (i + 1) % 100 == 0:
+        if (i + 1) % 500 == 0:
             conn.commit()
-            print(f"  Processed {i + 1}/{len(no_streak_players)} player-seasons ({total_sliding} sliding streaks)...")
+            print(f"  Processed {i + 1}/{len(player_seasons)} player-seasons ({total_sliding} sliding streaks, {skipped} already covered)...")
 
     conn.commit()
-    print(f"Done! Detected {total_sliding} sliding window streak segments.")
+    print(f"Done! Detected {total_sliding} sliding window streak segments ({skipped} player-seasons already had both hot+cold).")
 
 
 # --- Current Form detection ---

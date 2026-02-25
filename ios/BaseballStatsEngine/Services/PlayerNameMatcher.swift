@@ -84,6 +84,99 @@ enum PlayerNameMatcher {
         return nil
     }
 
+    /// Detect historical streak queries like "Judge's hot streaks last year" or "Ohtani cold streaks 2024".
+    /// Returns (canonicalName, "hot"/"cold", optionalSeason). Must be checked BEFORE parseCurrentForm
+    /// because both trigger on "hot streak" — this catches plural "streaks" or past-tense season references.
+    static func parseStreakQuery(_ input: String) -> (name: String, performance: String, season: Int?)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Determine hot vs cold
+        let hotTriggers = [
+            "hot streaks", "hot streak", "best streaks", "best streak",
+            "hottest streak", "hottest stretches", "hot runs",
+            "when was", "when did", "get hot"
+        ]
+        let coldTriggers = [
+            "cold streaks", "cold streak", "worst streaks", "worst streak",
+            "coldest streak", "cold stretches", "slumps", "slump",
+            "when was", "when did", "get cold"
+        ]
+
+        // Check cold first (more specific phrases like "cold streak" before generic "when was")
+        let isCold = coldTriggers.contains(where: { lower.contains($0) })
+            && (lower.contains("cold") || lower.contains("worst") || lower.contains("coldest") || lower.contains("slump"))
+        let isHot = hotTriggers.contains(where: { lower.contains($0) })
+            && (lower.contains("hot") || lower.contains("best") || lower.contains("hottest"))
+
+        guard isHot || isCold else { return nil }
+        let performance = isCold ? "cold" : "hot"
+
+        // Distinguish from current-form queries: this parser owns plural "streaks", explicit seasons,
+        // and past-tense references. If it's singular "hot streak" with no season context and present-tense
+        // wording (e.g. "Judge's hot streak right now"), let parseCurrentForm handle it.
+        let hasPlural = lower.contains("streaks") || lower.contains("stretches")
+            || lower.contains("runs") || lower.contains("slumps")
+        let hasExplicitYear = lower.range(of: "20[12][0-9]", options: .regularExpression) != nil
+        let pastTensePatterns = ["last year", "last season", "previous season", "prior season",
+                                 "two years ago", "2 years ago", "three years ago", "3 years ago"]
+        let hasPastTense = pastTensePatterns.contains(where: { lower.contains($0) })
+
+        // If singular "streak" with no season reference, defer to parseCurrentForm for "hot" queries
+        if !hasPlural && !hasExplicitYear && !hasPastTense && performance == "hot" {
+            return nil
+        }
+
+        // Detect season (reuse same logic as parseSeasonLookup)
+        var targetSeason: Int?
+        if let range = lower.range(of: "20[12][0-9]", options: .regularExpression),
+           let year = Int(lower[range]) {
+            targetSeason = year
+        } else {
+            let db = DatabaseService()
+            let currentYear: Int = {
+                if let result = try? db.execute(sql: "SELECT MAX(season) FROM season_batting_stats"),
+                   let row = result.rows.first, let year = Int(row[0]) {
+                    return year
+                }
+                return 2025
+            }()
+            let relativePatterns: [(patterns: [String], offset: Int)] = [
+                (["this year", "this season"], 0),
+                (["last year", "last season", "previous season", "prior season"], -1),
+                (["two years ago", "2 years ago"], -2),
+                (["three years ago", "3 years ago"], -3),
+            ]
+            for (patterns, offset) in relativePatterns {
+                if patterns.contains(where: { lower.contains($0) }) {
+                    targetSeason = currentYear + offset
+                    break
+                }
+            }
+        }
+
+        // Find player name — full name first (word-boundary aware)
+        var playerName: String?
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) {
+                playerName = name
+                break
+            }
+        }
+
+        // Try last name — unambiguous only
+        if playerName == nil {
+            for (lastName, players) in lastNameIndex {
+                if containsWord(lastName, in: lower) && players.count == 1 {
+                    playerName = players[0]
+                    break
+                }
+            }
+        }
+
+        guard let name = playerName else { return nil }
+        return (name, performance, targetSeason)
+    }
+
     /// Detect current hot streak queries like "how has Judge been playing lately?" or "is Ohtani hot right now?"
     /// Returns the canonical player name if one resolves unambiguously.
     static func parseCurrentForm(_ input: String) -> String? {

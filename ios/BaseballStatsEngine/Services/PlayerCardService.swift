@@ -297,7 +297,7 @@ enum PlayerCardService {
 
             // Per-season splits, streaks, and current form
             let splits = fetchPlatoonSplitsForSeason(name: name, season: year)
-            let streakGrid = fetchStreaksForSeason(name: name, season: year)
+            let streakGrid = fetchStreaksForSeason(name: name, season: year, performance: "hot")
             let currentForm = fetchCurrentFormForSeason(name: name, season: year)
 
             seasons.append(SeasonData(
@@ -394,19 +394,20 @@ enum PlayerCardService {
 
     // MARK: - Per-season streaks
 
-    private static func fetchStreaksForSeason(name: String, season: Int) -> StatGridParser.StatGrid? {
+    static func fetchStreaksForSeason(name: String, season: Int, performance: String = "hot") -> StatGridParser.StatGrid? {
+        let orderDir = performance == "cold" ? "ASC" : "DESC"
         var sql = """
             SELECT st.start_date, st.end_date, st.num_games,
                    st.at_bats, st.hits, st.walks, st.strikeouts,
                    st.batting_avg, st.obp, st.slg, st.ops, st.home_runs
             FROM streaks st
             JOIN players p ON st.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND st.season = \(season) AND st.performance = 'hot'
-            ORDER BY st.ops DESC
+            WHERE p.name LIKE '%\(sanitize(name))%' AND st.season = \(season) AND st.performance = '\(performance)'
+            ORDER BY st.ops \(orderDir)
             """
         var result = try? db.execute(sql: sql)
 
-        // Fall back to sensitive streaks if no hot rows at all
+        // Fall back to sensitive streaks if no rows
         if result == nil || result!.rows.isEmpty {
             sql = """
                 SELECT ss.start_date, ss.end_date, ss.num_games,
@@ -414,8 +415,8 @@ enum PlayerCardService {
                        ss.batting_avg, ss.obp, ss.slg, ss.ops, ss.home_runs
                 FROM streaks_sensitive ss
                 JOIN players p ON ss.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%' AND ss.season = \(season) AND ss.performance = 'hot'
-                ORDER BY ss.ops DESC
+                WHERE p.name LIKE '%\(sanitize(name))%' AND ss.season = \(season) AND ss.performance = '\(performance)'
+                ORDER BY ss.ops \(orderDir)
                 """
             result = try? db.execute(sql: sql)
         }
@@ -428,8 +429,8 @@ enum PlayerCardService {
                        sl.batting_avg, sl.obp, sl.slg, sl.ops, sl.home_runs
                 FROM streaks_sliding sl
                 JOIN players p ON sl.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%' AND sl.season = \(season) AND sl.performance = 'hot'
-                ORDER BY sl.ops DESC
+                WHERE p.name LIKE '%\(sanitize(name))%' AND sl.season = \(season) AND sl.performance = '\(performance)'
+                ORDER BY sl.ops \(orderDir)
                 """
             result = try? db.execute(sql: sql)
         }
@@ -553,6 +554,60 @@ enum PlayerCardService {
                 parts.append("ROW \(label): \(g), \(ab), \(h), \(bb), \(so), \(avg), \(obpVal), \(slgVal), \(opsVal), \(hr)")
             }
             parts.append("[/STATGRID]")
+        }
+
+        return parts.joined(separator: "\n")
+    }
+
+    /// Build a structured response for streak history queries like "Judge's hot streaks 2024".
+    /// Returns a string with [STATGRID] blocks — no Claude call needed.
+    static func buildStreakList(name: String, performance: String, season: Int?) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        // If no season specified, find the most recent season with streak data
+        let targetSeason: Int
+        if let s = season {
+            targetSeason = s
+        } else {
+            let sql = """
+                SELECT MAX(st.season) FROM streaks st
+                JOIN players p ON st.player_id = p.player_id
+                WHERE p.name LIKE '%\(sanitize(name))%'
+                """
+            guard let result = try? db.execute(sql: sql),
+                  let row = result.rows.first,
+                  let year = Int(row[0]) else { return nil }
+            targetSeason = year
+        }
+
+        guard let grid = fetchStreaksForSeason(name: name, season: targetSeason, performance: performance),
+              !grid.rows.isEmpty else {
+            let label = performance == "cold" ? "cold streaks" : "hot streaks"
+            return "No \(label) found for **\(displayName)** in \(targetSeason)."
+        }
+
+        let label = performance == "cold" ? "Cold Streaks" : "Hot Streaks"
+        var parts: [String] = []
+        parts.append("**\(displayName)** — \(targetSeason) \(label)\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + grid.headers.joined(separator: ", "))
+        for row in grid.rows {
+            parts.append("ROW \(row.label): " + row.values.joined(separator: ", "))
+        }
+        parts.append("[/STATGRID]")
+
+        // Summary line
+        let count = grid.rows.count
+        let streakWord = count == 1 ? "streak" : "streaks"
+        if let topRow = grid.rows.first {
+            let opsIdx = grid.headers.firstIndex(of: "OPS") ?? -1
+            let opsValue = opsIdx >= 0 && opsIdx < topRow.values.count ? topRow.values[opsIdx] : ""
+            let gIdx = grid.headers.firstIndex(of: "G") ?? -1
+            let gValue = gIdx >= 0 && gIdx < topRow.values.count ? topRow.values[gIdx] : ""
+            let adjective = performance == "cold" ? "coldest" : "hottest"
+            parts.append("\n\(count) \(performance) \(streakWord) detected. The \(adjective) was \(gValue) games (\(topRow.label)) with a \(opsValue) OPS.")
         }
 
         return parts.joined(separator: "\n")

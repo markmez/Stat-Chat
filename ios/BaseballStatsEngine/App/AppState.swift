@@ -47,6 +47,15 @@ final class AppState {
             return
         }
 
+        // Intercept streak history queries — build response from DB, skip Claude
+        if let streak = PlayerNameMatcher.parseStreakQuery(trimmed),
+           let response = PlayerCardService.buildStreakList(name: streak.name, performance: streak.performance, season: streak.season) {
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            queryEngine.injectHistory(question: trimmed, answer: response)
+            return
+        }
+
         // Intercept current hot streak queries — build response from DB, skip Claude
         if let playerName = PlayerNameMatcher.parseCurrentForm(trimmed),
            let response = PlayerCardService.buildCurrentHotStreak(name: playerName) {

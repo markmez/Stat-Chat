@@ -96,6 +96,14 @@ enum StatGridParser {
                 } else {
                     rows.append(StatGrid.Row(label: parts[0], values: Array(parts.dropFirst())))
                 }
+            } else if line.hasPrefix("ROW "), let colonIdx = line.firstIndex(of: ":") {
+                // Labeled row: "ROW Jun 17 – Jun 25: 8, 35, ..."
+                let label = String(line[line.index(line.startIndex, offsetBy: 4)..<colonIdx])
+                    .trimmingCharacters(in: .whitespaces)
+                let valuesStr = String(line[line.index(after: colonIdx)...])
+                let parts = valuesStr.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                guard !parts.isEmpty else { continue }
+                rows.append(StatGrid.Row(label: label, values: parts))
             } else if line.hasPrefix("FORM:") {
                 // Parse FORM: Player Name, season, autoDetectedGameNumber, totalGames
                 let formContent = String(line.dropFirst("FORM:".count))
