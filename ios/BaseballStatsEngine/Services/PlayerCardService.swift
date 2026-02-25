@@ -666,6 +666,196 @@ enum PlayerCardService {
         return parts.joined(separator: "\n")
     }
 
+    // MARK: - Single stat lookup (chat response builder)
+
+    /// Build a natural language response for "Judge home runs" or "Ohtani OPS" queries.
+    static func buildSingleStatLookup(name: String, stat: PlayerNameMatcher.StatInfo, season: Int) -> String? {
+        let sql = """
+            SELECT p.name, s.team, s.\(stat.dbColumn)
+            FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND s.season = \(season)
+            LIMIT 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              row.count >= 3 else { return nil }
+
+        let displayName = row[0]
+        let team = row[1]
+        let rawValue = row[2]
+
+        // Format the value
+        let formattedValue: String
+        if stat.isRate {
+            formattedValue = formatRate(rawValue)
+        } else {
+            formattedValue = rawValue
+        }
+
+        // Build stat-specific sentence
+        let sentence: String
+        switch stat.displayAbbrev {
+        case "HR":
+            sentence = "**\(displayName)** hit **\(formattedValue)** home runs in \(season)."
+        case "AVG":
+            sentence = "**\(displayName)** posted a **\(formattedValue) AVG** in \(season)."
+        case "RBI":
+            sentence = "**\(displayName)** drove in **\(formattedValue)** runs in \(season)."
+        case "SB":
+            sentence = "**\(displayName)** stole **\(formattedValue)** bases in \(season)."
+        case "R":
+            sentence = "**\(displayName)** scored **\(formattedValue)** runs in \(season)."
+        case "H":
+            sentence = "**\(displayName)** had **\(formattedValue)** hits in \(season)."
+        case "SO":
+            sentence = "**\(displayName)** struck out **\(formattedValue)** times in \(season)."
+        case "BB":
+            sentence = "**\(displayName)** drew **\(formattedValue)** walks in \(season)."
+        case "OPS":
+            sentence = "**\(displayName)** posted a **\(formattedValue) OPS** in \(season)."
+        case "OPS+":
+            sentence = "**\(displayName)** posted a **\(formattedValue) OPS+** in \(season)."
+        case "OBP":
+            sentence = "**\(displayName)** posted a **\(formattedValue) OBP** in \(season)."
+        case "SLG":
+            sentence = "**\(displayName)** posted a **\(formattedValue) SLG** in \(season)."
+        default:
+            if stat.isRate {
+                sentence = "**\(displayName)** posted a **\(formattedValue) \(stat.displayAbbrev)** in \(season)."
+            } else {
+                sentence = "**\(displayName)** had **\(formattedValue) \(stat.displayAbbrev)** in \(season)."
+            }
+        }
+
+        let teamDisplay = teamFullName(team)
+        return "\(sentence) (\(teamDisplay))\n\n_Tap a player name for their full profile._"
+    }
+
+    // MARK: - Platoon splits (chat response builder)
+
+    /// Build a STATGRID response for "Judge vs lefties" or "Soto splits" queries.
+    static func buildPlatoonSplits(name: String, hand: String?, season: Int) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        var splitFilter = ""
+        if let hand {
+            let splitValue = hand == "LHP" ? "vs_LHP" : "vs_RHP"
+            splitFilter = " AND ps.split = '\(splitValue)'"
+        }
+
+        let sql = """
+            SELECT ps.split, ps.plate_appearances, ps.at_bats, ps.hits,
+                   ps.doubles, ps.triples, ps.home_runs, ps.rbi,
+                   ps.walks, ps.strikeouts,
+                   ps.batting_avg, ps.obp, ps.slg, ps.ops, ps.iso, ps.babip
+            FROM platoon_splits ps
+            JOIN players p ON ps.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND ps.season = \(season)\(splitFilter)
+            ORDER BY ps.split
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["PA", "AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+
+        // Header text
+        let subtitle: String
+        if let hand {
+            subtitle = hand == "LHP" ? "vs Left-Handed Pitchers" : "vs Right-Handed Pitchers"
+        } else {
+            subtitle = "Platoon Splits"
+        }
+
+        var parts: [String] = []
+        parts.append("**\(displayName)** \u{2014} \(season) \(subtitle)\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + headers.joined(separator: ", "))
+        for row in result.rows.prefix(2) {
+            let splitLabel = row[0] == "vs_LHP" ? "vs LHP" : "vs RHP"
+            let values = formatValues(headers: headers, values: Array(row.dropFirst()))
+            parts.append("ROW \(splitLabel): " + values.joined(separator: ", "))
+        }
+        parts.append("[/STATGRID]")
+
+        parts.append("\n_Tap a player name for their full profile._")
+
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - Leaderboard (chat response builder)
+
+    /// Build a numbered leaderboard for "HR leaders" or "top 5 OPS" queries.
+    static func buildLeaderboard(stat: PlayerNameMatcher.StatInfo, season: Int, limit: Int) -> String {
+        // Rate stats need a PA minimum
+        let paFilter: String
+        if stat.isRate {
+            // Determine if full season (teamGames >= 140) or partial
+            let maxGamesSql = "SELECT MAX(games) FROM season_batting_stats WHERE season = \(season)"
+            let maxGames: Int
+            if let r = try? db.execute(sql: maxGamesSql), let row = r.rows.first, let val = Int(row[0]) {
+                maxGames = val
+            } else {
+                maxGames = 162
+            }
+            let paMin = maxGames >= 140 ? 400 : 200
+            paFilter = " AND s.plate_appearances >= \(paMin)"
+        } else {
+            paFilter = ""
+        }
+
+        // Sort direction: most stats descend, but SO and CS are "worst = most"
+        let orderDir: String
+        if stat.displayAbbrev == "SO" || stat.displayAbbrev == "CS" {
+            orderDir = "DESC"  // still "most" for leaderboard purposes
+        } else {
+            orderDir = "DESC"
+        }
+
+        let sql = """
+            SELECT p.name, s.team, s.\(stat.dbColumn)
+            FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE s.season = \(season)\(paFilter)
+            ORDER BY s.\(stat.dbColumn) \(orderDir)
+            LIMIT \(limit)
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else {
+            return "No \(stat.displayName) leaders found for \(season)."
+        }
+
+        var parts: [String] = []
+        parts.append("**\(season) \(stat.displayName) Leaders**\n")
+
+        for (i, row) in result.rows.enumerated() {
+            let playerName = row[0]
+            let team = row[1]
+            let rawValue = row[2]
+            let formattedValue = stat.isRate ? formatRate(rawValue) : rawValue
+            parts.append("\(i + 1). **\(playerName)** (\(team)) \u{2014} \(formattedValue)")
+        }
+
+        if stat.isRate {
+            // Determine PA minimum used
+            let maxGamesSql = "SELECT MAX(games) FROM season_batting_stats WHERE season = \(season)"
+            let maxGames: Int
+            if let r = try? db.execute(sql: maxGamesSql), let row = r.rows.first, let val = Int(row[0]) {
+                maxGames = val
+            } else {
+                maxGames = 162
+            }
+            let paMin = maxGames >= 140 ? 400 : 200
+            parts.append("\n_Min. \(paMin) PA. Tap a player name for their full profile._")
+        } else {
+            parts.append("\n_Tap a player name for their full profile._")
+        }
+
+        return parts.joined(separator: "\n")
+    }
+
     // MARK: - Current form
 
     static func fetchCurrentFormForSeason(name: String, season: Int) -> CurrentFormData? {

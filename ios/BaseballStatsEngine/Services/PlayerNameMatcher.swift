@@ -4,6 +4,128 @@ enum PlayerNameMatcher {
     nonisolated(unsafe) private(set) static var sortedNames: [String] = []
     nonisolated(unsafe) private(set) static var lastNameIndex: [String: [String]] = [:]
 
+    // MARK: - Stat alias infrastructure
+
+    struct StatInfo: Sendable {
+        let dbColumn: String      // e.g. "home_runs"
+        let displayAbbrev: String // e.g. "HR"
+        let displayName: String   // e.g. "Home Runs"
+        let isRate: Bool          // true for AVG, OBP, SLG, OPS, OPS+, ISO, BABIP
+    }
+
+    /// Maps lowercased aliases to stat info. Built from tuples, longest aliases first for matching.
+    static let statAliasMap: [String: StatInfo] = {
+        let entries: [(aliases: [String], dbColumn: String, abbrev: String, name: String, isRate: Bool)] = [
+            (["home runs", "homers", "dingers", "hr", "home run", "hrs", "homer", "dinger", "taters"],
+             "home_runs", "HR", "Home Runs", false),
+            (["batting average", "average", "avg", "ba", "batting avg"],
+             "batting_avg", "AVG", "Batting Average", true),
+            (["runs batted in", "rbis", "rbi", "ribbies"],
+             "rbi", "RBI", "RBI", false),
+            (["on base plus slugging", "ops"],
+             "ops", "OPS", "OPS", true),
+            (["ops+", "ops plus", "adjusted ops"],
+             "ops_plus", "OPS+", "OPS+", true),
+            (["stolen bases", "steals", "sb", "stolen base", "bags"],
+             "stolen_bases", "SB", "Stolen Bases", false),
+            (["strikeouts", "so", "ks", "k's", "strikeout", "punchouts"],
+             "strikeouts", "SO", "Strikeouts", false),
+            (["bases on balls", "walks", "bb", "walk"],
+             "walks", "BB", "Walks", false),
+            (["on-base percentage", "on base percentage", "obp", "on-base", "on base"],
+             "obp", "OBP", "On-Base Percentage", true),
+            (["slugging percentage", "slugging", "slg"],
+             "slg", "SLG", "Slugging Percentage", true),
+            (["runs scored", "runs"],
+             "runs", "R", "Runs", false),
+            (["hits"],
+             "hits", "H", "Hits", false),
+            (["doubles", "2b"],
+             "doubles", "2B", "Doubles", false),
+            (["triples", "3b"],
+             "triples", "3B", "Triples", false),
+            (["games played", "games"],
+             "games", "G", "Games", false),
+            (["isolated power", "iso"],
+             "iso", "ISO", "Isolated Power", true),
+            (["batting average on balls in play", "babip"],
+             "babip", "BABIP", "BABIP", true),
+            (["at-bats", "at bats", "ab"],
+             "at_bats", "AB", "At Bats", false),
+            (["caught stealing", "cs"],
+             "caught_stealing", "CS", "Caught Stealing", false),
+            (["hit by pitch", "hbp"],
+             "hit_by_pitch", "HBP", "Hit By Pitch", false),
+            (["intentional walks", "ibb"],
+             "intentional_walks", "IBB", "Intentional Walks", false),
+        ]
+        var map: [String: StatInfo] = [:]
+        for entry in entries {
+            let info = StatInfo(dbColumn: entry.dbColumn, displayAbbrev: entry.abbrev,
+                                displayName: entry.name, isRate: entry.isRate)
+            for alias in entry.aliases {
+                map[alias] = info
+            }
+        }
+        return map
+    }()
+
+    /// All stat aliases sorted longest first (for greedy matching).
+    private static let sortedStatAliases: [String] = {
+        Array(statAliasMap.keys).sorted { $0.count > $1.count }
+    }()
+
+    /// Find a stat keyword in the input string. Returns the first match (longest alias wins).
+    static func matchStat(_ input: String) -> StatInfo? {
+        let lower = input.lowercased()
+        for alias in sortedStatAliases {
+            if containsWord(alias, in: lower) {
+                return statAliasMap[alias]
+            }
+        }
+        return nil
+    }
+
+    /// Extract a season year from input. If `defaultToMostRecent` is true and no explicit year
+    /// is found, returns the max season from the DB.
+    static func detectSeason(_ input: String, defaultToMostRecent: Bool = false) -> Int? {
+        let lower = input.lowercased()
+
+        // Explicit year (2020-2029)
+        if let range = lower.range(of: "20[2][0-9]", options: .regularExpression),
+           let year = Int(lower[range]) {
+            return year
+        }
+
+        // Relative patterns
+        let db = DatabaseService()
+        let currentYear: Int = {
+            if let result = try? db.execute(sql: "SELECT MAX(season) FROM season_batting_stats"),
+               let row = result.rows.first, let year = Int(row[0]) {
+                return year
+            }
+            return 2025
+        }()
+
+        let relativePatterns: [(patterns: [String], offset: Int)] = [
+            (["this year", "this season", "current season"], 0),
+            (["last year", "last season", "previous season", "prior season"], -1),
+            (["two years ago", "2 years ago"], -2),
+            (["three years ago", "3 years ago"], -3),
+        ]
+        for (patterns, offset) in relativePatterns {
+            if patterns.contains(where: { lower.contains($0) }) {
+                return currentYear + offset
+            }
+        }
+
+        if defaultToMostRecent {
+            return currentYear
+        }
+
+        return nil
+    }
+
     static func load() {
         let db = DatabaseService()
         guard let result = try? db.execute(sql: "SELECT DISTINCT name FROM players", maxRows: 0) else { return }
@@ -267,6 +389,134 @@ enum PlayerNameMatcher {
 
         guard let name = playerName else { return nil }
         return (name, season)
+    }
+
+    // MARK: - Single-stat lookup parser
+
+    /// Detect queries like "Judge home runs", "Ohtani's OPS", "Soto RBI 2024".
+    /// Requires player name + stat keyword, excludes leaderboard words.
+    static func parseSingleStatLookup(_ input: String) -> (name: String, stat: StatInfo, season: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Exclude leaderboard patterns — those belong to parseLeaderboard
+        let leaderboardWords = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest", "lowest",
+                                "who led", "who leads", "who hit the most", "who had the most", "leading"]
+        if leaderboardWords.contains(where: { lower.contains($0) }) { return nil }
+
+        // Must have a stat keyword
+        guard let stat = matchStat(lower) else { return nil }
+
+        // Must have a player name
+        var playerName: String?
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) {
+                playerName = name
+                break
+            }
+        }
+        if playerName == nil {
+            for (lastName, players) in lastNameIndex {
+                if containsWord(lastName, in: lower) && players.count == 1 {
+                    playerName = players[0]
+                    break
+                }
+            }
+        }
+        guard let name = playerName else { return nil }
+
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        return (name, stat, season)
+    }
+
+    // MARK: - Platoon splits parser
+
+    /// Detect queries like "Judge vs lefties", "Soto splits", "Ohtani against RHP 2024".
+    /// Returns (name, hand, season) where hand is "LHP", "RHP", or nil (both).
+    static func parsePlatoonSplits(_ input: String) -> (name: String, hand: String?, season: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        let lhpTriggers = ["vs lefties", "against lefties", "vs left-handed", "vs lhp",
+                           "versus lefties", "facing lefties", "left-handed pitching",
+                           "vs. lefties", "against left-handed", "against lhp",
+                           "versus left-handed", "facing left-handed"]
+        let rhpTriggers = ["vs righties", "against righties", "vs right-handed", "vs rhp",
+                           "versus righties", "facing righties", "right-handed pitching",
+                           "vs. righties", "against right-handed", "against rhp",
+                           "versus right-handed", "facing right-handed"]
+        let bothTriggers = ["platoon splits", "platoon", "splits"]
+
+        var hand: String?
+        let hasLHP = lhpTriggers.contains(where: { lower.contains($0) })
+        let hasRHP = rhpTriggers.contains(where: { lower.contains($0) })
+        let hasBoth = bothTriggers.contains(where: { lower.contains($0) })
+
+        if hasLHP {
+            hand = "LHP"
+        } else if hasRHP {
+            hand = "RHP"
+        } else if hasBoth {
+            hand = nil
+        } else {
+            return nil
+        }
+
+        // Must have a player name
+        var playerName: String?
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) {
+                playerName = name
+                break
+            }
+        }
+        if playerName == nil {
+            for (lastName, players) in lastNameIndex {
+                if containsWord(lastName, in: lower) && players.count == 1 {
+                    playerName = players[0]
+                    break
+                }
+            }
+        }
+        guard let name = playerName else { return nil }
+
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        return (name, hand, season)
+    }
+
+    // MARK: - Leaderboard parser
+
+    /// Detect queries like "HR leaders", "top 5 OPS", "who hit the most home runs?".
+    /// Requires stat keyword + leaderboard trigger, NO player name.
+    static func parseLeaderboard(_ input: String) -> (stat: StatInfo, season: Int, limit: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        let leaderboardTriggers = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest",
+                                   "lowest", "who led", "who leads", "who hit the most", "who had the most",
+                                   "leading"]
+        guard leaderboardTriggers.contains(where: { lower.contains($0) }) else { return nil }
+
+        // Must have a stat keyword
+        guard let stat = matchStat(lower) else { return nil }
+
+        // Reject if any player name is found — that's a single-stat query
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) { return nil }
+        }
+        for (lastName, players) in lastNameIndex {
+            if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+        }
+
+        // Extract limit from "top N" pattern
+        var limit = 10
+        if let range = lower.range(of: "top\\s+(\\d+)", options: .regularExpression) {
+            let matched = lower[range]
+            if let numRange = matched.range(of: "\\d+", options: .regularExpression),
+               let num = Int(matched[numRange]) {
+                limit = max(1, min(num, 50))
+            }
+        }
+
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        return (stat, season, limit)
     }
 
     /// Find closest player names within edit distance threshold (for "did you mean?" suggestions).

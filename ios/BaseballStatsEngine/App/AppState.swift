@@ -65,11 +65,41 @@ final class AppState {
             return
         }
 
+        // Intercept single-stat lookup queries — "Judge home runs", "Ohtani OPS"
+        if let lookup = PlayerNameMatcher.parseSingleStatLookup(trimmed),
+           let response = PlayerCardService.buildSingleStatLookup(name: lookup.name, stat: lookup.stat, season: lookup.season) {
+            let linked = PlayerNameMatcher.addLinks(to: response)
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: linked))
+            queryEngine.injectHistory(question: trimmed, answer: response)
+            return
+        }
+
         // Intercept season lookup queries — build response from DB, skip Claude
         if let (playerName, season) = PlayerNameMatcher.parseSeasonLookup(trimmed),
            let response = PlayerCardService.buildSeasonSummary(name: playerName, season: season) {
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
+            queryEngine.injectHistory(question: trimmed, answer: response)
+            return
+        }
+
+        // Intercept platoon splits queries — "Judge vs lefties", "Soto splits"
+        if let splits = PlayerNameMatcher.parsePlatoonSplits(trimmed),
+           let response = PlayerCardService.buildPlatoonSplits(name: splits.name, hand: splits.hand, season: splits.season) {
+            let linked = PlayerNameMatcher.addLinks(to: response)
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: linked))
+            queryEngine.injectHistory(question: trimmed, answer: response)
+            return
+        }
+
+        // Intercept leaderboard queries — "HR leaders", "top 5 OPS"
+        if let board = PlayerNameMatcher.parseLeaderboard(trimmed) {
+            let response = PlayerCardService.buildLeaderboard(stat: board.stat, season: board.season, limit: board.limit)
+            let linked = PlayerNameMatcher.addLinks(to: response)
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: linked))
             queryEngine.injectHistory(question: trimmed, answer: response)
             return
         }
