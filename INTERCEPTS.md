@@ -140,9 +140,11 @@ Non-matching queries fall through to Claude.
 - "who hit the most home runs?" -> top 10 HR
 - "best batting average" -> top 10 AVG with PA minimum
 
-**Response**: Numbered markdown list with bold player names (auto-linked). Rate stats show PA minimum footer.
+**Response**: `[LEADERBOARD]` block rendered by `LeaderboardView` — columnar layout with rank, player name (tappable), team, and stat value. Shows first 25 rows with "Show more" button for remaining (up to 50 total). Rate stats show PA minimum footer. Tip appears above the leaderboard.
 
 **PA minimums**: Rate stats (AVG, OBP, SLG, OPS, OPS+, ISO, BABIP) require >= 400 PA for full seasons (max games >= 140) or >= 200 PA for partial seasons.
+
+**Default limit**: 50 (for pagination). "top N" overrides (clamped 1-50).
 
 ---
 

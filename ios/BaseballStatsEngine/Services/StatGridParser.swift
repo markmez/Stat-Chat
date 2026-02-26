@@ -30,14 +30,30 @@ enum StatGridParser {
     enum Segment {
         case text(String)
         case statGrid(StatGrid)
+        case leaderboard(StatGrid)
+        case tip(String)
+        case querySuggestion(String)
         case partialGrid(String)
     }
+
+    private static let tagTypes = ["STATGRID", "LEADERBOARD", "TIP", "SUGGEST"]
 
     static func parse(_ content: String, isStreaming: Bool) -> [Segment] {
         var segments: [Segment] = []
         var remaining = content
 
-        while let openRange = remaining.range(of: "[STATGRID]") {
+        while true {
+            // Find the nearest opening tag of any type
+            var earliest: (range: Range<String.Index>, tag: String)?
+            for tag in tagTypes {
+                if let range = remaining.range(of: "[\(tag)]") {
+                    if earliest == nil || range.lowerBound < earliest!.range.lowerBound {
+                        earliest = (range, tag)
+                    }
+                }
+            }
+            guard let (openRange, tag) = earliest else { break }
+
             // Text before the tag
             let before = String(remaining[remaining.startIndex..<openRange.lowerBound])
             if !before.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -45,14 +61,30 @@ enum StatGridParser {
             }
 
             let afterOpen = String(remaining[openRange.upperBound...])
+            let closeTag = "[/\(tag)]"
 
-            if let closeRange = afterOpen.range(of: "[/STATGRID]") {
-                // Complete grid block
-                let gridContent = String(afterOpen[afterOpen.startIndex..<closeRange.lowerBound])
-                if let grid = parseGrid(gridContent) {
-                    segments.append(.statGrid(grid))
-                } else {
-                    segments.append(.text(gridContent))
+            if let closeRange = afterOpen.range(of: closeTag) {
+                let blockContent = String(afterOpen[afterOpen.startIndex..<closeRange.lowerBound])
+
+                switch tag {
+                case "TIP":
+                    let trimmed = blockContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { segments.append(.tip(trimmed)) }
+                case "SUGGEST":
+                    let trimmed = blockContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { segments.append(.querySuggestion(trimmed)) }
+                case "LEADERBOARD":
+                    if let grid = parseGrid(blockContent) {
+                        segments.append(.leaderboard(grid))
+                    } else {
+                        segments.append(.text(blockContent))
+                    }
+                default: // STATGRID
+                    if let grid = parseGrid(blockContent) {
+                        segments.append(.statGrid(grid))
+                    } else {
+                        segments.append(.text(blockContent))
+                    }
                 }
                 remaining = String(afterOpen[closeRange.upperBound...])
             } else {
@@ -66,7 +98,7 @@ enum StatGridParser {
             }
         }
 
-        // Remaining text after last grid
+        // Remaining text after last block
         if !remaining.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             segments.append(.text(remaining))
         }

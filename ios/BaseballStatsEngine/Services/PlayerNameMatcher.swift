@@ -13,6 +13,12 @@ enum PlayerNameMatcher {
         let isRate: Bool          // true for AVG, OBP, SLG, OPS, OPS+, ISO, BABIP
     }
 
+    enum LeaderboardScope: Sendable {
+        case season(Int)
+        case allTimeSingleSeason
+        case career
+    }
+
     /// Maps lowercased aliases to stat info. Built from tuples, longest aliases first for matching.
     static let statAliasMap: [String: StatInfo] = {
         let entries: [(aliases: [String], dbColumn: String, abbrev: String, name: String, isRate: Bool)] = [
@@ -486,7 +492,7 @@ enum PlayerNameMatcher {
 
     /// Detect queries like "HR leaders", "top 5 OPS", "who hit the most home runs?".
     /// Requires stat keyword + leaderboard trigger, NO player name.
-    static func parseLeaderboard(_ input: String) -> (stat: StatInfo, season: Int, limit: Int)? {
+    static func parseLeaderboard(_ input: String) -> (stat: StatInfo, scope: LeaderboardScope, limit: Int)? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         let leaderboardTriggers = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest",
@@ -505,8 +511,8 @@ enum PlayerNameMatcher {
             if containsWord(lastName, in: lower) && players.count == 1 { return nil }
         }
 
-        // Extract limit from "top N" pattern
-        var limit = 10
+        // Extract limit from "top N" pattern (default 50 for pagination)
+        var limit = 50
         if let range = lower.range(of: "top\\s+(\\d+)", options: .regularExpression) {
             let matched = lower[range]
             if let numRange = matched.range(of: "\\d+", options: .regularExpression),
@@ -515,8 +521,16 @@ enum PlayerNameMatcher {
             }
         }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
-        return (stat, season, limit)
+        let scope: LeaderboardScope
+        if lower.contains("career") {
+            scope = .career
+        } else if lower.contains("all time") || lower.contains("all-time") || lower.contains("single season") {
+            scope = .allTimeSingleSeason
+        } else {
+            let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+            scope = .season(season)
+        }
+        return (stat, scope, limit)
     }
 
     /// Find closest player names within edit distance threshold (for "did you mean?" suggestions).

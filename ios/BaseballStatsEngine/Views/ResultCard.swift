@@ -6,6 +6,7 @@ struct ResultCard: View {
     var onBack: (() -> Void)? = nil
     var isStreaming: Bool = false
     var onPlayerTap: ((String) -> Void)? = nil
+    var onQueryTap: ((String) -> Void)? = nil
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
 
@@ -80,6 +81,52 @@ struct ResultCard: View {
                         StatGridView(grid: grid, onPlayerTap: onPlayerTap)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 6)
+
+                    case .leaderboard(let grid):
+                        LeaderboardView(grid: grid, onPlayerTap: onPlayerTap)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 6)
+
+                    case .tip(let text):
+                        HStack(alignment: .top, spacing: 5) {
+                            Image(systemName: "lightbulb")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.secondary.opacity(0.45))
+                            Group {
+                                Text("Tip: ").fontWeight(.medium) +
+                                Text(text).italic()
+                            }
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(.secondary.opacity(0.55))
+                        }
+                        .padding(.horizontal, 20)
+
+                    case .querySuggestion(let query):
+                        if let tap = onQueryTap {
+                            Button {
+                                tap(query)
+                            } label: {
+                                HStack(spacing: 5) {
+                                    Image(systemName: "magnifyingglass")
+                                        .font(.system(size: 11, weight: .medium))
+                                    Text(query)
+                                        .font(.system(.caption, design: .rounded, weight: .medium))
+                                }
+                                .foregroundStyle(deepBlue)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(
+                                    Capsule()
+                                        .fill(deepBlue.opacity(0.08))
+                                        .overlay(
+                                            Capsule()
+                                                .stroke(deepBlue.opacity(0.2), lineWidth: 0.5)
+                                        )
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 20)
+                        }
 
                     case .partialGrid:
                         // Hide raw HEADER:/ROW: text while streaming; grid pops in when complete

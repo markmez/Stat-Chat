@@ -47,6 +47,9 @@ struct ResultsView: View {
                                             } else {
                                                 selectedPlayerName = name
                                             }
+                                        },
+                                        onQueryTap: { query in
+                                            appState.sendQuestion(query)
                                         }
                                     )
                                     .id(message.id)

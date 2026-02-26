@@ -18,6 +18,7 @@
 		455928344195A5334455240E /* ResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD18464AB4C998AEF89D1ADC /* ResultsView.swift */; };
 		5015BF091371068EA3F0C963 /* PlayerCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B51AB0AF7813417184FAF96B /* PlayerCardView.swift */; };
 		544EBC4B31BC8B80788EE870 /* LoadingIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CBC668CB3B717109518A293 /* LoadingIndicator.swift */; };
+		5CCE38BE8D7080E8700D1E0B /* LeaderboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 797994603DE35696E898BBDA /* LeaderboardView.swift */; };
 		6DA656C612FFFC98992595AE /* StatGridParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12ED36FBBADEE2968B59C872 /* StatGridParser.swift */; };
 		725F4CA20FCDCC9874494AA9 /* DatabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94B9C740E67CB61B571A0B35 /* DatabaseService.swift */; };
 		7980858E751450598B53AA57 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A161890890E908E9407731BF /* Assets.xcassets */; };
@@ -50,6 +51,7 @@
 		614858769A9322978AF6F909 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 		6788FF565D12FAFC3C30AD38 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		6BB3CC48A319FDD80408F09F /* StatChat.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = StatChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		797994603DE35696E898BBDA /* LeaderboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaderboardView.swift; sourceTree = "<group>"; };
 		7CB091836D4207BE27DEBA70 /* AnimatedPlaceholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimatedPlaceholder.swift; sourceTree = "<group>"; };
 		7E985281B8BE082A2E1958F3 /* PromptStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptStore.swift; sourceTree = "<group>"; };
 		823E028B2FF8DBFD7E267FC7 /* AnthropicService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnthropicService.swift; sourceTree = "<group>"; };
@@ -149,6 +151,7 @@
 				4A03BB555AC13F877616BC08 /* APIKeySetupView.swift */,
 				6788FF565D12FAFC3C30AD38 /* HomeView.swift */,
 				ECFC73592230A429A6330F03 /* LaunchAnimationView.swift */,
+				797994603DE35696E898BBDA /* LeaderboardView.swift */,
 				8CBC668CB3B717109518A293 /* LoadingIndicator.swift */,
 				B51AB0AF7813417184FAF96B /* PlayerCardView.swift */,
 				56A2A2E05C215D0A3ADAAAAD /* ResultCard.swift */,
@@ -239,6 +242,7 @@
 				27359D246F5CF799D5EF74CA /* HomeView.swift in Sources */,
 				8D83356C0253272F8502ABEA /* KeychainHelper.swift in Sources */,
 				27E8F31F18C8C0D76DE297ED /* LaunchAnimationView.swift in Sources */,
+				5CCE38BE8D7080E8700D1E0B /* LeaderboardView.swift in Sources */,
 				544EBC4B31BC8B80788EE870 /* LoadingIndicator.swift in Sources */,
 				345576D5B8C92C14734E83D3 /* Message.swift in Sources */,
 				BCD80DF57F31A72D219E38F0 /* PlayerCardService.swift in Sources */,

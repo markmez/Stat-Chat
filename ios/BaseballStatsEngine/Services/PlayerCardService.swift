@@ -729,7 +729,7 @@ enum PlayerCardService {
         }
 
         let teamDisplay = teamFullName(team)
-        return "\(sentence) (\(teamDisplay))\n\n_Tap a player name for their full profile._"
+        return "\(sentence) (\(teamDisplay))\n\n[TIP]Tap a player name for their full profile.[/TIP]"
     }
 
     // MARK: - Platoon splits (chat response builder)
@@ -780,19 +780,33 @@ enum PlayerCardService {
         }
         parts.append("[/STATGRID]")
 
-        parts.append("\n_Tap a player name for their full profile._")
+        parts.append("\n[TIP]Tap a player name for their full profile.[/TIP]")
 
         return parts.joined(separator: "\n")
     }
 
     // MARK: - Leaderboard (chat response builder)
 
-    /// Build a numbered leaderboard for "HR leaders" or "top 5 OPS" queries.
-    static func buildLeaderboard(stat: PlayerNameMatcher.StatInfo, season: Int, limit: Int) -> String {
+    /// Build a leaderboard for the given stat and scope (season, all-time single season, or career).
+    /// Returns [LEADERBOARD] block with up to `limit` rows.
+    static func buildLeaderboard(stat: PlayerNameMatcher.StatInfo, scope: PlayerNameMatcher.LeaderboardScope, limit: Int) -> String {
+        switch scope {
+        case .season(let season):
+            return buildSeasonLeaderboard(stat: stat, season: season, limit: limit)
+        case .allTimeSingleSeason:
+            return buildAllTimeSingleSeasonLeaderboard(stat: stat, limit: limit)
+        case .career:
+            if stat.displayAbbrev == "OPS+" {
+                return "Career OPS+ leaders require weighted season averaging, which isn't supported yet. Try **career OPS leaders** instead.\n\n[SUGGEST]career ops leaders[/SUGGEST]"
+            }
+            return buildCareerLeaderboard(stat: stat, limit: limit)
+        }
+    }
+
+    private static func buildSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, season: Int, limit: Int) -> String {
         // Rate stats need a PA minimum
-        let paFilter: String
+        let paMin: Int?
         if stat.isRate {
-            // Determine if full season (teamGames >= 140) or partial
             let maxGamesSql = "SELECT MAX(games) FROM season_batting_stats WHERE season = \(season)"
             let maxGames: Int
             if let r = try? db.execute(sql: maxGamesSql), let row = r.rows.first, let val = Int(row[0]) {
@@ -800,26 +814,19 @@ enum PlayerCardService {
             } else {
                 maxGames = 162
             }
-            let paMin = maxGames >= 140 ? 400 : 200
-            paFilter = " AND s.plate_appearances >= \(paMin)"
+            paMin = maxGames >= 140 ? 400 : 200
         } else {
-            paFilter = ""
+            paMin = nil
         }
 
-        // Sort direction: most stats descend, but SO and CS are "worst = most"
-        let orderDir: String
-        if stat.displayAbbrev == "SO" || stat.displayAbbrev == "CS" {
-            orderDir = "DESC"  // still "most" for leaderboard purposes
-        } else {
-            orderDir = "DESC"
-        }
+        let paFilter = paMin.map { " AND s.plate_appearances >= \($0)" } ?? ""
 
         let sql = """
-            SELECT p.name, s.team, s.\(stat.dbColumn)
+            SELECT p.name, s.\(stat.dbColumn)
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
             WHERE s.season = \(season)\(paFilter)
-            ORDER BY s.\(stat.dbColumn) \(orderDir)
+            ORDER BY s.\(stat.dbColumn) DESC
             LIMIT \(limit)
             """
         guard let result = try? db.execute(sql: sql),
@@ -829,31 +836,137 @@ enum PlayerCardService {
 
         var parts: [String] = []
         parts.append("**\(season) \(stat.displayName) Leaders**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: \(stat.displayAbbrev)")
         for (i, row) in result.rows.enumerated() {
             let playerName = row[0]
-            let team = row[1]
-            let rawValue = row[2]
+            let rawValue = row[1]
             let formattedValue = stat.isRate ? formatRate(rawValue) : rawValue
-            parts.append("\(i + 1). **\(playerName)** (\(team)) \u{2014} \(formattedValue)")
+            parts.append("ROW \(i + 1). \(playerName): \(formattedValue)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        if let paMin {
+            parts.append("\n_Min. \(paMin) PA._")
         }
 
-        if stat.isRate {
-            // Determine PA minimum used
-            let maxGamesSql = "SELECT MAX(games) FROM season_batting_stats WHERE season = \(season)"
-            let maxGames: Int
-            if let r = try? db.execute(sql: maxGamesSql), let row = r.rows.first, let val = Int(row[0]) {
-                maxGames = val
-            } else {
-                maxGames = 162
-            }
-            let paMin = maxGames >= 140 ? 400 : 200
-            parts.append("\n_Min. \(paMin) PA. Tap a player name for their full profile._")
-        } else {
-            parts.append("\n_Tap a player name for their full profile._")
-        }
+        let statName = stat.displayName.lowercased()
+        parts.append("\n[SUGGEST]all-time single season \(statName) leaders[/SUGGEST]")
+        parts.append("[SUGGEST]career \(statName) leaders[/SUGGEST]")
 
         return parts.joined(separator: "\n")
+    }
+
+    private static func buildAllTimeSingleSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int) -> String {
+        let paFilter = stat.isRate ? " WHERE s.plate_appearances >= 400" : ""
+
+        let sql = """
+            SELECT p.name, s.\(stat.dbColumn), s.season
+            FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            \(paFilter)
+            ORDER BY s.\(stat.dbColumn) DESC
+            LIMIT \(limit)
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else {
+            return "No all-time \(stat.displayName) leaders found."
+        }
+
+        var parts: [String] = []
+        parts.append("**All-Time Single Season \(stat.displayName) Leaders**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: \(stat.displayAbbrev), Year")
+        for (i, row) in result.rows.enumerated() {
+            let playerName = row[0]
+            let rawValue = row[1]
+            let season = row[2]
+            let formattedValue = stat.isRate ? formatRate(rawValue) : rawValue
+            parts.append("ROW \(i + 1). \(playerName): \(formattedValue), \(season)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        if stat.isRate {
+            parts.append("\n_Min. 400 PA._")
+        }
+
+        let statName = stat.displayName.lowercased()
+        parts.append("\n[SUGGEST]career \(statName) leaders[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    private static func buildCareerLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int) -> String {
+        let selectExpr: String
+        if stat.isRate {
+            guard let formula = careerRateFormula(for: stat) else {
+                return "Career \(stat.displayName) leaders are not available."
+            }
+            selectExpr = "\(formula) as career_val"
+        } else {
+            selectExpr = "SUM(s.\(stat.dbColumn)) as career_val"
+        }
+
+        let paFilter = stat.isRate ? "\n            HAVING SUM(s.plate_appearances) >= 400" : ""
+
+        let sql = """
+            SELECT p.name, \(selectExpr)
+            FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            GROUP BY p.player_id\(paFilter)
+            ORDER BY career_val DESC
+            LIMIT \(limit)
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else {
+            return "No career \(stat.displayName) leaders found."
+        }
+
+        var parts: [String] = []
+        parts.append("**Career \(stat.displayName) Leaders**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: \(stat.displayAbbrev)")
+        for (i, row) in result.rows.enumerated() {
+            let playerName = row[0]
+            let rawValue = row[1]
+            let formattedValue = stat.isRate ? formatRate(rawValue) : rawValue
+            parts.append("ROW \(i + 1). \(playerName): \(formattedValue)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        if stat.isRate {
+            parts.append("\n_Min. 400 PA._")
+        }
+
+        let statName = stat.displayName.lowercased()
+        parts.append("\n[SUGGEST]all-time single season \(statName) leaders[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    private static func careerRateFormula(for stat: PlayerNameMatcher.StatInfo) -> String? {
+        switch stat.displayAbbrev {
+        case "AVG":
+            return "ROUND(CAST(SUM(s.hits) AS REAL) / NULLIF(SUM(s.at_bats), 0), 3)"
+        case "OBP":
+            return "ROUND(CAST(SUM(s.hits) + SUM(s.walks) + SUM(s.hit_by_pitch) AS REAL) / NULLIF(SUM(s.at_bats) + SUM(s.walks) + SUM(s.hit_by_pitch) + SUM(s.sacrifice_flies), 0), 3)"
+        case "SLG":
+            return "ROUND(CAST((SUM(s.hits) - SUM(s.doubles) - SUM(s.triples) - SUM(s.home_runs)) + 2 * SUM(s.doubles) + 3 * SUM(s.triples) + 4 * SUM(s.home_runs) AS REAL) / NULLIF(SUM(s.at_bats), 0), 3)"
+        case "OPS":
+            return "ROUND(CAST(SUM(s.hits) + SUM(s.walks) + SUM(s.hit_by_pitch) AS REAL) / NULLIF(SUM(s.at_bats) + SUM(s.walks) + SUM(s.hit_by_pitch) + SUM(s.sacrifice_flies), 0) + CAST((SUM(s.hits) - SUM(s.doubles) - SUM(s.triples) - SUM(s.home_runs)) + 2 * SUM(s.doubles) + 3 * SUM(s.triples) + 4 * SUM(s.home_runs) AS REAL) / NULLIF(SUM(s.at_bats), 0), 3)"
+        case "ISO":
+            return "ROUND(CAST(SUM(s.doubles) + 2 * SUM(s.triples) + 3 * SUM(s.home_runs) AS REAL) / NULLIF(SUM(s.at_bats), 0), 3)"
+        case "BABIP":
+            return "ROUND(CAST(SUM(s.hits) - SUM(s.home_runs) AS REAL) / NULLIF(SUM(s.at_bats) - SUM(s.strikeouts) - SUM(s.home_runs) + SUM(s.sacrifice_flies), 0), 3)"
+        default:
+            return nil
+        }
     }
 
     // MARK: - Current form
