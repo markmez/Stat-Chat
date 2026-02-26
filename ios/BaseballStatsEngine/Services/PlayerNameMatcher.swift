@@ -11,6 +11,11 @@ enum PlayerNameMatcher {
         let displayAbbrev: String // e.g. "HR"
         let displayName: String   // e.g. "Home Runs"
         let isRate: Bool          // true for AVG, OBP, SLG, OPS, OPS+, ISO, BABIP
+
+        /// Lowercased display name for pill text, but preserves all-caps acronyms (RBI, OPS, BABIP).
+        var pillName: String {
+            displayName == displayAbbrev ? displayName : displayName.lowercased()
+        }
     }
 
     enum LeaderboardScope: Sendable {
@@ -656,6 +661,52 @@ enum PlayerNameMatcher {
             scope = .season(season)
         }
         return (stat, scope, limit)
+    }
+
+    // MARK: - Stat definition parser
+
+    /// Detect queries like "what is OPS?", "explain BABIP", "what does AVG mean?".
+    /// Returns (abbreviation, definition) if a definition trigger + stat match is found.
+    static func parseStatDefinition(_ input: String) -> (abbrev: String, displayName: String, definition: String)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        let triggers = ["what is ", "what's ", "what are ", "what does ", "what do ",
+                        "explain ", "define ", "meaning of ", "definition of ",
+                        "tell me about ", "describe ", "how is ", "how do you calculate "]
+        let suffixTriggers = [" mean", " meaning", " stand for", " measure",
+                              " calculated", " definition"]
+
+        let hasTrigger = triggers.contains(where: { lower.contains($0) })
+            || suffixTriggers.contains(where: { lower.contains($0) })
+        guard hasTrigger else { return nil }
+
+        // Reject if a player name is present — "what is Judge's OPS" is a single-stat query
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) { return nil }
+        }
+        for (lastName, players) in lastNameIndex {
+            if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+        }
+
+        // Try matching via statAliasMap (handles natural language like "batting average")
+        if let stat = matchStat(lower),
+           let definition = StatDefinitions.lookup(stat.displayAbbrev) {
+            return (stat.displayAbbrev, stat.displayName, definition)
+        }
+
+        // Try direct abbreviation lookup for stats not in statAliasMap (wRC+, WAR, K, etc.)
+        let directAbbrevs = ["war", "wrc+", "k", "pa", "sf", "1b"]
+        for abbrev in directAbbrevs {
+            if containsWord(abbrev, in: lower) {
+                let key = abbrev.uppercased()
+                if let definition = StatDefinitions.lookup(key == "WRC+" ? "wRC+" : key) {
+                    let display = abbrev == "war" ? "WAR" : (abbrev == "wrc+" ? "wRC+" : key)
+                    return (display, display, definition)
+                }
+            }
+        }
+
+        return nil
     }
 
     // MARK: - Threshold parser

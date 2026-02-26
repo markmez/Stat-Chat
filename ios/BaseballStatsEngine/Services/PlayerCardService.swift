@@ -750,7 +750,7 @@ enum PlayerCardService {
                 }
             }
 
-            let statName = stat.displayName.lowercased()
+            let statName = stat.pillName
             return "\(sentence) (\(teamDisplay))\n\n[SUGGEST]career \(statName) leaders[/SUGGEST]\n[SUGGEST]\(displayName) \(mostRecentSeason)[/SUGGEST]"
         } else {
             // Full career grid
@@ -847,7 +847,7 @@ enum PlayerCardService {
         }
 
         let teamDisplay = teamFullName(team)
-        let statName = stat.displayName.lowercased()
+        let statName = stat.pillName
         return "\(sentence) (\(teamDisplay))\n\n[TIP]Tap a player name for their full profile.[/TIP]\n\n[SUGGEST]\(season) \(statName) leaders[/SUGGEST]\n[SUGGEST]\(displayName) career \(statName)[/SUGGEST]"
     }
 
@@ -927,7 +927,7 @@ enum PlayerCardService {
             parts.append("_Min. \(paMin) PA._")
         }
 
-        let statName = stat.displayName.lowercased()
+        let statName = stat.pillName
         parts.append("\n[SUGGEST]\(season) \(statName) leaders[/SUGGEST]")
         parts.append("[SUGGEST]career \(statName) leaders[/SUGGEST]")
 
@@ -983,7 +983,7 @@ enum PlayerCardService {
                 parts.append("\n_Min. \(paMin) PA._")
             }
 
-            let statName = stat.displayName.lowercased()
+            let statName = stat.pillName
             parts.append("\n[SUGGEST]\(season) \(statName) leaders[/SUGGEST]")
             parts.append("[SUGGEST]\(nickname) hitters[/SUGGEST]")
 
@@ -1161,7 +1161,7 @@ enum PlayerCardService {
             parts.append("\n_Min. \(paMin) PA._")
         }
 
-        let statName = stat.displayName.lowercased()
+        let statName = stat.pillName
         parts.append("\n[SUGGEST]all-time single season \(statName) leaders[/SUGGEST]")
         parts.append("[SUGGEST]career \(statName) leaders[/SUGGEST]")
 
@@ -1203,7 +1203,7 @@ enum PlayerCardService {
             parts.append("\n_Min. 400 PA._")
         }
 
-        let statName = stat.displayName.lowercased()
+        let statName = stat.pillName
         parts.append("\n[SUGGEST]career \(statName) leaders[/SUGGEST]")
 
         return parts.joined(separator: "\n")
@@ -1253,7 +1253,7 @@ enum PlayerCardService {
             parts.append("\n_Min. 400 PA._")
         }
 
-        let statName = stat.displayName.lowercased()
+        let statName = stat.pillName
         parts.append("\n[SUGGEST]all-time single season \(statName) leaders[/SUGGEST]")
 
         return parts.joined(separator: "\n")

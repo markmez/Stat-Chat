@@ -54,88 +54,128 @@ struct ResultCard: View {
                     .padding(.horizontal, 20)
             } else {
                 let segments = StatGridParser.parse(message.content, isStreaming: isStreaming)
-                ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                    switch segment {
-                    case .text(let text):
-                        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !trimmed.isEmpty {
-                            Text(LocalizedStringKey(PlayerNameMatcher.addLinks(to: trimmed)))
-                                .font(.system(.body, design: .rounded))
-                                .foregroundStyle(.primary.opacity(0.85))
-                                .tint(deepBlue)
-                                .textSelection(.enabled)
-                                .lineSpacing(3)
-                                .padding(.horizontal, 20)
-                                .environment(\.openURL, OpenURLAction { url in
-                                    if url.scheme == "statchat",
-                                       url.host == "player",
-                                       let name = url.pathComponents.dropFirst().first?.removingPercentEncoding {
-                                        onPlayerTap?(name)
-                                        return .handled
-                                    }
-                                    return .systemAction
-                                })
-                        }
+                let grouped = groupedSegments(segments)
+                ForEach(Array(grouped.enumerated()), id: \.offset) { _, group in
+                    switch group {
+                    case .single(let segment):
+                        renderSegment(segment)
 
-                    case .statGrid(let grid):
-                        StatGridView(grid: grid, onPlayerTap: onPlayerTap)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 6)
-
-                    case .leaderboard(let grid):
-                        LeaderboardView(grid: grid, onPlayerTap: onPlayerTap)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 6)
-
-                    case .tip(let text):
-                        HStack(alignment: .top, spacing: 5) {
-                            Image(systemName: "lightbulb")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.secondary.opacity(0.45))
-                            Group {
-                                Text("Tip: ").fontWeight(.medium) +
-                                Text(text).italic()
-                            }
-                            .font(.system(.caption, design: .rounded))
-                            .foregroundStyle(.secondary.opacity(0.55))
-                        }
-                        .padding(.horizontal, 20)
-
-                    case .querySuggestion(let query):
+                    case .suggestions(let queries):
                         if let tap = onQueryTap {
-                            Button {
-                                tap(query)
-                            } label: {
-                                HStack(spacing: 5) {
-                                    Image(systemName: "magnifyingglass")
-                                        .font(.system(size: 11, weight: .medium))
-                                    Text(query)
-                                        .font(.system(.caption, design: .rounded, weight: .medium))
-                                }
-                                .foregroundStyle(deepBlue)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .background(
-                                    Capsule()
-                                        .fill(deepBlue.opacity(0.08))
-                                        .overlay(
+                            FlowLayout(spacing: 8) {
+                                ForEach(queries, id: \.self) { query in
+                                    Button {
+                                        tap(query)
+                                    } label: {
+                                        HStack(spacing: 5) {
+                                            Image(systemName: "magnifyingglass")
+                                                .font(.system(size: 11, weight: .medium))
+                                            Text(query)
+                                                .font(.system(.caption, design: .rounded, weight: .medium))
+                                        }
+                                        .foregroundStyle(deepBlue)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 7)
+                                        .background(
                                             Capsule()
-                                                .stroke(deepBlue.opacity(0.2), lineWidth: 0.5)
+                                                .fill(deepBlue.opacity(0.08))
+                                                .overlay(
+                                                    Capsule()
+                                                        .stroke(deepBlue.opacity(0.2), lineWidth: 0.5)
+                                                )
                                         )
-                                )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
-                            .buttonStyle(.plain)
                             .padding(.horizontal, 20)
+                            .padding(.top, 10)
                         }
-
-                    case .partialGrid:
-                        // Hide raw HEADER:/ROW: text while streaming; grid pops in when complete
-                        EmptyView()
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func renderSegment(_ segment: StatGridParser.Segment) -> some View {
+        switch segment {
+        case .text(let text):
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                Text(LocalizedStringKey(PlayerNameMatcher.addLinks(to: trimmed)))
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .tint(deepBlue)
+                    .textSelection(.enabled)
+                    .lineSpacing(3)
+                    .padding(.horizontal, 20)
+                    .environment(\.openURL, OpenURLAction { url in
+                        if url.scheme == "statchat",
+                           url.host == "player",
+                           let name = url.pathComponents.dropFirst().first?.removingPercentEncoding {
+                            onPlayerTap?(name)
+                            return .handled
+                        }
+                        return .systemAction
+                    })
+            }
+
+        case .statGrid(let grid):
+            StatGridView(grid: grid, onPlayerTap: onPlayerTap)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 6)
+
+        case .leaderboard(let grid):
+            LeaderboardView(grid: grid, onPlayerTap: onPlayerTap)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 6)
+
+        case .tip(let text):
+            HStack(alignment: .top, spacing: 5) {
+                Image(systemName: "lightbulb")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary.opacity(0.45))
+                Group {
+                    Text("Tip: ").fontWeight(.medium) +
+                    Text(text).italic()
+                }
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(.secondary.opacity(0.55))
+            }
+            .padding(.horizontal, 20)
+
+        case .querySuggestion, .partialGrid:
+            EmptyView()
+        }
+    }
+
+    // Group consecutive querySuggestion segments together
+    private enum SegmentGroup {
+        case single(StatGridParser.Segment)
+        case suggestions([String])
+    }
+
+    private func groupedSegments(_ segments: [StatGridParser.Segment]) -> [SegmentGroup] {
+        var result: [SegmentGroup] = []
+        var pendingSuggestions: [String] = []
+
+        for segment in segments {
+            if case .querySuggestion(let query) = segment {
+                pendingSuggestions.append(query)
+            } else {
+                if !pendingSuggestions.isEmpty {
+                    result.append(.suggestions(pendingSuggestions))
+                    pendingSuggestions = []
+                }
+                result.append(.single(segment))
+            }
+        }
+        if !pendingSuggestions.isEmpty {
+            result.append(.suggestions(pendingSuggestions))
+        }
+        return result
     }
 
     // Error
@@ -158,5 +198,61 @@ struct ResultCard: View {
                 )
         )
         .padding(.horizontal, 16)
+    }
+}
+
+// MARK: - Flow layout for wrapping pills
+
+/// A horizontal wrapping layout — items flow left-to-right, wrapping to the next line when needed.
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = computeRows(proposal: proposal, subviews: subviews)
+        var height: CGFloat = 0
+        for (i, row) in rows.enumerated() {
+            let rowHeight = row.map(\.size.height).max() ?? 0
+            height += rowHeight
+            if i > 0 { height += spacing }
+        }
+        return CGSize(width: proposal.width ?? 0, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let rows = computeRows(proposal: proposal, subviews: subviews)
+        var y = bounds.minY
+        for (i, row) in rows.enumerated() {
+            if i > 0 { y += spacing }
+            var x = bounds.minX
+            let rowHeight = row.map(\.size.height).max() ?? 0
+            for item in row {
+                item.subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(item.size))
+                x += item.size.width + spacing
+            }
+            y += rowHeight
+        }
+    }
+
+    private struct RowItem {
+        let subview: LayoutSubview
+        let size: CGSize
+    }
+
+    private func computeRows(proposal: ProposedViewSize, subviews: Subviews) -> [[RowItem]] {
+        let maxWidth = proposal.width ?? .infinity
+        var rows: [[RowItem]] = [[]]
+        var currentRowWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            let needed = currentRowWidth > 0 ? size.width + spacing : size.width
+            if currentRowWidth + needed > maxWidth && !rows[rows.count - 1].isEmpty {
+                rows.append([])
+                currentRowWidth = 0
+            }
+            rows[rows.count - 1].append(RowItem(subview: subview, size: size))
+            currentRowWidth += (currentRowWidth > 0 ? spacing : 0) + size.width
+        }
+        return rows
     }
 }

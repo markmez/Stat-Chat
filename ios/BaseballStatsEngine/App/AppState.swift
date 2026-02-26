@@ -131,6 +131,16 @@ final class AppState {
             return
         }
 
+        // Intercept stat definition queries — "what is OPS?", "explain BABIP"
+        if let defn = PlayerNameMatcher.parseStatDefinition(trimmed) {
+            let statName = defn.displayName == defn.abbrev ? defn.displayName : defn.displayName.lowercased()
+            let response = "**\(defn.abbrev)** — \(defn.definition)\n\n[SUGGEST]\(statName) leaders[/SUGGEST]\n[SUGGEST]career \(statName) leaders[/SUGGEST]"
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            queryEngine.injectHistory(question: trimmed, answer: response)
+            return
+        }
+
         // Ambiguous last name — show "Did you mean?" with tappable player links
         if let candidates = PlayerNameMatcher.findAmbiguousPlayers(trimmed) {
             // Find which last name was ambiguous
@@ -280,7 +290,7 @@ final class AppState {
         }
 
         if let stat = detectedStat {
-            let statName = stat.displayName.lowercased()
+            let statName = stat.pillName
             pills.append("[SUGGEST]\(statName) leaders[/SUGGEST]")
         }
 
