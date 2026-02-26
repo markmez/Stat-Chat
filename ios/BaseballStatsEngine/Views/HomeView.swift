@@ -136,11 +136,11 @@ struct HomeView: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 } else {
                     VStack(spacing: 12) {
-                        Text("Search for player stats by full or last name,\nor ask any question about stats, such as:")
+                        Text("Search for player stats by name or ask any question.")
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
-                            .padding(.horizontal, 32)
+                            .padding(.horizontal, 24)
 
                         AnimatedPlaceholder { query in
                             questionText = query
