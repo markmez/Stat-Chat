@@ -409,6 +409,9 @@ enum PlayerNameMatcher {
                                 "who led", "who leads", "who hit the most", "who had the most", "leading"]
         if leaderboardWords.contains(where: { lower.contains($0) }) { return nil }
 
+        // Exclude career queries — those belong to parseCareerLookup
+        if containsWord("career", in: lower) { return nil }
+
         // Must have a stat keyword
         guard let stat = matchStat(lower) else { return nil }
 
@@ -432,6 +435,124 @@ enum PlayerNameMatcher {
 
         let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
         return (name, stat, season)
+    }
+
+    // MARK: - Team alias infrastructure
+
+    /// Maps lowercased team names/nicknames/abbreviations to Retrosheet team codes.
+    static let teamAliasMap: [String: String] = [
+        // Full names
+        "arizona diamondbacks": "ARI", "atlanta braves": "ATL",
+        "baltimore orioles": "BAL", "boston red sox": "BOS",
+        "chicago cubs": "CHN", "chicago white sox": "CHA",
+        "cincinnati reds": "CIN", "cleveland guardians": "CLE",
+        "colorado rockies": "COL", "detroit tigers": "DET",
+        "houston astros": "HOU", "kansas city royals": "KCA",
+        "los angeles angels": "ANA", "los angeles dodgers": "LAN",
+        "miami marlins": "MIA", "milwaukee brewers": "MIL",
+        "minnesota twins": "MIN", "new york mets": "NYN",
+        "new york yankees": "NYA", "oakland athletics": "OAK",
+        "philadelphia phillies": "PHI", "pittsburgh pirates": "PIT",
+        "san diego padres": "SDN", "san francisco giants": "SFN",
+        "seattle mariners": "SEA", "st. louis cardinals": "SLN",
+        "st louis cardinals": "SLN", "tampa bay rays": "TBA",
+        "texas rangers": "TEX", "toronto blue jays": "TOR",
+        "washington nationals": "WAS",
+        // Nicknames
+        "diamondbacks": "ARI", "d-backs": "ARI", "braves": "ATL",
+        "orioles": "BAL", "o's": "BAL", "red sox": "BOS",
+        "cubs": "CHN", "white sox": "CHA",
+        "reds": "CIN", "guardians": "CLE",
+        "rockies": "COL", "tigers": "DET",
+        "astros": "HOU", "royals": "KCA",
+        "angels": "ANA", "dodgers": "LAN",
+        "marlins": "MIA", "brewers": "MIL",
+        "twins": "MIN", "mets": "NYN",
+        "yankees": "NYA", "yanks": "NYA",
+        "athletics": "OAK", "a's": "OAK",
+        "phillies": "PHI", "phils": "PHI",
+        "pirates": "PIT", "bucs": "PIT",
+        "padres": "SDN", "giants": "SFN",
+        "mariners": "SEA", "cardinals": "SLN", "cards": "SLN",
+        "rays": "TBA", "rangers": "TEX",
+        "blue jays": "TOR", "jays": "TOR",
+        "nationals": "WAS", "nats": "WAS",
+        // Singular nicknames (common in "best yankee", "top dodger" patterns)
+        "yankee": "NYA", "dodger": "LAN", "met": "NYN",
+        "astro": "HOU", "phillie": "PHI", "padre": "SDN",
+        "mariner": "SEA", "brewer": "MIL", "cardinal": "SLN",
+        "guardian": "CLE", "oriole": "BAL", "pirate": "PIT",
+        "brave": "ATL", "marlin": "MIA", "national": "WAS",
+        // Unambiguous cities
+        "boston": "BOS", "houston": "HOU", "detroit": "DET",
+        "atlanta": "ATL", "baltimore": "BAL", "cincinnati": "CIN",
+        "cleveland": "CLE", "colorado": "COL", "milwaukee": "MIL",
+        "minnesota": "MIN", "oakland": "OAK", "philadelphia": "PHI",
+        "pittsburgh": "PIT", "seattle": "SEA", "tampa bay": "TBA",
+        "tampa": "TBA", "texas": "TEX", "toronto": "TOR",
+        "washington": "WAS", "miami": "MIA", "arizona": "ARI",
+        "san diego": "SDN", "san francisco": "SFN",
+        // Standard abbreviations → Retrosheet codes
+        "nyy": "NYA", "nym": "NYN", "chc": "CHN", "chw": "CHA",
+        "cws": "CHA", "stl": "SLN", "sfg": "SFN", "sf": "SFN",
+        "sd": "SDN", "sdp": "SDN", "lad": "LAN", "laa": "ANA",
+        "tb": "TBA", "tbr": "TBA", "kc": "KCA", "kcr": "KCA",
+        "wsh": "WAS", "wsn": "WAS",
+    ]
+
+    /// All team aliases sorted longest first (for greedy matching).
+    private static let sortedTeamAliases: [String] = {
+        Array(teamAliasMap.keys).sorted { $0.count > $1.count }
+    }()
+
+    /// Find a team alias in the input string. Returns Retrosheet code if found.
+    static func matchTeam(_ input: String) -> String? {
+        let lower = input.lowercased()
+        for alias in sortedTeamAliases {
+            if containsWord(alias, in: lower) {
+                return teamAliasMap[alias]
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Career lookup parser
+
+    /// Detect queries like "Judge career stats", "Judge career home runs", "Judge career OPS".
+    /// Requires "career" keyword + player name, optional stat keyword.
+    static func parseCareerLookup(_ input: String) -> (name: String, stat: StatInfo?)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Must contain "career"
+        guard containsWord("career", in: lower) else { return nil }
+
+        // Exclude leaderboard patterns — those go to parseLeaderboard with career scope
+        let leaderboardWords = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest", "lowest",
+                                "who led", "who leads", "who hit the most", "who had the most", "leading"]
+        if leaderboardWords.contains(where: { lower.contains($0) }) { return nil }
+
+        // Must have a player name
+        var playerName: String?
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) {
+                playerName = name
+                break
+            }
+        }
+        if playerName == nil {
+            for (lastName, players) in lastNameIndex {
+                if containsWord(lastName, in: lower) && players.count == 1 {
+                    playerName = players[0]
+                    break
+                }
+            }
+        }
+        guard let name = playerName else { return nil }
+
+        // Optional stat keyword
+        let stat = matchStat(lower)
+
+        return (name, stat)
     }
 
     // MARK: - Platoon splits parser
@@ -500,6 +621,10 @@ enum PlayerNameMatcher {
                                    "leading"]
         guard leaderboardTriggers.contains(where: { lower.contains($0) }) else { return nil }
 
+        // Reject team-aggregate questions — "what team had the highest OPS" asks about teams, not players
+        let teamAggregateTriggers = ["what team", "which team", "what teams", "which teams"]
+        if teamAggregateTriggers.contains(where: { lower.contains($0) }) { return nil }
+
         // Must have a stat keyword
         guard let stat = matchStat(lower) else { return nil }
 
@@ -532,6 +657,84 @@ enum PlayerNameMatcher {
         }
         return (stat, scope, limit)
     }
+
+    // MARK: - Threshold parser
+
+    /// Detect queries like "who hit 40 home runs?", "players batting over .300", "who had 100 RBI?".
+    /// Requires stat keyword + numeric threshold (league-wide, no player name).
+    static func parseThreshold(_ input: String) -> (stat: StatInfo, threshold: Double, comparison: String, season: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Reject if a player name is present — this is league-wide only
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) { return nil }
+        }
+        for (lastName, players) in lastNameIndex {
+            if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+        }
+
+        // Reject leaderboard triggers — those go to parseLeaderboard
+        let leaderboardWords = ["leaders", "leader", "leaderboard"]
+        if leaderboardWords.contains(where: { containsWord($0, in: lower) }) { return nil }
+
+        // Must have a stat keyword
+        guard let stat = matchStat(lower) else { return nil }
+
+        // Extract numeric threshold (skip 4-digit years 1900-2099)
+        let numberPattern = try! NSRegularExpression(pattern: "(\\d+\\.?\\d*|\\.\\d+)\\+?")
+        let matches = numberPattern.matches(in: lower, range: NSRange(lower.startIndex..., in: lower))
+
+        var threshold: Double?
+        for match in matches {
+            guard let range = Range(match.range(at: 1), in: lower) else { continue }
+            let numStr = String(lower[range])
+            guard let num = Double(numStr) else { continue }
+            // Skip 4-digit years (1900-2099)
+            let intNum = Int(num)
+            if intNum >= 1900 && intNum <= 2099 && !numStr.contains(".") { continue }
+            threshold = num
+            break
+        }
+
+        guard let threshold else { return nil }
+
+        // Determine comparison operator
+        let underPatterns = ["under ", "fewer than ", "less than ", "below ", "no more than "]
+        let comparison: String
+        if underPatterns.contains(where: { lower.contains($0) }) {
+            comparison = "<="
+        } else {
+            comparison = ">="
+        }
+
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        return (stat, threshold, comparison, season)
+    }
+
+    // MARK: - Team stats parser
+
+    /// Detect queries like "Yankees hitters", "Dodgers OPS leaders", "Mets home runs 2024".
+    /// Requires team alias match, no player name.
+    static func parseTeamStats(_ input: String) -> (teamCode: String, stat: StatInfo?, season: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Must have a team alias
+        guard let teamCode = matchTeam(lower) else { return nil }
+
+        // Reject if a player name is present
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) { return nil }
+        }
+        for (lastName, players) in lastNameIndex {
+            if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+        }
+
+        let stat = matchStat(lower)
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        return (teamCode, stat, season)
+    }
+
+    // MARK: - Fuzzy matching
 
     /// Find closest player names within edit distance threshold (for "did you mean?" suggestions).
     /// Returns multiple names when a last-name fuzzy match is ambiguous.

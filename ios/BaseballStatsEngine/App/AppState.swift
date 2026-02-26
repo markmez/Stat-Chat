@@ -74,6 +74,15 @@ final class AppState {
             return
         }
 
+        // Intercept career lookup queries — "Judge career stats", "Judge career home runs"
+        if let career = PlayerNameMatcher.parseCareerLookup(trimmed),
+           let response = PlayerCardService.buildCareerLookup(name: career.name, stat: career.stat) {
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            queryEngine.injectHistory(question: trimmed, answer: response)
+            return
+        }
+
         // Intercept season lookup queries — build response from DB, skip Claude
         if let (playerName, season) = PlayerNameMatcher.parseSeasonLookup(trimmed),
            let response = PlayerCardService.buildSeasonSummary(name: playerName, season: season) {
@@ -86,6 +95,27 @@ final class AppState {
         // Intercept platoon splits queries — "Judge vs lefties", "Soto splits"
         if let splits = PlayerNameMatcher.parsePlatoonSplits(trimmed),
            let response = PlayerCardService.buildPlatoonSplits(name: splits.name, hand: splits.hand, season: splits.season) {
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            queryEngine.injectHistory(question: trimmed, answer: response)
+            return
+        }
+
+        // Intercept threshold queries — "who hit 40 home runs?", "players batting over .300"
+        if let threshold = PlayerNameMatcher.parseThreshold(trimmed) {
+            let response = PlayerCardService.buildThresholdLeaderboard(
+                stat: threshold.stat, threshold: threshold.threshold,
+                comparison: threshold.comparison, season: threshold.season)
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            queryEngine.injectHistory(question: trimmed, answer: response)
+            return
+        }
+
+        // Intercept team stats queries — "Yankees hitters", "Dodgers OPS leaders"
+        if let teamQuery = PlayerNameMatcher.parseTeamStats(trimmed) {
+            let response = PlayerCardService.buildTeamStats(
+                teamCode: teamQuery.teamCode, stat: teamQuery.stat, season: teamQuery.season)
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             queryEngine.injectHistory(question: trimmed, answer: response)

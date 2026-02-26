@@ -562,6 +562,7 @@ enum PlayerCardService {
         }
 
         parts.append("\n[SUGGEST]how is \(displayName) doing lately[/SUGGEST]")
+        parts.append("[SUGGEST]\(displayName) career[/SUGGEST]")
 
         return parts.joined(separator: "\n")
     }
@@ -677,6 +678,112 @@ enum PlayerCardService {
         return parts.joined(separator: "\n")
     }
 
+    // MARK: - Career lookup (chat response builder)
+
+    /// Build a career response for "Judge career stats" or "Judge career home runs".
+    /// With stat: single career stat sentence. Without stat: full 21-stat career grid.
+    /// Returns nil if only 1 season of data (falls through to season lookup).
+    static func buildCareerLookup(name: String, stat: PlayerNameMatcher.StatInfo?) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+        let team = info?.team ?? ""
+        let teamDisplay = teamFullName(team)
+
+        // Detect the most recent season for pill suggestions
+        let mostRecentSeason: Int = {
+            let sql = """
+                SELECT MAX(s.season) FROM season_batting_stats s
+                JOIN players p ON s.player_id = p.player_id
+                WHERE p.name LIKE '%\(sanitize(name))%'
+                """
+            if let r = try? db.execute(sql: sql), let row = r.rows.first, let yr = Int(row[0]) {
+                return yr
+            }
+            return 2025
+        }()
+
+        if let stat {
+            // Single career stat
+            let selectExpr: String
+            if stat.isRate {
+                guard let formula = careerRateFormula(for: stat) else { return nil }
+                selectExpr = formula
+            } else {
+                selectExpr = "SUM(s.\(stat.dbColumn))"
+            }
+
+            let sql = """
+                SELECT \(selectExpr), COUNT(DISTINCT s.season)
+                FROM season_batting_stats s
+                JOIN players p ON s.player_id = p.player_id
+                WHERE p.name LIKE '%\(sanitize(name))%'
+                """
+            guard let result = try? db.execute(sql: sql),
+                  let row = result.rows.first,
+                  !row[0].isEmpty else { return nil }
+
+            let seasons = Int(row[1]) ?? 0
+            if seasons <= 1 { return nil }
+
+            let formattedValue = stat.isRate ? formatRate(row[0]) : row[0]
+
+            // Build natural language sentence
+            let sentence: String
+            switch stat.displayAbbrev {
+            case "HR":
+                sentence = "**\(displayName)** has hit **\(formattedValue)** career home runs."
+            case "AVG":
+                sentence = "**\(displayName)** has a **\(formattedValue)** career batting average."
+            case "RBI":
+                sentence = "**\(displayName)** has driven in **\(formattedValue)** career runs."
+            case "SB":
+                sentence = "**\(displayName)** has stolen **\(formattedValue)** career bases."
+            case "H":
+                sentence = "**\(displayName)** has **\(formattedValue)** career hits."
+            case "R":
+                sentence = "**\(displayName)** has scored **\(formattedValue)** career runs."
+            default:
+                if stat.isRate {
+                    sentence = "**\(displayName)** has a **\(formattedValue)** career \(stat.displayAbbrev)."
+                } else {
+                    sentence = "**\(displayName)** has **\(formattedValue)** career \(stat.displayAbbrev)."
+                }
+            }
+
+            let statName = stat.displayName.lowercased()
+            return "\(sentence) (\(teamDisplay))\n\n[SUGGEST]career \(statName) leaders[/SUGGEST]\n[SUGGEST]\(displayName) \(mostRecentSeason)[/SUGGEST]"
+        } else {
+            // Full career grid
+            guard let careerValues = fetchCareerRow(name: name) else { return nil }
+
+            var parts: [String] = []
+            parts.append("**\(displayName)** — Career Totals (\(teamDisplay))\n")
+
+            // Count seasons for the row label
+            let seasonCountSql = """
+                SELECT COUNT(DISTINCT s.season) FROM season_batting_stats s
+                JOIN players p ON s.player_id = p.player_id
+                WHERE p.name LIKE '%\(sanitize(name))%'
+                """
+            let seasonCount: String
+            if let r = try? db.execute(sql: seasonCountSql), let row = r.rows.first {
+                seasonCount = row[0]
+            } else {
+                seasonCount = "?"
+            }
+
+            parts.append("[STATGRID]")
+            parts.append("HEADER: " + allHeaders.joined(separator: ", "))
+            parts.append("ROW \(seasonCount) Seasons: " + careerValues.joined(separator: ", "))
+            parts.append("[/STATGRID]")
+
+            parts.append("\n[SUGGEST]\(displayName) \(mostRecentSeason)[/SUGGEST]")
+            parts.append("[SUGGEST]\(displayName) vs lefties[/SUGGEST]")
+
+            return parts.joined(separator: "\n")
+        }
+    }
+
     // MARK: - Single stat lookup (chat response builder)
 
     /// Build a natural language response for "Judge home runs" or "Ohtani OPS" queries.
@@ -741,7 +848,196 @@ enum PlayerCardService {
 
         let teamDisplay = teamFullName(team)
         let statName = stat.displayName.lowercased()
-        return "\(sentence) (\(teamDisplay))\n\n[TIP]Tap a player name for their full profile.[/TIP]\n\n[SUGGEST]\(season) \(statName) leaders[/SUGGEST]"
+        return "\(sentence) (\(teamDisplay))\n\n[TIP]Tap a player name for their full profile.[/TIP]\n\n[SUGGEST]\(season) \(statName) leaders[/SUGGEST]\n[SUGGEST]\(displayName) career \(statName)[/SUGGEST]"
+    }
+
+    // MARK: - Threshold leaderboard (chat response builder)
+
+    /// Build a filtered leaderboard for "who hit 40 home runs?" or "players batting over .300".
+    static func buildThresholdLeaderboard(stat: PlayerNameMatcher.StatInfo, threshold: Double, comparison: String, season: Int) -> String {
+        // Rate stats need a PA minimum
+        let paMin: Int?
+        if stat.isRate {
+            let maxGamesSql = "SELECT MAX(games) FROM season_batting_stats WHERE season = \(season)"
+            let maxGames: Int
+            if let r = try? db.execute(sql: maxGamesSql), let row = r.rows.first, let val = Int(row[0]) {
+                maxGames = val
+            } else {
+                maxGames = 162
+            }
+            paMin = maxGames >= 140 ? 400 : 200
+        } else {
+            paMin = nil
+        }
+
+        let paFilter = paMin.map { " AND s.plate_appearances >= \($0)" } ?? ""
+
+        let sql = """
+            SELECT p.name, s.\(stat.dbColumn)
+            FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE s.season = \(season) AND s.\(stat.dbColumn) \(comparison) \(threshold)\(paFilter)
+            ORDER BY s.\(stat.dbColumn) DESC
+            LIMIT 50
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else {
+            let thresholdStr = stat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
+            let op = comparison == ">=" ? "at least" : "no more than"
+            return "No players had \(op) \(thresholdStr) \(stat.displayAbbrev) in \(season)."
+        }
+
+        // Build title
+        let thresholdDisplay: String
+        if stat.isRate {
+            thresholdDisplay = formatRate(String(threshold))
+        } else {
+            thresholdDisplay = String(Int(threshold))
+        }
+
+        let title: String
+        if comparison == ">=" {
+            if stat.isRate {
+                title = "Players Batting Over \(thresholdDisplay) \(stat.displayAbbrev) in \(season)"
+            } else {
+                title = "Players with \(thresholdDisplay)+ \(stat.displayName) in \(season)"
+            }
+        } else {
+            title = "Players with \(thresholdDisplay) or Fewer \(stat.displayName) in \(season)"
+        }
+
+        var parts: [String] = []
+        parts.append("**\(title)**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: \(stat.displayAbbrev)")
+        for (i, row) in result.rows.enumerated() {
+            let playerName = row[0]
+            let rawValue = row[1]
+            let formattedValue = stat.isRate ? formatRate(rawValue) : rawValue
+            parts.append("ROW \(i + 1). \(playerName): \(formattedValue)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        let count = result.rows.count
+        parts.append("\n\(count) player\(count == 1 ? "" : "s") matched.")
+
+        if let paMin {
+            parts.append("_Min. \(paMin) PA._")
+        }
+
+        let statName = stat.displayName.lowercased()
+        parts.append("\n[SUGGEST]\(season) \(statName) leaders[/SUGGEST]")
+        parts.append("[SUGGEST]career \(statName) leaders[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - Team stats (chat response builder)
+
+    /// Build a team leaderboard for "Yankees hitters" or "Dodgers OPS leaders".
+    static func buildTeamStats(teamCode: String, stat: PlayerNameMatcher.StatInfo?, season: Int) -> String {
+        let fullName = teamFullName(teamCode)
+        let nickname = teamNickname(teamCode)
+
+        if let stat {
+            // Team leaderboard for a specific stat
+            let paMin: Int?
+            if stat.isRate {
+                paMin = 50
+            } else {
+                paMin = nil
+            }
+            let paFilter = paMin.map { " AND s.plate_appearances >= \($0)" } ?? ""
+
+            let sql = """
+                SELECT p.name, s.\(stat.dbColumn)
+                FROM season_batting_stats s
+                JOIN players p ON s.player_id = p.player_id
+                WHERE (s.team = '\(teamCode)' OR s.team LIKE '\(teamCode)/%' OR s.team LIKE '%/\(teamCode)')
+                      AND s.season = \(season)\(paFilter)
+                ORDER BY s.\(stat.dbColumn) DESC
+                LIMIT 15
+                """
+            guard let result = try? db.execute(sql: sql),
+                  !result.rows.isEmpty else {
+                return "No \(stat.displayName) data found for the \(fullName) in \(season)."
+            }
+
+            var parts: [String] = []
+            parts.append("**\(fullName)** — \(season) \(stat.displayName) Leaders\n")
+            parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+            parts.append("[LEADERBOARD]")
+            parts.append("HEADER: \(stat.displayAbbrev)")
+            for (i, row) in result.rows.enumerated() {
+                let playerName = row[0]
+                let rawValue = row[1]
+                let formattedValue = stat.isRate ? formatRate(rawValue) : rawValue
+                parts.append("ROW \(i + 1). \(playerName): \(formattedValue)")
+            }
+            parts.append("[/LEADERBOARD]")
+
+            if let paMin {
+                parts.append("\n_Min. \(paMin) PA._")
+            }
+
+            let statName = stat.displayName.lowercased()
+            parts.append("\n[SUGGEST]\(season) \(statName) leaders[/SUGGEST]")
+            parts.append("[SUGGEST]\(nickname) hitters[/SUGGEST]")
+
+            return parts.joined(separator: "\n")
+        } else {
+            // Team overview sorted by OPS
+            let sql = """
+                SELECT p.name, s.games, s.batting_avg, s.home_runs, s.rbi, s.ops
+                FROM season_batting_stats s
+                JOIN players p ON s.player_id = p.player_id
+                WHERE (s.team = '\(teamCode)' OR s.team LIKE '\(teamCode)/%' OR s.team LIKE '%/\(teamCode)')
+                      AND s.season = \(season) AND s.plate_appearances >= 50
+                ORDER BY s.ops DESC
+                LIMIT 15
+                """
+            guard let result = try? db.execute(sql: sql),
+                  !result.rows.isEmpty else {
+                return "No hitting data found for the \(fullName) in \(season)."
+            }
+
+            var parts: [String] = []
+            parts.append("**\(fullName)** — \(season) Hitters\n")
+            parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+            parts.append("[LEADERBOARD]")
+            parts.append("HEADER: G, AVG, HR, RBI, OPS")
+            for (i, row) in result.rows.enumerated() {
+                let playerName = row[0]
+                let g = row[1]
+                let avg = formatRate(row[2])
+                let hr = row[3]
+                let rbi = row[4]
+                let ops = formatRate(row[5])
+                parts.append("ROW \(i + 1). \(playerName): \(g), \(avg), \(hr), \(rbi), \(ops)")
+            }
+            parts.append("[/LEADERBOARD]")
+
+            parts.append("\n_Min. 50 PA._")
+            parts.append("\n[SUGGEST]\(nickname) home runs[/SUGGEST]")
+            parts.append("[SUGGEST]\(nickname) batting average[/SUGGEST]")
+
+            return parts.joined(separator: "\n")
+        }
+    }
+
+    /// Extract the team nickname from a Retrosheet code (e.g., "NYA" → "Yankees").
+    private static func teamNickname(_ code: String) -> String {
+        let full = teamFullName(code)
+        // Last word of full name is typically the nickname
+        let parts = full.split(separator: " ")
+        if parts.count >= 2 {
+            return String(parts.last!)
+        }
+        return full
     }
 
     // MARK: - Platoon splits (chat response builder)
