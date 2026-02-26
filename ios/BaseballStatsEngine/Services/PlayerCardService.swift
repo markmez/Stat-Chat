@@ -164,6 +164,11 @@ enum PlayerCardService {
             return "I don't have enough data to compare these two players."
         }
 
+        let name1 = info1?.name ?? player1
+        let name2 = info2?.name ?? player2
+        parts.append("\n[SUGGEST]\(name1) vs lefties[/SUGGEST]")
+        parts.append("[SUGGEST]\(name2) vs lefties[/SUGGEST]")
+
         return parts.joined(separator: "\n")
     }
 
@@ -556,6 +561,8 @@ enum PlayerCardService {
             parts.append("[/STATGRID]")
         }
 
+        parts.append("\n[SUGGEST]how is \(displayName) doing lately[/SUGGEST]")
+
         return parts.joined(separator: "\n")
     }
 
@@ -610,6 +617,9 @@ enum PlayerCardService {
             parts.append("\n\(count) \(performance) \(streakWord) detected. The \(adjective) was \(gValue) games (\(topRow.label)) with a \(opsValue) OPS.")
         }
 
+        let oppositePerf = performance == "hot" ? "cold" : "hot"
+        parts.append("\n[SUGGEST]\(displayName) \(oppositePerf) streaks[/SUGGEST]")
+
         return parts.joined(separator: "\n")
     }
 
@@ -662,6 +672,7 @@ enum PlayerCardService {
 
         // Brief comparison to full season
         parts.append("\nThat's up from his \(season) season line of \(seasonAvg)/\(seasonOps) (AVG/OPS).")
+        parts.append("\n[SUGGEST]\(displayName) hot streaks[/SUGGEST]")
 
         return parts.joined(separator: "\n")
     }
@@ -729,7 +740,8 @@ enum PlayerCardService {
         }
 
         let teamDisplay = teamFullName(team)
-        return "\(sentence) (\(teamDisplay))\n\n[TIP]Tap a player name for their full profile.[/TIP]"
+        let statName = stat.displayName.lowercased()
+        return "\(sentence) (\(teamDisplay))\n\n[TIP]Tap a player name for their full profile.[/TIP]\n\n[SUGGEST]\(season) \(statName) leaders[/SUGGEST]"
     }
 
     // MARK: - Platoon splits (chat response builder)
@@ -781,6 +793,7 @@ enum PlayerCardService {
         parts.append("[/STATGRID]")
 
         parts.append("\n[TIP]Tap a player name for their full profile.[/TIP]")
+        parts.append("\n[SUGGEST]\(displayName) \(season)[/SUGGEST]")
 
         return parts.joined(separator: "\n")
     }

@@ -191,6 +191,8 @@ enum PromptStore {
     - For leaderboard/ranking queries on rate stats (AVG, OBP, SLG, OPS, OPS+, ISO, BABIP), add a minimum plate appearances filter: WHERE plate_appearances >= 400 for a full season, or >= 200 for partial/current seasons. Counting stats (HR, RBI, SB, etc.) don't need this filter.
     - When the user asks for a player's "stats" without specifying a year, use UNION ALL to return (1) their most recent season row AND (2) a career totals row. IMPORTANT: Wrap the first SELECT in a subquery since SQLite does not allow ORDER BY/LIMIT before UNION ALL. Example pattern: SELECT * FROM (SELECT ... ORDER BY s.season DESC LIMIT 1) UNION ALL SELECT ... For career totals, SUM the counting stats and recalculate rate stats from sums (e.g., CAST(SUM(hits) AS REAL)/SUM(at_bats) for AVG). Use 'Career' as the season value. Only include the career row if the player has more than one season of data.
     - For questions about stats we don't have data for, return SELECT 'NO_DATA' as answer.
+    - CRITICAL: Always use single quotes around string literals (e.g., '%Judge%', 'vs_LHP'). Never leave string values unquoted — this is the most common cause of SQL syntax errors.
+    - For "compare to the league" or "how does X rank" questions, use a subquery or the league_averages table. Example: SELECT p.name, s.iso, (SELECT league_iso FROM league_averages WHERE season = s.season) AS league_avg FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE p.name LIKE '%Judge%' ORDER BY s.season DESC LIMIT 1.
     """
 
     static let standardHeader = "G, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP, AVG, OBP, SLG, OPS, OPS+, ISO, BABIP"

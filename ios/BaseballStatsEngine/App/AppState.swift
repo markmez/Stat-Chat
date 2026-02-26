@@ -133,6 +133,14 @@ final class AppState {
                     messages[streamingIndex] = Message(role: .assistant, content: currentStreamingText)
                 }
                 guard !Task.isCancelled else { return }
+                // Append contextual SUGGEST pills based on query content
+                if streamingIndex < messages.count {
+                    let pills = buildFallbackPills(for: trimmed)
+                    if !pills.isEmpty {
+                        let existing = messages[streamingIndex].content
+                        messages[streamingIndex] = Message(role: .assistant, content: existing + "\n\n" + pills)
+                    }
+                }
                 isLoading = false
                 currentStreamingText = ""
             } catch {
@@ -140,7 +148,11 @@ final class AppState {
                 isLoading = false
                 currentStreamingText = ""
                 guard streamingIndex < messages.count else { return }
-                messages[streamingIndex] = Message(role: .error, content: error.localizedDescription)
+                let pills = buildFallbackPills(for: trimmed)
+                let errorContent = pills.isEmpty
+                    ? error.localizedDescription
+                    : error.localizedDescription + "\n\n" + pills
+                messages[streamingIndex] = Message(role: .error, content: errorContent)
             }
         }
     }
@@ -200,6 +212,49 @@ final class AppState {
     func clearSearchHistory() {
         searchHistory.removeAll()
         UserDefaults.standard.removeObject(forKey: historyKey)
+    }
+
+    /// Build contextual SUGGEST pills for Claude fallthrough responses based on query content.
+    private func buildFallbackPills(for query: String) -> String {
+        let lower = query.lowercased()
+        var pills: [String] = []
+
+        // Detect player name in query
+        let words = lower.split(separator: " ").map(String.init)
+        var detectedPlayer: String?
+        for i in 0..<words.count {
+            // Try two-word names first (more specific)
+            if i + 1 < words.count {
+                let pair = "\(words[i]) \(words[i + 1])"
+                if let match = PlayerNameMatcher.matchPlayer(pair) {
+                    detectedPlayer = match
+                    break
+                }
+            }
+            // Then single word (last name)
+            if let match = PlayerNameMatcher.matchPlayer(words[i]) {
+                detectedPlayer = match
+                break
+            }
+        }
+
+        // Detect stat keyword
+        let detectedStat = PlayerNameMatcher.matchStat(lower)
+
+        if let player = detectedPlayer {
+            let season = PlayerNameMatcher.detectSeason(lower, defaultToMostRecent: true) ?? 2025
+            pills.append("[SUGGEST]\(player) \(season)[/SUGGEST]")
+            if detectedStat != nil {
+                pills.append("[SUGGEST]\(player) splits[/SUGGEST]")
+            }
+        }
+
+        if let stat = detectedStat {
+            let statName = stat.displayName.lowercased()
+            pills.append("[SUGGEST]\(statName) leaders[/SUGGEST]")
+        }
+
+        return pills.joined(separator: "\n")
     }
 
     /// Heuristic: does this question need prior context to make sense?
