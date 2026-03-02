@@ -517,9 +517,44 @@ final class QueryEngine {
         }
     }
 
-    /// Inject a Q&A pair into history (for locally-handled queries like comparisons)
+    /// Inject a Q&A pair into history (for locally-handled queries like comparisons).
+    /// Strips internal UI tags so Claude sees clean natural language context.
     func injectHistory(question: String, answer: String) {
-        addToHistory(question: question, answer: answer)
+        addToHistory(question: question, answer: sanitizeForHistory(answer))
+    }
+
+    /// Strip internal rendering tags from intercepted responses so Claude gets clean context.
+    private func sanitizeForHistory(_ text: String) -> String {
+        var lines = text.components(separatedBy: "\n")
+
+        lines = lines.compactMap { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            // Remove SUGGEST pills, TIP blocks, LEADERBOARD delimiters, HEADER lines, FORM metadata
+            if trimmed.hasPrefix("[SUGGEST]") { return nil }
+            if trimmed.hasPrefix("[TIP]") { return nil }
+            if trimmed == "[LEADERBOARD]" || trimmed == "[/LEADERBOARD]" { return nil }
+            if trimmed.hasPrefix("HEADER:") { return nil }
+            if trimmed.hasPrefix("FORM:") { return nil }
+
+            // Convert "ROW 1. Name: Value" → "1. Name: Value"
+            if trimmed.hasPrefix("ROW ") {
+                return String(trimmed.dropFirst(4))
+            }
+
+            return line
+        }
+
+        // Collapse runs of blank lines
+        var result: [String] = []
+        for line in lines {
+            if line.trimmingCharacters(in: .whitespaces).isEmpty && result.last?.trimmingCharacters(in: .whitespaces).isEmpty == true {
+                continue
+            }
+            result.append(line)
+        }
+
+        return result.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func clearHistory() {
