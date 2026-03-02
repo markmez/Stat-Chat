@@ -69,12 +69,25 @@ Available for seasons 1969 and later.
 - babip (REAL) — BABIP
 - wrc_plus (INTEGER) — NULL (not available from this data source)
 
+### home_away_splits
+Home and away batting splits aggregated from game logs.
+- player_id (TEXT) — references players table
+- season (INTEGER) — year
+- split (TEXT) — "home" or "away"
+- games (INTEGER) — games played in that split
+- plate_appearances (INTEGER) — PA
+- at_bats (INTEGER) — AB
+- hits, doubles, triples, home_runs, runs, rbi, walks, strikeouts, hit_by_pitch, sacrifice_flies (INTEGER)
+- batting_avg, obp, slg, ops, iso, babip (REAL) — rate stats
+- For home/away queries, JOIN with home_away_splits using split = 'home' or split = 'away'
+
 ### game_batting_logs
 Available for seasons 1898 and later.
 - player_id (TEXT) — references players table
 - season (INTEGER) — year
 - date (TEXT) — game date in YYYY-MM-DD format
 - opponent (TEXT) — opponent team abbreviation (may be NULL)
+- vishome (TEXT) — "H" for home game, "V" for away/visitor game
 - plate_appearances, at_bats, hits, doubles, triples, home_runs, runs, rbi, walks, strikeouts (INTEGER)
 - batting_avg, obp, slg, ops (REAL) — per-game rates
 
@@ -130,6 +143,7 @@ Precomputed "current form" for each player-season — the stats from the last de
 - League-wide averages per season (league_averages table)
 - Game-level batting logs from 1898 to present (Retrosheet) — all players, not limited to qualified batters
 - Platoon splits (vs LHP and vs RHP) from 1969 to present (Retrosheet retrosplits)
+- Home/away splits aggregated from game logs (home_away_splits table)
 - Precomputed streak segments for players with sufficient game logs (streaks table)
 - Sensitive fallback streaks for players with no dramatic shifts (streaks_sensitive table)
 - Current form data for each player-season (current_form table) — form period stats from last performance shift to end of season
@@ -144,6 +158,7 @@ Precomputed "current form" for each player-season — the stats from the last de
 - For counting stats (HR, RBI, etc.), use the integer columns directly
 - For split queries (vs lefties/righties), JOIN with platoon_splits using split = 'vs_LHP' or split = 'vs_RHP'
 - Platoon splits are only available for 1969 and later. If the user asks about splits for earlier years, let them know.
+- For home/away split queries, JOIN with home_away_splits using split = 'home' or split = 'away'
 - Some historical stats (IBB, SF, HBP) may be NULL or 0 for very old seasons (pre-1955)
 - If the user says "last year" or "last season", assume 2024. If they say "this year" or "this season", assume 2025.
 """

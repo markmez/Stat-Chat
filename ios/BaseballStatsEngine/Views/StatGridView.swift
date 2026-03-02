@@ -4,6 +4,9 @@ struct StatGridView: View {
     let grid: StatGridParser.StatGrid
     var onPlayerTap: ((String) -> Void)? = nil
     var compactHeaders: [String]? = nil
+    /// When set, enables "Project Over 162 Games" toggle using this as the divisor (player's season games).
+    /// Counting stats scale by 162 / seasonGames. Rate stats stay unchanged.
+    var seasonGames: Int? = nil
 
     /// 1-line summary: the 7 key batting stats shown when compact
     static let summaryHeaders = ["G", "AB", "AVG", "OBP", "SLG", "OPS", "HR"]
@@ -49,6 +52,11 @@ struct StatGridView: View {
     /// Uniform column width — same for every column across all rows so they align in a true grid
     private let columnWidth: CGFloat = 50
 
+    /// Whether the projection toggle should be available
+    private var canProject: Bool {
+        grid.formMetadata == nil && (isStreakGrid || seasonGames != nil)
+    }
+
     /// Whether this grid looks like streak data (date-range labels, has G + rate stats, no PA)
     private var isStreakGrid: Bool {
         let headers = Set(filteredGrid.headers)
@@ -59,7 +67,7 @@ struct StatGridView: View {
         return hasG && rateHits >= 2 && !hasPA && hasDateLabel
     }
 
-    private static let countingStats: Set<String> = ["G", "AB", "R", "H", "BB", "SO", "HR", "RBI"]
+    private static let countingStats: Set<String> = ["G", "PA", "AB", "R", "H", "BB", "SO", "HR", "RBI", "2B", "3B", "HBP", "SF"]
 
     /// Recompute form stats from game logs starting at a given game number.
     static func recomputeFromLogs(_ logs: [GameLog], fromGameNumber: Int) -> StatGridParser.StatGrid? {
@@ -110,6 +118,18 @@ struct StatGridView: View {
         let scale = 162.0 / numGames
         return zip(headers, values).map { header, value in
             if header == "Perf" { return "\u{2014}" }
+            if countingStats.contains(header), let raw = Double(value) {
+                return String(Int((raw * scale).rounded()))
+            }
+            return value
+        }
+    }
+
+    /// Project a row's counting stats to 162-game pace using the player's season games as the divisor.
+    static func projectTo162WithScale(headers: [String], values: [String], seasonGames: Int) -> [String] {
+        guard seasonGames > 0 else { return values }
+        let scale = 162.0 / Double(seasonGames)
+        return zip(headers, values).map { header, value in
             if countingStats.contains(header), let raw = Double(value) {
                 return String(Int((raw * scale).rounded()))
             }
@@ -462,9 +482,11 @@ struct StatGridView: View {
                 .padding(.top, row.label.isEmpty && index == 0 ? 10 : 4)
                 .padding(.bottom, showProjection ? 4 : 10)
 
-                // Projected 162-game pace row (for streak grids, not form grids)
-                if showProjection && isStreakGrid && grid.formMetadata == nil {
-                    let projValues = Self.projectTo162(headers: displayHeaders, values: isCompactAvailable && !isExpanded ? compactValues(for: row) : row.values)
+                // Projected 162-game pace row
+                if showProjection && canProject {
+                    let rowValues = isCompactAvailable && !isExpanded ? compactValues(for: row) : row.values
+                    let projValues = seasonGames.map { Self.projectTo162WithScale(headers: displayHeaders, values: rowValues, seasonGames: $0) }
+                        ?? Self.projectTo162(headers: displayHeaders, values: rowValues)
                     let projChunks = chunk(projValues)
                     let hChunksProj = displayHeaderChunks
 
@@ -528,8 +550,8 @@ struct StatGridView: View {
                 .buttonStyle(.plain)
             }
 
-            // Streak projection toggle (hide for form grids)
-            if isStreakGrid && grid.formMetadata == nil {
+            // Projection toggle
+            if canProject {
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         showProjection.toggle()

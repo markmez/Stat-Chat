@@ -122,12 +122,43 @@ def create_tables(conn):
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS home_away_splits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            split TEXT NOT NULL,
+            games INTEGER,
+            plate_appearances INTEGER,
+            at_bats INTEGER,
+            hits INTEGER,
+            doubles INTEGER,
+            triples INTEGER,
+            home_runs INTEGER,
+            runs INTEGER,
+            rbi INTEGER,
+            walks INTEGER,
+            strikeouts INTEGER,
+            hit_by_pitch INTEGER,
+            sacrifice_flies INTEGER,
+            batting_avg REAL,
+            obp REAL,
+            slg REAL,
+            ops REAL,
+            iso REAL,
+            babip REAL,
+            FOREIGN KEY (player_id) REFERENCES players(player_id),
+            UNIQUE(player_id, season, split)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS game_batting_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             player_id TEXT NOT NULL,
             season INTEGER NOT NULL,
             date TEXT NOT NULL,
             opponent TEXT,
+            vishome TEXT,
             plate_appearances INTEGER,
             at_bats INTEGER,
             hits INTEGER,
@@ -175,6 +206,8 @@ def create_tables(conn):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_splits_player ON platoon_splits(player_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_splits_player_season ON platoon_splits(player_id, season)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_splits_split ON platoon_splits(split)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ha_player ON home_away_splits(player_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_ha_player_season ON home_away_splits(player_id, season)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_gamelogs_player ON game_batting_logs(player_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_gamelogs_player_season ON game_batting_logs(player_id, season)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_gamelogs_date ON game_batting_logs(date)")
@@ -454,18 +487,19 @@ def load_game_logs(conn, start_season, end_season):
 
             date = format_date(row.get("date", ""))
             opp = str(row.get("opp", "")) if pd.notna(row.get("opp")) else None
+            vishome = str(row.get("vishome", "")).upper() if pd.notna(row.get("vishome")) else None
 
             rates = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so)
 
             cursor.execute("""
                 INSERT OR REPLACE INTO game_batting_logs (
-                    player_id, season, date, opponent,
+                    player_id, season, date, opponent, vishome,
                     plate_appearances, at_bats, hits, doubles, triples,
                     home_runs, runs, rbi, walks, strikeouts,
                     batting_avg, obp, slg, ops
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                pid, season, date, opp,
+                pid, season, date, opp, vishome,
                 pa, ab, h, doubles, triples, hr, r, rbi, bb, so,
                 rates["avg"], rates["obp"], rates["slg"], rates["ops"],
             ))
@@ -476,6 +510,110 @@ def load_game_logs(conn, start_season, end_season):
         print(f"  {season}: {season_rows} game log rows")
 
     print(f"  Loaded {total_games} game log rows total")
+
+
+# ---------------------------------------------------------------------------
+# Phase 2b: Home/Away splits (aggregated from Retrosheet batting.csv)
+# ---------------------------------------------------------------------------
+
+def load_home_away_splits(conn, start_season, end_season):
+    """Aggregate batting.csv by player + vishome to create home/away splits."""
+    print(f"Phase 2b: Loading home/away splits for {start_season}-{end_season}...")
+    cursor = conn.cursor()
+    total_splits = 0
+
+    for season in range(start_season, end_season + 1):
+        try:
+            zf = download_retrosheet_zip(season)
+        except Exception as e:
+            print(f"  Warning: Failed to download {season}: {e}")
+            continue
+
+        batting = read_csv_from_zip(zf, "batting.csv")
+        if batting is None:
+            continue
+
+        # Filter to regular season, stat type = value
+        if "gametype" in batting.columns:
+            batting = batting[batting["gametype"] == "regular"]
+        if "stattype" in batting.columns:
+            batting = batting[batting["stattype"] == "value"]
+
+        # Need vishome column
+        if "vishome" not in batting.columns:
+            print(f"  {season}: no vishome column in batting.csv, skipping")
+            continue
+
+        # Normalize vishome to uppercase and drop rows without valid values
+        batting["vishome"] = batting["vishome"].astype(str).str.upper()
+        batting = batting[batting["vishome"].isin(["H", "V"])]
+
+        # Group by player + vishome
+        counting_cols = ["b_pa", "b_ab", "b_h", "b_d", "b_t", "b_hr",
+                         "b_r", "b_rbi", "b_w", "b_k", "b_hbp", "b_sf"]
+        for col in counting_cols:
+            if col in batting.columns:
+                batting[col] = batting[col].fillna(0).astype(int)
+
+        grouped = batting.groupby(["id", "vishome"]).agg(
+            games=("id", "count"),
+            pa=("b_pa", "sum"),
+            ab=("b_ab", "sum"),
+            h=("b_h", "sum"),
+            doubles=("b_d", "sum"),
+            triples=("b_t", "sum"),
+            hr=("b_hr", "sum"),
+            r=("b_r", "sum"),
+            rbi=("b_rbi", "sum"),
+            bb=("b_w", "sum"),
+            so=("b_k", "sum"),
+            hbp=("b_hbp", "sum"),
+            sf=("b_sf", "sum"),
+        ).reset_index()
+
+        season_rows = 0
+        for _, row in grouped.iterrows():
+            pid = str(row["id"])
+            vh = str(row["vishome"])
+            split = "home" if vh == "H" else "away"
+
+            games = safe_int(row["games"])
+            pa = safe_int(row["pa"])
+            ab = safe_int(row["ab"])
+            h = safe_int(row["h"])
+            doubles = safe_int(row["doubles"])
+            triples = safe_int(row["triples"])
+            hr = safe_int(row["hr"])
+            r = safe_int(row["r"])
+            rbi = safe_int(row["rbi"])
+            bb = safe_int(row["bb"])
+            so = safe_int(row["so"])
+            hbp = safe_int(row["hbp"])
+            sf = safe_int(row["sf"])
+
+            rates = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so)
+
+            cursor.execute("""
+                INSERT OR REPLACE INTO home_away_splits (
+                    player_id, season, split, games, plate_appearances, at_bats,
+                    hits, doubles, triples, home_runs, runs, rbi,
+                    walks, strikeouts, hit_by_pitch, sacrifice_flies,
+                    batting_avg, obp, slg, ops, iso, babip
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                pid, season, split, games, pa, ab,
+                h, doubles, triples, hr, r, rbi,
+                bb, so, hbp, sf,
+                rates["avg"], rates["obp"], rates["slg"], rates["ops"],
+                rates["iso"], rates["babip"],
+            ))
+            season_rows += 1
+
+        conn.commit()
+        total_splits += season_rows
+        print(f"  {season}: {season_rows} home/away split rows")
+
+    print(f"  Loaded {total_splits} home/away split rows total")
 
 
 # ---------------------------------------------------------------------------
@@ -768,6 +906,14 @@ def pull_and_load(start_season, end_season):
         conn.commit()
         print("  Migrated: added ops_plus column to season_batting_stats")
 
+    # Migrate existing DBs: add vishome column to game_batting_logs if missing
+    cursor.execute("PRAGMA table_info(game_batting_logs)")
+    gl_columns = {row[1] for row in cursor.fetchall()}
+    if "vishome" not in gl_columns:
+        cursor.execute("ALTER TABLE game_batting_logs ADD COLUMN vishome TEXT")
+        print("  Migrated: added vishome column to game_batting_logs")
+    conn.commit()
+
     # Migrate existing DBs: add bio columns to players if missing
     cursor.execute("PRAGMA table_info(players)")
     player_columns = {row[1] for row in cursor.fetchall()}
@@ -782,6 +928,9 @@ def pull_and_load(start_season, end_season):
 
     # Phase 2: Game logs from Retrosheet
     load_game_logs(conn, start_season, end_season)
+
+    # Phase 2b: Home/away splits from Retrosheet
+    load_home_away_splits(conn, start_season, end_season)
 
     # Phase 3: Platoon splits from retrosplits
     load_retrosplits(conn, start_season, end_season)

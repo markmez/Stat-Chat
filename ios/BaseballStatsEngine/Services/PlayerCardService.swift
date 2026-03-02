@@ -34,6 +34,7 @@ struct SeasonData: Sendable {
     /// Raw counting stat values (G, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP)
     let countingValues: [String: Double]
     let platoonSplits: StatGridParser.StatGrid?
+    let homeAwaySplits: StatGridParser.StatGrid?
     let streaks: StatGridParser.StatGrid?
     let currentForm: CurrentFormData?
 }
@@ -302,13 +303,15 @@ enum PlayerCardService {
 
             // Per-season splits, streaks, and current form
             let splits = fetchPlatoonSplitsForSeason(name: name, season: year)
+            let homeAwaySplits = fetchHomeAwaySplitsForSeason(name: name, season: year)
             let streakGrid = fetchStreaksForSeason(name: name, season: year, performance: "hot")
             let currentForm = fetchCurrentFormForSeason(name: name, season: year)
 
             seasons.append(SeasonData(
                 year: year, team: team, age: age, games: games, teamGames: teamGames,
                 stats: grid, countingValues: counting,
-                platoonSplits: splits, streaks: streakGrid, currentForm: currentForm
+                platoonSplits: splits, homeAwaySplits: homeAwaySplits,
+                streaks: streakGrid, currentForm: currentForm
             ))
         }
 
@@ -389,6 +392,34 @@ enum PlayerCardService {
         var rows: [StatGridParser.StatGrid.Row] = []
         for row in result.rows.prefix(2) {
             let splitLabel = row[0] == "vs_LHP" ? "vs LHP" : "vs RHP"
+            let values = formatValues(headers: headers, values: Array(row.dropFirst()))
+            rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: values))
+        }
+
+        guard !rows.isEmpty else { return nil }
+        return StatGridParser.StatGrid(headers: headers, rows: rows)
+    }
+
+    // MARK: - Per-season home/away splits
+
+    private static func fetchHomeAwaySplitsForSeason(name: String, season: Int) -> StatGridParser.StatGrid? {
+        let sql = """
+            SELECT has.split, has.games, has.plate_appearances, has.at_bats, has.hits,
+                   has.doubles, has.triples, has.home_runs, has.rbi,
+                   has.walks, has.strikeouts,
+                   has.batting_avg, has.obp, has.slg, has.ops, has.iso, has.babip
+            FROM home_away_splits has
+            JOIN players p ON has.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND has.season = \(season)
+            ORDER BY has.split DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["G", "PA", "AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+        var rows: [StatGridParser.StatGrid.Row] = []
+        for row in result.rows.prefix(2) {
+            let splitLabel = row[0] == "home" ? "Home" : "Away"
             let values = formatValues(headers: headers, values: Array(row.dropFirst()))
             rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: values))
         }

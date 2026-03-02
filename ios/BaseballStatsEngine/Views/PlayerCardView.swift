@@ -11,6 +11,8 @@ struct PlayerCardView: View {
     @State private var formSliderGameNumber: Int? = nil  // nil = auto-detected, represents "last N games"
     @State private var gameLogs: [GameLog]? = nil
     @State private var formProjectionMode: FormProjectionMode = .pace
+    @State private var splitTab: SplitTab = .platoon
+    @State private var priorSeasonTabs: [Int: SplitTab] = [:]
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
@@ -23,6 +25,12 @@ struct PlayerCardView: View {
     enum FormProjectionMode: String, CaseIterable {
         case pace = "162-Game Pace"
         case forecast = "Season Forecast"
+    }
+
+    enum SplitTab: String, CaseIterable {
+        case platoon = "Platoon"
+        case homeAway = "Home / Away"
+        case streaks = "Hot Streaks"
     }
 
     var body: some View {
@@ -92,15 +100,11 @@ struct PlayerCardView: View {
                                 projectedStatsSection(season: current)
                             }
 
-                            // Current season platoon splits
-                            if let splits = current.platoonSplits {
-                                sectionView(title: "Platoon Splits", grid: splits, compact: true)
-                            }
-
-                            // Current season streaks
-                            if let streaks = current.streaks {
-                                sectionView(title: "Notable Hot Streaks", grid: streaks, compact: true)
-                            }
+                            // Unified splits section (platoon / home-away / hot streaks)
+                            splitsSection(
+                                season: current,
+                                tab: $splitTab
+                            )
                         }
 
                         // Career totals
@@ -151,13 +155,13 @@ struct PlayerCardView: View {
                                                     .padding(.horizontal, 6)
                                             }
 
-                                            if let splits = season.platoonSplits {
-                                                sectionView(title: "Platoon Splits", grid: splits, compact: true)
-                                            }
-
-                                            if let streaks = season.streaks {
-                                                sectionView(title: "Notable Hot Streaks", grid: streaks, compact: true)
-                                            }
+                                            splitsSection(
+                                                season: season,
+                                                tab: Binding(
+                                                    get: { priorSeasonTabs[season.year] ?? .platoon },
+                                                    set: { priorSeasonTabs[season.year] = $0 }
+                                                )
+                                            )
                                         }
                                         .padding(.bottom, 8)
                                     }
@@ -266,6 +270,76 @@ struct PlayerCardView: View {
         }
     }
 
+    @ViewBuilder
+    private func splitsSection(
+        season: SeasonData,
+        tab: Binding<SplitTab>
+    ) -> some View {
+        let hasData = season.platoonSplits != nil || season.homeAwaySplits != nil || season.streaks != nil
+
+        if hasData {
+            VStack(alignment: .leading, spacing: 8) {
+                // Segmented control
+                HStack(spacing: 0) {
+                    ForEach(SplitTab.allCases, id: \.self) { t in
+                        let available = tabHasData(t, season: season)
+                        Button {
+                            if available {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    tab.wrappedValue = t
+                                }
+                            }
+                        } label: {
+                            Text(t.rawValue)
+                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(tab.wrappedValue == t
+                                              ? deepBlue.opacity(0.12)
+                                              : Color.clear)
+                                )
+                                .foregroundStyle(tab.wrappedValue == t ? deepBlue : .secondary)
+                                .opacity(available ? 1.0 : 0.4)
+                        }
+                        .disabled(!available)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .onAppear {
+                    // Auto-select first tab that has data if current selection is empty
+                    if !tabHasData(tab.wrappedValue, season: season) {
+                        for t in SplitTab.allCases {
+                            if tabHasData(t, season: season) {
+                                tab.wrappedValue = t
+                                break
+                            }
+                        }
+                    }
+                }
+
+                // Content for selected tab
+                if let grid = gridForTab(tab.wrappedValue, season: season) {
+                    StatGridView(grid: grid, compactHeaders: StatGridView.summaryHeaders, seasonGames: season.games)
+                        .padding(.horizontal, 6)
+                }
+            }
+        }
+    }
+
+    private func tabHasData(_ tab: SplitTab, season: SeasonData) -> Bool {
+        gridForTab(tab, season: season) != nil
+    }
+
+    private func gridForTab(_ tab: SplitTab, season: SeasonData) -> StatGridParser.StatGrid? {
+        switch tab {
+        case .platoon: return season.platoonSplits
+        case .homeAway: return season.homeAwaySplits
+        case .streaks: return season.streaks
+        }
+    }
+
     private func currentFormSection(season: SeasonData) -> some View {
         guard let form = season.currentForm else { return AnyView(EmptyView()) }
 
@@ -285,7 +359,7 @@ struct PlayerCardView: View {
 
         return AnyView(VStack(alignment: .leading, spacing: 8) {
             Text("Current Hot Streak")
-                .font(.system(.headline, design: .rounded, weight: .semibold))
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 20)
 
