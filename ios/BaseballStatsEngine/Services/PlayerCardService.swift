@@ -1912,6 +1912,15 @@ enum PlayerCardService {
         reverseTeamMap[name]
     }
 
+    /// Case-insensitive version — matches "new york yankees" etc.
+    static func teamCodeFromFullNameCaseInsensitive(_ input: String) -> String? {
+        let lower = input.lowercased()
+        for (name, code) in reverseTeamMap {
+            if name.lowercased() == lower { return code }
+        }
+        return nil
+    }
+
     // MARK: - Team card fetch
 
     static func fetchTeamCard(teamCode: String) -> TeamCard? {

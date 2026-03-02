@@ -16,6 +16,14 @@ struct PlayerCardView: View {
     @State private var priorSeasonTabs: [Int: SplitTab] = [:]
     @State private var selectedTeamCode: String? = nil
 
+    // Floating search bar state
+    @State private var searchText = ""
+    @FocusState private var isSearchFocused: Bool
+    @State private var searchSuggestions: [String] = []
+    @State private var searchPendingQuery: String?
+    @State private var searchPlayerName: String? = nil
+    @State private var searchQuestion: String? = nil
+
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
@@ -44,6 +52,7 @@ struct PlayerCardView: View {
             if isLoading {
                 LoadingIndicator()
             } else if let card = playerCard {
+                VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
                         // Header with back arrow + subtitle
@@ -217,7 +226,11 @@ struct PlayerCardView: View {
                         }
                     }
                     .padding(.top, 16)
-                    .padding(.bottom, 24)
+                    .padding(.bottom, 80)
+                }
+                .scrollDismissesKeyboard(.interactively)
+
+                floatingSearchBar
                 }
             }
         }
@@ -272,10 +285,144 @@ struct PlayerCardView: View {
         )) {
             TeamCardView(teamCode: selectedTeamCode ?? "")
         }
+        .navigationDestination(isPresented: Binding(
+            get: { searchPlayerName != nil },
+            set: { if !$0 { searchPlayerName = nil } }
+        )) {
+            PlayerCardView(playerName: searchPlayerName ?? "")
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { searchQuestion != nil },
+            set: { if !$0 { searchQuestion = nil } }
+        )) {
+            ResultsView(initialQuestion: searchQuestion ?? "")
+        }
         .task {
             playerCard = await PlayerCardService.fetch(name: playerName)
             isLoading = false
         }
+    }
+
+    // MARK: - Floating search bar
+
+    private var floatingSearchBar: some View {
+        VStack(spacing: 0) {
+            // Fade gradient so scrolled content doesn't look clipped
+            LinearGradient(
+                colors: [Color(uiColor: .systemBackground).opacity(0), Color(uiColor: .systemBackground)],
+                startPoint: .top, endPoint: .bottom
+            )
+            .frame(height: 16)
+
+            VStack(spacing: 6) {
+                // "Did you mean?" suggestions
+                if let query = searchPendingQuery, !searchSuggestions.isEmpty {
+                    VStack(spacing: 4) {
+                        Text("Did you mean:")
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(.secondary)
+
+                        ForEach(searchSuggestions, id: \.self) { name in
+                            Button {
+                                let n = name
+                                withAnimation { searchSuggestions = []; searchPendingQuery = nil }
+                                searchText = ""
+                                searchPlayerName = n
+                            } label: {
+                                Text(name)
+                                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                    .foregroundStyle(deepBlue)
+                            }
+                        }
+
+                        Button {
+                            let q = query
+                            withAnimation { searchSuggestions = []; searchPendingQuery = nil }
+                            searchText = ""
+                            searchQuestion = q
+                        } label: {
+                            (Text("Or search \"")
+                                .foregroundStyle(.secondary)
+                             + Text(query)
+                                .foregroundStyle(lightBlue)
+                             + Text("\"")
+                                .foregroundStyle(.secondary))
+                                .font(.system(.caption, design: .rounded))
+                        }
+                    }
+                    .padding(.bottom, 6)
+                }
+
+                // Search input
+                HStack(spacing: 12) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(lightBlue)
+
+                    TextField("", text: $searchText, prompt:
+                        Text("Search player stats or ask a question")
+                            .foregroundStyle(Color(uiColor: .placeholderText))
+                    )
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .focused($isSearchFocused)
+                    .onSubmit { submitSearch() }
+
+                    if !searchText.isEmpty {
+                        Button(action: submitSearch) {
+                            Image(systemName: "arrow.right.circle.fill")
+                                .font(.system(size: 22))
+                                .foregroundStyle(lightBlue)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 0.5)
+                )
+                .padding(.horizontal, 16)
+            }
+            .padding(.bottom, 6)
+            .background(Color(uiColor: .systemBackground))
+        }
+    }
+
+    private func submitSearch() {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        searchSuggestions = []
+        searchPendingQuery = nil
+
+        // Exact player name match
+        if let name = PlayerNameMatcher.matchPlayer(trimmed) {
+            searchText = ""
+            searchPlayerName = name
+            return
+        }
+
+        // Exact team name match (case-insensitive)
+        if let code = PlayerCardService.teamCodeFromFullNameCaseInsensitive(trimmed) {
+            searchText = ""
+            selectedTeamCode = code
+            return
+        }
+
+        // Fuzzy player name match → "Did you mean?"
+        let fuzzy = PlayerNameMatcher.fuzzyMatch(trimmed)
+        if !fuzzy.isEmpty {
+            withAnimation(.easeOut(duration: 0.25)) {
+                searchSuggestions = fuzzy
+                searchPendingQuery = trimmed
+            }
+            return
+        }
+
+        // Fall through to Claude
+        searchText = ""
+        searchQuestion = trimmed
     }
 
     private func sectionView(title: String, grid: StatGridParser.StatGrid, compact: Bool = false) -> some View {
