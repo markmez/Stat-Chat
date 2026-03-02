@@ -111,6 +111,7 @@ struct RosterEntry: Sendable {
 struct TeamSeasonData: Sendable {
     let year: Int
     let stats: StatGridParser.StatGrid
+    let pitchingStats: StatGridParser.StatGrid?
     let leaders: [StatLeader]
     let roster: [RosterEntry]
 }
@@ -2090,8 +2091,45 @@ enum PlayerCardService {
                               formatRate(String(slg)), formatRate(String(ops))]
             let statsGrid = StatGridParser.StatGrid(
                 headers: teamHeaders,
-                rows: [StatGridParser.StatGrid.Row(label: fullName, values: teamValues)]
+                rows: [StatGridParser.StatGrid.Row(label: "", values: teamValues)]
             )
+
+            // 2a-2. Team pitching aggregate stats
+            let pitchingTeamFilterAgg = "(sp.team = '\(sanitize(teamCode))' OR sp.team LIKE '\(sanitize(teamCode))/%' OR sp.team LIKE '%/\(sanitize(teamCode))')"
+            let pitchAggSql = """
+                SELECT SUM(sp.wins), SUM(sp.losses), SUM(sp.saves),
+                       SUM(sp.ip_outs), SUM(sp.hits), SUM(sp.earned_runs),
+                       SUM(sp.walks), SUM(sp.strikeouts), SUM(sp.home_runs)
+                FROM season_pitching_stats sp
+                WHERE \(pitchingTeamFilterAgg) AND sp.season = \(year)
+                """
+            var pitchingStatsGrid: StatGridParser.StatGrid? = nil
+            if let pitchAggResult = try? db.execute(sql: pitchAggSql),
+               let pitchAggRow = pitchAggResult.rows.first,
+               pitchAggRow.count >= 9,
+               let ipOutsVal = Double(pitchAggRow[3]), ipOutsVal > 0 {
+                let pSV = pitchAggRow[2]
+                let pH = pitchAggRow[4], pER = pitchAggRow[5]
+                let pBB = pitchAggRow[6], pSO = pitchAggRow[7], pHR = pitchAggRow[8]
+
+                // Compute ERA: (ER * 9) / (ip_outs / 3)
+                let erVal = Double(pER) ?? 0
+                let era = (erVal * 9.0) / (ipOutsVal / 3.0)
+
+                // Compute WHIP: (H + BB) / (ip_outs / 3)
+                let hitsVal = Double(pH) ?? 0
+                let walksVal = Double(pBB) ?? 0
+                let whip = (hitsVal + walksVal) / (ipOutsVal / 3.0)
+
+                let pitchHeaders = ["SV", "H", "ER", "HR", "BB", "SO", "ERA", "WHIP"]
+                let pitchValues = [pSV, pH, pER, pHR, pBB, pSO,
+                                   formatPitchingRate(String(era), decimals: 2),
+                                   formatPitchingRate(String(whip), decimals: 2)]
+                pitchingStatsGrid = StatGridParser.StatGrid(
+                    headers: pitchHeaders,
+                    rows: [StatGridParser.StatGrid.Row(label: "", values: pitchValues)]
+                )
+            }
 
             // 2b. Leaders (top 3 per category)
             let leaderCategories: [(label: String, col: String, isRate: Bool)] = [
@@ -2120,6 +2158,33 @@ enum PlayerCardService {
                 }
             }
 
+            // 2b-2. Pitching leaders
+            let pitchingTeamFilter = "(sp.team = '\(sanitize(teamCode))' OR sp.team LIKE '\(sanitize(teamCode))/%' OR sp.team LIKE '%/\(sanitize(teamCode))')"
+            let pitchingLeaderCategories: [(label: String, col: String, asc: Bool, minIP: Bool)] = [
+                ("W", "wins", false, false),
+                ("SV", "saves", false, false),
+                ("SO", "strikeouts", false, false),
+                ("ERA", "era", true, true),
+            ]
+            for cat in pitchingLeaderCategories {
+                let ipFilter = cat.minIP ? "AND sp.ip_outs >= 54" : ""
+                let sortDir = cat.asc ? "ASC" : "DESC"
+                let pitchLeaderSql = """
+                    SELECT p.name, sp.\(cat.col)
+                    FROM season_pitching_stats sp
+                    JOIN players p ON sp.player_id = p.player_id
+                    WHERE \(pitchingTeamFilter) AND sp.season = \(year) \(ipFilter)
+                    ORDER BY sp.\(cat.col) \(sortDir)
+                    LIMIT 20
+                    """
+                if let leaderResult = try? db.execute(sql: pitchLeaderSql) {
+                    for lRow in leaderResult.rows {
+                        let value = cat.asc ? formatPitchingRate(lRow[1], decimals: 2) : lRow[1]
+                        leaders.append(StatLeader(category: cat.label, name: lRow[0], value: value))
+                    }
+                }
+            }
+
             // 2c. Roster (name + position only)
             let rosterSql = """
                 SELECT p.name, p.positions, s.plate_appearances
@@ -2128,11 +2193,13 @@ enum PlayerCardService {
                 WHERE \(teamFilter) AND s.season = \(year)
                 ORDER BY s.plate_appearances DESC
                 """
-            var rosterEntries: [(name: String, position: String)] = []
+            var positionPlayers: [(name: String, position: String)] = []
+            var pitchers: [(name: String, position: String)] = []
             if let rosterResult = try? db.execute(sql: rosterSql) {
                 for rRow in rosterResult.rows {
                     let playerName = rRow[0]
                     var pos = rRow[1]
+                    let pa = Int(rRow[2]) ?? 0
                     if pos.isEmpty {
                         let posSql = """
                             SELECT sfs.position FROM season_fielding_stats sfs
@@ -2145,13 +2212,46 @@ enum PlayerCardService {
                             pos = posRow[0]
                         }
                     }
-                    rosterEntries.append((name: playerName, position: pos))
+                    if pa == 0 && pos.hasPrefix("P") {
+                        pitchers.append((name: playerName, position: pos))
+                    } else {
+                        positionPlayers.append((name: playerName, position: pos))
+                    }
                 }
             }
 
+            // Sort pitchers by GS DESC, then G DESC
+            if !pitchers.isEmpty {
+                // Build lookup of GS and G from pitching stats
+                let pitcherNameList = pitchers.map { "'\(sanitize($0.name))'" }.joined(separator: ",")
+                let pitchSortSql = """
+                    SELECT p.name, sp.games_started, sp.games
+                    FROM season_pitching_stats sp
+                    JOIN players p ON sp.player_id = p.player_id
+                    WHERE \(pitchingTeamFilter) AND sp.season = \(year)
+                          AND p.name IN (\(pitcherNameList))
+                    """
+                var pitcherSort: [String: (gs: Int, g: Int)] = [:]
+                if let pitchResult = try? db.execute(sql: pitchSortSql) {
+                    for pRow in pitchResult.rows {
+                        let gs = Int(pRow[1]) ?? 0
+                        let g = Int(pRow[2]) ?? 0
+                        pitcherSort[pRow[0]] = (gs: gs, g: g)
+                    }
+                }
+                pitchers.sort { a, b in
+                    let aStats = pitcherSort[a.name] ?? (gs: 0, g: 0)
+                    let bStats = pitcherSort[b.name] ?? (gs: 0, g: 0)
+                    if aStats.gs != bStats.gs { return aStats.gs > bStats.gs }
+                    return aStats.g > bStats.g
+                }
+            }
+
+            let rosterEntries = positionPlayers + pitchers
             let roster = rosterEntries.map { RosterEntry(name: $0.name, position: $0.position) }
             teamSeasons.append(TeamSeasonData(
-                year: year, stats: statsGrid, leaders: leaders, roster: roster
+                year: year, stats: statsGrid, pitchingStats: pitchingStatsGrid,
+                leaders: leaders, roster: roster
             ))
         }
 

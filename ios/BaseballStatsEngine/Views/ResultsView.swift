@@ -234,6 +234,13 @@ struct ResultsView: View {
             return
         }
 
+        // Direct-to-team shortcut: skip Claude if input is just a team name
+        if let teamCode = PlayerNameMatcher.matchTeamExact(trimmed) {
+            appState.addToSearchHistory(trimmed)
+            selectedTeamCode = teamCode
+            return
+        }
+
         appState.sendQuestion(trimmed, followUpContext: initialQuestion)
     }
 }

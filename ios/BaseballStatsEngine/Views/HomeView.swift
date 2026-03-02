@@ -224,6 +224,8 @@ struct HomeView: View {
                             appState.addToSearchHistory(q)
                             if let playerName = PlayerNameMatcher.matchPlayer(q) {
                                 path.append(PlayerCardDestination(name: playerName))
+                            } else if let teamCode = PlayerNameMatcher.matchTeamExact(q) {
+                                path.append(TeamCardDestination(code: teamCode))
                             } else {
                                 path.append(ResultsDestination(question: q))
                             }
@@ -357,6 +359,9 @@ struct HomeView: View {
         if let playerName = PlayerNameMatcher.matchPlayer(trimmed) {
             appState.addToSearchHistory(trimmed)
             path.append(PlayerCardDestination(name: playerName))
+        } else if let teamCode = PlayerNameMatcher.matchTeamExact(trimmed) {
+            appState.addToSearchHistory(trimmed)
+            path.append(TeamCardDestination(code: teamCode))
         } else {
             let fuzzyMatches = PlayerNameMatcher.fuzzyMatch(trimmed)
             if !fuzzyMatches.isEmpty {

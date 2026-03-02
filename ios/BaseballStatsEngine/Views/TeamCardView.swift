@@ -317,9 +317,30 @@ struct TeamCardView: View {
     @ViewBuilder
     private func seasonSection(season: TeamSeasonData, expanded: Bool) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Team stats grid
-            StatGridView(grid: season.stats)
-                .padding(.horizontal, 6)
+            // Team stats grids (batting + pitching)
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Team Batting Totals")
+                        .font(.system(.headline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 20)
+
+                    StatGridView(grid: season.stats)
+                        .padding(.horizontal, 6)
+                }
+
+                if let pitchingStats = season.pitchingStats {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Team Pitching Totals")
+                            .font(.system(.headline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 20)
+
+                        StatGridView(grid: pitchingStats)
+                            .padding(.horizontal, 6)
+                    }
+                }
+            }
 
             // Leaders
             if !season.leaders.isEmpty {
@@ -338,7 +359,7 @@ struct TeamCardView: View {
     private let leaderPageSize = 5
 
     private func leadersSection(leaders: [StatLeader], year: Int) -> some View {
-        let categories = ["HR", "SB", "H", "AVG", "OBP", "OPS"]
+        let categories = ["HR", "SB", "H", "AVG", "OBP", "OPS", "W", "SV", "SO", "ERA"]
         let columns = [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)]
 
         return VStack(alignment: .leading, spacing: 8) {

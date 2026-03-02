@@ -573,6 +573,14 @@ enum PlayerNameMatcher {
         return nil
     }
 
+    /// Exact team name match — returns Retrosheet code only if the entire input is a team alias
+    /// (optionally preceded by "the"). Used for direct-to-profile shortcuts.
+    static func matchTeamExact(_ input: String) -> String? {
+        var lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lower.hasPrefix("the ") { lower = String(lower.dropFirst(4)) }
+        return teamAliasMap[lower]
+    }
+
     // MARK: - Career lookup parser
 
     /// Detect queries like "Judge career stats", "Judge career home runs", "Judge career OPS".
