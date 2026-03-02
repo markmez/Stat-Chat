@@ -537,22 +537,60 @@ struct PlayerCardView: View {
             VStack(alignment: .leading, spacing: 12) {
                 // Subtitle + slider
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Since \(formattedDate) (\(formNumGames) games)")
-                        .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 14)
+                    HStack(spacing: 4) {
+                        Text("Since \(formattedDate) (\(formNumGames) games)")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
 
-                    Slider(
-                        value: Binding<Double>(
-                            get: { Double(numGamesShown) },
-                            set: { newValue in
-                                formSliderGameNumber = max(10, min(Int(newValue.rounded()), form.totalSeasonGames))
+                        if formSliderGameNumber != nil {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    formSliderGameNumber = nil
+                                }
+                            } label: {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "arrow.counterclockwise")
+                                        .font(.system(size: 12, weight: .semibold))
+                                    Text("Reset")
+                                        .font(.system(.caption2, design: .rounded, weight: .medium))
+                                }
+                                .foregroundStyle(deepBlue.opacity(0.7))
                             }
-                        ),
-                        in: 10...Double(max(form.totalSeasonGames, 11)),
-                        step: 1
-                    )
-                    .tint(deepBlue)
+                            .buttonStyle(.plain)
+                            .transition(.opacity)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+
+                    ZStack {
+                        Slider(
+                            value: Binding<Double>(
+                                get: { Double(numGamesShown) },
+                                set: { newValue in
+                                    formSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
+                                }
+                            ),
+                            in: 1...Double(max(form.totalSeasonGames, 2)),
+                            step: 1
+                        )
+                        .tint(deepBlue)
+
+                        // Tick mark at detected position — only visible when slider has moved away
+                        if formSliderGameNumber != nil {
+                            GeometryReader { geo in
+                                let range = Double(max(form.totalSeasonGames, 2)) - 1
+                                let pct = range > 0 ? (Double(form.numGames) - 1) / range : 0
+                                let trackWidth = geo.size.width - 28
+                                let xPos = 14 + trackWidth * pct
+
+                                Rectangle()
+                                    .fill(deepBlue.opacity(0.5))
+                                    .frame(width: 2, height: 14)
+                                    .position(x: xPos, y: geo.size.height / 2)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                    }
                     .padding(.horizontal, 14)
                 }
                 .onAppear {
