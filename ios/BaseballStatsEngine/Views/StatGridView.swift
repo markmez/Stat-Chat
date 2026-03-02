@@ -557,13 +557,14 @@ struct StatGridView: View {
                         showProjection.toggle()
                     }
                 } label: {
-                    HStack(spacing: 4) {
-                        Text(showProjection ? "Hide Projection" : "Project Over 162 Game Season")
-                            .font(.system(.caption, design: .rounded, weight: .medium))
+                    HStack(spacing: 6) {
+                        Text(showProjection ? "Full Season Projection" : "Full Season Projection")
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(.primary)
                         Image(systemName: showProjection ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
                     }
-                    .foregroundStyle(.secondary)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 10)
                 }

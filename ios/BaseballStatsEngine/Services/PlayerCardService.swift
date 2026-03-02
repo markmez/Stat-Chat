@@ -46,6 +46,7 @@ struct PlayerCard: Sendable {
     let fullTeamName: String
     let age: Int?
     let birthdate: Date?
+    let positions: String?
     let bats: String?
     let throws_: String?
     let seasons: [SeasonData]
@@ -109,6 +110,7 @@ enum PlayerCardService {
             fullTeamName: fullTeam,
             age: dynamicAge,
             birthdate: birthDate,
+            positions: playerInfo?.positions,
             bats: playerInfo?.bats,
             throws_: playerInfo?.throws_,
             seasons: seasons,
@@ -243,9 +245,9 @@ enum PlayerCardService {
 
     // MARK: - Player info
 
-    private static func fetchPlayerInfo(name: String) -> (name: String, team: String, birthdate: String?, bats: String?, throws_: String?)? {
+    private static func fetchPlayerInfo(name: String) -> (name: String, team: String, birthdate: String?, bats: String?, throws_: String?, positions: String?)? {
         let sql = """
-            SELECT p.name, p.team, p.birthdate, p.bats, p.throws FROM players p
+            SELECT p.name, p.team, p.birthdate, p.bats, p.throws, p.positions FROM players p
             WHERE p.name LIKE '%\(sanitize(name))%'
             LIMIT 1
             """
@@ -255,7 +257,8 @@ enum PlayerCardService {
         let birthdate = row.count > 2 && !row[2].isEmpty ? row[2] : nil
         let bats = row.count > 3 && !row[3].isEmpty ? row[3] : nil
         let throws_ = row.count > 4 && !row[4].isEmpty ? row[4] : nil
-        return (row[0], row[1], birthdate, bats, throws_)
+        let positions = row.count > 5 && !row[5].isEmpty ? row[5] : nil
+        return (row[0], row[1], birthdate, bats, throws_, positions)
     }
 
     // MARK: - All seasons

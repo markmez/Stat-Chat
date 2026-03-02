@@ -11,6 +11,7 @@ struct PlayerCardView: View {
     @State private var formSliderGameNumber: Int? = nil  // nil = auto-detected, represents "last N games"
     @State private var gameLogs: [GameLog]? = nil
     @State private var formProjectionMode: FormProjectionMode = .pace
+    @State private var showFormProjection = false
     @State private var splitTab: SplitTab = .platoon
     @State private var priorSeasonTabs: [Int: SplitTab] = [:]
 
@@ -44,33 +45,36 @@ struct PlayerCardView: View {
             } else if let card = playerCard {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
-                        // Header with back arrow
-                        HStack(alignment: .top, spacing: 10) {
-                            Button(action: { dismiss() }) {
-                                Image(systemName: "chevron.left")
-                                    .font(.system(size: 22, weight: .medium))
-                                    .foregroundStyle(lightBlue)
-                            }
-                            .padding(.top, 2)
+                        // Header with back arrow + subtitle
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .top, spacing: 10) {
+                                Button(action: { dismiss() }) {
+                                    Image(systemName: "chevron.left")
+                                        .font(.system(size: 22, weight: .medium))
+                                        .foregroundStyle(lightBlue)
+                                }
+                                .padding(.top, 2)
 
-                            VStack(alignment: .leading, spacing: 4) {
                                 Text(card.name)
                                     .font(.system(.title2, design: .rounded, weight: .bold))
                                     .foregroundStyle(.primary)
-
-                                // Full team name + age + handedness
-                                HStack(spacing: 0) {
-                                    Text(card.fullTeamName)
-                                    if let age = card.age {
-                                        Text("  \u{00B7}  Age \(age)")
-                                    }
-                                    if let bats = card.bats, let throws_ = card.throws_ {
-                                        Text("  \u{00B7}  Bats \(bats) / Throws \(throws_)")
-                                    }
-                                }
-                                .font(.system(.subheadline, design: .rounded))
-                                .foregroundStyle(.secondary)
                             }
+
+                            // Full team name + position + age + handedness
+                            HStack(spacing: 0) {
+                                Text(card.fullTeamName)
+                                if let positions = card.positions {
+                                    Text("  \u{00B7}  \(positions)")
+                                }
+                                if let age = card.age {
+                                    Text("  \u{00B7}  Age \(age)")
+                                }
+                                if let bats = card.bats, let throws_ = card.throws_ {
+                                    Text("  \u{00B7}  B/T: \(bats)/\(throws_)")
+                                }
+                            }
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
                         }
                         .padding(.horizontal, 20)
 
@@ -399,42 +403,60 @@ struct PlayerCardView: View {
 
                 StatGridView(grid: formGrid)
 
-                // Divider between streak stats and projection
+                // Collapsible projection
                 Rectangle()
                     .fill(Color(uiColor: .separator).opacity(0.3))
                     .frame(height: 1)
                     .padding(.horizontal, 14)
 
-                // Projection tabs
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 0) {
-                        ForEach(availableModes, id: \.self) { mode in
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.15)) {
-                                    formProjectionMode = mode
-                                }
-                            } label: {
-                                Text(mode.rawValue)
-                                    .font(.system(.caption, design: .rounded, weight: .medium))
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 5)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(formProjectionMode == mode
-                                                  ? deepBlue.opacity(0.12)
-                                                  : Color.clear)
-                                    )
-                                    .foregroundStyle(formProjectionMode == mode ? deepBlue : .secondary)
-                            }
-                        }
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showFormProjection.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Full Season Projection")
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(.primary)
+                        Image(systemName: showFormProjection ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.horizontal, 14)
+                }
+                .buttonStyle(.plain)
 
-                    let projectedGrid = buildFormProjection(
-                        season: season, formGrid: formGrid, formNumGames: formNumGames,
-                        effectiveGameNumber: effectiveGameNumber
-                    )
-                    StatGridView(grid: projectedGrid)
+                if showFormProjection {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 0) {
+                            ForEach(availableModes, id: \.self) { mode in
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.15)) {
+                                        formProjectionMode = mode
+                                    }
+                                } label: {
+                                    Text(mode.rawValue)
+                                        .font(.system(.caption, design: .rounded, weight: .medium))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 6)
+                                                .fill(formProjectionMode == mode
+                                                      ? deepBlue.opacity(0.12)
+                                                      : Color.clear)
+                                        )
+                                        .foregroundStyle(formProjectionMode == mode ? deepBlue : .secondary)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 14)
+
+                        let projectedGrid = buildFormProjection(
+                            season: season, formGrid: formGrid, formNumGames: formNumGames,
+                            effectiveGameNumber: effectiveGameNumber
+                        )
+                        StatGridView(grid: projectedGrid)
+                    }
                 }
             }
             .padding(.vertical, 12)
