@@ -212,6 +212,28 @@ def create_tables(conn):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_gamelogs_player_season ON game_batting_logs(player_id, season)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_gamelogs_date ON game_batting_logs(date)")
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS season_fielding_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            position TEXT NOT NULL,
+            games INTEGER,
+            games_started INTEGER,
+            innings REAL,
+            putouts INTEGER,
+            assists INTEGER,
+            errors INTEGER,
+            double_plays INTEGER,
+            passed_balls INTEGER,
+            fielding_pct REAL,
+            FOREIGN KEY (player_id) REFERENCES players(player_id),
+            UNIQUE(player_id, season, position)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_fielding_player ON season_fielding_stats(player_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_fielding_player_season ON season_fielding_stats(player_id, season)")
+
     conn.commit()
 
 
@@ -617,6 +639,99 @@ def load_home_away_splits(conn, start_season, end_season):
 
 
 # ---------------------------------------------------------------------------
+# Phase 2c: Fielding stats (from Retrosheet fielding.csv)
+# ---------------------------------------------------------------------------
+
+POS_MAP = {1: "P", 2: "C", 3: "1B", 4: "2B", 5: "3B", 6: "SS", 7: "LF", 8: "CF", 9: "RF"}
+
+
+def load_fielding_stats(conn, start_season, end_season):
+    """Aggregate fielding.csv into per-player, per-position season stats."""
+    print(f"Phase 2c: Loading fielding stats for {start_season}-{end_season}...")
+    cursor = conn.cursor()
+    total_rows = 0
+
+    for season in range(start_season, end_season + 1):
+        try:
+            zf = download_retrosheet_zip(season)
+        except Exception as e:
+            print(f"  Warning: Failed to download {season}: {e}")
+            continue
+
+        fielding = read_csv_from_zip(zf, "fielding.csv")
+        if fielding is None:
+            continue
+
+        # Filter to regular season, stat type = value
+        if "gametype" in fielding.columns:
+            fielding = fielding[fielding["gametype"] == "regular"]
+        if "stattype" in fielding.columns:
+            fielding = fielding[fielding["stattype"] == "value"]
+
+        # Map position codes to names, drop unmapped (e.g. DH=0)
+        fielding = fielding[fielding["d_pos"].isin(POS_MAP.keys())].copy()
+        fielding["position"] = fielding["d_pos"].map(POS_MAP)
+
+        # Fill NaN in counting columns
+        counting_cols = ["d_gs", "d_ifouts", "d_po", "d_a", "d_e", "d_dp", "d_pb"]
+        for col in counting_cols:
+            if col in fielding.columns:
+                fielding[col] = fielding[col].fillna(0).astype(int)
+
+        # Aggregate by player + position
+        grouped = fielding.groupby(["id", "position"]).agg(
+            games=("id", "count"),
+            gs=("d_gs", "sum"),
+            ifouts=("d_ifouts", "sum"),
+            po=("d_po", "sum"),
+            a=("d_a", "sum"),
+            e=("d_e", "sum"),
+            dp=("d_dp", "sum"),
+            pb=("d_pb", "sum"),
+        ).reset_index()
+
+        # Clear stale rows for this season
+        cursor.execute("DELETE FROM season_fielding_stats WHERE season = ?", (season,))
+
+        season_rows = 0
+        for _, row in grouped.iterrows():
+            pid = str(row["id"])
+            pos = str(row["position"])
+            games = safe_int(row["games"])
+            if games == 0:
+                continue
+
+            gs = safe_int(row["gs"])
+            ifouts = safe_int(row["ifouts"])
+            innings = ifouts / 3.0
+            po = safe_int(row["po"])
+            a = safe_int(row["a"])
+            e = safe_int(row["e"])
+            dp = safe_int(row["dp"])
+            pb = safe_int(row["pb"])
+            total = po + a + e
+            fpct = round((po + a) / total, 3) if total > 0 else None
+
+            cursor.execute("""
+                INSERT OR REPLACE INTO season_fielding_stats (
+                    player_id, season, position, games, games_started,
+                    innings, putouts, assists, errors, double_plays,
+                    passed_balls, fielding_pct
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                pid, season, pos, games, gs,
+                round(innings, 1), po, a, e, dp, pb, fpct,
+            ))
+            season_rows += 1
+
+        conn.commit()
+        total_rows += season_rows
+        print(f"  {season}: {season_rows} fielding stat rows")
+
+    print(f"  Loaded {total_rows} fielding stat rows total")
+
+
+# ---------------------------------------------------------------------------
 # Phase 3: Retrosplits — platoon splits (vs LHP / vs RHP)
 # ---------------------------------------------------------------------------
 
@@ -931,6 +1046,9 @@ def pull_and_load(start_season, end_season):
 
     # Phase 2b: Home/away splits from Retrosheet
     load_home_away_splits(conn, start_season, end_season)
+
+    # Phase 2c: Fielding stats from Retrosheet
+    load_fielding_stats(conn, start_season, end_season)
 
     # Phase 3: Platoon splits from retrosplits
     load_retrosplits(conn, start_season, end_season)

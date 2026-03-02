@@ -31,6 +31,7 @@ struct PlayerCardView: View {
         case platoon = "Platoon"
         case homeAway = "Home / Away"
         case streaks = "Hot Streaks"
+        case fielding = "Fielding"
     }
 
     var body: some View {
@@ -275,7 +276,7 @@ struct PlayerCardView: View {
         season: SeasonData,
         tab: Binding<SplitTab>
     ) -> some View {
-        let hasData = season.platoonSplits != nil || season.homeAwaySplits != nil || season.streaks != nil
+        let hasData = season.platoonSplits != nil || season.homeAwaySplits != nil || season.streaks != nil || season.fieldingStats != nil
 
         if hasData {
             VStack(alignment: .leading, spacing: 8) {
@@ -306,7 +307,7 @@ struct PlayerCardView: View {
                         .disabled(!available)
                     }
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 8)
                 .onAppear {
                     // Auto-select first tab that has data if current selection is empty
                     if !tabHasData(tab.wrappedValue, season: season) {
@@ -321,8 +322,11 @@ struct PlayerCardView: View {
 
                 // Content for selected tab
                 if let grid = gridForTab(tab.wrappedValue, season: season) {
-                    StatGridView(grid: grid, compactHeaders: StatGridView.summaryHeaders, seasonGames: season.games)
-                        .padding(.horizontal, 6)
+                    StatGridView(
+                        grid: grid,
+                        seasonGames: tab.wrappedValue == .fielding ? nil : season.games
+                    )
+                    .padding(.horizontal, 6)
                 }
             }
         }
@@ -337,6 +341,7 @@ struct PlayerCardView: View {
         case .platoon: return season.platoonSplits
         case .homeAway: return season.homeAwaySplits
         case .streaks: return season.streaks
+        case .fielding: return season.fieldingStats
         }
     }
 

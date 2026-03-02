@@ -35,6 +35,16 @@ enum StatDefinitions {
         "wRC+": "Weighted runs created plus — park- and league-adjusted offensive value. 100 is average, 150+ is elite.",
         "WAR": "Wins above replacement — total value in wins compared to a replacement-level player. 2+ is solid, 5+ is All-Star, 8+ is MVP.",
 
+        // Fielding stats
+        "PO": "Putouts — outs recorded directly by this fielder (catching a fly ball, stepping on a base, tagging a runner)",
+        "A": "Assists — throws that lead to an out being recorded by another fielder",
+        "E": "Errors — misplays that allow a batter or runner to advance",
+        "DP": "Double plays turned",
+        "PB": "Passed balls — pitches the catcher should have caught but didn't, allowing runners to advance",
+        "FLD%": "Fielding percentage — (putouts + assists) / (putouts + assists + errors). .980+ is solid, .990+ is excellent.",
+        "GS": "Games started",
+        "INN": "Innings played at this position",
+
         // Streak/game log fields
         "Games": "Number of games in this stretch",
         "Dates": "Date range of this stretch",

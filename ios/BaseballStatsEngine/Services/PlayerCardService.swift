@@ -36,6 +36,7 @@ struct SeasonData: Sendable {
     let platoonSplits: StatGridParser.StatGrid?
     let homeAwaySplits: StatGridParser.StatGrid?
     let streaks: StatGridParser.StatGrid?
+    let fieldingStats: StatGridParser.StatGrid?
     let currentForm: CurrentFormData?
 }
 
@@ -301,17 +302,18 @@ enum PlayerCardService {
             // Get team max games for this team+season
             let teamGames = fetchTeamGames(team: team, season: year)
 
-            // Per-season splits, streaks, and current form
+            // Per-season splits, streaks, fielding, and current form
             let splits = fetchPlatoonSplitsForSeason(name: name, season: year)
             let homeAwaySplits = fetchHomeAwaySplitsForSeason(name: name, season: year)
             let streakGrid = fetchStreaksForSeason(name: name, season: year, performance: "hot")
+            let fieldingGrid = fetchFieldingForSeason(name: name, season: year)
             let currentForm = fetchCurrentFormForSeason(name: name, season: year)
 
             seasons.append(SeasonData(
                 year: year, team: team, age: age, games: games, teamGames: teamGames,
                 stats: grid, countingValues: counting,
                 platoonSplits: splits, homeAwaySplits: homeAwaySplits,
-                streaks: streakGrid, currentForm: currentForm
+                streaks: streakGrid, fieldingStats: fieldingGrid, currentForm: currentForm
             ))
         }
 
@@ -376,7 +378,7 @@ enum PlayerCardService {
 
     private static func fetchPlatoonSplitsForSeason(name: String, season: Int) -> StatGridParser.StatGrid? {
         let sql = """
-            SELECT ps.split, ps.plate_appearances, ps.at_bats, ps.hits,
+            SELECT ps.split, ps.at_bats, ps.hits,
                    ps.doubles, ps.triples, ps.home_runs, ps.rbi,
                    ps.walks, ps.strikeouts,
                    ps.batting_avg, ps.obp, ps.slg, ps.ops, ps.iso, ps.babip
@@ -388,7 +390,7 @@ enum PlayerCardService {
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else { return nil }
 
-        let headers = ["PA", "AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+        let headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
         var rows: [StatGridParser.StatGrid.Row] = []
         for row in result.rows.prefix(2) {
             let splitLabel = row[0] == "vs_LHP" ? "vs LHP" : "vs RHP"
@@ -404,7 +406,7 @@ enum PlayerCardService {
 
     private static func fetchHomeAwaySplitsForSeason(name: String, season: Int) -> StatGridParser.StatGrid? {
         let sql = """
-            SELECT has.split, has.games, has.plate_appearances, has.at_bats, has.hits,
+            SELECT has.split, has.games, has.at_bats, has.runs, has.hits,
                    has.doubles, has.triples, has.home_runs, has.rbi,
                    has.walks, has.strikeouts,
                    has.batting_avg, has.obp, has.slg, has.ops, has.iso, has.babip
@@ -416,12 +418,61 @@ enum PlayerCardService {
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else { return nil }
 
-        let headers = ["G", "PA", "AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+        let headers = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
         var rows: [StatGridParser.StatGrid.Row] = []
         for row in result.rows.prefix(2) {
             let splitLabel = row[0] == "home" ? "Home" : "Away"
             let values = formatValues(headers: headers, values: Array(row.dropFirst()))
             rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: values))
+        }
+
+        guard !rows.isEmpty else { return nil }
+        return StatGridParser.StatGrid(headers: headers, rows: rows)
+    }
+
+    // MARK: - Per-season fielding stats
+
+    private static func fetchFieldingForSeason(name: String, season: Int) -> StatGridParser.StatGrid? {
+        let sql = """
+            SELECT sfs.position, sfs.games, sfs.games_started, sfs.innings,
+                   sfs.putouts, sfs.assists, sfs.errors, sfs.double_plays,
+                   sfs.passed_balls, sfs.fielding_pct
+            FROM season_fielding_stats sfs
+            JOIN players p ON sfs.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND sfs.season = \(season) AND sfs.games > 0
+            ORDER BY sfs.games DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        // Check if any row has passed_balls > 0 (catcher)
+        let hasPB = result.rows.contains { row in
+            row.count > 8 && (Int(row[8]) ?? 0) > 0
+        }
+
+        var headers = ["PO", "A", "E", "DP", "FLD%"]
+        if hasPB { headers.insert("PB", at: 4) }
+
+        var rows: [StatGridParser.StatGrid.Row] = []
+        for row in result.rows {
+            let pos = row[0]
+            let po = row[4]
+            let a = row[5]
+            let e = row[6]
+            let dp = row[7]
+            let pb = row.count > 8 ? row[8] : "0"
+            let fpct: String
+            if let fpctVal = Double(row[9]) {
+                fpct = String(format: "%.3f", fpctVal)
+            } else {
+                fpct = row[9]
+            }
+
+            var values = [po, a, e, dp]
+            if hasPB { values.append(pb) }
+            values.append(fpct)
+
+            rows.append(StatGridParser.StatGrid.Row(label: pos, values: values))
         }
 
         guard !rows.isEmpty else { return nil }

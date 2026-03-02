@@ -137,6 +137,23 @@ Precomputed "current form" for each player-season — the stats from the last de
 - batting_avg, obp, slg, ops, iso (REAL) — form period rate stats
 - season_at_bats, season_hits, season_doubles, season_triples, season_home_runs, season_runs, season_rbi, season_walks, season_strikeouts, season_plate_appearances (INTEGER) — full season counting stats for comparison
 
+### season_fielding_stats
+Per-position fielding stats aggregated from Retrosheet fielding.csv.
+- player_id (TEXT) — references players table
+- season (INTEGER) — year
+- position (TEXT) — fielding position: "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "P"
+- games (INTEGER) — games played at this position
+- games_started (INTEGER) — games started at this position
+- innings (REAL) — innings played (computed from outs / 3)
+- putouts (INTEGER) — putouts (PO)
+- assists (INTEGER) — assists (A)
+- errors (INTEGER) — errors (E)
+- double_plays (INTEGER) — double plays turned (DP)
+- passed_balls (INTEGER) — passed balls (PB) — primarily relevant for catchers
+- fielding_pct (REAL) — fielding percentage: (PO + A) / (PO + A + E)
+- For fielding queries, join with season_fielding_stats using player_id and season
+- A player may have multiple rows per season (one per position played)
+
 ## Currently Available Data
 - Season batting stats from 1898 to present (aggregated from Retrosheet game logs)
 - OPS+ for every player-season (league-adjusted, no park factors — 100 = average)
@@ -147,6 +164,7 @@ Precomputed "current form" for each player-season — the stats from the last de
 - Precomputed streak segments for players with sufficient game logs (streaks table)
 - Sensitive fallback streaks for players with no dramatic shifts (streaks_sensitive table)
 - Current form data for each player-season (current_form table) — form period stats from last performance shift to end of season
+- Per-position fielding stats (season_fielding_stats table) — games, innings, putouts, assists, errors, DP, PB, fielding %
 - Note: wRC+ and WAR columns exist but are NULL. Use ops_plus for league-adjusted offense instead.
 
 ## Important Notes
