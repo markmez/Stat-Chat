@@ -785,6 +785,62 @@ enum PlayerNameMatcher {
         return (teamCode, stat, season)
     }
 
+    // MARK: - Team total parser
+
+    /// Detect aggregate team queries like "how many home runs did the Yankees hit?", "Yankees total RBI".
+    /// Requires team + stat + aggregate phrasing. No player name.
+    static func parseTeamTotal(_ input: String) -> (teamCode: String, stat: StatInfo, season: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Must have a team alias
+        guard let teamCode = matchTeam(lower) else { return nil }
+
+        // Must have a recognized stat
+        guard let stat = matchStat(lower) else { return nil }
+
+        // Must have aggregate phrasing
+        let totalSignals = [
+            "how many", "total", "combined", "as a team",
+            "did the", "do the", "did they", "do they"
+        ]
+        let hasTotal = totalSignals.contains { lower.contains($0) }
+        guard hasTotal else { return nil }
+
+        // Reject if a player name is present
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) { return nil }
+        }
+        for (lastName, players) in lastNameIndex {
+            if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+        }
+
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        return (teamCode, stat, season)
+    }
+
+    // MARK: - Team ranking parser
+
+    /// Detect team-ranking queries like "what team hit the most home runs?", "which team had the highest OPS?".
+    /// Returns stat + season. No specific team required.
+    static func parseTeamRanking(_ input: String) -> (stat: StatInfo, season: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Must have a team-ranking signal
+        let teamRankingTriggers = [
+            "what team", "which team", "what teams", "which teams",
+            "team with the most", "team with the highest", "team with the lowest",
+            "team with the fewest", "rank teams", "team rankings",
+            "teams by"
+        ]
+        guard teamRankingTriggers.contains(where: { lower.contains($0) }) else { return nil }
+
+        // Must have a stat keyword
+        guard let stat = matchStat(lower) else { return nil }
+
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        return (stat, season)
+    }
+
     // MARK: - Fuzzy matching
 
     /// Find closest player names within edit distance threshold (for "did you mean?" suggestions).

@@ -112,6 +112,26 @@ final class AppState {
             return
         }
 
+        // Intercept team ranking queries — "what team hit the most HR?"
+        if let teamRanking = PlayerNameMatcher.parseTeamRanking(trimmed) {
+            let response = PlayerCardService.buildTeamRanking(
+                stat: teamRanking.stat, season: teamRanking.season)
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            queryEngine.injectHistory(question: trimmed, answer: response)
+            return
+        }
+
+        // Intercept team total queries — "how many HR did the Yankees hit?"
+        if let teamTotal = PlayerNameMatcher.parseTeamTotal(trimmed) {
+            let response = PlayerCardService.buildTeamTotal(
+                teamCode: teamTotal.teamCode, stat: teamTotal.stat, season: teamTotal.season)
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            queryEngine.injectHistory(question: trimmed, answer: response)
+            return
+        }
+
         // Intercept team stats queries — "Yankees hitters", "Dodgers OPS leaders"
         if let teamQuery = PlayerNameMatcher.parseTeamStats(trimmed) {
             let response = PlayerCardService.buildTeamStats(

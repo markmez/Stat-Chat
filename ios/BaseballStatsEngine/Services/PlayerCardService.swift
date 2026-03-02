@@ -1114,6 +1114,156 @@ enum PlayerCardService {
         }
     }
 
+    /// Build a team aggregate total response — e.g. "The Yankees hit 234 home runs in 2024."
+    static func buildTeamTotal(teamCode: String, stat: PlayerNameMatcher.StatInfo, season: Int) -> String {
+        let fullName = teamFullName(teamCode)
+        let nickname = teamNickname(teamCode)
+
+        if stat.isRate {
+            // Rate stats → compute from raw components for accuracy
+            let (numExpr, denomExpr, label): (String, String, String) = switch stat.dbColumn {
+            case "batting_avg":
+                ("SUM(s.hits)", "SUM(s.at_bats)", "batting average")
+            case "obp":
+                ("SUM(s.hits + s.walks + s.hit_by_pitch)", "SUM(s.at_bats + s.walks + s.hit_by_pitch + s.sacrifice_flies)", "on-base percentage")
+            case "slg":
+                ("SUM(s.hits - s.doubles - s.triples - s.home_runs + 2*s.doubles + 3*s.triples + 4*s.home_runs)", "SUM(s.at_bats)", "slugging percentage")
+            case "ops":
+                ("CAST(SUM(s.hits + s.walks + s.hit_by_pitch) AS REAL) / SUM(s.at_bats + s.walks + s.hit_by_pitch + s.sacrifice_flies) + CAST(SUM(s.hits - s.doubles - s.triples - s.home_runs + 2*s.doubles + 3*s.triples + 4*s.home_runs) AS REAL) / SUM(s.at_bats)", "1", "OPS")
+            default:
+                ("SUM(s.\(stat.dbColumn) * s.plate_appearances)", "SUM(s.plate_appearances)", stat.displayName.lowercased())
+            }
+
+            let sql: String
+            if stat.dbColumn == "ops" {
+                // OPS = OBP + SLG, compute directly
+                sql = """
+                    SELECT CAST(SUM(s.hits + s.walks + s.hit_by_pitch) AS REAL) / SUM(s.at_bats + s.walks + s.hit_by_pitch + s.sacrifice_flies)
+                         + CAST(SUM(s.hits - s.doubles - s.triples - s.home_runs + 2*s.doubles + 3*s.triples + 4*s.home_runs) AS REAL) / SUM(s.at_bats)
+                    FROM season_batting_stats s
+                    WHERE (s.team = '\(teamCode)' OR s.team LIKE '\(teamCode)/%' OR s.team LIKE '%/\(teamCode)')
+                          AND s.season = \(season) AND s.plate_appearances >= 1
+                    """
+            } else {
+                sql = """
+                    SELECT CAST(\(numExpr) AS REAL) / \(denomExpr)
+                    FROM season_batting_stats s
+                    WHERE (s.team = '\(teamCode)' OR s.team LIKE '\(teamCode)/%' OR s.team LIKE '%/\(teamCode)')
+                          AND s.season = \(season) AND s.plate_appearances >= 1
+                    """
+            }
+
+            guard let result = try? db.execute(sql: sql),
+                  let row = result.rows.first,
+                  let value = Double(row[0]) else {
+                return "No \(stat.displayName) data found for the \(fullName) in \(season)."
+            }
+            let formatted = formatRate(String(value))
+            return "The **\(fullName)** had a team \(label) of **\(formatted)** in \(season).\n\n[SUGGEST]\(nickname) \(stat.pillName) leaders[/SUGGEST]\n[SUGGEST]\(nickname) hitters[/SUGGEST]"
+        } else {
+            // Counting stats → SUM
+            let sql = """
+                SELECT SUM(s.\(stat.dbColumn))
+                FROM season_batting_stats s
+                WHERE (s.team = '\(teamCode)' OR s.team LIKE '\(teamCode)/%' OR s.team LIKE '%/\(teamCode)')
+                      AND s.season = \(season)
+                """
+            guard let result = try? db.execute(sql: sql),
+                  let row = result.rows.first,
+                  let total = Int(row[0]) else {
+                return "No \(stat.displayName) data found for the \(fullName) in \(season)."
+            }
+
+            // Stat-appropriate verb
+            let phrase: String = switch stat.dbColumn {
+            case "home_runs", "hits", "doubles", "triples":
+                "hit **\(total) \(stat.displayName.lowercased())**"
+            case "rbi":
+                "drove in **\(total) runs**"
+            case "runs":
+                "scored **\(total) runs**"
+            case "stolen_bases":
+                "stole **\(total) bases**"
+            case "walks":
+                "drew **\(total) walks**"
+            case "strikeouts":
+                "struck out **\(total) times**"
+            default:
+                "had **\(total) \(stat.displayName.lowercased())**"
+            }
+
+            return "The **\(fullName)** \(phrase) in \(season).\n\n[SUGGEST]\(nickname) \(stat.pillName) leaders[/SUGGEST]\n[SUGGEST]\(nickname) hitters[/SUGGEST]"
+        }
+    }
+
+    /// Build a team ranking — top 10 teams by a stat.
+    static func buildTeamRanking(stat: PlayerNameMatcher.StatInfo, season: Int) -> String {
+        let limit = 10
+
+        let sql: String
+        if stat.isRate {
+            // Rate stats: compute from raw components, require minimum PA
+            let selectExpr: String = switch stat.dbColumn {
+            case "batting_avg":
+                "CAST(SUM(s.hits) AS REAL) / SUM(s.at_bats)"
+            case "obp":
+                "CAST(SUM(s.hits + s.walks + s.hit_by_pitch) AS REAL) / SUM(s.at_bats + s.walks + s.hit_by_pitch + s.sacrifice_flies)"
+            case "slg":
+                "CAST(SUM(s.hits - s.doubles - s.triples - s.home_runs + 2*s.doubles + 3*s.triples + 4*s.home_runs) AS REAL) / SUM(s.at_bats)"
+            case "ops":
+                "CAST(SUM(s.hits + s.walks + s.hit_by_pitch) AS REAL) / SUM(s.at_bats + s.walks + s.hit_by_pitch + s.sacrifice_flies) + CAST(SUM(s.hits - s.doubles - s.triples - s.home_runs + 2*s.doubles + 3*s.triples + 4*s.home_runs) AS REAL) / SUM(s.at_bats)"
+            case "iso":
+                "CAST(SUM(s.hits - s.doubles - s.triples - s.home_runs + 2*s.doubles + 3*s.triples + 4*s.home_runs) AS REAL) / SUM(s.at_bats) - CAST(SUM(s.hits) AS REAL) / SUM(s.at_bats)"
+            default:
+                "SUM(s.\(stat.dbColumn) * s.plate_appearances) / SUM(s.plate_appearances)"
+            }
+
+            sql = """
+                SELECT s.team, \(selectExpr) AS team_stat
+                FROM season_batting_stats s
+                WHERE s.season = \(season) AND s.plate_appearances >= 1
+                GROUP BY s.team
+                HAVING SUM(s.plate_appearances) >= 100
+                ORDER BY team_stat DESC
+                LIMIT \(limit)
+                """
+        } else {
+            // Counting stats: SUM
+            sql = """
+                SELECT s.team, SUM(s.\(stat.dbColumn)) AS team_stat
+                FROM season_batting_stats s
+                WHERE s.season = \(season)
+                GROUP BY s.team
+                ORDER BY team_stat DESC
+                LIMIT \(limit)
+                """
+        }
+
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else {
+            return "No team \(stat.displayName) data found for \(season)."
+        }
+
+        var parts: [String] = []
+        parts.append("**\(season) Team \(stat.displayName) Rankings**\n")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: \(stat.displayAbbrev)")
+        for (i, row) in result.rows.enumerated() {
+            let teamCode = row[0]
+            let fullName = teamFullName(teamCode)
+            let rawValue = row[1]
+            let formattedValue = stat.isRate ? formatRate(rawValue) : rawValue
+            parts.append("ROW \(i + 1). \(fullName): \(formattedValue)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        let statName = stat.pillName
+        parts.append("\n[SUGGEST]\(season) \(statName) leaders[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
     /// Extract the team nickname from a Retrosheet code (e.g., "NYA" → "Yankees").
     private static func teamNickname(_ code: String) -> String {
         let full = teamFullName(code)
