@@ -2,8 +2,10 @@ import Foundation
 
 final class AnthropicService: Sendable {
     private let model = "claude-sonnet-4-5-20250929"
+    private let routingModel = "claude-haiku-4-5-20251001"
     private let apiURL = URL(string: "https://api.anthropic.com/v1/messages")!
     private let apiVersion = "2023-06-01"
+    private let cacheBetaHeader = "prompt-caching-2024-07-31"
 
     var apiKey: String? {
         KeychainHelper.load()
@@ -23,24 +25,72 @@ final class AnthropicService: Sendable {
         }
     }
 
+    // MARK: - Codable request types (deterministic JSON key ordering)
+
+    private struct APIRequest: Encodable {
+        let model: String
+        let max_tokens: Int
+        let system: SystemContent
+        let messages: [APIMessage]
+        let stream: Bool
+    }
+
+    private enum SystemContent: Encodable {
+        case plain(String)
+        case cached([CachedBlock])
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            switch self {
+            case .plain(let text):
+                try container.encode(text)
+            case .cached(let blocks):
+                try container.encode(blocks)
+            }
+        }
+    }
+
+    private struct CachedBlock: Encodable {
+        let type: String
+        let text: String
+        let cache_control: CacheControl
+    }
+
+    private struct CacheControl: Encodable {
+        let type: String
+    }
+
+    private struct APIMessage: Encodable {
+        let role: String
+        let content: String
+    }
+
     // MARK: - Non-streaming calls
 
     func routeQuery(question: String, history: [(String, String)]) async throws -> String {
         let response = try await callAPI(
-            system: PromptStore.routerPrompt,
+            system: .plain(PromptStore.routerPrompt),
             messages: buildMessages(question: question, history: history),
             maxTokens: 256,
-            stream: false
+            stream: false,
+            model: routingModel,
+            useCache: false
         )
         return parseNonStreamingResponse(response)
     }
 
     func generateSQL(question: String, history: [(String, String)]) async throws -> String {
         let response = try await callAPI(
-            system: PromptStore.sqlGenerationPrompt,
+            system: .cached([CachedBlock(
+                type: "text",
+                text: PromptStore.sqlGenerationPrompt,
+                cache_control: CacheControl(type: "ephemeral")
+            )]),
             messages: buildMessages(question: question, history: history),
             maxTokens: 1024,
-            stream: false
+            stream: false,
+            model: model,
+            useCache: true
         )
         let sql = parseNonStreamingResponse(response)
         return SQLSanitizer.sanitize(sql)
@@ -54,9 +104,14 @@ final class AnthropicService: Sendable {
     ) -> AsyncThrowingStream<String, Error> {
         let content = "Question: \(question)\n\nSQL executed: \(sql)\n\nResults:\n\(results)"
         return streamAPI(
-            system: PromptStore.answerGenerationPrompt,
+            system: .cached([CachedBlock(
+                type: "text",
+                text: PromptStore.answerGenerationPrompt,
+                cache_control: CacheControl(type: "ephemeral")
+            )]),
             messages: buildMessages(content: content, history: history),
-            maxTokens: 1024
+            maxTokens: 1024,
+            useCache: true
         )
     }
 
@@ -66,9 +121,10 @@ final class AnthropicService: Sendable {
     ) -> AsyncThrowingStream<String, Error> {
         let content = "Question: \(question)\n\nStreak data:\n\(streakData)"
         return streamAPI(
-            system: PromptStore.streakAnswerPrompt,
+            system: .plain(PromptStore.streakAnswerPrompt),
             messages: buildMessages(content: content, history: history),
-            maxTokens: 1024
+            maxTokens: 1024,
+            useCache: false
         )
     }
 
@@ -78,9 +134,10 @@ final class AnthropicService: Sendable {
     ) -> AsyncThrowingStream<String, Error> {
         let content = "Question: \(question)\n\nCurrent form data:\n\(formData)"
         return streamAPI(
-            system: PromptStore.currentFormAnswerPrompt,
+            system: .plain(PromptStore.currentFormAnswerPrompt),
             messages: buildMessages(content: content, history: history),
-            maxTokens: 1024
+            maxTokens: 1024,
+            useCache: false
         )
     }
 
@@ -89,41 +146,44 @@ final class AnthropicService: Sendable {
         history: [(String, String)]
     ) -> AsyncThrowingStream<String, Error> {
         return streamAPI(
-            system: PromptStore.statExplanationPrompt,
+            system: .plain(PromptStore.statExplanationPrompt),
             messages: buildMessages(question: question, history: history),
-            maxTokens: 512
+            maxTokens: 512,
+            useCache: false
         )
     }
 
     // MARK: - Message building
 
-    private func buildMessages(question: String, history: [(String, String)]) -> [[String: String]] {
-        var messages: [[String: String]] = []
+    private func buildMessages(question: String, history: [(String, String)]) -> [APIMessage] {
+        var messages: [APIMessage] = []
         for (prevQ, prevA) in history {
-            messages.append(["role": "user", "content": prevQ])
-            messages.append(["role": "assistant", "content": prevA])
+            messages.append(APIMessage(role: "user", content: prevQ))
+            messages.append(APIMessage(role: "assistant", content: prevA))
         }
-        messages.append(["role": "user", "content": question])
+        messages.append(APIMessage(role: "user", content: question))
         return messages
     }
 
-    private func buildMessages(content: String, history: [(String, String)]) -> [[String: String]] {
-        var messages: [[String: String]] = []
+    private func buildMessages(content: String, history: [(String, String)]) -> [APIMessage] {
+        var messages: [APIMessage] = []
         for (prevQ, prevA) in history {
-            messages.append(["role": "user", "content": prevQ])
-            messages.append(["role": "assistant", "content": prevA])
+            messages.append(APIMessage(role: "user", content: prevQ))
+            messages.append(APIMessage(role: "assistant", content: prevA))
         }
-        messages.append(["role": "user", "content": content])
+        messages.append(APIMessage(role: "user", content: content))
         return messages
     }
 
     // MARK: - Non-streaming HTTP
 
     private func callAPI(
-        system: String,
-        messages: [[String: String]],
+        system: SystemContent,
+        messages: [APIMessage],
         maxTokens: Int,
-        stream: Bool
+        stream: Bool,
+        model: String,
+        useCache: Bool
     ) async throws -> Data {
         guard let key = apiKey else { throw ServiceError.noAPIKey }
 
@@ -132,15 +192,20 @@ final class AnthropicService: Sendable {
         request.setValue(key, forHTTPHeaderField: "x-api-key")
         request.setValue(apiVersion, forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "content-type")
+        if useCache {
+            request.setValue(cacheBetaHeader, forHTTPHeaderField: "anthropic-beta")
+        }
 
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": maxTokens,
-            "system": system,
-            "messages": messages,
-            "stream": stream,
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let body = APIRequest(
+            model: model,
+            max_tokens: maxTokens,
+            system: system,
+            messages: messages,
+            stream: stream
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        request.httpBody = try encoder.encode(body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
@@ -163,9 +228,10 @@ final class AnthropicService: Sendable {
     // MARK: - Streaming HTTP (SSE)
 
     private func streamAPI(
-        system: String,
-        messages: [[String: String]],
-        maxTokens: Int
+        system: SystemContent,
+        messages: [APIMessage],
+        maxTokens: Int,
+        useCache: Bool
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task {
@@ -180,15 +246,20 @@ final class AnthropicService: Sendable {
                     request.setValue(key, forHTTPHeaderField: "x-api-key")
                     request.setValue(self.apiVersion, forHTTPHeaderField: "anthropic-version")
                     request.setValue("application/json", forHTTPHeaderField: "content-type")
+                    if useCache {
+                        request.setValue(self.cacheBetaHeader, forHTTPHeaderField: "anthropic-beta")
+                    }
 
-                    let body: [String: Any] = [
-                        "model": self.model,
-                        "max_tokens": maxTokens,
-                        "system": system,
-                        "messages": messages,
-                        "stream": true,
-                    ]
-                    request.httpBody = try JSONSerialization.data(withJSONObject: body)
+                    let body = APIRequest(
+                        model: self.model,
+                        max_tokens: maxTokens,
+                        system: system,
+                        messages: messages,
+                        stream: true
+                    )
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = .sortedKeys
+                    request.httpBody = try encoder.encode(body)
 
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
                     if let http = response as? HTTPURLResponse, http.statusCode != 200 {

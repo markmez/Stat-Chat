@@ -14,22 +14,113 @@ final class QueryEngine {
     /// Ask a natural language baseball question. Calls `onChunk` for each streamed token.
     /// Returns the full assembled answer.
     func ask(_ question: String, onChunk: @escaping @MainActor (String) -> Void) async throws -> String {
-        // Step 0: Route the query
-        let routeJSON = try await anthropic.routeQuery(question: question, history: history)
+        // Step 0: Route the query — try local classification first, fall back to Claude
+        let route: String
+        if let localRoute = classifyLocally(question) {
+            route = localRoute
+        } else {
+            let routeJSON = try await anthropic.routeQuery(question: question, history: history)
+            if routeJSON.contains("stat_explanation") {
+                route = "stat_explanation"
+            } else if routeJSON.contains("current_form") {
+                route = "current_form"
+            } else if routeJSON.contains("streak_finder") {
+                route = "streak_finder"
+            } else {
+                route = "simple_lookup"
+            }
+        }
 
         let fullAnswer: String
-        if routeJSON.contains("stat_explanation") {
-            let stream = anthropic.explainStat(question: question, history: history)
-            fullAnswer = try await collectStream(stream, onChunk: onChunk)
-        } else if routeJSON.contains("current_form") {
+        if route == "stat_explanation" {
+            if let local = handleLocalStatExplanation(question: question, onChunk: onChunk) {
+                fullAnswer = local
+            } else {
+                // Stat not in local dictionary — fall back to Claude
+                let stream = anthropic.explainStat(question: question, history: history)
+                fullAnswer = try await collectStream(stream, onChunk: onChunk)
+            }
+        } else if route == "current_form" {
             fullAnswer = try await handleCurrentFormQuery(question: question, onChunk: onChunk)
-        } else if routeJSON.contains("streak_finder") {
+        } else if route == "streak_finder" {
             fullAnswer = try await handleStreakQuery(question: question, onChunk: onChunk)
         } else {
             fullAnswer = try await handleSQLQuery(question: question, onChunk: onChunk)
         }
         addToHistory(question: question, answer: fullAnswer)
         return fullAnswer
+    }
+
+    // MARK: - Local query classification (skip Claude router for obvious patterns)
+
+    private func classifyLocally(_ question: String) -> String? {
+        let q = question.lowercased()
+        // Streak patterns
+        if q.contains("streak") || q.contains("slump") || q.contains("on fire")
+           || q.contains("hot stretch") || q.contains("cold stretch") {
+            return "streak_finder"
+        }
+        // Current form patterns
+        if q.contains("lately") || q.contains("recently") || q.contains("current form")
+           || q.contains("right now") || q.contains("doing now") {
+            return "current_form"
+        }
+        // Stat explanation patterns
+        if q.hasPrefix("what is ") || q.hasPrefix("what does ") || q.hasPrefix("explain ")
+           || q.hasPrefix("what's ") || q.hasPrefix("define ") {
+            // Only classify as stat_explanation if no player name is detected
+            if PlayerNameMatcher.matchStat(q) != nil {
+                let hasPlayer = PlayerNameMatcher.sortedNames.contains { name in
+                    PlayerNameMatcher.containsWord(name.lowercased(), in: q)
+                }
+                if !hasPlayer { return "stat_explanation" }
+            }
+        }
+        if (q.contains("how is") || q.contains("how do you")) && q.contains("calculated") {
+            return "stat_explanation"
+        }
+        return nil
+    }
+
+    // MARK: - Local stat explanation (zero API cost)
+
+    private func handleLocalStatExplanation(
+        question: String,
+        onChunk: @escaping @MainActor (String) -> Void
+    ) -> String? {
+        // Try to match a stat in the question
+        let lower = question.lowercased()
+        var definition: String?
+        var abbrev: String?
+
+        // Try via statAliasMap (handles "batting average", "on-base percentage", etc.)
+        if let stat = PlayerNameMatcher.matchStat(lower),
+           let defn = StatDefinitions.lookup(stat.displayAbbrev) {
+            abbrev = stat.displayAbbrev
+            definition = defn
+        }
+
+        // Try direct abbreviation lookup for stats not in statAliasMap
+        if definition == nil {
+            let directAbbrevs = ["war", "wrc+", "k", "pa", "sf", "1b", "fld%"]
+            for da in directAbbrevs {
+                if PlayerNameMatcher.containsWord(da, in: lower) {
+                    let key = da.uppercased()
+                    let lookupKey = key == "WRC+" ? "wRC+" : key
+                    if let defn = StatDefinitions.lookup(lookupKey) {
+                        abbrev = lookupKey
+                        definition = defn
+                        break
+                    }
+                }
+            }
+        }
+
+        guard let abbrev, let definition else { return nil }
+
+        let response = "**\(abbrev)** — \(definition)"
+        onChunk(response)
+        return response
     }
 
     // MARK: - Standard SQL query path
@@ -98,29 +189,18 @@ final class QueryEngine {
         question: String,
         onChunk: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        // Generate SQL to extract the player name (reuse the SQL generator)
-        let sql = try await anthropic.generateSQL(question: question, history: history)
-
-        // Extract player name from the generated SQL
-        guard let nameRange = sql.range(of: #"LIKE\s+'%([^%]+)%'"#, options: .regularExpression),
-              let innerRange = sql[nameRange].range(of: #"'%([^%]+)%'"#, options: .regularExpression) else {
-            // Fall back to standard SQL query if we can't extract a name
+        // Extract player name locally — avoid a full SQL generation API call
+        let playerName: String
+        if let name = extractPlayerNameLocally(from: question) {
+            playerName = name
+        } else {
+            // Local extraction failed — fall back to standard SQL query path
             return try await handleSQLQuery(question: question, onChunk: onChunk)
         }
-        let nameSlice = sql[innerRange]
-        let playerName = String(nameSlice)
-            .replacingOccurrences(of: "'%", with: "")
-            .replacingOccurrences(of: "%'", with: "")
 
-        // Extract season (default to most recent)
-        let seasonPattern = #"season\s*=\s*(\d{4})"#
-        var season = "2025"
-        if let seasonRange = sql.range(of: seasonPattern, options: .regularExpression) {
-            let match = sql[seasonRange]
-            if let digitRange = match.range(of: #"\d{4}"#, options: .regularExpression) {
-                season = String(match[digitRange])
-            }
-        }
+        // Extract season from question text directly
+        let season = String(PlayerNameMatcher.detectSeason(question, defaultToMostRecent: true)
+                            ?? 2025)
 
         // Query current_form table
         let formSQL = """
@@ -559,5 +639,28 @@ final class QueryEngine {
 
     func clearHistory() {
         history.removeAll()
+    }
+
+    // MARK: - Local player name extraction
+
+    /// Extract a player name from a question using PlayerNameMatcher (no API call).
+    private func extractPlayerNameLocally(from question: String) -> String? {
+        let lower = question.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Try full name match first (longest names first, word-boundary aware)
+        for name in PlayerNameMatcher.sortedNames {
+            if PlayerNameMatcher.containsWord(name.lowercased(), in: lower) {
+                return name
+            }
+        }
+
+        // Try unambiguous last name match
+        for (lastName, players) in PlayerNameMatcher.lastNameIndex {
+            if PlayerNameMatcher.containsWord(lastName, in: lower) && players.count == 1 {
+                return players[0]
+            }
+        }
+
+        return nil
     }
 }
