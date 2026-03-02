@@ -16,6 +16,9 @@ struct PlayerCardView: View {
     @State private var priorSeasonTabs: [Int: SplitTab] = [:]
     @State private var selectedTeamCode: String? = nil
 
+    // Two-way player state
+    @State private var twoWayTab: Int = 0  // 0 = Batting, 1 = Pitching
+
     // Pitching-specific state
     @State private var pitchingFormSliderGameNumber: Int? = nil
     @State private var pitchingGameLogs: [PitchingGameLog]? = nil
@@ -101,7 +104,19 @@ struct PlayerCardView: View {
                         }
                         .padding(.horizontal, 20)
 
-                        if card.isPitcher, let pitchingSeasons = card.pitchingSeasons, !pitchingSeasons.isEmpty {
+                        if card.isTwoWay {
+                            Picker("", selection: $twoWayTab) {
+                                Text("Batting").tag(0)
+                                Text("Pitching").tag(1)
+                            }
+                            .pickerStyle(.segmented)
+                            .padding(.horizontal, 20)
+                        }
+
+                        if card.isTwoWay, twoWayTab == 1,
+                           let pitchingSeasons = card.pitchingSeasons, !pitchingSeasons.isEmpty {
+                            pitcherCardContent(card: card, pitchingSeasons: pitchingSeasons)
+                        } else if card.isPitcher, let pitchingSeasons = card.pitchingSeasons, !pitchingSeasons.isEmpty {
                             pitcherCardContent(card: card, pitchingSeasons: pitchingSeasons)
                         } else {
                             batterCardContent(card: card)

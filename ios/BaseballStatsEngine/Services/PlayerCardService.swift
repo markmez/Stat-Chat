@@ -91,6 +91,7 @@ struct PlayerCard: Sendable {
     let streaks: StatGridParser.StatGrid?
     let bio: String?
     let isPitcher: Bool
+    let isTwoWay: Bool
     let pitchingSeasons: [PitchingSeasonData]?
     let pitchingCareerTotals: StatGridParser.StatGrid?
 }
@@ -154,6 +155,31 @@ enum PlayerCardService {
         return false
     }
 
+    /// Detect two-way players: meaningful batting stats (PA >= 130) AND meaningful pitching stats (ip_outs >= 90, ~30 IP).
+    /// PA threshold of 130 exceeds what any pitcher would accumulate just from batting in their own starts (~4 PA × 32 GS = 128).
+    /// IP threshold of 30 filters out position players doing blowout mop-up duty.
+    static func isTwoWayPlayer(name: String) -> Bool {
+        let batSql = """
+            SELECT 1 FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND s.plate_appearances >= 130
+            LIMIT 1
+            """
+        guard let batResult = try? db.execute(sql: batSql),
+              !batResult.rows.isEmpty else { return false }
+
+        let pitchSql = """
+            SELECT 1 FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND sp.ip_outs >= 90
+            LIMIT 1
+            """
+        guard let pitchResult = try? db.execute(sql: pitchSql),
+              !pitchResult.rows.isEmpty else { return false }
+
+        return true
+    }
+
     // All pitching stats in conventional order (full set for SQL column mapping)
     private static let pitchingAllHeaders = [
         "W", "L", "SV", "G", "GS", "GF", "CG", "QS", "IP", "H", "R", "ER", "HR", "BB", "IBB",
@@ -190,8 +216,9 @@ enum PlayerCardService {
         let team = playerInfo?.team ?? ""
         let displayName = playerInfo?.name ?? name
 
-        // Detect if player is primarily a pitcher
+        // Detect if player is primarily a pitcher or a two-way player
         let playerIsPitcher = isPitcher(name: name)
+        let playerIsTwoWay = !playerIsPitcher && isTwoWayPlayer(name: name)
 
         // Fetch batting stats (all synchronous SQL)
         let seasons = fetchAllSeasons(name: name)
@@ -199,10 +226,10 @@ enum PlayerCardService {
         let splits = fetchPlatoonSplits(name: name)
         let streakGrid = fetchStreaks(name: name)
 
-        // Fetch pitching stats if pitcher
+        // Fetch pitching stats if pitcher or two-way player
         let pitchingSeasons: [PitchingSeasonData]?
         let pitchingCareer: StatGridParser.StatGrid?
-        if playerIsPitcher {
+        if playerIsPitcher || playerIsTwoWay {
             pitchingSeasons = fetchPitchingAllSeasons(name: name)
             pitchingCareer = fetchPitchingCareerTotals(name: name)
         } else {
@@ -253,6 +280,7 @@ enum PlayerCardService {
             streaks: streakGrid,
             bio: bio,
             isPitcher: playerIsPitcher,
+            isTwoWay: playerIsTwoWay,
             pitchingSeasons: pitchingSeasons,
             pitchingCareerTotals: pitchingCareer
         )
