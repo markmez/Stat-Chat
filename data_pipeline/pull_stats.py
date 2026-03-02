@@ -39,6 +39,7 @@ RETROSHEET_SEASON_URL = "https://www.retrosheet.org/downloads/{year}/{year}csvs.
 
 # Chadwick Bureau retrosplits (GitHub raw)
 RETROSPLITS_URL = "https://raw.githubusercontent.com/chadwickbureau/retrosplits/master/splits/batting-platoon-{year}.csv"
+PITCHING_RETROSPLITS_URL = "https://raw.githubusercontent.com/chadwickbureau/retrosplits/master/splits/pitching-platoon-{year}.csv"
 
 
 def create_tables(conn):
@@ -234,6 +235,161 @@ def create_tables(conn):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_fielding_player ON season_fielding_stats(player_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_fielding_player_season ON season_fielding_stats(player_id, season)")
 
+    # --- Pitching tables ---
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS season_pitching_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            team TEXT,
+            games INTEGER,
+            games_started INTEGER,
+            games_finished INTEGER,
+            complete_games INTEGER,
+            wins INTEGER,
+            losses INTEGER,
+            saves INTEGER,
+            ip_outs INTEGER,
+            innings_pitched TEXT,
+            hits INTEGER,
+            runs INTEGER,
+            earned_runs INTEGER,
+            home_runs INTEGER,
+            walks INTEGER,
+            intentional_walks INTEGER,
+            strikeouts INTEGER,
+            hit_by_pitch INTEGER,
+            wild_pitches INTEGER,
+            balks INTEGER,
+            batters_faced INTEGER,
+            sacrifice_hits INTEGER,
+            sacrifice_flies INTEGER,
+            stolen_bases INTEGER,
+            caught_stealing INTEGER,
+            quality_starts INTEGER,
+            era REAL,
+            whip REAL,
+            k_per_9 REAL,
+            bb_per_9 REAL,
+            k_per_bb REAL,
+            h_per_9 REAL,
+            hr_per_9 REAL,
+            baa REAL,
+            era_plus INTEGER,
+            FOREIGN KEY (player_id) REFERENCES players(player_id),
+            UNIQUE(player_id, season, team)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitching_player ON season_pitching_stats(player_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitching_season ON season_pitching_stats(season)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitching_player_season ON season_pitching_stats(player_id, season)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS game_pitching_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            opponent TEXT,
+            vishome TEXT,
+            is_start INTEGER,
+            ip_outs INTEGER,
+            innings_pitched TEXT,
+            hits INTEGER,
+            runs INTEGER,
+            earned_runs INTEGER,
+            home_runs INTEGER,
+            walks INTEGER,
+            strikeouts INTEGER,
+            hit_by_pitch INTEGER,
+            batters_faced INTEGER,
+            win INTEGER,
+            loss INTEGER,
+            save INTEGER,
+            era REAL,
+            FOREIGN KEY (player_id) REFERENCES players(player_id),
+            UNIQUE(player_id, season, date)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchlogs_player ON game_pitching_logs(player_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchlogs_player_season ON game_pitching_logs(player_id, season)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchlogs_date ON game_pitching_logs(date)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pitching_platoon_splits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            split TEXT NOT NULL,
+            plate_appearances INTEGER,
+            at_bats INTEGER,
+            hits INTEGER,
+            doubles INTEGER,
+            triples INTEGER,
+            home_runs INTEGER,
+            walks INTEGER,
+            intentional_walks INTEGER,
+            strikeouts INTEGER,
+            hit_by_pitch INTEGER,
+            sacrifice_hits INTEGER,
+            sacrifice_flies INTEGER,
+            batting_avg_against REAL,
+            obp_against REAL,
+            slg_against REAL,
+            ops_against REAL,
+            FOREIGN KEY (player_id) REFERENCES players(player_id),
+            UNIQUE(player_id, season, split)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchsplits_player ON pitching_platoon_splits(player_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchsplits_player_season ON pitching_platoon_splits(player_id, season)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pitching_home_away_splits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            split TEXT NOT NULL,
+            games INTEGER,
+            games_started INTEGER,
+            ip_outs INTEGER,
+            innings_pitched TEXT,
+            hits INTEGER,
+            earned_runs INTEGER,
+            home_runs INTEGER,
+            walks INTEGER,
+            strikeouts INTEGER,
+            era REAL,
+            whip REAL,
+            k_per_9 REAL,
+            bb_per_9 REAL,
+            baa REAL,
+            FOREIGN KEY (player_id) REFERENCES players(player_id),
+            UNIQUE(player_id, season, split)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchha_player ON pitching_home_away_splits(player_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchha_player_season ON pitching_home_away_splits(player_id, season)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS league_pitching_averages (
+            season INTEGER PRIMARY KEY,
+            total_ip_outs INTEGER,
+            total_er INTEGER,
+            total_h INTEGER,
+            total_bb INTEGER,
+            total_so INTEGER,
+            total_hr INTEGER,
+            total_bf INTEGER,
+            league_era REAL,
+            league_whip REAL,
+            league_k_per_9 REAL,
+            league_bb_per_9 REAL,
+            league_baa REAL
+        )
+    """)
+
     conn.commit()
 
 
@@ -349,13 +505,16 @@ def load_players_and_season_stats(conn, start_season, end_season):
                 name = f"{first} {last}".strip()
                 team = str(row.get("team", "")) if pd.notna(row.get("team")) else ""
 
-                # Determine primary position from games at each position
+                # Determine positions sorted by games played DESC (primary position first)
                 pos_cols = ["g_c", "g_1b", "g_2b", "g_3b", "g_ss", "g_lf", "g_cf", "g_rf", "g_dh", "g_p"]
                 pos_names = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH", "P"]
-                positions = []
+                pos_games = []
                 for col, pos_name in zip(pos_cols, pos_names):
-                    if safe_int(row.get(col)) > 0:
-                        positions.append(pos_name)
+                    g = safe_int(row.get(col))
+                    if g > 0:
+                        pos_games.append((g, pos_name))
+                pos_games.sort(key=lambda x: x[0], reverse=True)
+                positions = [p for _, p in pos_games]
                 pos_str = "/".join(positions) if positions else None
 
                 bats = str(row.get("bat", "")) if pd.notna(row.get("bat")) else None
@@ -732,6 +891,507 @@ def load_fielding_stats(conn, start_season, end_season):
 
 
 # ---------------------------------------------------------------------------
+# Pitching: Season stats, game logs, home/away splits
+# ---------------------------------------------------------------------------
+
+def format_ip(ip_outs):
+    """Format innings pitched from outs: 19 outs → '6.1', 20 → '6.2', 21 → '7.0'."""
+    full = ip_outs // 3
+    remainder = ip_outs % 3
+    return f"{full}.{remainder}"
+
+
+def compute_pitching_rate_stats(ip_outs, h, er, bb, so, hr, bf):
+    """Compute ERA, WHIP, K/9, BB/9, K/BB, H/9, HR/9, BAA from counting stats."""
+    ip = ip_outs / 3.0 if ip_outs > 0 else 0
+    era = 9.0 * er / ip if ip > 0 else None
+    whip = (bb + h) / ip if ip > 0 else None
+    k_per_9 = 9.0 * so / ip if ip > 0 else None
+    bb_per_9 = 9.0 * bb / ip if ip > 0 else None
+    k_per_bb = so / bb if bb > 0 else None
+    h_per_9 = 9.0 * h / ip if ip > 0 else None
+    hr_per_9 = 9.0 * hr / ip if ip > 0 else None
+    # BAA: hits / (batters faced - walks - HBP - SH - SF)
+    # Simplified: hits / at_bats_against. We approximate AB = BF - BB - HBP - SH - SF
+    # but we don't always have HBP/SH/SF breakdown here, so use BF - BB as rough AB
+    ab_approx = bf - bb if bf > bb else bf
+    baa = h / ab_approx if ab_approx > 0 else None
+    return {
+        "era": round(era, 2) if era is not None else None,
+        "whip": round(whip, 2) if whip is not None else None,
+        "k_per_9": round(k_per_9, 1) if k_per_9 is not None else None,
+        "bb_per_9": round(bb_per_9, 1) if bb_per_9 is not None else None,
+        "k_per_bb": round(k_per_bb, 2) if k_per_bb is not None else None,
+        "h_per_9": round(h_per_9, 1) if h_per_9 is not None else None,
+        "hr_per_9": round(hr_per_9, 1) if hr_per_9 is not None else None,
+        "baa": round(baa, 3) if baa is not None else None,
+    }
+
+
+def load_pitching_season_stats(conn, start_season, end_season):
+    """Aggregate pitching.csv into season pitching stats per player."""
+    print(f"Pitching Phase 1: Loading pitching season stats for {start_season}-{end_season}...")
+    cursor = conn.cursor()
+    total_stats = 0
+
+    for season in range(start_season, end_season + 1):
+        try:
+            zf = download_retrosheet_zip(season)
+        except Exception as e:
+            print(f"  Warning: Failed to download {season}: {e}")
+            continue
+
+        pitching = read_csv_from_zip(zf, "pitching.csv")
+        if pitching is None:
+            continue
+
+        if "gametype" in pitching.columns:
+            pitching = pitching[pitching["gametype"] == "regular"]
+        if "stattype" in pitching.columns:
+            pitching = pitching[pitching["stattype"] == "value"]
+
+        # Fill NaN in counting columns and flag columns
+        counting_cols = ["p_ipouts", "p_bfp", "p_h", "p_d", "p_t", "p_hr", "p_r", "p_er",
+                         "p_w", "p_iw", "p_k", "p_hbp", "p_wp", "p_bk", "p_sh", "p_sf",
+                         "p_sb", "p_cs", "p_gs", "p_gf", "p_cg"]
+        for col in counting_cols:
+            if col in pitching.columns:
+                pitching[col] = pitching[col].fillna(0).astype(int)
+
+        flag_cols = ["wp", "lp", "save"]
+        for col in flag_cols:
+            if col in pitching.columns:
+                pitching[col] = pitching[col].fillna(0).astype(int)
+
+        # Compute quality starts per game row: >= 18 outs (6 IP) and <= 3 ER
+        pitching["qs"] = ((pitching["p_ipouts"] >= 18) & (pitching["p_er"] <= 3)).astype(int)
+
+        # Aggregate by player ID
+        agg = pitching.groupby("id").agg(
+            team=("team", lambda x: "/".join(dict.fromkeys(x))),
+            games=("id", "count"),
+            gs=("p_gs", "sum"),
+            gf=("p_gf", "sum"),
+            cg=("p_cg", "sum"),
+            wins=("wp", "sum"),
+            losses=("lp", "sum"),
+            saves=("save", "sum"),
+            ip_outs=("p_ipouts", "sum"),
+            h=("p_h", "sum"),
+            r=("p_r", "sum"),
+            er=("p_er", "sum"),
+            hr=("p_hr", "sum"),
+            bb=("p_w", "sum"),
+            ibb=("p_iw", "sum"),
+            so=("p_k", "sum"),
+            hbp=("p_hbp", "sum"),
+            wp=("p_wp", "sum"),
+            bk=("p_bk", "sum"),
+            bf=("p_bfp", "sum"),
+            sh=("p_sh", "sum"),
+            sf=("p_sf", "sum"),
+            sb=("p_sb", "sum"),
+            cs=("p_cs", "sum"),
+            qs=("qs", "sum"),
+        ).reset_index()
+
+        cursor.execute("DELETE FROM season_pitching_stats WHERE season = ?", (season,))
+
+        season_rows = 0
+        for _, row in agg.iterrows():
+            pid = str(row["id"])
+            ip_outs = safe_int(row["ip_outs"])
+            h = safe_int(row["h"])
+            er = safe_int(row["er"])
+            bb = safe_int(row["bb"])
+            so = safe_int(row["so"])
+            hr = safe_int(row["hr"])
+            bf = safe_int(row["bf"])
+            hbp = safe_int(row["hbp"])
+            sh_val = safe_int(row["sh"])
+            sf_val = safe_int(row["sf"])
+
+            rates = compute_pitching_rate_stats(ip_outs, h, er, bb, so, hr, bf)
+
+            # Better BAA: use proper at-bats = BF - BB - HBP - SH - SF
+            ab_against = bf - bb - hbp - sh_val - sf_val
+            baa = round(h / ab_against, 3) if ab_against > 0 else None
+
+            cursor.execute("""
+                INSERT OR REPLACE INTO season_pitching_stats (
+                    player_id, season, team, games, games_started, games_finished,
+                    complete_games, wins, losses, saves, ip_outs, innings_pitched,
+                    hits, runs, earned_runs, home_runs, walks, intentional_walks,
+                    strikeouts, hit_by_pitch, wild_pitches, balks, batters_faced,
+                    sacrifice_hits, sacrifice_flies, stolen_bases, caught_stealing,
+                    quality_starts, era, whip, k_per_9, bb_per_9, k_per_bb,
+                    h_per_9, hr_per_9, baa, era_plus
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                pid, season, str(row["team"]),
+                safe_int(row["games"]), safe_int(row["gs"]), safe_int(row["gf"]),
+                safe_int(row["cg"]), safe_int(row["wins"]), safe_int(row["losses"]),
+                safe_int(row["saves"]), ip_outs, format_ip(ip_outs),
+                h, safe_int(row["r"]), er, hr, bb, safe_int(row["ibb"]),
+                so, hbp, safe_int(row["wp"]), safe_int(row["bk"]), bf,
+                sh_val, sf_val, safe_int(row["sb"]), safe_int(row["cs"]),
+                safe_int(row["qs"]),
+                rates["era"], rates["whip"], rates["k_per_9"], rates["bb_per_9"],
+                rates["k_per_bb"], rates["h_per_9"], rates["hr_per_9"],
+                baa,
+                None,  # ERA+ filled later
+            ))
+            season_rows += 1
+
+        conn.commit()
+        total_stats += season_rows
+        print(f"  {season}: {season_rows} pitching season stat rows")
+
+    print(f"  Loaded {total_stats} pitching season stat rows total")
+
+
+def load_pitching_game_logs(conn, start_season, end_season):
+    """Load game-level pitching logs from Retrosheet pitching.csv."""
+    print(f"Pitching Phase 2: Loading pitching game logs for {start_season}-{end_season}...")
+    cursor = conn.cursor()
+    total_games = 0
+
+    for season in range(start_season, end_season + 1):
+        try:
+            zf = download_retrosheet_zip(season)
+        except Exception as e:
+            print(f"  Warning: Failed to download {season}: {e}")
+            continue
+
+        pitching = read_csv_from_zip(zf, "pitching.csv")
+        if pitching is None:
+            continue
+
+        if "gametype" in pitching.columns:
+            pitching = pitching[pitching["gametype"] == "regular"]
+        if "stattype" in pitching.columns:
+            pitching = pitching[pitching["stattype"] == "value"]
+
+        season_rows = 0
+        for _, row in pitching.iterrows():
+            pid = str(row.get("id", ""))
+            if not pid:
+                continue
+
+            ip_outs = safe_int(row.get("p_ipouts"))
+            h = safe_int(row.get("p_h"))
+            er = safe_int(row.get("p_er"))
+            bb = safe_int(row.get("p_w"))
+            so = safe_int(row.get("p_k"))
+            hr = safe_int(row.get("p_hr"))
+            bf = safe_int(row.get("p_bfp"))
+            hbp = safe_int(row.get("p_hbp"))
+            r = safe_int(row.get("p_r"))
+            is_start = 1 if safe_int(row.get("p_gs")) == 1 else 0
+            win = 1 if safe_int(row.get("wp")) == 1 else 0
+            loss = 1 if safe_int(row.get("lp")) == 1 else 0
+            sv = 1 if safe_int(row.get("save")) == 1 else 0
+
+            date = format_date(row.get("date", ""))
+            opp = str(row.get("opp", "")) if pd.notna(row.get("opp")) else None
+            vishome = str(row.get("vishome", "")).upper() if pd.notna(row.get("vishome")) else None
+
+            # Per-game ERA
+            ip = ip_outs / 3.0
+            game_era = round(9.0 * er / ip, 2) if ip > 0 else None
+
+            cursor.execute("""
+                INSERT OR REPLACE INTO game_pitching_logs (
+                    player_id, season, date, opponent, vishome, is_start,
+                    ip_outs, innings_pitched, hits, runs, earned_runs,
+                    home_runs, walks, strikeouts, hit_by_pitch, batters_faced,
+                    win, loss, save, era
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                pid, season, date, opp, vishome, is_start,
+                ip_outs, format_ip(ip_outs), h, r, er,
+                hr, bb, so, hbp, bf,
+                win, loss, sv, game_era,
+            ))
+            season_rows += 1
+
+        conn.commit()
+        total_games += season_rows
+        print(f"  {season}: {season_rows} pitching game log rows")
+
+    print(f"  Loaded {total_games} pitching game log rows total")
+
+
+def load_pitching_home_away_splits(conn, start_season, end_season):
+    """Aggregate pitching.csv by player + vishome to create home/away pitching splits."""
+    print(f"Pitching Phase 3: Loading pitching home/away splits for {start_season}-{end_season}...")
+    cursor = conn.cursor()
+    total_splits = 0
+
+    for season in range(start_season, end_season + 1):
+        try:
+            zf = download_retrosheet_zip(season)
+        except Exception as e:
+            print(f"  Warning: Failed to download {season}: {e}")
+            continue
+
+        pitching = read_csv_from_zip(zf, "pitching.csv")
+        if pitching is None:
+            continue
+
+        if "gametype" in pitching.columns:
+            pitching = pitching[pitching["gametype"] == "regular"]
+        if "stattype" in pitching.columns:
+            pitching = pitching[pitching["stattype"] == "value"]
+
+        if "vishome" not in pitching.columns:
+            print(f"  {season}: no vishome column in pitching.csv, skipping")
+            continue
+
+        pitching["vishome"] = pitching["vishome"].astype(str).str.upper()
+        pitching = pitching[pitching["vishome"].isin(["H", "V"])]
+
+        counting_cols = ["p_ipouts", "p_bfp", "p_h", "p_er", "p_hr", "p_w", "p_k",
+                         "p_hbp", "p_sh", "p_sf", "p_gs"]
+        for col in counting_cols:
+            if col in pitching.columns:
+                pitching[col] = pitching[col].fillna(0).astype(int)
+
+        grouped = pitching.groupby(["id", "vishome"]).agg(
+            games=("id", "count"),
+            gs=("p_gs", "sum"),
+            ip_outs=("p_ipouts", "sum"),
+            h=("p_h", "sum"),
+            er=("p_er", "sum"),
+            hr=("p_hr", "sum"),
+            bb=("p_w", "sum"),
+            so=("p_k", "sum"),
+            hbp=("p_hbp", "sum"),
+            sh=("p_sh", "sum"),
+            sf=("p_sf", "sum"),
+            bf=("p_bfp", "sum"),
+        ).reset_index()
+
+        season_rows = 0
+        for _, row in grouped.iterrows():
+            pid = str(row["id"])
+            vh = str(row["vishome"])
+            split = "home" if vh == "H" else "away"
+
+            ip_outs = safe_int(row["ip_outs"])
+            h = safe_int(row["h"])
+            er = safe_int(row["er"])
+            bb = safe_int(row["bb"])
+            so = safe_int(row["so"])
+            hr = safe_int(row["hr"])
+            bf = safe_int(row["bf"])
+            hbp = safe_int(row["hbp"])
+            sh_val = safe_int(row["sh"])
+            sf_val = safe_int(row["sf"])
+
+            rates = compute_pitching_rate_stats(ip_outs, h, er, bb, so, hr, bf)
+            ab_against = bf - bb - hbp - sh_val - sf_val
+            baa = round(h / ab_against, 3) if ab_against > 0 else None
+
+            cursor.execute("""
+                INSERT OR REPLACE INTO pitching_home_away_splits (
+                    player_id, season, split, games, games_started,
+                    ip_outs, innings_pitched, hits, earned_runs, home_runs,
+                    walks, strikeouts, era, whip, k_per_9, bb_per_9, baa
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                pid, season, split,
+                safe_int(row["games"]), safe_int(row["gs"]),
+                ip_outs, format_ip(ip_outs), h, er, hr,
+                bb, so, rates["era"], rates["whip"],
+                rates["k_per_9"], rates["bb_per_9"], baa,
+            ))
+            season_rows += 1
+
+        conn.commit()
+        total_splits += season_rows
+        print(f"  {season}: {season_rows} pitching home/away split rows")
+
+    print(f"  Loaded {total_splits} pitching home/away split rows total")
+
+
+def download_pitching_retrosplits(season):
+    """Download pitching-platoon CSV for a season from Chadwick Bureau."""
+    ensure_cache_dir()
+    cache_path = os.path.join(CACHE_DIR, f"retrosplits_pitching_platoon_{season}.csv")
+
+    if os.path.exists(cache_path):
+        return pd.read_csv(cache_path)
+
+    url = PITCHING_RETROSPLITS_URL.format(year=season)
+    print(f"    Downloading pitching retrosplits {season}...")
+    try:
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.text))
+        df.to_csv(cache_path, index=False)
+        return df
+    except requests.RequestException as e:
+        print(f"    Warning: Failed to download pitching platoon splits for {season}: {e}")
+        return None
+
+
+def load_pitching_retrosplits(conn, start_season, end_season):
+    """Load pitching platoon splits from Chadwick Bureau retrosplits."""
+    effective_start = max(start_season, 1969)
+    if effective_start > end_season:
+        print(f"Pitching Phase 4: Skipping pitching platoon splits (year range predates 1969)")
+        return
+
+    print(f"Pitching Phase 4: Loading pitching retrosplits for {effective_start}-{end_season}...")
+    cursor = conn.cursor()
+    total_splits = 0
+
+    for season in range(effective_start, end_season + 1):
+        df = download_pitching_retrosplits(season)
+        if df is None:
+            continue
+
+        # Filter to regular season only
+        if "PHASE" in df.columns:
+            df = df[df["PHASE"] == "R"]
+
+        counting_cols = ["B_PA", "B_AB", "B_H", "B_TB", "B_2B", "B_3B", "B_HR",
+                         "B_BB", "B_IBB", "B_SO", "B_HP", "B_SH", "B_SF"]
+        for col in counting_cols:
+            if col in df.columns:
+                df[col] = df[col].fillna(0).astype(int)
+
+        # Group by pitcher + batter hand
+        grouped = df.groupby(["RESP_PIT_ID", "RESP_BAT_HAND_CD"]).agg(
+            {col: "sum" for col in counting_cols if col in df.columns}
+        ).reset_index()
+
+        season_rows = 0
+        for _, row in grouped.iterrows():
+            pid = str(row.get("RESP_PIT_ID", ""))
+            if not pid:
+                continue
+
+            bat_hand = str(row.get("RESP_BAT_HAND_CD", ""))
+            if bat_hand == "L":
+                split = "vs_LHB"
+            elif bat_hand == "R":
+                split = "vs_RHB"
+            else:
+                continue
+
+            pa = safe_int(row.get("B_PA"))
+            ab = safe_int(row.get("B_AB"))
+            h = safe_int(row.get("B_H"))
+            doubles = safe_int(row.get("B_2B"))
+            triples = safe_int(row.get("B_3B"))
+            hr = safe_int(row.get("B_HR"))
+            bb = safe_int(row.get("B_BB"))
+            ibb = safe_int(row.get("B_IBB"))
+            so = safe_int(row.get("B_SO"))
+            hbp = safe_int(row.get("B_HP"))
+            sh_val = safe_int(row.get("B_SH"))
+            sf_val = safe_int(row.get("B_SF"))
+
+            # Compute batting-against rates
+            avg_against = round(h / ab, 3) if ab > 0 else None
+            obp_denom = ab + bb + hbp + sf_val
+            obp_against = round((h + bb + hbp) / obp_denom, 3) if obp_denom > 0 else None
+            tb = h + doubles + 2 * triples + 3 * hr
+            slg_against = round(tb / ab, 3) if ab > 0 else None
+            ops_against = round((obp_against or 0) + (slg_against or 0), 3) if obp_against is not None or slg_against is not None else None
+
+            cursor.execute("""
+                INSERT OR REPLACE INTO pitching_platoon_splits (
+                    player_id, season, split, plate_appearances, at_bats,
+                    hits, doubles, triples, home_runs, walks, intentional_walks,
+                    strikeouts, hit_by_pitch, sacrifice_hits, sacrifice_flies,
+                    batting_avg_against, obp_against, slg_against, ops_against
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                pid, season, split, pa, ab,
+                h, doubles, triples, hr, bb, ibb,
+                so, hbp, sh_val, sf_val,
+                avg_against, obp_against, slg_against, ops_against,
+            ))
+            season_rows += 1
+
+        conn.commit()
+        total_splits += season_rows
+        print(f"  {season}: {season_rows} pitching platoon split rows")
+
+        time.sleep(0.3)
+
+    print(f"  Loaded {total_splits} pitching platoon split rows total")
+
+
+def compute_league_pitching_averages(conn):
+    """Aggregate season_pitching_stats per season into league-wide pitching totals and rates."""
+    print("Pitching Phase 5a: Computing league pitching averages...")
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT season,
+               SUM(ip_outs), SUM(earned_runs), SUM(hits),
+               SUM(walks), SUM(strikeouts), SUM(home_runs),
+               SUM(batters_faced)
+        FROM season_pitching_stats
+        GROUP BY season
+    """)
+
+    rows_inserted = 0
+    for row in cursor.fetchall():
+        season = row[0]
+        ip_outs, er, h, bb, so, hr, bf = row[1], row[2], row[3], row[4], row[5], row[6], row[7]
+
+        rates = compute_pitching_rate_stats(ip_outs, h, er, bb, so, hr, bf)
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO league_pitching_averages (
+                season, total_ip_outs, total_er, total_h, total_bb,
+                total_so, total_hr, total_bf,
+                league_era, league_whip, league_k_per_9, league_bb_per_9, league_baa
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            season, ip_outs, er, h, bb, so, hr, bf,
+            rates["era"], rates["whip"], rates["k_per_9"], rates["bb_per_9"], rates["baa"],
+        ))
+        rows_inserted += 1
+        print(f"  {season}: ERA={rates['era']}, WHIP={rates['whip']}, K/9={rates['k_per_9']}")
+
+    conn.commit()
+    print(f"  Inserted {rows_inserted} league pitching average rows")
+
+
+def compute_era_plus(conn):
+    """Compute ERA+ for each pitcher-season: 100 * league_ERA / player_ERA."""
+    print("Pitching Phase 5b: Computing ERA+...")
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT season, league_era FROM league_pitching_averages")
+    league = {}
+    for row in cursor.fetchall():
+        league[row[0]] = row[1]
+
+    cursor.execute("""
+        SELECT id, season, era FROM season_pitching_stats
+        WHERE era IS NOT NULL AND era > 0
+    """)
+    updates = []
+    for row in cursor.fetchall():
+        row_id, season, player_era = row
+        if season not in league or league[season] is None or league[season] == 0:
+            continue
+        era_plus = int(round(100 * league[season] / player_era))
+        updates.append((era_plus, row_id))
+
+    cursor.executemany("UPDATE season_pitching_stats SET era_plus = ? WHERE id = ?", updates)
+    conn.commit()
+    print(f"  Updated {len(updates)} pitcher-seasons with ERA+")
+
+
+# ---------------------------------------------------------------------------
 # Phase 3: Retrosplits — platoon splits (vs LHP / vs RHP)
 # ---------------------------------------------------------------------------
 
@@ -1059,6 +1719,14 @@ def pull_and_load(start_season, end_season):
 
     # Phase 5: Player bio data (birthdate, bats, throws)
     load_bio_data(conn)
+
+    # Pitching phases
+    load_pitching_season_stats(conn, start_season, end_season)
+    load_pitching_game_logs(conn, start_season, end_season)
+    load_pitching_home_away_splits(conn, start_season, end_season)
+    load_pitching_retrosplits(conn, start_season, end_season)
+    compute_league_pitching_averages(conn)
+    compute_era_plus(conn)
 
     conn.close()
     print(f"\nDone! Database saved to: {DB_PATH}")

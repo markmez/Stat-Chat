@@ -136,8 +136,16 @@ We download Retrosheet season ZIPs that contain 7 CSV files. We currently only u
 - ~~`throw` (L/R) — throw hand~~ DONE (stored as `throws` in players table)
 - `first_g`, `last_g` — career date range. Could enable "active in year X" queries.
 
+### Database size & bundling strategy
+Current DB (2024-2025 only): **37 MB** bundled in-app — fast, works offline. But full historical data (1898+) with game logs would be **~1.8 GB** — way too big to bundle. Game logs are ~90% of the size (~9.4M rows). Season-level stats alone for all history would only be ~25 MB.
+
+**Plan: Bundle recent, backend for historical.** Bundle the last 5-10 years of data (~100-150 MB) for speed. Historical queries (pre-2015 or so) go through the backend server. This keeps the app fast for the most common queries while still supporting "who led the league in HR in 1961?" via the server. The backend is already needed for API key security, so this piggybacks on that infrastructure.
+
+**Important:** When updating the bundled DB, always copy the rebuilt `baseball_stats.db` from the project root into `ios/BaseballStatsEngine/Resources/baseball_stats.db`. They are separate files — the pipeline writes to the project root, but the app bundles from Resources.
+
 ### Before public/commercial release
-1. **Backend server for API key security** — POC uses direct Claude API calls with key on-device
+1. **Backend server for API key security + historical data** — POC uses direct Claude API calls with key on-device. Server also needed for historical data too large to bundle.
 2. ~~Swap to commercially licensed data sources~~ DONE (Retrosheet + Chadwick Bureau)
 3. ~~League-adjusted offense metric~~ DONE (OPS+)
-4. Expand historical data (1898+), add pitching stats
+4. ~~Add pitching stats~~ DONE (season stats, game logs, streaks, splits, current form, ERA+)
+5. Expand historical data (1898+) — via backend server for game logs, bundled for season stats

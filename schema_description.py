@@ -154,18 +154,149 @@ Per-position fielding stats aggregated from Retrosheet fielding.csv.
 - For fielding queries, join with season_fielding_stats using player_id and season
 - A player may have multiple rows per season (one per position played)
 
+### season_pitching_stats
+Per-season aggregated pitching stats from Retrosheet pitching.csv.
+- player_id (TEXT) — references players table
+- season (INTEGER) — year
+- team (TEXT) — team abbreviation
+- games (INTEGER) — total games pitched (G)
+- games_started (INTEGER) — games started (GS)
+- games_finished (INTEGER) — games finished (GF)
+- complete_games (INTEGER) — complete games (CG)
+- wins (INTEGER) — wins (W)
+- losses (INTEGER) — losses (L)
+- saves (INTEGER) — saves (SV)
+- ip_outs (INTEGER) — raw outs recorded (divide by 3 for IP). Use this for arithmetic.
+- innings_pitched (TEXT) — formatted IP display string (e.g., "134.0", "6.1"). Use this for display only.
+- hits (INTEGER) — hits allowed (H)
+- runs (INTEGER) — runs allowed (R)
+- earned_runs (INTEGER) — earned runs (ER)
+- home_runs (INTEGER) — home runs allowed (HR)
+- walks (INTEGER) — walks/bases on balls (BB)
+- intentional_walks (INTEGER) — intentional walks (IBB)
+- strikeouts (INTEGER) — strikeouts (SO/K)
+- hit_by_pitch (INTEGER) — hit by pitch (HBP)
+- wild_pitches (INTEGER) — wild pitches (WP)
+- balks (INTEGER) — balks (BK)
+- batters_faced (INTEGER) — total batters faced (BF)
+- sacrifice_hits (INTEGER) — sacrifice hits allowed (SH)
+- sacrifice_flies (INTEGER) — sacrifice flies allowed (SF)
+- stolen_bases (INTEGER) — stolen bases allowed (SB)
+- caught_stealing (INTEGER) — caught stealing (CS)
+- quality_starts (INTEGER) — quality starts: >= 6.0 IP and <= 3 ER (QS)
+- era (REAL) — earned run average (ERA = 9 * ER / IP)
+- whip (REAL) — walks + hits per inning pitched (WHIP = (BB + H) / IP)
+- k_per_9 (REAL) — strikeouts per 9 innings (K/9)
+- bb_per_9 (REAL) — walks per 9 innings (BB/9)
+- k_per_bb (REAL) — strikeout-to-walk ratio (K/BB)
+- h_per_9 (REAL) — hits per 9 innings (H/9)
+- hr_per_9 (REAL) — home runs per 9 innings (HR/9)
+- baa (REAL) — batting average against (BAA)
+- era_plus (INTEGER) — ERA+ (ERA adjusted for league average). 100 = league average, >100 is above average. Computed as 100 * league_ERA / player_ERA. No park factors.
+
+### game_pitching_logs
+Per-game pitching logs from Retrosheet pitching.csv. One row per pitcher per game appearance.
+- player_id (TEXT) — references players table
+- season (INTEGER) — year
+- date (TEXT) — game date in YYYY-MM-DD format
+- opponent (TEXT) — opponent team abbreviation
+- vishome (TEXT) — "H" for home game, "V" for away/visitor game
+- is_start (INTEGER) — 1 if the pitcher started the game, 0 otherwise
+- ip_outs (INTEGER) — outs recorded in this game
+- innings_pitched (TEXT) — formatted IP for display (e.g., "6.1")
+- hits, runs, earned_runs, home_runs, walks, strikeouts, hit_by_pitch, batters_faced (INTEGER) — per-game counting stats
+- win (INTEGER) — 1 if pitcher got the win, 0 otherwise
+- loss (INTEGER) — 1 if pitcher got the loss, 0 otherwise
+- save (INTEGER) — 1 if pitcher got the save, 0 otherwise
+- era (REAL) — per-game ERA (9 * ER / IP for that game)
+
+### pitching_platoon_splits
+How batters performed against each pitcher, broken down by batter handedness. From Chadwick Bureau retrosplits.
+- player_id (TEXT) — references players table (the pitcher)
+- season (INTEGER) — year
+- split (TEXT) — "vs_LHB" (vs left-handed batters) or "vs_RHB" (vs right-handed batters)
+- plate_appearances, at_bats, hits, doubles, triples, home_runs (INTEGER) — batting stats against
+- walks, intentional_walks, strikeouts, hit_by_pitch, sacrifice_hits, sacrifice_flies (INTEGER)
+- batting_avg_against (REAL) — opponents' batting average
+- obp_against (REAL) — opponents' on-base percentage
+- slg_against (REAL) — opponents' slugging percentage
+- ops_against (REAL) — opponents' OPS
+- For pitching platoon queries, use split = 'vs_LHB' or 'vs_RHB'. Note: these are BATTER hand, not pitcher hand.
+
+### pitching_home_away_splits
+Home and away pitching splits aggregated from game logs.
+- player_id (TEXT) — references players table
+- season (INTEGER) — year
+- split (TEXT) — "home" or "away"
+- games, games_started (INTEGER) — games pitched / started in that split
+- ip_outs (INTEGER) — outs recorded
+- innings_pitched (TEXT) — formatted IP for display
+- hits, earned_runs, home_runs, walks, strikeouts (INTEGER) — counting stats
+- era, whip, k_per_9, bb_per_9, baa (REAL) — rate stats
+
+### league_pitching_averages
+Per-season league-wide pitching averages.
+- season (INTEGER, primary key) — year
+- total_ip_outs, total_er, total_h, total_bb, total_so, total_hr, total_bf (INTEGER) — league totals
+- league_era (REAL) — league ERA
+- league_whip (REAL) — league WHIP
+- league_k_per_9 (REAL) — league K/9
+- league_bb_per_9 (REAL) — league BB/9
+- league_baa (REAL) — league batting average against
+
+### pitching_streaks
+Precomputed pitching performance streaks detected via change-point analysis. Uses per-game ERA as the signal (inverted: low ERA = hot).
+- player_id (TEXT) — references players table
+- season (INTEGER) — year
+- role (TEXT) — "starter" or "reliever"
+- start_date, end_date (TEXT) — date range
+- num_games (INTEGER) — games in the streak
+- ip_outs (INTEGER), innings_pitched (TEXT) — IP raw and formatted
+- hits, earned_runs, walks, strikeouts, home_runs (INTEGER) — counting stats
+- era, whip, k_per_9 (REAL) — rate stats
+- performance (TEXT) — "hot" (ERA <= 70% of season avg), "cold" (ERA >= 140%), or "average"
+
+### pitching_streaks_sensitive
+Sensitive pitching streaks for pitchers with no change points at standard threshold. Same schema as pitching_streaks plus season_era for context.
+
+### pitching_streaks_sliding
+Sliding window gap-fill pitching streaks. Same schema as pitching_streaks_sensitive.
+
+### pitching_current_form
+Current form for each pitcher-season — the tail slice with the lowest ERA (optimistic fan, inverted).
+- player_id (TEXT) — references players table
+- season (INTEGER) — year
+- role (TEXT) — "starter" or "reliever"
+- form_start_date (TEXT) — date when form period starts
+- form_start_game_number (INTEGER) — 1-indexed game number
+- total_season_games (INTEGER) — total games in season
+- num_games (INTEGER) — games in form period
+- ip_outs (INTEGER), innings_pitched (TEXT) — form period IP
+- hits, earned_runs, home_runs, walks, strikeouts, batters_faced (INTEGER) — form period counting stats
+- era, whip, k_per_9, bb_per_9 (REAL) — form period rate stats
+- season_ip_outs, season_hits, season_earned_runs, season_home_runs, season_walks, season_strikeouts, season_batters_faced (INTEGER) — full season counting stats
+- season_era (REAL) — full season ERA for comparison
+
 ## Currently Available Data
 - Season batting stats from 1898 to present (aggregated from Retrosheet game logs)
-- OPS+ for every player-season (league-adjusted, no park factors — 100 = average)
-- League-wide averages per season (league_averages table)
-- Game-level batting logs from 1898 to present (Retrosheet) — all players, not limited to qualified batters
-- Platoon splits (vs LHP and vs RHP) from 1969 to present (Retrosheet retrosplits)
-- Home/away splits aggregated from game logs (home_away_splits table)
-- Precomputed streak segments for players with sufficient game logs (streaks table)
-- Sensitive fallback streaks for players with no dramatic shifts (streaks_sensitive table)
-- Current form data for each player-season (current_form table) — form period stats from last performance shift to end of season
+- Season pitching stats from 1898 to present (aggregated from Retrosheet pitching.csv)
+- OPS+ for every batter-season, ERA+ for every pitcher-season (league-adjusted, no park factors — 100 = average)
+- League-wide batting averages (league_averages table) and pitching averages (league_pitching_averages table)
+- Game-level batting logs and pitching logs from 1898 to present
+- Batting platoon splits (vs LHP/RHP) and pitching platoon splits (vs LHB/RHB) from 1969 to present
+- Home/away splits for both batting (home_away_splits) and pitching (pitching_home_away_splits)
+- Precomputed batting streaks (streaks, streaks_sensitive, streaks_sliding tables)
+- Precomputed pitching streaks (pitching_streaks, pitching_streaks_sensitive, pitching_streaks_sliding tables)
+- Current form for batters (current_form table) and pitchers (pitching_current_form table)
 - Per-position fielding stats (season_fielding_stats table) — games, innings, putouts, assists, errors, DP, PB, fielding %
 - Note: wRC+ and WAR columns exist but are NULL. Use ops_plus for league-adjusted offense instead.
+
+## Pitcher Detection
+- The `players.positions` field is sorted by games played DESC (primary position first).
+- A player is a pitcher if their positions field starts with "P" AND they have rows in season_pitching_stats.
+- For players like Shohei Ohtani who play DH and P, the primary position is determined by which role had more games. DH/P = primarily a batter (show batting stats). P/DH = primarily a pitcher (show pitching stats).
+- When a user asks about a pitcher, query the pitching tables (season_pitching_stats, game_pitching_logs, etc.) instead of batting tables.
+- Shared stat names like "strikeouts" or "home runs" should be resolved based on whether the player is a pitcher or batter.
 
 ## Important Notes
 - Player names are stored as full names: "Aaron Judge", "Shohei Ohtani", etc.
@@ -174,9 +305,13 @@ Per-position fielding stats aggregated from Retrosheet fielding.csv.
 - For rate stats (AVG, OBP, SLG, OPS, OPS+), use the precomputed columns rather than calculating from raw counts
 - For OPS+ leaderboards, apply the same PA minimums as other rate stats (>=400 full season, >=200 partial)
 - For counting stats (HR, RBI, etc.), use the integer columns directly
-- For split queries (vs lefties/righties), JOIN with platoon_splits using split = 'vs_LHP' or split = 'vs_RHP'
+- For batting split queries (vs lefties/righties), JOIN with platoon_splits using split = 'vs_LHP' or split = 'vs_RHP'
+- For pitching split queries (vs lefties/righties), JOIN with pitching_platoon_splits using split = 'vs_LHB' or split = 'vs_RHB'
 - Platoon splits are only available for 1969 and later. If the user asks about splits for earlier years, let them know.
-- For home/away split queries, JOIN with home_away_splits using split = 'home' or split = 'away'
+- For home/away batting splits, JOIN with home_away_splits. For pitching home/away, JOIN with pitching_home_away_splits.
+- For pitching rate stat leaderboards (ERA, WHIP, etc.), use ip_outs >= 486 (162 IP) for starters, ip_outs >= 150 (50 IP) for all pitchers
+- Pitching counting stats: "strikeouts" in pitching context = K (pitcher's strikeouts), different from batter strikeouts
+- innings_pitched is a TEXT display field (e.g., "134.0"). For arithmetic, use ip_outs (integer, divide by 3 for IP as decimal)
 - Some historical stats (IBB, SF, HBP) may be NULL or 0 for very old seasons (pre-1955)
 - If the user says "last year" or "last season", assume 2024. If they say "this year" or "this season", assume 2025.
 """

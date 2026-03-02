@@ -69,6 +69,45 @@ enum PlayerNameMatcher {
              "hit_by_pitch", "HBP", "Hit By Pitch", false),
             (["intentional walks", "ibb"],
              "intentional_walks", "IBB", "Intentional Walks", false),
+            // --- Pitching stats ---
+            (["earned run average", "era"],
+             "era", "ERA", "ERA", true),
+            (["walks and hits per innings pitched", "whip"],
+             "whip", "WHIP", "WHIP", true),
+            (["strikeouts per 9 innings", "k/9", "k per 9", "strikeouts per nine"],
+             "k_per_9", "K/9", "K/9", true),
+            (["walks per 9 innings", "bb/9", "bb per 9", "walks per nine"],
+             "bb_per_9", "BB/9", "BB/9", true),
+            (["strikeout to walk ratio", "k/bb", "k per bb", "strikeout walk ratio"],
+             "k_per_bb", "K/BB", "K/BB", true),
+            (["hits per 9 innings", "h/9", "h per 9", "hits per nine"],
+             "h_per_9", "H/9", "H/9", true),
+            (["home runs per 9 innings", "hr/9", "hr per 9"],
+             "hr_per_9", "HR/9", "HR/9", true),
+            (["batting average against", "baa", "opponents batting average", "opponent avg"],
+             "baa", "BAA", "BAA", true),
+            (["era+", "era plus", "adjusted era"],
+             "era_plus", "ERA+", "ERA+", true),
+            (["wins", "w"],
+             "wins", "W", "Wins", false),
+            (["losses"],
+             "losses", "L", "Losses", false),
+            (["saves", "sv"],
+             "saves", "SV", "Saves", false),
+            (["innings pitched", "ip", "innings"],
+             "innings_pitched", "IP", "Innings Pitched", false),
+            (["quality starts", "qs"],
+             "quality_starts", "QS", "Quality Starts", false),
+            (["complete games", "cg"],
+             "complete_games", "CG", "Complete Games", false),
+            (["games finished", "gf"],
+             "games_finished", "GF", "Games Finished", false),
+            (["wild pitches", "wp"],
+             "wild_pitches", "WP", "Wild Pitches", false),
+            (["balks", "bk"],
+             "balks", "BK", "Balks", false),
+            (["batters faced", "bf"],
+             "batters_faced", "BF", "Batters Faced", false),
         ]
         var map: [String: StatInfo] = [:]
         for entry in entries {
@@ -80,6 +119,19 @@ enum PlayerNameMatcher {
         }
         return map
     }()
+
+    /// Stats that are ONLY pitching (not shared with batting)
+    static let pitchingOnlyStats: Set<String> = [
+        "era", "whip", "k_per_9", "bb_per_9", "k_per_bb", "h_per_9", "hr_per_9",
+        "baa", "era_plus", "wins", "losses", "saves", "innings_pitched",
+        "quality_starts", "complete_games", "games_finished", "wild_pitches",
+        "balks", "batters_faced"
+    ]
+
+    /// Check if a StatInfo represents a pitching-only stat
+    static func isPitchingStat(_ stat: StatInfo) -> Bool {
+        pitchingOnlyStats.contains(stat.dbColumn)
+    }
 
     /// All stat aliases sorted longest first (for greedy matching).
     private static let sortedStatAliases: [String] = {

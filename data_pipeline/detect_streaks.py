@@ -681,10 +681,647 @@ def detect_current_form(conn):
     print(f"Done! Detected current form for {total_forms} player-seasons.")
 
 
+# ============================================================================
+# PITCHING STREAK DETECTION
+# ============================================================================
+
+# Pitching PELT parameters
+PITCHING_STARTER_WINDOW = 3     # Rolling window for starters
+PITCHING_STARTER_MIN_SEG = 3    # Minimum starts in a segment
+PITCHING_RELIEVER_WINDOW = 5    # Rolling window for relievers
+PITCHING_RELIEVER_MIN_SEG = 5   # Minimum games in a segment
+PITCHING_ERA_CAP = 27.0         # Cap for 0-IP appearances (9 ER * 9 innings / 0 IP → use this)
+
+
+def classify_pitcher(games_started, total_games):
+    """Classify pitcher as starter or reliever. >50% GS = starter."""
+    if total_games == 0:
+        return "reliever"
+    return "starter" if games_started > total_games / 2 else "reliever"
+
+
+def create_pitching_streaks_table(conn):
+    """Create the pitching_streaks table."""
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pitching_streaks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            role TEXT,
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            num_games INTEGER NOT NULL,
+            ip_outs INTEGER,
+            innings_pitched TEXT,
+            hits INTEGER,
+            earned_runs INTEGER,
+            walks INTEGER,
+            strikeouts INTEGER,
+            home_runs INTEGER,
+            era REAL,
+            whip REAL,
+            k_per_9 REAL,
+            performance TEXT,
+            FOREIGN KEY (player_id) REFERENCES players(player_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pstreaks_player ON pitching_streaks(player_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pstreaks_player_season ON pitching_streaks(player_id, season)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pstreaks_performance ON pitching_streaks(performance)")
+    conn.commit()
+
+
+def create_pitching_streaks_sensitive_table(conn):
+    """Create the pitching_streaks_sensitive table."""
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pitching_streaks_sensitive (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            role TEXT,
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            num_games INTEGER NOT NULL,
+            ip_outs INTEGER,
+            innings_pitched TEXT,
+            hits INTEGER,
+            earned_runs INTEGER,
+            walks INTEGER,
+            strikeouts INTEGER,
+            home_runs INTEGER,
+            era REAL,
+            whip REAL,
+            k_per_9 REAL,
+            performance TEXT,
+            season_era REAL,
+            FOREIGN KEY (player_id) REFERENCES players(player_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pstreaks_sens_player ON pitching_streaks_sensitive(player_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pstreaks_sens_player_season ON pitching_streaks_sensitive(player_id, season)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pstreaks_sens_performance ON pitching_streaks_sensitive(performance)")
+    conn.commit()
+
+
+def create_pitching_streaks_sliding_table(conn):
+    """Create the pitching_streaks_sliding table."""
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pitching_streaks_sliding (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            role TEXT,
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            num_games INTEGER NOT NULL,
+            ip_outs INTEGER,
+            innings_pitched TEXT,
+            hits INTEGER,
+            earned_runs INTEGER,
+            walks INTEGER,
+            strikeouts INTEGER,
+            home_runs INTEGER,
+            era REAL,
+            whip REAL,
+            k_per_9 REAL,
+            performance TEXT,
+            season_era REAL,
+            FOREIGN KEY (player_id) REFERENCES players(player_id)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pstreaks_slid_player ON pitching_streaks_sliding(player_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pstreaks_slid_player_season ON pitching_streaks_sliding(player_id, season)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pstreaks_slid_performance ON pitching_streaks_sliding(performance)")
+    conn.commit()
+
+
+def get_pitching_player_seasons(conn):
+    """Get all pitcher-season combos that have game logs."""
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT DISTINCT player_id, season
+        FROM game_pitching_logs
+        ORDER BY season, player_id
+    """)
+    return cursor.fetchall()
+
+
+def get_pitching_game_logs(conn, player_id, season, starts_only=False):
+    """Get pitching game logs for a player-season, ordered by date.
+
+    Returns: [(date, ip_outs, hits, earned_runs, walks, strikeouts, home_runs, is_start, batters_faced)]
+    """
+    cursor = conn.cursor()
+    if starts_only:
+        cursor.execute("""
+            SELECT date, ip_outs, hits, earned_runs, walks, strikeouts,
+                   home_runs, is_start, batters_faced
+            FROM game_pitching_logs
+            WHERE player_id = ? AND season = ? AND is_start = 1
+            ORDER BY date ASC
+        """, (player_id, season))
+    else:
+        cursor.execute("""
+            SELECT date, ip_outs, hits, earned_runs, walks, strikeouts,
+                   home_runs, is_start, batters_faced
+            FROM game_pitching_logs
+            WHERE player_id = ? AND season = ?
+            ORDER BY date ASC
+        """, (player_id, season))
+    return cursor.fetchall()
+
+
+def compute_game_era_signal(games):
+    """Compute per-game ERA values from pitching game log rows.
+
+    For 0-IP appearances, cap at PITCHING_ERA_CAP (27.0).
+    """
+    era_values = []
+    for g in games:
+        ip_outs = g[1] or 0
+        er = g[3] or 0
+        if ip_outs > 0:
+            era_values.append(9.0 * er / (ip_outs / 3.0))
+        else:
+            era_values.append(PITCHING_ERA_CAP if er > 0 else 0.0)
+    return np.array(era_values)
+
+
+def compute_pitching_segment_stats(games, start_idx, end_idx):
+    """Compute aggregate pitching stats for a segment of games."""
+    segment = games[start_idx:end_idx]
+    total_ip_outs = sum(g[1] or 0 for g in segment)
+    total_h = sum(g[2] or 0 for g in segment)
+    total_er = sum(g[3] or 0 for g in segment)
+    total_bb = sum(g[4] or 0 for g in segment)
+    total_so = sum(g[5] or 0 for g in segment)
+    total_hr = sum(g[6] or 0 for g in segment)
+
+    ip = total_ip_outs / 3.0 if total_ip_outs > 0 else 0
+    era = round(9.0 * total_er / ip, 2) if ip > 0 else None
+    whip = round((total_bb + total_h) / ip, 2) if ip > 0 else None
+    k_per_9 = round(9.0 * total_so / ip, 1) if ip > 0 else None
+
+    full_ip = total_ip_outs // 3
+    remainder = total_ip_outs % 3
+    innings_pitched = f"{full_ip}.{remainder}"
+
+    return {
+        "start_date": segment[0][0],
+        "end_date": segment[-1][0],
+        "num_games": len(segment),
+        "ip_outs": total_ip_outs,
+        "innings_pitched": innings_pitched,
+        "hits": total_h,
+        "earned_runs": total_er,
+        "walks": total_bb,
+        "strikeouts": total_so,
+        "home_runs": total_hr,
+        "era": era,
+        "whip": whip,
+        "k_per_9": k_per_9,
+    }
+
+
+def label_pitching_performance(segment_era, season_era):
+    """Label a pitching segment as hot, cold, or average.
+
+    INVERTED from batting: low ERA = hot, high ERA = cold.
+    Asymmetric thresholds: hot <= 70% season avg, cold >= 140% season avg.
+    """
+    if season_era is None or season_era == 0:
+        return "average"
+    if segment_era is None:
+        return "average"
+    ratio = segment_era / season_era
+    if ratio <= 0.70:
+        return "hot"
+    elif ratio >= 1.40:
+        return "cold"
+    else:
+        return "average"
+
+
+def detect_pitching_streaks(conn):
+    """Run PELT streak detection for all pitcher-seasons."""
+    create_pitching_streaks_table(conn)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM pitching_streaks")
+    conn.commit()
+
+    player_seasons = get_pitching_player_seasons(conn)
+    print(f"Running pitching streak detection for {len(player_seasons)} pitcher-seasons...")
+
+    total_streaks = 0
+    for i, (player_id, season) in enumerate(player_seasons):
+        # Determine role
+        all_games = get_pitching_game_logs(conn, player_id, season)
+        gs_count = sum(1 for g in all_games if g[7] == 1)
+        role = classify_pitcher(gs_count, len(all_games))
+
+        if role == "starter":
+            games = get_pitching_game_logs(conn, player_id, season, starts_only=True)
+            min_seg = PITCHING_STARTER_MIN_SEG
+            window = PITCHING_STARTER_WINDOW
+        else:
+            games = all_games
+            min_seg = PITCHING_RELIEVER_MIN_SEG
+            window = PITCHING_RELIEVER_WINDOW
+
+        if len(games) < min_seg * 2:
+            continue
+
+        era_signal = compute_game_era_signal(games)
+        season_era = float(np.mean(era_signal))
+
+        # Smooth with role-appropriate window
+        smoothed = np.convolve(era_signal, np.ones(window) / window, mode='same')
+        smoothed = smoothed.reshape(-1, 1)
+
+        algo = rpt.Pelt(model="l2", min_size=min_seg, jump=1)
+        algo.fit(smoothed)
+        breakpoints = algo.predict(pen=PENALTY)
+
+        start_idx = 0
+        for end_idx in breakpoints:
+            if end_idx > len(games):
+                end_idx = len(games)
+
+            stats = compute_pitching_segment_stats(games, start_idx, end_idx)
+            performance = label_pitching_performance(stats["era"], season_era)
+
+            cursor.execute("""
+                INSERT INTO pitching_streaks (
+                    player_id, season, role, start_date, end_date, num_games,
+                    ip_outs, innings_pitched, hits, earned_runs, walks,
+                    strikeouts, home_runs, era, whip, k_per_9, performance
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                player_id, season, role,
+                stats["start_date"], stats["end_date"], stats["num_games"],
+                stats["ip_outs"], stats["innings_pitched"],
+                stats["hits"], stats["earned_runs"], stats["walks"],
+                stats["strikeouts"], stats["home_runs"],
+                stats["era"], stats["whip"], stats["k_per_9"],
+                performance,
+            ))
+            total_streaks += 1
+            start_idx = end_idx
+
+        if (i + 1) % 100 == 0:
+            conn.commit()
+            print(f"  Processed {i + 1}/{len(player_seasons)} pitcher-seasons ({total_streaks} streaks)...")
+
+    conn.commit()
+    print(f"Done! Detected {total_streaks} pitching streak segments.")
+
+
+def detect_pitching_sensitive_streaks(conn):
+    """Second pass: PELT with lower penalty for pitcher-seasons with no change points."""
+    create_pitching_streaks_sensitive_table(conn)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM pitching_streaks_sensitive")
+    conn.commit()
+
+    cursor.execute("""
+        SELECT player_id, season, role, COUNT(*) as seg_count
+        FROM pitching_streaks
+        GROUP BY player_id, season
+        HAVING seg_count = 1
+    """)
+    single_segment_pitchers = cursor.fetchall()
+    print(f"Running pitching sensitive streak detection for {len(single_segment_pitchers)} single-segment pitcher-seasons...")
+
+    total_sensitive = 0
+    for i, (player_id, season, role, _) in enumerate(single_segment_pitchers):
+        if role == "starter":
+            games = get_pitching_game_logs(conn, player_id, season, starts_only=True)
+            min_seg = PITCHING_STARTER_MIN_SEG
+            window = PITCHING_STARTER_WINDOW
+            max_seg = 15
+        else:
+            games = get_pitching_game_logs(conn, player_id, season)
+            min_seg = PITCHING_RELIEVER_MIN_SEG
+            window = PITCHING_RELIEVER_WINDOW
+            max_seg = 30
+
+        if len(games) < min_seg * 2:
+            continue
+
+        era_signal = compute_game_era_signal(games)
+        season_era = float(np.mean(era_signal))
+
+        smoothed = np.convolve(era_signal, np.ones(window) / window, mode='same')
+        smoothed = smoothed.reshape(-1, 1)
+
+        algo = rpt.Pelt(model="l2", min_size=min_seg, jump=1)
+        algo.fit(smoothed)
+        breakpoints = algo.predict(pen=SENSITIVE_PENALTY)
+
+        start_idx = 0
+        for end_idx in breakpoints:
+            if end_idx > len(games):
+                end_idx = len(games)
+
+            num_games = end_idx - start_idx
+            if min_seg <= num_games <= max_seg:
+                stats = compute_pitching_segment_stats(games, start_idx, end_idx)
+                performance = label_pitching_performance(stats["era"], season_era)
+
+                cursor.execute("""
+                    INSERT INTO pitching_streaks_sensitive (
+                        player_id, season, role, start_date, end_date, num_games,
+                        ip_outs, innings_pitched, hits, earned_runs, walks,
+                        strikeouts, home_runs, era, whip, k_per_9,
+                        performance, season_era
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    player_id, season, role,
+                    stats["start_date"], stats["end_date"], stats["num_games"],
+                    stats["ip_outs"], stats["innings_pitched"],
+                    stats["hits"], stats["earned_runs"], stats["walks"],
+                    stats["strikeouts"], stats["home_runs"],
+                    stats["era"], stats["whip"], stats["k_per_9"],
+                    performance, round(season_era, 2) if season_era else None,
+                ))
+                total_sensitive += 1
+
+            start_idx = end_idx
+
+        if (i + 1) % 100 == 0:
+            conn.commit()
+            print(f"  Processed {i + 1}/{len(single_segment_pitchers)} pitcher-seasons ({total_sensitive} sensitive streaks)...")
+
+    conn.commit()
+    print(f"Done! Detected {total_sensitive} pitching sensitive streak segments.")
+
+
+def detect_pitching_sliding_streaks(conn):
+    """Third pass: sliding window gap-filler for pitcher-seasons missing hot or cold."""
+    create_pitching_streaks_sliding_table(conn)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM pitching_streaks_sliding")
+    conn.commit()
+
+    player_seasons = get_pitching_player_seasons(conn)
+    print(f"Running pitching sliding window gap-fill for {len(player_seasons)} pitcher-seasons...")
+
+    total_sliding = 0
+    skipped = 0
+    for i, (player_id, season) in enumerate(player_seasons):
+        cursor.execute("""
+            SELECT DISTINCT performance FROM (
+                SELECT performance FROM pitching_streaks
+                WHERE player_id = ? AND season = ? AND performance IN ('hot', 'cold')
+                UNION ALL
+                SELECT performance FROM pitching_streaks_sensitive
+                WHERE player_id = ? AND season = ? AND performance IN ('hot', 'cold')
+            )
+        """, (player_id, season, player_id, season))
+        existing = {row[0] for row in cursor.fetchall()}
+
+        needs_hot = 'hot' not in existing
+        needs_cold = 'cold' not in existing
+        if not needs_hot and not needs_cold:
+            skipped += 1
+            continue
+
+        # Determine role
+        all_games = get_pitching_game_logs(conn, player_id, season)
+        gs_count = sum(1 for g in all_games if g[7] == 1)
+        role = classify_pitcher(gs_count, len(all_games))
+
+        if role == "starter":
+            games = get_pitching_game_logs(conn, player_id, season, starts_only=True)
+            min_seg = PITCHING_STARTER_MIN_SEG
+            window_sizes = [5, 4, 3]
+        else:
+            games = all_games
+            min_seg = PITCHING_RELIEVER_MIN_SEG
+            window_sizes = [10, 8, 5]
+
+        if len(games) < min_seg * 2:
+            continue
+
+        era_signal = compute_game_era_signal(games)
+        season_era = float(np.mean(era_signal))
+        if season_era == 0:
+            continue
+
+        # Find best (lowest ERA = hot) and worst (highest ERA = cold) windows
+        best = None  # lowest ERA
+        worst = None  # highest ERA
+        for ws in window_sizes:
+            if len(games) < ws:
+                continue
+            for start in range(len(games) - ws + 1):
+                end = start + ws
+                stats = compute_pitching_segment_stats(games, start, end)
+                seg_era = stats["era"]
+                if seg_era is None:
+                    continue
+                if best is None or seg_era < best[0]:
+                    best = (seg_era, start, end, ws)
+                if worst is None or seg_era > worst[0]:
+                    worst = (seg_era, start, end, ws)
+
+        for streak_data, label, needed in [(best, "hot", needs_hot), (worst, "cold", needs_cold)]:
+            if not needed or streak_data is None:
+                continue
+            seg_era, start_idx, end_idx, _ = streak_data
+            deviation = abs(seg_era - season_era) / season_era if season_era > 0 else 0
+            if deviation < SLIDING_MIN_DEVIATION:
+                continue
+
+            stats = compute_pitching_segment_stats(games, start_idx, end_idx)
+
+            cursor.execute("""
+                INSERT INTO pitching_streaks_sliding (
+                    player_id, season, role, start_date, end_date, num_games,
+                    ip_outs, innings_pitched, hits, earned_runs, walks,
+                    strikeouts, home_runs, era, whip, k_per_9,
+                    performance, season_era
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                player_id, season, role,
+                stats["start_date"], stats["end_date"], stats["num_games"],
+                stats["ip_outs"], stats["innings_pitched"],
+                stats["hits"], stats["earned_runs"], stats["walks"],
+                stats["strikeouts"], stats["home_runs"],
+                stats["era"], stats["whip"], stats["k_per_9"],
+                label, round(season_era, 2),
+            ))
+            total_sliding += 1
+
+        if (i + 1) % 500 == 0:
+            conn.commit()
+            print(f"  Processed {i + 1}/{len(player_seasons)} pitcher-seasons ({total_sliding} sliding, {skipped} already covered)...")
+
+    conn.commit()
+    print(f"Done! Detected {total_sliding} pitching sliding window streaks ({skipped} already had both hot+cold).")
+
+
+# --- Pitching Current Form ---
+
+PITCHING_FORM_STARTER_MIN = 3
+PITCHING_FORM_STARTER_MAX = 15
+PITCHING_FORM_RELIEVER_MIN = 5
+PITCHING_FORM_RELIEVER_MAX = 30
+
+
+def create_pitching_current_form_table(conn):
+    """Create the pitching_current_form table."""
+    cursor = conn.cursor()
+    cursor.execute("DROP TABLE IF EXISTS pitching_current_form")
+    cursor.execute("""
+        CREATE TABLE pitching_current_form (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            role TEXT,
+            form_start_date TEXT NOT NULL,
+            form_start_game_number INTEGER NOT NULL,
+            total_season_games INTEGER NOT NULL,
+            num_games INTEGER NOT NULL,
+            ip_outs INTEGER,
+            innings_pitched TEXT,
+            hits INTEGER,
+            earned_runs INTEGER,
+            home_runs INTEGER,
+            walks INTEGER,
+            strikeouts INTEGER,
+            batters_faced INTEGER,
+            era REAL,
+            whip REAL,
+            k_per_9 REAL,
+            bb_per_9 REAL,
+            season_ip_outs INTEGER,
+            season_hits INTEGER,
+            season_earned_runs INTEGER,
+            season_home_runs INTEGER,
+            season_walks INTEGER,
+            season_strikeouts INTEGER,
+            season_batters_faced INTEGER,
+            season_era REAL,
+            FOREIGN KEY (player_id) REFERENCES players(player_id),
+            UNIQUE(player_id, season)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pcform_player ON pitching_current_form(player_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pcform_player_season ON pitching_current_form(player_id, season)")
+    conn.commit()
+
+
+def detect_pitching_current_form(conn):
+    """Detect current form for all pitcher-seasons.
+
+    Algorithm: find the tail slice that minimizes ERA (optimistic fan, inverted).
+    Starters: scan 3-15 starts. Relievers: scan 5-30 games.
+    """
+    create_pitching_current_form_table(conn)
+    cursor = conn.cursor()
+
+    player_seasons = get_pitching_player_seasons(conn)
+    print(f"Detecting pitching current form for {len(player_seasons)} pitcher-seasons...")
+
+    total_forms = 0
+    for i, (player_id, season) in enumerate(player_seasons):
+        all_games = get_pitching_game_logs(conn, player_id, season)
+        gs_count = sum(1 for g in all_games if g[7] == 1)
+        role = classify_pitcher(gs_count, len(all_games))
+
+        if role == "starter":
+            games = get_pitching_game_logs(conn, player_id, season, starts_only=True)
+            min_slice = PITCHING_FORM_STARTER_MIN
+            max_slice = PITCHING_FORM_STARTER_MAX
+        else:
+            games = all_games
+            min_slice = PITCHING_FORM_RELIEVER_MIN
+            max_slice = PITCHING_FORM_RELIEVER_MAX
+
+        if len(games) < min_slice:
+            continue
+
+        # Find tail slice that minimizes ERA
+        best_start_idx = None
+        best_era = float('inf')
+        actual_max = min(max_slice, len(games))
+
+        for slice_len in range(min_slice, actual_max + 1):
+            start_idx = len(games) - slice_len
+            total_ip_outs = sum(g[1] or 0 for g in games[start_idx:])
+            total_er = sum(g[3] or 0 for g in games[start_idx:])
+            ip = total_ip_outs / 3.0
+            if ip > 0:
+                era = 9.0 * total_er / ip
+            else:
+                era = PITCHING_ERA_CAP
+
+            if era < best_era:
+                best_era = era
+                best_start_idx = start_idx
+
+        form_start_idx = best_start_idx if best_start_idx is not None else max(0, len(games) - min_slice)
+
+        # Compute form stats
+        form = compute_pitching_segment_stats(games, form_start_idx, len(games))
+        season_stats = compute_pitching_segment_stats(games, 0, len(games))
+
+        # Additional rates for form
+        form_ip = (form["ip_outs"] or 0) / 3.0
+        form_bb_per_9 = round(9.0 * form["walks"] / form_ip, 1) if form_ip > 0 else None
+        total_bf_form = sum(g[8] or 0 for g in games[form_start_idx:])
+        total_bf_season = sum(g[8] or 0 for g in games)
+
+        cursor.execute("""
+            INSERT INTO pitching_current_form (
+                player_id, season, role, form_start_date, form_start_game_number,
+                total_season_games, num_games,
+                ip_outs, innings_pitched, hits, earned_runs, home_runs,
+                walks, strikeouts, batters_faced, era, whip, k_per_9, bb_per_9,
+                season_ip_outs, season_hits, season_earned_runs, season_home_runs,
+                season_walks, season_strikeouts, season_batters_faced, season_era
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            player_id, season, role,
+            form["start_date"], form_start_idx + 1,
+            len(games), form["num_games"],
+            form["ip_outs"], form["innings_pitched"],
+            form["hits"], form["earned_runs"], form["home_runs"],
+            form["walks"], form["strikeouts"], total_bf_form,
+            form["era"], form["whip"], form["k_per_9"], form_bb_per_9,
+            season_stats["ip_outs"], season_stats["hits"],
+            season_stats["earned_runs"], season_stats["home_runs"],
+            season_stats["walks"], season_stats["strikeouts"],
+            total_bf_season, season_stats["era"],
+        ))
+        total_forms += 1
+
+        if (i + 1) % 100 == 0:
+            conn.commit()
+            print(f"  Processed {i + 1}/{len(player_seasons)} pitcher-seasons ({total_forms} forms)...")
+
+    conn.commit()
+    print(f"Done! Detected pitching current form for {total_forms} pitcher-seasons.")
+
+
 if __name__ == "__main__":
     conn = sqlite3.connect(DB_PATH)
+
+    # Batting streaks
     detect_all_streaks(conn)
     detect_sensitive_streaks(conn)
     detect_sliding_streaks(conn)
     detect_current_form(conn)
+
+    # Pitching streaks
+    detect_pitching_streaks(conn)
+    detect_pitching_sensitive_streaks(conn)
+    detect_pitching_sliding_streaks(conn)
+    detect_pitching_current_form(conn)
+
     conn.close()

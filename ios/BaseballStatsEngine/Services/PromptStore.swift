@@ -112,25 +112,139 @@ enum PromptStore {
     - batting_avg, obp, slg, ops, iso (REAL) — form period rate stats
     - season_at_bats, season_hits, season_doubles, season_triples, season_home_runs, season_runs, season_rbi, season_walks, season_strikeouts, season_plate_appearances (INTEGER) — full season counting stats for comparison
 
+    ### season_pitching_stats
+    - player_id (TEXT) — references players table
+    - season (INTEGER) — year
+    - team (TEXT) — team abbreviation for that season
+    - games (INTEGER) — games pitched (G)
+    - games_started (INTEGER) — games started (GS)
+    - games_finished (INTEGER) — games finished (GF)
+    - complete_games (INTEGER) — complete games (CG)
+    - quality_starts (INTEGER) — quality starts: 6+ IP and 3 or fewer ER (QS)
+    - wins (INTEGER) — wins (W)
+    - losses (INTEGER) — losses (L)
+    - saves (INTEGER) — saves (SV)
+    - ip_outs (INTEGER) — total outs recorded (use for arithmetic; 3 outs = 1 inning)
+    - innings_pitched (TEXT) — formatted innings pitched, e.g., "134.0", "6.1" (IP)
+    - hits (INTEGER) — hits allowed (H)
+    - runs (INTEGER) — runs allowed (R)
+    - earned_runs (INTEGER) — earned runs (ER)
+    - home_runs (INTEGER) — home runs allowed (HR)
+    - walks (INTEGER) — walks issued (BB)
+    - intentional_walks (INTEGER) — intentional walks (IBB)
+    - strikeouts (INTEGER) — strikeouts (SO)
+    - hit_by_pitch (INTEGER) — hit batters (HBP)
+    - wild_pitches (INTEGER) — wild pitches (WP)
+    - balks (INTEGER) — balks (BK)
+    - batters_faced (INTEGER) — total batters faced (BF)
+    - sacrifice_hits (INTEGER) — sacrifice hits allowed (SH)
+    - sacrifice_flies (INTEGER) — sacrifice flies allowed (SF)
+    - stolen_bases (INTEGER) — stolen bases allowed (SB)
+    - caught_stealing (INTEGER) — caught stealing (CS)
+    - era (REAL) — earned run average (ERA)
+    - whip (REAL) — walks + hits per inning pitched (WHIP)
+    - k_per_9 (REAL) — strikeouts per 9 innings (K/9)
+    - bb_per_9 (REAL) — walks per 9 innings (BB/9)
+    - k_per_bb (REAL) — strikeout-to-walk ratio (K/BB)
+    - h_per_9 (REAL) — hits per 9 innings (H/9)
+    - hr_per_9 (REAL) — home runs per 9 innings (HR/9)
+    - baa (REAL) — batting average against (BAA)
+    - era_plus (INTEGER) — ERA+ (ERA adjusted for league average). 100 = league average, >100 is above average.
+
+    ### game_pitching_logs
+    - player_id (TEXT) — references players table
+    - season (INTEGER) — year
+    - date (TEXT) — game date in YYYY-MM-DD format
+    - opponent (TEXT) — opponent team abbreviation
+    - vishome (TEXT) — "V" for visitor, "H" for home
+    - is_start (INTEGER) — 1 if this was a start, 0 if relief
+    - ip_outs (INTEGER) — outs recorded in this game
+    - innings_pitched (TEXT) — formatted IP for this game
+    - hits, runs, earned_runs, home_runs, walks, strikeouts, hit_by_pitch (INTEGER)
+    - batters_faced (INTEGER) — batters faced this game
+    - win, loss, save (INTEGER) — 1 if decision, 0 otherwise
+    - era (REAL) — game ERA (9 * ER / IP)
+
+    ### pitching_platoon_splits
+    Batting performance against a pitcher split by batter handedness.
+    - player_id (TEXT) — references players table
+    - season (INTEGER) — year
+    - split (TEXT) — either "vs_LHB" (vs left-handed batters) or "vs_RHB" (vs right-handed batters)
+    - plate_appearances, at_bats, hits, doubles, triples, home_runs (INTEGER)
+    - walks, intentional_walks, strikeouts, hit_by_pitch (INTEGER)
+    - sacrifice_hits, sacrifice_flies (INTEGER)
+    - batting_avg_against, obp_against, slg_against, ops_against (REAL)
+
+    ### pitching_home_away_splits
+    - player_id (TEXT) — references players table
+    - season (INTEGER) — year
+    - split (TEXT) — "home" or "away"
+    - games, games_started, ip_outs (INTEGER), innings_pitched (TEXT)
+    - hits, earned_runs, home_runs, walks, strikeouts (INTEGER)
+    - era, whip, k_per_9, bb_per_9, baa (REAL)
+
+    ### league_pitching_averages
+    Per-season league-wide pitching averages.
+    - season (INTEGER, primary key) — year
+    - league_era, league_whip, league_k_per_9, league_bb_per_9, league_baa (REAL)
+
+    ### pitching_streaks
+    Precomputed pitching performance streaks (change-point analysis on per-game ERA).
+    - player_id (TEXT), season (INTEGER), role (TEXT — "starter" or "reliever")
+    - start_date, end_date (TEXT), num_games (INTEGER)
+    - ip_outs (INTEGER), innings_pitched (TEXT)
+    - hits, earned_runs, walks, strikeouts, home_runs (INTEGER)
+    - era, whip, k_per_9 (REAL)
+    - performance (TEXT) — "hot", "cold", or "average" (inverted: low ERA = hot)
+    - season_era (REAL) — player's overall season ERA for context
+
+    ### pitching_streaks_sensitive / pitching_streaks_sliding
+    Fallback streak tables with same schema as pitching_streaks.
+
+    ### pitching_current_form
+    Current form for pitchers — stats from last detected performance shift to end of season.
+    - player_id (TEXT), season (INTEGER), role (TEXT)
+    - form_start_date (TEXT), form_start_game_number (INTEGER), total_season_games (INTEGER)
+    - num_games (INTEGER)
+    - ip_outs (INTEGER), innings_pitched (TEXT)
+    - hits, earned_runs, home_runs, walks, strikeouts, batters_faced (INTEGER)
+    - era, whip, k_per_9, bb_per_9 (REAL)
+    - season_ip_outs (INTEGER), season_innings_pitched (TEXT)
+    - season_hits, season_earned_runs, season_home_runs, season_walks, season_strikeouts, season_batters_faced (INTEGER)
+    - season_era, season_whip, season_k_per_9, season_bb_per_9 (REAL)
+
+    ## Pitcher Detection
+    - A player is a pitcher if their `positions` field in the `players` table starts with "P" (positions are sorted by games played DESC, so primary position is first)
+    - Ohtani-type players: Position with most games comes first. If DH/P (more DH games), they show as a hitter. If P/DH, they show as a pitcher.
+    - Pitchers have data in the pitching tables. Use season_pitching_stats for pitcher stats, NOT season_batting_stats.
+
     ## Currently Available Data
     - Season batting stats from 1898 to present (aggregated from Retrosheet game logs)
-    - OPS+ for every player-season (league-adjusted, no park factors — 100 = average)
-    - League-wide averages per season (league_averages table)
+    - Season pitching stats from 2024-2025 (aggregated from Retrosheet pitching.csv)
+    - OPS+ for every batter-season, ERA+ for every pitcher-season (league-adjusted, no park factors — 100 = average)
+    - League-wide batting and pitching averages per season
     - Game-level batting logs from 1898 to present — all players, not limited to qualified batters
-    - Platoon splits (vs LHP and vs RHP) from 1969 to present (Retrosheet retrosplits)
-    - Precomputed streak segments for players with sufficient game logs (streaks table)
-    - Sensitive fallback streaks for players with no dramatic shifts (streaks_sensitive table)
+    - Game-level pitching logs from 2024-2025 — all pitchers
+    - Platoon splits: batting (vs LHP/vs RHP) and pitching (vs LHB/vs RHB) from 1969+
+    - Home/away splits for pitchers from 2024-2025
+    - Precomputed streak segments for batters and pitchers
+    - Sensitive fallback streaks for players with no dramatic shifts (streaks_sensitive tables)
+    - Current form for batters and pitchers (current_form / pitching_current_form tables)
 
     ## Important Notes
     - Player names are stored as full names: "Aaron Judge", "Shohei Ohtani", etc.
     - Use LIKE with '%' for fuzzy name matching when the user gives a partial name
     - Team abbreviations use Retrosheet format: NYA (Yankees), NYN (Mets), LAN (Dodgers), CHN (Cubs), CHA (White Sox), SLN (Cardinals), SFN (Giants), SDN (Padres), TBA (Rays), KCA (Royals), ANA (Angels), WAS (Nationals), etc.
-    - For rate stats (AVG, OBP, SLG, OPS, OPS+), use the precomputed columns rather than calculating from raw counts
-    - For OPS+ leaderboards, apply the same PA minimums as other rate stats (>=400 full season, >=200 partial)
-    - For counting stats (HR, RBI, etc.), use the integer columns directly
+    - For batting rate stats (AVG, OBP, SLG, OPS, OPS+), use the precomputed columns rather than calculating from raw counts
+    - For OPS+ leaderboards, apply PA minimums (>=400 full season, >=200 partial)
+    - For pitching rate stats (ERA, WHIP, K/9, BB/9, BAA, ERA+), use the precomputed columns
+    - For ERA/ERA+ leaderboards, apply IP minimums (>=100 IP or ip_outs >= 300 for starters, >=40 IP or ip_outs >= 120 for relievers)
+    - For pitching IP arithmetic, use ip_outs (integer outs). To convert: innings = ip_outs / 3, remainder = ip_outs % 3
+    - Batting platoon splits labels: "vs_LHP" / "vs_RHP" (pitcher hand). Pitching platoon splits labels: "vs_LHB" / "vs_RHB" (batter hand).
     - Platoon splits are only available for 1969 and later. If the user asks about splits for earlier years, let them know.
     - Some historical stats (IBB, SF, HBP) may be NULL or 0 for very old seasons (pre-1955)
-    - For split queries (vs lefties/righties), JOIN with platoon_splits using split = 'vs_LHP' or split = 'vs_RHP'
+    - For batting split queries (vs lefties/righties), JOIN with platoon_splits using split = 'vs_LHP' or split = 'vs_RHP'
+    - For pitching split queries (vs lefties/righties), JOIN with pitching_platoon_splits using split = 'vs_LHB' or split = 'vs_RHB'
     - If the user says "last year" or "last season", assume 2024. If they say "this year" or "this season", assume 2025.
     """
 
@@ -185,10 +299,13 @@ enum PromptStore {
     - If the question is not about baseball statistics, output exactly: SELECT 'OFF_TOPIC'
     - Use JOINs between players and season_batting_stats as needed.
     - For player name lookups, use LIKE with '%' for flexibility (e.g., WHERE p.name LIKE '%Judge%').
-    - Always alias tables: players AS p, season_batting_stats AS s.
+    - Always alias tables: players AS p, season_batting_stats AS s, season_pitching_stats AS sp.
+    - For pitching questions, use season_pitching_stats and game_pitching_logs instead of the batting equivalents.
     - Format numbers nicely: use ROUND() for decimals, PRINTF() for batting averages (3 decimal places).
     - For "league leaders" or "top" queries, use ORDER BY ... DESC LIMIT 10 unless a specific number is requested.
-    - For leaderboard/ranking queries on rate stats (AVG, OBP, SLG, OPS, OPS+, ISO, BABIP), add a minimum plate appearances filter: WHERE plate_appearances >= 400 for a full season, or >= 200 for partial/current seasons. Counting stats (HR, RBI, SB, etc.) don't need this filter.
+    - For batting leaderboard queries on rate stats (AVG, OBP, SLG, OPS, OPS+, ISO, BABIP), add minimum plate appearances: WHERE plate_appearances >= 400 for full season, >= 200 for partial.
+    - For pitching leaderboard queries on rate stats (ERA, WHIP, K/9, BB/9, BAA, ERA+), add minimum IP: WHERE ip_outs >= 300 for starters (~100 IP), >= 120 for relievers (~40 IP).
+    - For pitching counting stats (W, SV, SO, etc.), no IP minimum needed.
     - When the user asks for a player's "stats" without specifying a year, use UNION ALL to return (1) their most recent season row AND (2) a career totals row. IMPORTANT: Wrap the first SELECT in a subquery since SQLite does not allow ORDER BY/LIMIT before UNION ALL. Example pattern: SELECT * FROM (SELECT ... ORDER BY s.season DESC LIMIT 1) UNION ALL SELECT ... For career totals, SUM the counting stats and recalculate rate stats from sums (e.g., CAST(SUM(hits) AS REAL)/SUM(at_bats) for AVG). Use 'Career' as the season value. Only include the career row if the player has more than one season of data.
     - For questions about stats we don't have data for, return SELECT 'NO_DATA' as answer.
     - CRITICAL: Always use single quotes around string literals (e.g., '%Judge%', 'vs_LHP'). Never leave string values unquoted — this is the most common cause of SQL syntax errors.
@@ -197,17 +314,23 @@ enum PromptStore {
 
     static let standardHeader = "G, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, IBB, SO, HBP, AVG, OBP, SLG, OPS, OPS+, ISO, BABIP"
 
+    static let pitchingStandardHeader = "W, L, SV, G, GS, CG, QS, IP, H, R, ER, HR, BB, SO, HBP, WP, BK, SB, CS, ERA, WHIP, K/9, BB/9, H/9, HR/9, BAA, ERA+"
+
     static let answerGenerationPrompt = """
     You are a knowledgeable baseball analyst. Given a user's question, the SQL that was run, and the results, provide a clear, concise answer.
 
     Rules:
     - Be conversational but accurate. You're talking to a baseball fan.
     - STAT GRID FORMAT: When your answer includes 3 or more stats for a player, or stats for multiple players, present them in a stat grid block. Wrap the grid in [STATGRID] and [/STATGRID] tags. Use HEADER: for column names and ROW: for each player. Separate values with commas.
-    - MANDATORY HEADER: Every stat grid MUST use this exact header line with all 21 stats. Copy it verbatim — never shorten or rearrange:
+    - MANDATORY HEADER: For batting stats, every stat grid MUST use this exact header line with all 21 stats:
 
     HEADER: \(standardHeader)
 
-    This is not optional. Every [STATGRID] block must start with this exact HEADER line. The app's UI handles layout and display.
+    For pitching stats, use this pitching header:
+
+    HEADER: \(pitchingStandardHeader)
+
+    This is not optional. Every [STATGRID] block must start with the appropriate HEADER line. The app's UI handles layout and display.
 
     SINGLE PLAYER — do NOT include the player name in the ROW:
 

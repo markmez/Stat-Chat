@@ -45,6 +45,27 @@ enum StatDefinitions {
         "GS": "Games started",
         "INN": "Innings played at this position",
 
+        // Pitching stats
+        "ERA": "Earned run average — earned runs allowed per 9 innings pitched. Lower is better. Sub-3.00 is excellent, sub-2.00 is elite.",
+        "WHIP": "Walks plus hits per inning pitched — baserunners allowed per inning. Lower is better. Sub-1.00 is elite, 1.00-1.20 is excellent.",
+        "K/9": "Strikeouts per 9 innings — measures a pitcher's ability to miss bats. 9.0+ is very good, 10.0+ is elite.",
+        "BB/9": "Walks per 9 innings — measures a pitcher's control. Lower is better. Sub-2.0 is excellent.",
+        "K/BB": "Strikeout-to-walk ratio — strikeouts divided by walks. Higher is better. 3.0+ is very good, 4.0+ is elite.",
+        "H/9": "Hits allowed per 9 innings. Lower is better. Sub-7.0 is very good.",
+        "HR/9": "Home runs allowed per 9 innings. Lower is better. Sub-1.0 is good.",
+        "BAA": "Batting average against — opponents' batting average. Lower is better. Sub-.220 is very good.",
+        "ERA+": "ERA adjusted for league average and park factors. 100 = league average, higher is better. 150+ is elite.",
+        "W": "Wins — games where the pitcher was the pitcher of record when the winning team took the lead for good.",
+        "L": "Losses — games where the pitcher was the pitcher of record when the opposing team took the lead for good.",
+        "SV": "Saves — a relief pitcher finishes a game won by their team under specific conditions (entered with a lead of 3 or fewer runs, or the tying run was on base/at bat/on deck).",
+        "IP": "Innings pitched — each out recorded counts as one-third of an inning. 200+ IP in a season is a workhorse.",
+        "QS": "Quality starts — starts where the pitcher went at least 6 innings and allowed 3 or fewer earned runs.",
+        "CG": "Complete games — games where the starting pitcher pitched the entire game.",
+        "GF": "Games finished — games where the pitcher recorded the final out. Typically a closer/reliever stat.",
+        "WP": "Wild pitches — pitches too far from the strike zone for the catcher to handle, allowing runners to advance.",
+        "BK": "Balks — illegal pitching motions that allow baserunners to advance one base.",
+        "BF": "Batters faced — total number of batters a pitcher has faced (pitching equivalent of plate appearances).",
+
         // Streak/game log fields
         "Games": "Number of games in this stretch",
         "Dates": "Date range of this stretch",

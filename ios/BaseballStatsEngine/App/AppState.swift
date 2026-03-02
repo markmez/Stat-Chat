@@ -40,7 +40,12 @@ final class AppState {
 
         // Intercept comparison queries — build response from DB, skip Claude
         if let (p1, p2) = PlayerNameMatcher.parseComparison(trimmed) {
-            let response = PlayerCardService.buildComparison(player1: p1, player2: p2)
+            let response: String
+            if PlayerCardService.isPitcher(name: p1) && PlayerCardService.isPitcher(name: p2) {
+                response = PlayerCardService.buildPitchingComparison(player1: p1, player2: p2)
+            } else {
+                response = PlayerCardService.buildComparison(player1: p1, player2: p2)
+            }
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             queryEngine.injectHistory(question: trimmed, answer: "Compared \(p1) and \(p2). \(response)")
@@ -48,64 +53,113 @@ final class AppState {
         }
 
         // Intercept streak history queries — build response from DB, skip Claude
-        if let streak = PlayerNameMatcher.parseStreakQuery(trimmed),
-           let response = PlayerCardService.buildStreakList(name: streak.name, performance: streak.performance, season: streak.season) {
-            messages.append(Message(role: .user, content: trimmed))
-            messages.append(Message(role: .assistant, content: response))
-            queryEngine.injectHistory(question: trimmed, answer: response)
-            return
+        if let streak = PlayerNameMatcher.parseStreakQuery(trimmed) {
+            let response: String?
+            if PlayerCardService.isPitcher(name: streak.name) {
+                response = PlayerCardService.buildPitchingStreakList(name: streak.name, performance: streak.performance, season: streak.season)
+            } else {
+                response = PlayerCardService.buildStreakList(name: streak.name, performance: streak.performance, season: streak.season)
+            }
+            if let response {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                queryEngine.injectHistory(question: trimmed, answer: response)
+                return
+            }
         }
 
         // Intercept current hot streak queries — build response from DB, skip Claude
-        if let playerName = PlayerNameMatcher.parseCurrentForm(trimmed),
-           let response = PlayerCardService.buildCurrentHotStreak(name: playerName) {
-            messages.append(Message(role: .user, content: trimmed))
-            messages.append(Message(role: .assistant, content: response))
-            queryEngine.injectHistory(question: trimmed, answer: response)
-            return
+        if let playerName = PlayerNameMatcher.parseCurrentForm(trimmed) {
+            let response: String?
+            if PlayerCardService.isPitcher(name: playerName) {
+                response = PlayerCardService.buildPitchingCurrentHotStreak(name: playerName)
+            } else {
+                response = PlayerCardService.buildCurrentHotStreak(name: playerName)
+            }
+            if let response {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                queryEngine.injectHistory(question: trimmed, answer: response)
+                return
+            }
         }
 
         // Intercept single-stat lookup queries — "Judge home runs", "Ohtani OPS"
-        if let lookup = PlayerNameMatcher.parseSingleStatLookup(trimmed),
-           let response = PlayerCardService.buildSingleStatLookup(name: lookup.name, stat: lookup.stat, season: lookup.season) {
-            messages.append(Message(role: .user, content: trimmed))
-            messages.append(Message(role: .assistant, content: response))
-            queryEngine.injectHistory(question: trimmed, answer: response)
-            return
+        if let lookup = PlayerNameMatcher.parseSingleStatLookup(trimmed) {
+            let response: String?
+            if PlayerCardService.isPitcher(name: lookup.name) || PlayerNameMatcher.isPitchingStat(lookup.stat) {
+                response = PlayerCardService.buildPitchingSingleStatLookup(name: lookup.name, stat: lookup.stat, season: lookup.season)
+            } else {
+                response = PlayerCardService.buildSingleStatLookup(name: lookup.name, stat: lookup.stat, season: lookup.season)
+            }
+            if let response {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                queryEngine.injectHistory(question: trimmed, answer: response)
+                return
+            }
         }
 
         // Intercept career lookup queries — "Judge career stats", "Judge career home runs"
-        if let career = PlayerNameMatcher.parseCareerLookup(trimmed),
-           let response = PlayerCardService.buildCareerLookup(name: career.name, stat: career.stat) {
-            messages.append(Message(role: .user, content: trimmed))
-            messages.append(Message(role: .assistant, content: response))
-            queryEngine.injectHistory(question: trimmed, answer: response)
-            return
+        if let career = PlayerNameMatcher.parseCareerLookup(trimmed) {
+            let response: String?
+            if PlayerCardService.isPitcher(name: career.name) {
+                response = PlayerCardService.buildPitchingCareerLookup(name: career.name, stat: career.stat)
+            } else {
+                response = PlayerCardService.buildCareerLookup(name: career.name, stat: career.stat)
+            }
+            if let response {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                queryEngine.injectHistory(question: trimmed, answer: response)
+                return
+            }
         }
 
         // Intercept season lookup queries — build response from DB, skip Claude
-        if let (playerName, season) = PlayerNameMatcher.parseSeasonLookup(trimmed),
-           let response = PlayerCardService.buildSeasonSummary(name: playerName, season: season) {
-            messages.append(Message(role: .user, content: trimmed))
-            messages.append(Message(role: .assistant, content: response))
-            queryEngine.injectHistory(question: trimmed, answer: response)
-            return
+        if let (playerName, season) = PlayerNameMatcher.parseSeasonLookup(trimmed) {
+            let response: String?
+            if PlayerCardService.isPitcher(name: playerName) {
+                response = PlayerCardService.buildPitchingSeasonSummary(name: playerName, season: season)
+            } else {
+                response = PlayerCardService.buildSeasonSummary(name: playerName, season: season)
+            }
+            if let response {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                queryEngine.injectHistory(question: trimmed, answer: response)
+                return
+            }
         }
 
         // Intercept platoon splits queries — "Judge vs lefties", "Soto splits"
-        if let splits = PlayerNameMatcher.parsePlatoonSplits(trimmed),
-           let response = PlayerCardService.buildPlatoonSplits(name: splits.name, hand: splits.hand, season: splits.season) {
-            messages.append(Message(role: .user, content: trimmed))
-            messages.append(Message(role: .assistant, content: response))
-            queryEngine.injectHistory(question: trimmed, answer: response)
-            return
+        if let splits = PlayerNameMatcher.parsePlatoonSplits(trimmed) {
+            let response: String?
+            if PlayerCardService.isPitcher(name: splits.name) {
+                response = PlayerCardService.buildPitchingPlatoonSplits(name: splits.name, hand: splits.hand, season: splits.season)
+            } else {
+                response = PlayerCardService.buildPlatoonSplits(name: splits.name, hand: splits.hand, season: splits.season)
+            }
+            if let response {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                queryEngine.injectHistory(question: trimmed, answer: response)
+                return
+            }
         }
 
         // Intercept threshold queries — "who hit 40 home runs?", "players batting over .300"
         if let threshold = PlayerNameMatcher.parseThreshold(trimmed) {
-            let response = PlayerCardService.buildThresholdLeaderboard(
-                stat: threshold.stat, threshold: threshold.threshold,
-                comparison: threshold.comparison, season: threshold.season)
+            let response: String
+            if PlayerNameMatcher.isPitchingStat(threshold.stat) {
+                response = PlayerCardService.buildPitchingThresholdLeaderboard(
+                    stat: threshold.stat, threshold: threshold.threshold,
+                    comparison: threshold.comparison, season: threshold.season)
+            } else {
+                response = PlayerCardService.buildThresholdLeaderboard(
+                    stat: threshold.stat, threshold: threshold.threshold,
+                    comparison: threshold.comparison, season: threshold.season)
+            }
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             queryEngine.injectHistory(question: trimmed, answer: response)
@@ -134,8 +188,14 @@ final class AppState {
 
         // Intercept team stats queries — "Yankees hitters", "Dodgers OPS leaders"
         if let teamQuery = PlayerNameMatcher.parseTeamStats(trimmed) {
-            let response = PlayerCardService.buildTeamStats(
-                teamCode: teamQuery.teamCode, stat: teamQuery.stat, season: teamQuery.season)
+            let response: String
+            if let stat = teamQuery.stat, PlayerNameMatcher.isPitchingStat(stat) {
+                response = PlayerCardService.buildPitchingTeamStats(
+                    teamCode: teamQuery.teamCode, stat: stat, season: teamQuery.season)
+            } else {
+                response = PlayerCardService.buildTeamStats(
+                    teamCode: teamQuery.teamCode, stat: teamQuery.stat, season: teamQuery.season)
+            }
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             queryEngine.injectHistory(question: trimmed, answer: response)
@@ -144,7 +204,12 @@ final class AppState {
 
         // Intercept leaderboard queries — "HR leaders", "top 5 OPS"
         if let board = PlayerNameMatcher.parseLeaderboard(trimmed) {
-            let response = PlayerCardService.buildLeaderboard(stat: board.stat, scope: board.scope, limit: board.limit)
+            let response: String
+            if PlayerNameMatcher.isPitchingStat(board.stat) {
+                response = PlayerCardService.buildPitchingLeaderboard(stat: board.stat, scope: board.scope, limit: board.limit)
+            } else {
+                response = PlayerCardService.buildLeaderboard(stat: board.stat, scope: board.scope, limit: board.limit)
+            }
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             queryEngine.injectHistory(question: trimmed, answer: response)
@@ -315,6 +380,11 @@ final class AppState {
         }
 
         return pills.joined(separator: "\n")
+    }
+
+    /// Check if a player name resolves to a pitcher
+    private func isPitcherQuery(_ name: String) -> Bool {
+        PlayerCardService.isPitcher(name: name)
     }
 
     /// Heuristic: does this question need prior context to make sense?

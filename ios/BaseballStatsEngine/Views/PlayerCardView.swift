@@ -16,6 +16,11 @@ struct PlayerCardView: View {
     @State private var priorSeasonTabs: [Int: SplitTab] = [:]
     @State private var selectedTeamCode: String? = nil
 
+    // Pitching-specific state
+    @State private var pitchingFormSliderGameNumber: Int? = nil
+    @State private var pitchingGameLogs: [PitchingGameLog]? = nil
+    @State private var showPitchingFormProjection = false
+
     // Floating search bar state
     @State private var searchText = ""
     @FocusState private var isSearchFocused: Bool
@@ -96,100 +101,10 @@ struct PlayerCardView: View {
                         }
                         .padding(.horizontal, 20)
 
-                        // Current season
-                        if let current = card.seasons.first {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("\(String(current.year)) Season")
-                                    .font(.system(.headline, design: .rounded, weight: .semibold))
-                                    .foregroundStyle(.primary)
-                                    .padding(.horizontal, 20)
-
-                                if let teamLabel = seasonTeamLabel(teamStr: current.team, headerTeam: card.team) {
-                                    Text(teamLabel)
-                                        .font(.system(.subheadline, design: .rounded))
-                                        .foregroundStyle(.secondary)
-                                        .padding(.horizontal, 20)
-                                }
-
-                                StatGridView(grid: current.stats)
-                                    .padding(.horizontal, 6)
-                            }
-
-                            // Current form section (includes projection when present)
-                            if current.currentForm != nil {
-                                currentFormSection(season: current)
-                            } else {
-                                // Projected stats only when no current form (hot streak has its own projection)
-                                projectedStatsSection(season: current)
-                            }
-
-                            // Unified splits section (platoon / home-away / hot streaks)
-                            splitsSection(
-                                season: current,
-                                tab: $splitTab
-                            )
-                        }
-
-                        // Career totals
-                        if let career = card.careerTotals {
-                            sectionView(title: "Career", grid: career)
-                        }
-
-                        // Prior seasons — expandable in place
-                        let priorSeasons = Array(card.seasons.dropFirst())
-                        if !priorSeasons.isEmpty {
-                            VStack(alignment: .leading, spacing: 0) {
-                                ForEach(priorSeasons, id: \.year) { season in
-                                    let isExpanded = expandedSeasons.contains(season.year)
-
-                                    Button {
-                                        withAnimation(.easeInOut(duration: 0.2)) {
-                                            if isExpanded {
-                                                expandedSeasons.remove(season.year)
-                                            } else {
-                                                expandedSeasons.insert(season.year)
-                                            }
-                                        }
-                                    } label: {
-                                        HStack(spacing: 6) {
-                                            Text("\(String(season.year)) Season")
-                                                .font(.system(.headline, design: .rounded, weight: .semibold))
-                                                .foregroundStyle(.primary)
-                                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                                                .font(.system(size: 11, weight: .semibold))
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        .padding(.horizontal, 20)
-                                        .padding(.vertical, 10)
-                                    }
-                                    .buttonStyle(.plain)
-
-                                    if isExpanded {
-                                        VStack(alignment: .leading, spacing: 16) {
-                                            VStack(alignment: .leading, spacing: 8) {
-                                                if let teamLabel = seasonTeamLabel(teamStr: season.team, headerTeam: card.team) {
-                                                    Text(teamLabel)
-                                                        .font(.system(.subheadline, design: .rounded))
-                                                        .foregroundStyle(.secondary)
-                                                        .padding(.horizontal, 20)
-                                                }
-
-                                                StatGridView(grid: season.stats)
-                                                    .padding(.horizontal, 6)
-                                            }
-
-                                            splitsSection(
-                                                season: season,
-                                                tab: Binding(
-                                                    get: { priorSeasonTabs[season.year] ?? .platoon },
-                                                    set: { priorSeasonTabs[season.year] = $0 }
-                                                )
-                                            )
-                                        }
-                                        .padding(.bottom, 8)
-                                    }
-                                }
-                            }
+                        if card.isPitcher, let pitchingSeasons = card.pitchingSeasons, !pitchingSeasons.isEmpty {
+                            pitcherCardContent(card: card, pitchingSeasons: pitchingSeasons)
+                        } else {
+                            batterCardContent(card: card)
                         }
 
                         // Bio
@@ -423,6 +338,487 @@ struct PlayerCardView: View {
         // Fall through to Claude
         searchText = ""
         searchQuestion = trimmed
+    }
+
+    // MARK: - Batter Card Content
+
+    @ViewBuilder
+    private func batterCardContent(card: PlayerCard) -> some View {
+        // Current season
+        if let current = card.seasons.first {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("\(String(current.year)) Season")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 20)
+
+                if let teamLabel = seasonTeamLabel(teamStr: current.team, headerTeam: card.team) {
+                    Text(teamLabel)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 20)
+                }
+
+                StatGridView(grid: current.stats)
+                    .padding(.horizontal, 6)
+            }
+
+            // Current form section (includes projection when present)
+            if current.currentForm != nil {
+                currentFormSection(season: current)
+            } else {
+                // Projected stats only when no current form (hot streak has its own projection)
+                projectedStatsSection(season: current)
+            }
+
+            // Unified splits section (platoon / home-away / hot streaks)
+            splitsSection(
+                season: current,
+                tab: $splitTab
+            )
+        }
+
+        // Career totals
+        if let career = card.careerTotals {
+            sectionView(title: "Career", grid: career)
+        }
+
+        // Prior seasons — expandable in place
+        let priorSeasons = Array(card.seasons.dropFirst())
+        if !priorSeasons.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(priorSeasons, id: \.year) { season in
+                    let isExpanded = expandedSeasons.contains(season.year)
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            if isExpanded {
+                                expandedSeasons.remove(season.year)
+                            } else {
+                                expandedSeasons.insert(season.year)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("\(String(season.year)) Season")
+                                .font(.system(.headline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(.primary)
+                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.plain)
+
+                    if isExpanded {
+                        VStack(alignment: .leading, spacing: 16) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                if let teamLabel = seasonTeamLabel(teamStr: season.team, headerTeam: card.team) {
+                                    Text(teamLabel)
+                                        .font(.system(.subheadline, design: .rounded))
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 20)
+                                }
+
+                                StatGridView(grid: season.stats)
+                                    .padding(.horizontal, 6)
+                            }
+
+                            splitsSection(
+                                season: season,
+                                tab: Binding(
+                                    get: { priorSeasonTabs[season.year] ?? .platoon },
+                                    set: { priorSeasonTabs[season.year] = $0 }
+                                )
+                            )
+                        }
+                        .padding(.bottom, 8)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Pitcher Card Content
+
+    @ViewBuilder
+    private func pitcherCardContent(card: PlayerCard, pitchingSeasons: [PitchingSeasonData]) -> some View {
+        // Current season
+        if let current = pitchingSeasons.first {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("\(String(current.year)) Season")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 20)
+
+                if let teamLabel = seasonTeamLabel(teamStr: current.team, headerTeam: card.team) {
+                    Text(teamLabel)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 20)
+                }
+
+                StatGridView(grid: current.stats)
+                    .padding(.horizontal, 6)
+            }
+
+            // Pitching current form section
+            if current.currentForm != nil {
+                pitchingFormSection(season: current)
+            }
+
+            // Pitching splits section
+            pitchingSplitsSection(season: current, tab: $splitTab)
+        }
+
+        // Pitching career totals
+        if let career = card.pitchingCareerTotals {
+            sectionView(title: "Career", grid: career)
+        }
+
+        // Prior pitching seasons — expandable
+        let priorPitching = Array(pitchingSeasons.dropFirst())
+        if !priorPitching.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(priorPitching, id: \.year) { season in
+                    let isExpanded = expandedSeasons.contains(season.year)
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            if isExpanded {
+                                expandedSeasons.remove(season.year)
+                            } else {
+                                expandedSeasons.insert(season.year)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("\(String(season.year)) Season")
+                                .font(.system(.headline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(.primary)
+                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                    }
+                    .buttonStyle(.plain)
+
+                    if isExpanded {
+                        VStack(alignment: .leading, spacing: 16) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                if let teamLabel = seasonTeamLabel(teamStr: season.team, headerTeam: card.team) {
+                                    Text(teamLabel)
+                                        .font(.system(.subheadline, design: .rounded))
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 20)
+                                }
+
+                                StatGridView(grid: season.stats)
+                                    .padding(.horizontal, 6)
+                            }
+
+                            pitchingSplitsSection(
+                                season: season,
+                                tab: Binding(
+                                    get: { priorSeasonTabs[season.year] ?? .platoon },
+                                    set: { priorSeasonTabs[season.year] = $0 }
+                                )
+                            )
+                        }
+                        .padding(.bottom, 8)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Pitching Splits Section
+
+    @ViewBuilder
+    private func pitchingSplitsSection(
+        season: PitchingSeasonData,
+        tab: Binding<SplitTab>
+    ) -> some View {
+        let hasData = season.platoonSplits != nil || season.homeAwaySplits != nil || season.streaks != nil
+
+        if hasData {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 0) {
+                    let tabs: [SplitTab] = [.platoon, .homeAway, .streaks]
+                    ForEach(tabs, id: \.self) { t in
+                        let available = pitchingTabHasData(t, season: season)
+                        Button {
+                            if available {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    tab.wrappedValue = t
+                                }
+                            }
+                        } label: {
+                            Text(t.rawValue)
+                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(tab.wrappedValue == t
+                                              ? deepBlue.opacity(0.12)
+                                              : Color.clear)
+                                )
+                                .foregroundStyle(tab.wrappedValue == t ? deepBlue : .secondary)
+                                .opacity(available ? 1.0 : 0.4)
+                        }
+                        .disabled(!available)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .onAppear {
+                    if !pitchingTabHasData(tab.wrappedValue, season: season) {
+                        for t in [SplitTab.platoon, .homeAway, .streaks] {
+                            if pitchingTabHasData(t, season: season) {
+                                tab.wrappedValue = t
+                                break
+                            }
+                        }
+                    }
+                }
+
+                if let grid = pitchingGridForTab(tab.wrappedValue, season: season) {
+                    StatGridView(grid: grid, seasonGames: season.games)
+                        .padding(.horizontal, 6)
+                }
+            }
+        }
+    }
+
+    private func pitchingTabHasData(_ tab: SplitTab, season: PitchingSeasonData) -> Bool {
+        pitchingGridForTab(tab, season: season) != nil
+    }
+
+    private func pitchingGridForTab(_ tab: SplitTab, season: PitchingSeasonData) -> StatGridParser.StatGrid? {
+        switch tab {
+        case .platoon: return season.platoonSplits
+        case .homeAway: return season.homeAwaySplits
+        case .streaks: return season.streaks
+        case .fielding: return nil
+        }
+    }
+
+    // MARK: - Pitching Form Section
+
+    private func pitchingFormSection(season: PitchingSeasonData) -> some View {
+        guard let form = season.currentForm else { return AnyView(EmptyView()) }
+
+        let numGamesShown = pitchingFormSliderGameNumber ?? form.numGames
+        let effectiveGameNumber = form.totalSeasonGames - numGamesShown + 1
+        let (formGrid, formNumGames, formStartDate) = recomputePitchingFormStats(
+            season: season, fromGameNumber: effectiveGameNumber
+        )
+
+        let formattedDate = PlayerCardService.formatDateShort(formStartDate)
+
+        return AnyView(VStack(alignment: .leading, spacing: 8) {
+            Text("Current Hot Streak")
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 20)
+
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 4) {
+                        Text("Since \(formattedDate) (\(formNumGames) games)")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+
+                        if pitchingFormSliderGameNumber != nil {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    pitchingFormSliderGameNumber = nil
+                                }
+                            } label: {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "arrow.counterclockwise")
+                                        .font(.system(size: 12, weight: .semibold))
+                                    Text("Reset")
+                                        .font(.system(.caption2, design: .rounded, weight: .medium))
+                                }
+                                .foregroundStyle(deepBlue.opacity(0.7))
+                            }
+                            .buttonStyle(.plain)
+                            .transition(.opacity)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+
+                    ZStack {
+                        Slider(
+                            value: Binding<Double>(
+                                get: { Double(numGamesShown) },
+                                set: { newValue in
+                                    pitchingFormSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
+                                }
+                            ),
+                            in: 1...Double(max(form.totalSeasonGames, 2)),
+                            step: 1
+                        )
+                        .tint(deepBlue)
+
+                        if pitchingFormSliderGameNumber != nil {
+                            GeometryReader { geo in
+                                let range = Double(max(form.totalSeasonGames, 2)) - 1
+                                let pct = range > 0 ? (Double(form.numGames) - 1) / range : 0
+                                let trackWidth = geo.size.width - 28
+                                let xPos = 14 + trackWidth * pct
+
+                                Rectangle()
+                                    .fill(deepBlue.opacity(0.5))
+                                    .frame(width: 2, height: 14)
+                                    .position(x: xPos, y: geo.size.height / 2)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                }
+                .onAppear {
+                    if pitchingGameLogs == nil {
+                        pitchingGameLogs = PlayerCardService.fetchPitchingGameLogsForSeason(
+                            name: playerName, season: season.year
+                        )
+                    }
+                }
+
+                StatGridView(grid: formGrid)
+
+                // Collapsible projection
+                Rectangle()
+                    .fill(Color(uiColor: .separator).opacity(0.3))
+                    .frame(height: 1)
+                    .padding(.horizontal, 14)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showPitchingFormProjection.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Full Season Projection")
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(.primary)
+                        Image(systemName: showPitchingFormProjection ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 14)
+                }
+                .buttonStyle(.plain)
+
+                if showPitchingFormProjection {
+                    let projectedGrid = buildPitchingFormProjection(
+                        season: season, formGrid: formGrid, formNumGames: formNumGames
+                    )
+                    StatGridView(grid: projectedGrid)
+                }
+            }
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(uiColor: .secondarySystemBackground))
+            )
+            .padding(.horizontal, 6)
+        })
+    }
+
+    private func recomputePitchingFormStats(
+        season: PitchingSeasonData, fromGameNumber: Int
+    ) -> (grid: StatGridParser.StatGrid, numGames: Int, startDate: String) {
+        guard let form = season.currentForm else {
+            return (StatGridParser.StatGrid(headers: [], rows: []), 0, "")
+        }
+
+        if let logs = pitchingGameLogs, !logs.isEmpty {
+            let startIdx = max(0, fromGameNumber - 1)
+            let slice = Array(logs[startIdx...])
+            guard !slice.isEmpty else {
+                return (form.stats, form.numGames, form.formStartDate)
+            }
+
+            var totalIPOuts = 0, totalH = 0, totalER = 0, totalBB = 0, totalSO = 0, totalHR = 0
+            for g in slice {
+                totalIPOuts += g.ipOuts
+                totalH += g.hits; totalER += g.earnedRuns
+                totalBB += g.walks; totalSO += g.strikeouts; totalHR += g.homeRuns
+            }
+
+            let ip = Double(totalIPOuts) / 3.0
+            let era = ip > 0 ? 9.0 * Double(totalER) / ip : 0
+            let whip = ip > 0 ? Double(totalBB + totalH) / ip : 0
+            let k9 = ip > 0 ? 9.0 * Double(totalSO) / ip : 0
+
+            func fmtIP(_ outs: Int) -> String {
+                "\(outs / 3).\(outs % 3)"
+            }
+
+            let headers = ["G", "IP", "H", "ER", "BB", "SO", "HR", "ERA", "WHIP", "K/9"]
+            let values = [
+                String(slice.count), fmtIP(totalIPOuts),
+                String(totalH), String(totalER), String(totalBB), String(totalSO), String(totalHR),
+                String(format: "%.2f", era), String(format: "%.2f", whip), String(format: "%.1f", k9)
+            ]
+            let grid = StatGridParser.StatGrid(
+                headers: headers,
+                rows: [StatGridParser.StatGrid.Row(label: "", values: values)]
+            )
+            return (grid, slice.count, slice.first?.date ?? form.formStartDate)
+        }
+
+        return (form.stats, form.numGames, form.formStartDate)
+    }
+
+    private func buildPitchingFormProjection(
+        season: PitchingSeasonData, formGrid: StatGridParser.StatGrid, formNumGames: Int
+    ) -> StatGridParser.StatGrid {
+        guard formNumGames > 0 else { return formGrid }
+
+        let headers = formGrid.headers
+        let values = formGrid.rows.first?.values ?? []
+        // Project counting stats by IP pace to a full-season workload
+        // Estimate total IP from form, then scale to ~200 IP (starter) or ~70 IP (reliever)
+        let targetGames = season.gamesStarted > season.games / 2 ? 32 : 70 // starter vs reliever
+        let scale = Double(targetGames) / Double(formNumGames)
+
+        let countingStats: Set<String> = ["G", "IP", "H", "ER", "BB", "SO", "HR"]
+
+        var projected: [String] = []
+        for (idx, header) in headers.enumerated() {
+            guard idx < values.count else { break }
+            if countingStats.contains(header) {
+                if header == "IP" {
+                    // Parse IP string, scale ip_outs
+                    let parts = values[idx].split(separator: ".")
+                    let whole = Int(parts.first ?? "0") ?? 0
+                    let frac = parts.count > 1 ? (Int(parts[1]) ?? 0) : 0
+                    let outs = whole * 3 + frac
+                    let projOuts = Int((Double(outs) * scale).rounded())
+                    projected.append("\(projOuts / 3).\(projOuts % 3)")
+                } else if let v = Double(values[idx]) {
+                    projected.append(String(Int((v * scale).rounded())))
+                } else {
+                    projected.append(values[idx])
+                }
+            } else {
+                // Rate stats stay as-is
+                projected.append(values[idx])
+            }
+        }
+
+        return StatGridParser.StatGrid(
+            headers: headers,
+            rows: [StatGridParser.StatGrid.Row(label: "", values: projected)]
+        )
     }
 
     private func sectionView(title: String, grid: StatGridParser.StatGrid, compact: Bool = false) -> some View {

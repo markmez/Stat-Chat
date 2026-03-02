@@ -24,6 +24,42 @@ struct GameLog: Sendable {
     let plateAppearances: Int
 }
 
+struct PitchingSeasonData: Sendable {
+    let year: Int
+    let team: String
+    let games: Int
+    let gamesStarted: Int
+    let teamGames: Int
+    let stats: StatGridParser.StatGrid
+    let countingValues: [String: Double]
+    let platoonSplits: StatGridParser.StatGrid?
+    let homeAwaySplits: StatGridParser.StatGrid?
+    let streaks: StatGridParser.StatGrid?
+    let currentForm: PitchingCurrentFormData?
+}
+
+struct PitchingCurrentFormData: Sendable {
+    let formStartDate: String
+    let formStartGameNumber: Int
+    let totalSeasonGames: Int
+    let numGames: Int
+    let role: String
+    let stats: StatGridParser.StatGrid
+    let countingValues: [String: Double]
+    let seasonCountingValues: [String: Double]
+}
+
+struct PitchingGameLog: Sendable {
+    let date: String
+    let ipOuts: Int
+    let hits: Int
+    let earnedRuns: Int
+    let walks: Int
+    let strikeouts: Int
+    let homeRuns: Int
+    let isStart: Bool
+}
+
 struct SeasonData: Sendable {
     let year: Int
     let team: String
@@ -54,6 +90,9 @@ struct PlayerCard: Sendable {
     let platoonSplits: StatGridParser.StatGrid?
     let streaks: StatGridParser.StatGrid?
     let bio: String?
+    let isPitcher: Bool
+    let pitchingSeasons: [PitchingSeasonData]?
+    let pitchingCareerTotals: StatGridParser.StatGrid?
 }
 
 // MARK: - Team Card models
@@ -87,6 +126,57 @@ enum PlayerCardService {
 
     private static let db = DatabaseService()
 
+    /// Check if a player is primarily a pitcher
+    static func isPitcher(name: String) -> Bool {
+        let sql = """
+            SELECT p.positions FROM players p
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            LIMIT 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              !row[0].isEmpty else { return false }
+        let positions = row[0]
+        // Primary position (first in slash-separated list) must be "P"
+        guard positions.hasPrefix("P") else { return false }
+        // Also must have pitching stats
+        let pitchSql = """
+            SELECT 1 FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            LIMIT 1
+            """
+        if let pitchResult = try? db.execute(sql: pitchSql),
+           !pitchResult.rows.isEmpty {
+            return true
+        }
+        return false
+    }
+
+    // All pitching stats in conventional order (full set for SQL column mapping)
+    private static let pitchingAllHeaders = [
+        "W", "L", "SV", "G", "GS", "GF", "CG", "QS", "IP", "H", "R", "ER", "HR", "BB", "IBB",
+        "SO", "HBP", "WP", "BK", "BF", "SH", "SF", "SB", "CS",
+        "ERA", "WHIP", "K/9", "BB/9", "K/BB", "H/9", "HR/9", "BAA", "ERA+"
+    ]
+
+    // Stats hidden from display
+    private static let pitchingHiddenStats: Set<String> = ["GF", "IBB", "BF", "SF", "SH", "K/BB"]
+
+    // Display headers (filtered)
+    private static let pitchingHeaders = pitchingAllHeaders.filter { !pitchingHiddenStats.contains($0) }
+
+    /// Filter full pitching values (aligned to pitchingAllHeaders) down to display set.
+    private static func filterPitchingForDisplay(_ values: [String]) -> [String] {
+        var filtered: [String] = []
+        for (i, h) in pitchingAllHeaders.enumerated() where !pitchingHiddenStats.contains(h) {
+            if i < values.count {
+                filtered.append(values[i])
+            }
+        }
+        return filtered
+    }
+
     // All 21 stats in conventional order (PA and SF excluded for compact 3-row display)
     private static let allHeaders = [
         "G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "SB", "CS",
@@ -99,16 +189,33 @@ enum PlayerCardService {
         let team = playerInfo?.team ?? ""
         let displayName = playerInfo?.name ?? name
 
-        // Fetch stats (all synchronous SQL)
+        // Detect if player is primarily a pitcher
+        let playerIsPitcher = isPitcher(name: name)
+
+        // Fetch batting stats (all synchronous SQL)
         let seasons = fetchAllSeasons(name: name)
         let career = fetchCareerTotals(name: name)
         let splits = fetchPlatoonSplits(name: name)
         let streakGrid = fetchStreaks(name: name)
 
+        // Fetch pitching stats if pitcher
+        let pitchingSeasons: [PitchingSeasonData]?
+        let pitchingCareer: StatGridParser.StatGrid?
+        if playerIsPitcher {
+            pitchingSeasons = fetchPitchingAllSeasons(name: name)
+            pitchingCareer = fetchPitchingCareerTotals(name: name)
+        } else {
+            pitchingSeasons = nil
+            pitchingCareer = nil
+        }
+
         // Use most recent season's team for header (players.team can be stale)
         let headerTeam: String
         if let latestSeason = seasons.first {
             let parts = latestSeason.team.split(separator: "/")
+            headerTeam = String(parts.last ?? Substring(team))
+        } else if let latestPitching = pitchingSeasons?.first {
+            let parts = latestPitching.team.split(separator: "/")
             headerTeam = String(parts.last ?? Substring(team))
         } else {
             headerTeam = team
@@ -143,7 +250,10 @@ enum PlayerCardService {
             careerTotals: career,
             platoonSplits: splits,
             streaks: streakGrid,
-            bio: bio
+            bio: bio,
+            isPitcher: playerIsPitcher,
+            pitchingSeasons: pitchingSeasons,
+            pitchingCareerTotals: pitchingCareer
         )
     }
 
@@ -2047,5 +2157,1223 @@ enum PlayerCardService {
 
         guard !teamSeasons.isEmpty else { return nil }
         return TeamCard(teamCode: teamCode, fullName: fullName, seasons: teamSeasons)
+    }
+
+    // MARK: - Pitching Season Resolution
+
+    /// Resolve a season for a pitcher — if the requested season has no data, fall back to their most recent.
+    private static func resolvePitchingSeason(name: String, requested: Int) -> Int {
+        let sql = """
+            SELECT sp.season FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            ORDER BY sp.season DESC LIMIT 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              let latest = Int(row[0]) else { return requested }
+
+        // Check if requested season exists
+        let checkSql = """
+            SELECT 1 FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND sp.season = \(requested)
+            LIMIT 1
+            """
+        if let checkResult = try? db.execute(sql: checkSql), checkResult.rows.isEmpty {
+            return latest
+        }
+        return requested
+    }
+
+    // MARK: - Pitching Helpers
+
+    private static func formatPitchingRate(_ value: String, decimals: Int = 2) -> String {
+        guard let num = Double(value) else { return value }
+        return String(format: "%.\(decimals)f", num)
+    }
+
+    private static func formatPitchingValues(headers: [String], values: [String]) -> [String] {
+        let twoDecStats: Set<String> = ["ERA", "WHIP", "K/BB"]
+        let oneDecStats: Set<String> = ["K/9", "BB/9", "H/9", "HR/9"]
+        let threeDecStats: Set<String> = ["BAA"]
+        var formatted: [String] = []
+        for (idx, value) in values.enumerated() {
+            if idx < headers.count {
+                let h = headers[idx]
+                if twoDecStats.contains(h) {
+                    formatted.append(formatPitchingRate(value, decimals: 2))
+                } else if oneDecStats.contains(h) {
+                    formatted.append(formatPitchingRate(value, decimals: 1))
+                } else if threeDecStats.contains(h) {
+                    formatted.append(formatRate(value))
+                } else {
+                    formatted.append(value)
+                }
+            } else {
+                formatted.append(value)
+            }
+        }
+        return formatted
+    }
+
+    // MARK: - Pitching All Seasons
+
+    private static func fetchPitchingAllSeasons(name: String) -> [PitchingSeasonData] {
+        let sql = """
+            SELECT sp.season, sp.team,
+                   sp.wins, sp.losses, sp.saves, sp.games, sp.games_started, sp.games_finished,
+                   sp.complete_games, sp.quality_starts, sp.innings_pitched,
+                   sp.hits, sp.runs, sp.earned_runs, sp.home_runs, sp.walks, sp.intentional_walks,
+                   sp.strikeouts, sp.hit_by_pitch, sp.wild_pitches, sp.balks,
+                   sp.batters_faced, sp.sacrifice_hits, sp.sacrifice_flies,
+                   sp.stolen_bases, sp.caught_stealing,
+                   sp.era, sp.whip, sp.k_per_9, sp.bb_per_9, sp.k_per_bb,
+                   sp.h_per_9, sp.hr_per_9, sp.baa, sp.era_plus
+            FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            ORDER BY sp.season DESC
+            """
+        guard let result = try? db.execute(sql: sql) else { return [] }
+
+        let countingKeys = ["W", "L", "SV", "G", "GS", "GF", "CG", "QS", "IP",
+                            "H", "R", "ER", "HR", "BB", "IBB", "SO", "HBP", "WP", "BK",
+                            "BF", "SH", "SF", "SB", "CS"]
+
+        var seasons: [PitchingSeasonData] = []
+        for row in result.rows {
+            guard let year = Int(row[0]) else { continue }
+            let team = row[1]
+            let games = Int(row[5]) ?? 0
+            let gamesStarted = Int(row[6]) ?? 0
+
+            // Columns 2-34 map to pitchingAllHeaders (33 stats)
+            let values = Array(row[2...34])
+            let formatted = formatPitchingValues(headers: pitchingAllHeaders, values: values)
+            let displayValues = filterPitchingForDisplay(formatted)
+            let grid = StatGridParser.StatGrid(
+                headers: pitchingHeaders,
+                rows: [StatGridParser.StatGrid.Row(label: "", values: displayValues)]
+            )
+
+            // Build counting values dict
+            var counting: [String: Double] = [:]
+            for (i, key) in countingKeys.enumerated() {
+                if key == "IP" {
+                    // Use ip_outs for counting, not formatted IP
+                    let ipOutsSql = """
+                        SELECT sp.ip_outs FROM season_pitching_stats sp
+                        JOIN players p ON sp.player_id = p.player_id
+                        WHERE p.name LIKE '%\(sanitize(name))%' AND sp.season = \(year)
+                        LIMIT 1
+                        """
+                    if let ipResult = try? db.execute(sql: ipOutsSql),
+                       let ipRow = ipResult.rows.first {
+                        counting["IP_OUTS"] = Double(ipRow[0]) ?? 0
+                    }
+                    counting[key] = Double(row[2 + i]) ?? 0
+                } else {
+                    counting[key] = Double(row[2 + i]) ?? 0
+                }
+            }
+
+            let teamGames = fetchTeamGames(team: team, season: year)
+            let splits = fetchPitchingPlatoonSplitsForSeason(name: name, season: year)
+            let homeAwaySplits = fetchPitchingHomeAwaySplitsForSeason(name: name, season: year)
+            let streakGrid = fetchPitchingStreaksForSeason(name: name, season: year, performance: "hot")
+            let currentForm = fetchPitchingCurrentFormForSeason(name: name, season: year)
+
+            seasons.append(PitchingSeasonData(
+                year: year, team: team, games: games, gamesStarted: gamesStarted,
+                teamGames: teamGames, stats: grid, countingValues: counting,
+                platoonSplits: splits, homeAwaySplits: homeAwaySplits,
+                streaks: streakGrid, currentForm: currentForm
+            ))
+        }
+
+        return seasons
+    }
+
+    // MARK: - Pitching Career Totals
+
+    private static func fetchPitchingCareerTotals(name: String) -> StatGridParser.StatGrid? {
+        let sql = """
+            SELECT COUNT(DISTINCT sp.season),
+                   SUM(sp.wins), SUM(sp.losses), SUM(sp.saves),
+                   SUM(sp.games), SUM(sp.games_started), SUM(sp.games_finished),
+                   SUM(sp.complete_games), SUM(sp.quality_starts),
+                   CAST(SUM(sp.ip_outs) / 3 AS TEXT) || '.' || CAST(SUM(sp.ip_outs) % 3 AS TEXT),
+                   SUM(sp.hits), SUM(sp.runs), SUM(sp.earned_runs), SUM(sp.home_runs),
+                   SUM(sp.walks), SUM(sp.intentional_walks),
+                   SUM(sp.strikeouts), SUM(sp.hit_by_pitch), SUM(sp.wild_pitches), SUM(sp.balks),
+                   SUM(sp.batters_faced), SUM(sp.sacrifice_hits), SUM(sp.sacrifice_flies),
+                   SUM(sp.stolen_bases), SUM(sp.caught_stealing),
+                   ROUND(9.0 * CAST(SUM(sp.earned_runs) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 2),
+                   ROUND(CAST(SUM(sp.walks) + SUM(sp.hits) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 2),
+                   ROUND(9.0 * CAST(SUM(sp.strikeouts) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 1),
+                   ROUND(9.0 * CAST(SUM(sp.walks) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 1),
+                   ROUND(CAST(SUM(sp.strikeouts) AS REAL) / NULLIF(SUM(sp.walks), 0), 2),
+                   ROUND(9.0 * CAST(SUM(sp.hits) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 1),
+                   ROUND(9.0 * CAST(SUM(sp.home_runs) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 1),
+                   ROUND(CAST(SUM(sp.hits) AS REAL) / NULLIF(SUM(sp.batters_faced) - SUM(sp.walks) - SUM(sp.hit_by_pitch) - SUM(sp.sacrifice_hits) - SUM(sp.sacrifice_flies), 0), 3)
+            FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            HAVING COUNT(DISTINCT sp.season) > 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first else { return nil }
+
+        let seasons = row[0]
+        // row[1..24] = counting stats, row[25..32] = rate stats (no ERA+)
+        let values = Array(row.dropFirst())
+        var formatted = formatPitchingValues(headers: pitchingAllHeaders.filter { $0 != "ERA+" }, values: values)
+
+        // Append ERA+ as "--" for career
+        formatted.append("--")
+        let displayValues = filterPitchingForDisplay(formatted)
+
+        return StatGridParser.StatGrid(
+            headers: pitchingHeaders,
+            rows: [StatGridParser.StatGrid.Row(label: "\(seasons) Seasons", values: displayValues)]
+        )
+    }
+
+    // MARK: - Per-season pitching platoon splits
+
+    private static func fetchPitchingPlatoonSplitsForSeason(name: String, season: Int) -> StatGridParser.StatGrid? {
+        let sql = """
+            SELECT pps.split, pps.at_bats, pps.hits,
+                   pps.doubles, pps.triples, pps.home_runs,
+                   pps.walks, pps.strikeouts,
+                   pps.batting_avg_against, pps.obp_against, pps.slg_against, pps.ops_against
+            FROM pitching_platoon_splits pps
+            JOIN players p ON pps.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND pps.season = \(season)
+            ORDER BY pps.split
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        var rows: [StatGridParser.StatGrid.Row] = []
+        for row in result.rows.prefix(2) {
+            let splitLabel = row[0] == "vs_LHB" ? "vs LHB" : "vs RHB"
+            let values = formatValues(headers: headers, values: Array(row.dropFirst()))
+            rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: values))
+        }
+
+        guard !rows.isEmpty else { return nil }
+        return StatGridParser.StatGrid(headers: headers, rows: rows)
+    }
+
+    // MARK: - Per-season pitching home/away splits
+
+    private static func fetchPitchingHomeAwaySplitsForSeason(name: String, season: Int) -> StatGridParser.StatGrid? {
+        let sql = """
+            SELECT phas.split, phas.games, phas.games_started, phas.innings_pitched,
+                   phas.hits, phas.earned_runs, phas.home_runs, phas.walks, phas.strikeouts,
+                   phas.era, phas.whip, phas.k_per_9, phas.bb_per_9, phas.baa
+            FROM pitching_home_away_splits phas
+            JOIN players p ON phas.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND phas.season = \(season)
+            ORDER BY phas.split DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["G", "GS", "IP", "H", "ER", "HR", "BB", "SO", "ERA", "WHIP", "K/9", "BB/9", "BAA"]
+        var rows: [StatGridParser.StatGrid.Row] = []
+        for row in result.rows.prefix(2) {
+            let splitLabel = row[0] == "home" ? "Home" : "Away"
+            let values = formatPitchingValues(headers: headers, values: Array(row.dropFirst()))
+            rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: values))
+        }
+
+        guard !rows.isEmpty else { return nil }
+        return StatGridParser.StatGrid(headers: headers, rows: rows)
+    }
+
+    // MARK: - Per-season pitching streaks
+
+    static func fetchPitchingStreaksForSeason(name: String, season: Int, performance: String = "hot") -> StatGridParser.StatGrid? {
+        let orderDir = performance == "cold" ? "DESC" : "ASC"  // Lower ERA = hotter for pitchers
+        var sql = """
+            SELECT ps.start_date, ps.end_date, ps.num_games,
+                   ps.innings_pitched, ps.hits, ps.earned_runs, ps.walks, ps.strikeouts,
+                   ps.home_runs, ps.era, ps.whip, ps.k_per_9
+            FROM pitching_streaks ps
+            JOIN players p ON ps.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND ps.season = \(season) AND ps.performance = '\(performance)'
+            ORDER BY ps.era \(orderDir)
+            """
+        var result = try? db.execute(sql: sql)
+
+        // Fall back to sensitive streaks if no rows
+        if result == nil || result!.rows.isEmpty {
+            sql = """
+                SELECT pss.start_date, pss.end_date, pss.num_games,
+                       pss.innings_pitched, pss.hits, pss.earned_runs, pss.walks, pss.strikeouts,
+                       pss.home_runs, pss.era, pss.whip, pss.k_per_9
+                FROM pitching_streaks_sensitive pss
+                JOIN players p ON pss.player_id = p.player_id
+                WHERE p.name LIKE '%\(sanitize(name))%' AND pss.season = \(season) AND pss.performance = '\(performance)'
+                ORDER BY pss.era \(orderDir)
+                """
+            result = try? db.execute(sql: sql)
+        }
+
+        // Tier 3: sliding window fallback
+        if result == nil || result!.rows.isEmpty {
+            sql = """
+                SELECT psl.start_date, psl.end_date, psl.num_games,
+                       psl.innings_pitched, psl.hits, psl.earned_runs, psl.walks, psl.strikeouts,
+                       psl.home_runs, psl.era, psl.whip, psl.k_per_9
+                FROM pitching_streaks_sliding psl
+                JOIN players p ON psl.player_id = p.player_id
+                WHERE p.name LIKE '%\(sanitize(name))%' AND psl.season = \(season) AND psl.performance = '\(performance)'
+                ORDER BY psl.era \(orderDir)
+                """
+            result = try? db.execute(sql: sql)
+        }
+
+        guard let result, !result.rows.isEmpty else { return nil }
+
+        let headers = ["G", "IP", "H", "ER", "BB", "SO", "HR", "ERA", "WHIP", "K/9"]
+        var rows: [StatGridParser.StatGrid.Row] = []
+        for row in result.rows.prefix(4) {
+            let startDate = formatDate(row[0])
+            let endDate = formatDate(row[1])
+            let label = "\(startDate) \u{2013} \(endDate)"
+            let games = row[2]
+            let ip = row[3]
+            let h = row[4]
+            let er = row[5]
+            let bb = row[6]
+            let so = row[7]
+            let hr = row[8]
+            let era = formatPitchingRate(row[9], decimals: 2)
+            let whip = formatPitchingRate(row[10], decimals: 2)
+            let k9 = formatPitchingRate(row[11], decimals: 1)
+            rows.append(StatGridParser.StatGrid.Row(
+                label: label,
+                values: [games, ip, h, er, bb, so, hr, era, whip, k9]
+            ))
+        }
+
+        guard !rows.isEmpty else { return nil }
+        return StatGridParser.StatGrid(headers: headers, rows: rows)
+    }
+
+    // MARK: - Pitching current form
+
+    static func fetchPitchingCurrentFormForSeason(name: String, season: Int) -> PitchingCurrentFormData? {
+        let sql = """
+            SELECT pcf.form_start_date, pcf.form_start_game_number, pcf.total_season_games, pcf.num_games,
+                   pcf.role, pcf.innings_pitched, pcf.hits, pcf.earned_runs, pcf.home_runs,
+                   pcf.walks, pcf.strikeouts, pcf.batters_faced,
+                   pcf.era, pcf.whip, pcf.k_per_9, pcf.bb_per_9,
+                   pcf.season_ip_outs, pcf.season_hits, pcf.season_earned_runs,
+                   pcf.season_home_runs, pcf.season_walks, pcf.season_strikeouts,
+                   pcf.season_batters_faced, pcf.season_era, pcf.ip_outs
+            FROM pitching_current_form pcf
+            JOIN players p ON pcf.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND pcf.season = \(season)
+            LIMIT 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              row.count >= 24 else { return nil }
+
+        let formStartDate = row[0]
+        let formStartGameNumber = Int(row[1]) ?? 1
+        let totalSeasonGames = Int(row[2]) ?? 0
+        let numGames = Int(row[3]) ?? 0
+        let role = row[4]
+        let ip = row[5]
+        let h = row[6]
+        let er = row[7]
+        let hr = row[8]
+        let bb = row[9]
+        let so = row[10]
+        // bf at index 11
+        let era = formatPitchingRate(row[12], decimals: 2)
+        let whip = formatPitchingRate(row[13], decimals: 2)
+        let k9 = formatPitchingRate(row[14], decimals: 1)
+        let bb9 = formatPitchingRate(row[15], decimals: 1)
+
+        let formHeaders = ["G", "IP", "H", "ER", "HR", "BB", "SO", "ERA", "WHIP", "K/9", "BB/9"]
+        let formValues = [String(numGames), ip, h, er, hr, bb, so, era, whip, k9, bb9]
+        let grid = StatGridParser.StatGrid(
+            headers: formHeaders,
+            rows: [StatGridParser.StatGrid.Row(label: "", values: formValues)]
+        )
+
+        let ipOuts = Double(row[24]) ?? 0
+        let countingValues: [String: Double] = [
+            "G": Double(numGames), "IP_OUTS": ipOuts,
+            "H": Double(h) ?? 0, "ER": Double(er) ?? 0, "HR": Double(hr) ?? 0,
+            "BB": Double(bb) ?? 0, "SO": Double(so) ?? 0
+        ]
+
+        let seasonCountingValues: [String: Double] = [
+            "IP_OUTS": Double(row[16]) ?? 0, "H": Double(row[17]) ?? 0,
+            "ER": Double(row[18]) ?? 0, "HR": Double(row[19]) ?? 0,
+            "BB": Double(row[20]) ?? 0, "SO": Double(row[21]) ?? 0,
+            "BF": Double(row[22]) ?? 0
+        ]
+
+        return PitchingCurrentFormData(
+            formStartDate: formStartDate,
+            formStartGameNumber: formStartGameNumber,
+            totalSeasonGames: totalSeasonGames,
+            numGames: numGames,
+            role: role,
+            stats: grid,
+            countingValues: countingValues,
+            seasonCountingValues: seasonCountingValues
+        )
+    }
+
+    // MARK: - Pitching game logs
+
+    static func fetchPitchingGameLogsForSeason(name: String, season: Int) -> [PitchingGameLog] {
+        let sql = """
+            SELECT g.date, g.ip_outs, g.hits, g.earned_runs, g.walks, g.strikeouts,
+                   g.home_runs, g.is_start
+            FROM game_pitching_logs g
+            JOIN players p ON g.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND g.season = \(season)
+            ORDER BY g.date ASC
+            """
+        guard let result = try? db.execute(sql: sql, maxRows: 0) else { return [] }
+        return result.rows.compactMap { row -> PitchingGameLog? in
+            guard row.count >= 8 else { return nil }
+            return PitchingGameLog(
+                date: row[0],
+                ipOuts: Int(row[1]) ?? 0,
+                hits: Int(row[2]) ?? 0,
+                earnedRuns: Int(row[3]) ?? 0,
+                walks: Int(row[4]) ?? 0,
+                strikeouts: Int(row[5]) ?? 0,
+                homeRuns: Int(row[6]) ?? 0,
+                isStart: (Int(row[7]) ?? 0) == 1
+            )
+        }
+    }
+
+    // MARK: - Pitching single stat lookup (chat response builder)
+
+    static func buildPitchingSingleStatLookup(name: String, stat: PlayerNameMatcher.StatInfo, season: Int) -> String? {
+        let targetSeason = resolvePitchingSeason(name: name, requested: season)
+
+        let sql = """
+            SELECT p.name, sp.team, sp.\(stat.dbColumn)
+            FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND sp.season = \(targetSeason)
+            LIMIT 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              row.count >= 3 else { return nil }
+
+        let displayName = row[0]
+        let team = row[1]
+        let rawValue = row[2]
+
+        let formattedValue: String
+        if stat.isRate {
+            formattedValue = formatPitchingRate(rawValue, decimals: 2)
+        } else {
+            formattedValue = rawValue
+        }
+
+        let sentence: String
+        switch stat.displayAbbrev {
+        case "W":
+            sentence = "**\(displayName)** won **\(formattedValue)** games in \(targetSeason)."
+        case "SV":
+            sentence = "**\(displayName)** had **\(formattedValue)** saves in \(targetSeason)."
+        case "SO":
+            sentence = "**\(displayName)** struck out **\(formattedValue)** batters in \(targetSeason)."
+        case "ERA":
+            sentence = "**\(displayName)** posted a **\(formattedValue) ERA** in \(targetSeason)."
+        case "WHIP":
+            sentence = "**\(displayName)** posted a **\(formattedValue) WHIP** in \(targetSeason)."
+        case "K/9":
+            sentence = "**\(displayName)** posted a **\(formatPitchingRate(rawValue, decimals: 1)) K/9** in \(targetSeason)."
+        default:
+            if stat.isRate {
+                sentence = "**\(displayName)** posted a **\(formattedValue) \(stat.displayAbbrev)** in \(targetSeason)."
+            } else {
+                sentence = "**\(displayName)** had **\(formattedValue) \(stat.displayAbbrev)** in \(targetSeason)."
+            }
+        }
+
+        let teamDisplay = teamFullName(team)
+        let statName = stat.pillName
+        return "\(sentence) (\(teamDisplay))\n\n[TIP]Tap a player name for their full profile.[/TIP]\n\n[SUGGEST]\(targetSeason) \(statName) leaders[/SUGGEST]\n[SUGGEST]\(displayName) career[/SUGGEST]"
+    }
+
+    // MARK: - Pitching season summary (chat response builder)
+
+    static func buildPitchingSeasonSummary(name: String, season: Int) -> String? {
+        let targetSeason = resolvePitchingSeason(name: name, requested: season)
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        let sql = """
+            SELECT sp.team, sp.wins, sp.losses, sp.saves, sp.games, sp.games_started,
+                   sp.games_finished, sp.complete_games, sp.quality_starts, sp.innings_pitched,
+                   sp.hits, sp.runs, sp.earned_runs, sp.home_runs, sp.walks, sp.intentional_walks,
+                   sp.strikeouts, sp.hit_by_pitch, sp.wild_pitches, sp.balks,
+                   sp.batters_faced, sp.sacrifice_hits, sp.sacrifice_flies,
+                   sp.stolen_bases, sp.caught_stealing,
+                   sp.era, sp.whip, sp.k_per_9, sp.bb_per_9, sp.k_per_bb,
+                   sp.h_per_9, sp.hr_per_9, sp.baa, sp.era_plus
+            FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND sp.season = \(targetSeason)
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              row.count >= 34 else { return nil }
+
+        let team = teamFullName(row[0])
+        let values = Array(row[1...33])
+        let formatted = formatPitchingValues(headers: pitchingAllHeaders, values: values)
+        let displayValues = filterPitchingForDisplay(formatted)
+
+        var parts: [String] = []
+        parts.append("**\(displayName)** \u{2014} \(targetSeason) Season (\(team))\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + pitchingHeaders.joined(separator: ", "))
+        parts.append("ROW: " + displayValues.joined(separator: ", "))
+        parts.append("[/STATGRID]")
+
+        parts.append("\n[SUGGEST]how is \(displayName) doing lately[/SUGGEST]")
+        parts.append("[SUGGEST]\(displayName) career[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - Pitching streak list (chat response builder)
+
+    static func buildPitchingStreakList(name: String, performance: String, season: Int?) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        let targetSeason: Int
+        if let s = season {
+            targetSeason = resolvePitchingSeason(name: name, requested: s)
+        } else {
+            let sql = """
+                SELECT MAX(ps.season) FROM pitching_streaks ps
+                JOIN players p ON ps.player_id = p.player_id
+                WHERE p.name LIKE '%\(sanitize(name))%'
+                """
+            guard let result = try? db.execute(sql: sql),
+                  let row = result.rows.first,
+                  let year = Int(row[0]) else { return nil }
+            targetSeason = year
+        }
+
+        guard let grid = fetchPitchingStreaksForSeason(name: name, season: targetSeason, performance: performance),
+              !grid.rows.isEmpty else {
+            let label = performance == "cold" ? "cold streaks" : "hot streaks"
+            return "No \(label) found for **\(displayName)** in \(targetSeason)."
+        }
+
+        let label = performance == "cold" ? "Cold Streaks" : "Hot Streaks"
+        var parts: [String] = []
+        parts.append("**\(displayName)** \u{2014} \(targetSeason) \(label)\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + grid.headers.joined(separator: ", "))
+        for row in grid.rows {
+            parts.append("ROW \(row.label): " + row.values.joined(separator: ", "))
+        }
+        parts.append("[/STATGRID]")
+
+        let count = grid.rows.count
+        let streakWord = count == 1 ? "streak" : "streaks"
+        if let topRow = grid.rows.first {
+            let eraIdx = grid.headers.firstIndex(of: "ERA") ?? -1
+            let eraValue = eraIdx >= 0 && eraIdx < topRow.values.count ? topRow.values[eraIdx] : ""
+            let gIdx = grid.headers.firstIndex(of: "G") ?? -1
+            let gValue = gIdx >= 0 && gIdx < topRow.values.count ? topRow.values[gIdx] : ""
+            let adjective = performance == "cold" ? "coldest" : "hottest"
+            parts.append("\n\(count) \(performance) \(streakWord) detected. The \(adjective) was \(gValue) games (\(topRow.label)) with a \(eraValue) ERA.")
+        }
+
+        let oppositePerf = performance == "hot" ? "cold" : "hot"
+        parts.append("\n[SUGGEST]\(displayName) \(oppositePerf) streaks[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - Pitching current hot streak (chat response builder)
+
+    static func buildPitchingCurrentHotStreak(name: String) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        let sql = """
+            SELECT pcf.season, pcf.form_start_date, pcf.form_start_game_number,
+                   pcf.total_season_games, pcf.num_games, pcf.role,
+                   pcf.innings_pitched, pcf.hits, pcf.earned_runs,
+                   pcf.walks, pcf.strikeouts, pcf.home_runs,
+                   pcf.era, pcf.whip, pcf.k_per_9, pcf.bb_per_9,
+                   pcf.season_era, sp.team
+            FROM pitching_current_form pcf
+            JOIN players p ON pcf.player_id = p.player_id
+            LEFT JOIN season_pitching_stats sp ON pcf.player_id = sp.player_id AND pcf.season = sp.season
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            ORDER BY pcf.season DESC
+            LIMIT 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              row.count >= 18 else { return nil }
+
+        let season = row[0]
+        let startDate = formatDate(row[1])
+        let startGameNum = row[2]
+        let totalGames = row[3]
+        let numGames = Int(row[4]) ?? 0
+        let role = row[5]
+        let ip = row[6], h = row[7], er = row[8]
+        let bb = row[9], so = row[10], hr = row[11]
+        let era = formatPitchingRate(row[12], decimals: 2)
+        let whip = formatPitchingRate(row[13], decimals: 2)
+        let k9 = formatPitchingRate(row[14], decimals: 1)
+        let bb9 = formatPitchingRate(row[15], decimals: 1)
+        let seasonEra = formatPitchingRate(row[16], decimals: 2)
+        let team = row[17]
+
+        let teamGames = fetchTeamGames(team: team, season: Int(season) ?? 0)
+
+        var parts: [String] = []
+        parts.append("\(displayName) has been on fire over the last \(numGames) games (since \(startDate)):\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: G, IP, H, ER, HR, BB, SO, ERA, WHIP, K/9, BB/9")
+        parts.append("FORM: \(displayName), \(season), \(startGameNum), \(totalGames), \(teamGames)")
+        parts.append("ROW: \(numGames), \(ip), \(h), \(er), \(hr), \(bb), \(so), \(era), \(whip), \(k9), \(bb9)")
+        parts.append("[/STATGRID]")
+
+        parts.append("\nThat's compared to his \(season) season ERA of \(seasonEra).")
+        parts.append("\n[SUGGEST]\(displayName) hot streaks[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - Pitching career lookup (chat response builder)
+
+    static func buildPitchingCareerLookup(name: String, stat: PlayerNameMatcher.StatInfo?) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+        let team = info?.team ?? ""
+        let teamDisplay = teamFullName(team)
+
+        let mostRecentSeason: Int = {
+            let sql = """
+                SELECT MAX(sp.season) FROM season_pitching_stats sp
+                JOIN players p ON sp.player_id = p.player_id
+                WHERE p.name LIKE '%\(sanitize(name))%'
+                """
+            if let r = try? db.execute(sql: sql), let row = r.rows.first, let yr = Int(row[0]) {
+                return yr
+            }
+            return 2025
+        }()
+
+        if let stat {
+            let selectExpr: String
+            if stat.isRate {
+                guard let formula = careerPitchingRateFormula(for: stat) else { return nil }
+                selectExpr = formula
+            } else {
+                selectExpr = "SUM(sp.\(stat.dbColumn))"
+            }
+
+            let sql = """
+                SELECT \(selectExpr), COUNT(DISTINCT sp.season)
+                FROM season_pitching_stats sp
+                JOIN players p ON sp.player_id = p.player_id
+                WHERE p.name LIKE '%\(sanitize(name))%'
+                """
+            guard let result = try? db.execute(sql: sql),
+                  let row = result.rows.first,
+                  !row[0].isEmpty else { return nil }
+
+            let seasons = Int(row[1]) ?? 0
+            if seasons <= 1 { return nil }
+
+            let formattedValue = stat.isRate ? formatPitchingRate(row[0], decimals: 2) : row[0]
+
+            let sentence: String
+            switch stat.displayAbbrev {
+            case "W":
+                sentence = "**\(displayName)** has **\(formattedValue)** career wins."
+            case "SV":
+                sentence = "**\(displayName)** has **\(formattedValue)** career saves."
+            case "SO":
+                sentence = "**\(displayName)** has **\(formattedValue)** career strikeouts."
+            case "ERA":
+                sentence = "**\(displayName)** has a **\(formattedValue)** career ERA."
+            case "WHIP":
+                sentence = "**\(displayName)** has a **\(formattedValue)** career WHIP."
+            default:
+                if stat.isRate {
+                    sentence = "**\(displayName)** has a **\(formattedValue)** career \(stat.displayAbbrev)."
+                } else {
+                    sentence = "**\(displayName)** has **\(formattedValue)** career \(stat.displayAbbrev)."
+                }
+            }
+
+            let statName = stat.pillName
+            return "\(sentence) (\(teamDisplay))\n\n[SUGGEST]career \(statName) leaders[/SUGGEST]\n[SUGGEST]\(displayName) \(mostRecentSeason)[/SUGGEST]"
+        } else {
+            guard let careerGrid = fetchPitchingCareerTotals(name: name) else { return nil }
+
+            var parts: [String] = []
+            parts.append("**\(displayName)** \u{2014} Career Totals (\(teamDisplay))\n")
+
+            parts.append("[STATGRID]")
+            parts.append("HEADER: " + pitchingHeaders.joined(separator: ", "))
+            if let careerRow = careerGrid.rows.first {
+                parts.append("ROW \(careerRow.label): " + careerRow.values.joined(separator: ", "))
+            }
+            parts.append("[/STATGRID]")
+
+            parts.append("\n[SUGGEST]\(displayName) \(mostRecentSeason)[/SUGGEST]")
+            parts.append("[SUGGEST]\(displayName) vs lefties[/SUGGEST]")
+
+            return parts.joined(separator: "\n")
+        }
+    }
+
+    // MARK: - Pitching leaderboard (chat response builder)
+
+    static func buildPitchingLeaderboard(stat: PlayerNameMatcher.StatInfo, scope: PlayerNameMatcher.LeaderboardScope, limit: Int) -> String {
+        switch scope {
+        case .season(let season):
+            return buildPitchingSeasonLeaderboard(stat: stat, season: season, limit: limit)
+        case .allTimeSingleSeason:
+            return buildPitchingAllTimeSingleSeasonLeaderboard(stat: stat, limit: limit)
+        case .career:
+            return buildPitchingCareerLeaderboard(stat: stat, limit: limit)
+        }
+    }
+
+    private static func buildPitchingSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, season: Int, limit: Int) -> String {
+        // Rate stats need an IP minimum
+        let ipMin: String?
+        if stat.isRate {
+            let maxGamesSql = "SELECT MAX(games) FROM season_pitching_stats WHERE season = \(season)"
+            let maxGames: Int
+            if let r = try? db.execute(sql: maxGamesSql), let row = r.rows.first, let val = Int(row[0]) {
+                maxGames = val
+            } else {
+                maxGames = 162
+            }
+            // 162 IP (486 outs) for full season, 81 IP (243 outs) for partial
+            ipMin = maxGames >= 140 ? " AND sp.ip_outs >= 486" : " AND sp.ip_outs >= 243"
+        } else {
+            ipMin = nil
+        }
+
+        let ipFilter = ipMin ?? ""
+        let orderDir = (stat.displayAbbrev == "ERA" || stat.displayAbbrev == "WHIP" || stat.displayAbbrev == "BB/9" || stat.displayAbbrev == "H/9" || stat.displayAbbrev == "HR/9" || stat.displayAbbrev == "BAA") ? "ASC" : "DESC"
+
+        let sql = """
+            SELECT p.name, sp.\(stat.dbColumn)
+            FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE sp.season = \(season)\(ipFilter)
+            ORDER BY sp.\(stat.dbColumn) \(orderDir)
+            LIMIT \(limit)
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else {
+            return "No \(stat.displayName) leaders found for \(season)."
+        }
+
+        var parts: [String] = []
+        parts.append("**\(season) \(stat.displayName) Leaders (Pitching)**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: \(stat.displayAbbrev)")
+        for (i, row) in result.rows.enumerated() {
+            let playerName = row[0]
+            let rawValue = row[1]
+            let formattedValue = stat.isRate ? formatPitchingRate(rawValue, decimals: 2) : rawValue
+            parts.append("ROW \(i + 1). \(playerName): \(formattedValue)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        if ipMin != nil {
+            parts.append("\n_Min. qualified IP._")
+        }
+
+        let statName = stat.pillName
+        parts.append("\n[SUGGEST]career \(statName) leaders[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    private static func buildPitchingAllTimeSingleSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int) -> String {
+        let ipFilter = stat.isRate ? " WHERE sp.ip_outs >= 486" : ""
+        let orderDir = (stat.displayAbbrev == "ERA" || stat.displayAbbrev == "WHIP" || stat.displayAbbrev == "BB/9" || stat.displayAbbrev == "BAA") ? "ASC" : "DESC"
+
+        let sql = """
+            SELECT p.name, sp.\(stat.dbColumn), sp.season
+            FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            \(ipFilter)
+            ORDER BY sp.\(stat.dbColumn) \(orderDir)
+            LIMIT \(limit)
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else {
+            return "No all-time \(stat.displayName) leaders found."
+        }
+
+        var parts: [String] = []
+        parts.append("**All-Time Single Season \(stat.displayName) Leaders (Pitching)**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: \(stat.displayAbbrev), Year")
+        for (i, row) in result.rows.enumerated() {
+            let playerName = row[0]
+            let rawValue = row[1]
+            let season = row[2]
+            let formattedValue = stat.isRate ? formatPitchingRate(rawValue, decimals: 2) : rawValue
+            parts.append("ROW \(i + 1). \(playerName): \(formattedValue), \(season)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        if stat.isRate {
+            parts.append("\n_Min. 162 IP._")
+        }
+
+        return parts.joined(separator: "\n")
+    }
+
+    private static func buildPitchingCareerLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int) -> String {
+        let selectExpr: String
+        if stat.isRate {
+            guard let formula = careerPitchingRateFormula(for: stat) else {
+                return "Career \(stat.displayName) leaders are not available."
+            }
+            selectExpr = "\(formula) as career_val"
+        } else {
+            selectExpr = "SUM(sp.\(stat.dbColumn)) as career_val"
+        }
+
+        let ipFilter = stat.isRate ? "\n            HAVING SUM(sp.ip_outs) >= 486" : ""
+        let orderDir = (stat.displayAbbrev == "ERA" || stat.displayAbbrev == "WHIP" || stat.displayAbbrev == "BB/9" || stat.displayAbbrev == "BAA") ? "ASC" : "DESC"
+
+        let sql = """
+            SELECT p.name, \(selectExpr)
+            FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            GROUP BY p.player_id\(ipFilter)
+            ORDER BY career_val \(orderDir)
+            LIMIT \(limit)
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else {
+            return "No career \(stat.displayName) leaders found."
+        }
+
+        var parts: [String] = []
+        parts.append("**Career \(stat.displayName) Leaders (Pitching)**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: \(stat.displayAbbrev)")
+        for (i, row) in result.rows.enumerated() {
+            let playerName = row[0]
+            let rawValue = row[1]
+            let formattedValue = stat.isRate ? formatPitchingRate(rawValue, decimals: 2) : rawValue
+            parts.append("ROW \(i + 1). \(playerName): \(formattedValue)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        if stat.isRate {
+            parts.append("\n_Min. 162 IP._")
+        }
+
+        return parts.joined(separator: "\n")
+    }
+
+    private static func careerPitchingRateFormula(for stat: PlayerNameMatcher.StatInfo) -> String? {
+        switch stat.displayAbbrev {
+        case "ERA":
+            return "ROUND(9.0 * CAST(SUM(sp.earned_runs) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 2)"
+        case "WHIP":
+            return "ROUND(CAST(SUM(sp.walks) + SUM(sp.hits) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 2)"
+        case "K/9":
+            return "ROUND(9.0 * CAST(SUM(sp.strikeouts) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 1)"
+        case "BB/9":
+            return "ROUND(9.0 * CAST(SUM(sp.walks) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 1)"
+        case "K/BB":
+            return "ROUND(CAST(SUM(sp.strikeouts) AS REAL) / NULLIF(SUM(sp.walks), 0), 2)"
+        case "H/9":
+            return "ROUND(9.0 * CAST(SUM(sp.hits) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 1)"
+        case "HR/9":
+            return "ROUND(9.0 * CAST(SUM(sp.home_runs) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 1)"
+        case "BAA":
+            return "ROUND(CAST(SUM(sp.hits) AS REAL) / NULLIF(SUM(sp.batters_faced) - SUM(sp.walks) - SUM(sp.hit_by_pitch) - SUM(sp.sacrifice_hits) - SUM(sp.sacrifice_flies), 0), 3)"
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - Pitching comparison (chat response builder)
+
+    static func buildPitchingComparison(player1: String, player2: String) -> String {
+        let header = "HEADER: " + pitchingHeaders.joined(separator: ", ")
+
+        let season1 = fetchPitchingLatestSeasonRow(name: player1)
+        let season2 = fetchPitchingLatestSeasonRow(name: player2)
+
+        let career1 = fetchPitchingCareerRow(name: player1)
+        let career2 = fetchPitchingCareerRow(name: player2)
+
+        let info1 = fetchPlayerInfo(name: player1)
+        let info2 = fetchPlayerInfo(name: player2)
+        let label1 = "\(info1?.name ?? player1) (\(info1?.team ?? ""))"
+        let label2 = "\(info2?.name ?? player2) (\(info2?.team ?? ""))"
+
+        var parts: [String] = []
+
+        if let s1 = season1, let s2 = season2 {
+            let year = s1.year
+            parts.append("\(year) Season:\n")
+            parts.append("[STATGRID]")
+            parts.append(header)
+            parts.append("ROW: \(label1), \(s1.values.joined(separator: ", "))")
+            parts.append("ROW: \(label2), \(s2.values.joined(separator: ", "))")
+            parts.append("[/STATGRID]")
+        }
+
+        if let c1 = career1, let c2 = career2 {
+            parts.append("\nCareer:\n")
+            parts.append("[STATGRID]")
+            parts.append(header)
+            parts.append("ROW: \(label1), \(c1.joined(separator: ", "))")
+            parts.append("ROW: \(label2), \(c2.joined(separator: ", "))")
+            parts.append("[/STATGRID]")
+        }
+
+        if parts.isEmpty {
+            return "I don't have enough pitching data to compare these two players."
+        }
+
+        let name1 = info1?.name ?? player1
+        let name2 = info2?.name ?? player2
+        parts.append("\n[SUGGEST]\(name1) vs lefties[/SUGGEST]")
+        parts.append("[SUGGEST]\(name2) vs lefties[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    private static func fetchPitchingLatestSeasonRow(name: String) -> (year: Int, values: [String])? {
+        let sql = """
+            SELECT sp.season,
+                   sp.wins, sp.losses, sp.saves, sp.games, sp.games_started, sp.games_finished,
+                   sp.complete_games, sp.quality_starts, sp.innings_pitched,
+                   sp.hits, sp.runs, sp.earned_runs, sp.home_runs, sp.walks, sp.intentional_walks,
+                   sp.strikeouts, sp.hit_by_pitch, sp.wild_pitches, sp.balks,
+                   sp.batters_faced, sp.sacrifice_hits, sp.sacrifice_flies,
+                   sp.stolen_bases, sp.caught_stealing,
+                   sp.era, sp.whip, sp.k_per_9, sp.bb_per_9, sp.k_per_bb,
+                   sp.h_per_9, sp.hr_per_9, sp.baa, sp.era_plus
+            FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            ORDER BY sp.season DESC
+            LIMIT 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              let year = Int(row[0]) else { return nil }
+
+        let values = Array(row[1...33])
+        let formatted = formatPitchingValues(headers: pitchingAllHeaders, values: values)
+        return (year, filterPitchingForDisplay(formatted))
+    }
+
+    private static func fetchPitchingCareerRow(name: String) -> [String]? {
+        let sql = """
+            SELECT SUM(sp.wins), SUM(sp.losses), SUM(sp.saves),
+                   SUM(sp.games), SUM(sp.games_started), SUM(sp.games_finished),
+                   SUM(sp.complete_games), SUM(sp.quality_starts),
+                   CAST(SUM(sp.ip_outs) / 3 AS TEXT) || '.' || CAST(SUM(sp.ip_outs) % 3 AS TEXT),
+                   SUM(sp.hits), SUM(sp.runs), SUM(sp.earned_runs), SUM(sp.home_runs),
+                   SUM(sp.walks), SUM(sp.intentional_walks),
+                   SUM(sp.strikeouts), SUM(sp.hit_by_pitch), SUM(sp.wild_pitches), SUM(sp.balks),
+                   SUM(sp.batters_faced), SUM(sp.sacrifice_hits), SUM(sp.sacrifice_flies),
+                   SUM(sp.stolen_bases), SUM(sp.caught_stealing),
+                   ROUND(9.0 * CAST(SUM(sp.earned_runs) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 2),
+                   ROUND(CAST(SUM(sp.walks) + SUM(sp.hits) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 2),
+                   ROUND(9.0 * CAST(SUM(sp.strikeouts) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 1),
+                   ROUND(9.0 * CAST(SUM(sp.walks) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 1),
+                   ROUND(CAST(SUM(sp.strikeouts) AS REAL) / NULLIF(SUM(sp.walks), 0), 2),
+                   ROUND(9.0 * CAST(SUM(sp.hits) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 1),
+                   ROUND(9.0 * CAST(SUM(sp.home_runs) AS REAL) / NULLIF(SUM(sp.ip_outs) / 3.0, 0), 1),
+                   ROUND(CAST(SUM(sp.hits) AS REAL) / NULLIF(SUM(sp.batters_faced) - SUM(sp.walks) - SUM(sp.hit_by_pitch) - SUM(sp.sacrifice_hits) - SUM(sp.sacrifice_flies), 0), 3)
+            FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            HAVING COUNT(DISTINCT sp.season) > 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first else { return nil }
+
+        // row has 32 values (no ERA+); format them
+        var formatted = formatPitchingValues(headers: pitchingAllHeaders.filter { $0 != "ERA+" }, values: row)
+        // Append ERA+ as "--" for career
+        formatted.append("--")
+        return filterPitchingForDisplay(formatted)
+    }
+
+    // MARK: - Pitching platoon splits (chat response builder)
+
+    static func buildPitchingPlatoonSplits(name: String, hand: String?, season: Int) -> String? {
+        let targetSeason = resolvePitchingSeason(name: name, requested: season)
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        var splitFilter = ""
+        if let hand {
+            let splitValue = hand == "LHB" ? "vs_LHB" : "vs_RHB"
+            splitFilter = " AND pps.split = '\(splitValue)'"
+        }
+
+        let sql = """
+            SELECT pps.split, pps.at_bats, pps.hits,
+                   pps.doubles, pps.triples, pps.home_runs,
+                   pps.walks, pps.strikeouts,
+                   pps.batting_avg_against, pps.obp_against, pps.slg_against, pps.ops_against
+            FROM pitching_platoon_splits pps
+            JOIN players p ON pps.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND pps.season = \(targetSeason)\(splitFilter)
+            ORDER BY pps.split
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+
+        let subtitle: String
+        if let hand {
+            subtitle = hand == "LHB" ? "vs Left-Handed Batters" : "vs Right-Handed Batters"
+        } else {
+            subtitle = "Platoon Splits"
+        }
+
+        var parts: [String] = []
+        parts.append("**\(displayName)** \u{2014} \(targetSeason) \(subtitle)\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + headers.joined(separator: ", "))
+        for row in result.rows.prefix(2) {
+            let splitLabel = row[0] == "vs_LHB" ? "vs LHB" : "vs RHB"
+            let values = formatValues(headers: headers, values: Array(row.dropFirst()))
+            parts.append("ROW \(splitLabel): " + values.joined(separator: ", "))
+        }
+        parts.append("[/STATGRID]")
+
+        parts.append("\n[TIP]Tap a player name for their full profile.[/TIP]")
+        parts.append("\n[SUGGEST]\(displayName) \(targetSeason)[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - Pitching threshold leaderboard (chat response builder)
+
+    static func buildPitchingThresholdLeaderboard(stat: PlayerNameMatcher.StatInfo, threshold: Double, comparison: String, season: Int) -> String {
+        let ipMin: String?
+        if stat.isRate {
+            let maxGamesSql = "SELECT MAX(games) FROM season_pitching_stats WHERE season = \(season)"
+            let maxGames: Int
+            if let r = try? db.execute(sql: maxGamesSql), let row = r.rows.first, let val = Int(row[0]) {
+                maxGames = val
+            } else {
+                maxGames = 162
+            }
+            ipMin = maxGames >= 140 ? " AND sp.ip_outs >= 486" : " AND sp.ip_outs >= 243"
+        } else {
+            ipMin = nil
+        }
+
+        let ipFilter = ipMin ?? ""
+        let orderDir = (stat.displayAbbrev == "ERA" || stat.displayAbbrev == "WHIP" || stat.displayAbbrev == "BAA") ? "ASC" : "DESC"
+
+        let sql = """
+            SELECT p.name, sp.\(stat.dbColumn)
+            FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE sp.season = \(season) AND sp.\(stat.dbColumn) \(comparison) \(threshold)\(ipFilter)
+            ORDER BY sp.\(stat.dbColumn) \(orderDir)
+            LIMIT 50
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else {
+            let thresholdStr = stat.isRate ? formatPitchingRate(String(threshold), decimals: 2) : String(Int(threshold))
+            let op = comparison == ">=" ? "at least" : "no more than"
+            return "No pitchers had \(op) \(thresholdStr) \(stat.displayAbbrev) in \(season)."
+        }
+
+        let thresholdDisplay: String
+        if stat.isRate {
+            thresholdDisplay = formatPitchingRate(String(threshold), decimals: 2)
+        } else {
+            thresholdDisplay = String(Int(threshold))
+        }
+
+        let title: String
+        if comparison == "<=" {
+            if stat.isRate {
+                title = "Pitchers with \(thresholdDisplay) or Better \(stat.displayAbbrev) in \(season)"
+            } else {
+                title = "Pitchers with \(thresholdDisplay) or Fewer \(stat.displayName) in \(season)"
+            }
+        } else {
+            if stat.isRate {
+                title = "Pitchers with \(stat.displayAbbrev) Over \(thresholdDisplay) in \(season)"
+            } else {
+                title = "Pitchers with \(thresholdDisplay)+ \(stat.displayName) in \(season)"
+            }
+        }
+
+        var parts: [String] = []
+        parts.append("**\(title)**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: \(stat.displayAbbrev)")
+        for (i, row) in result.rows.enumerated() {
+            let playerName = row[0]
+            let rawValue = row[1]
+            let formattedValue = stat.isRate ? formatPitchingRate(rawValue, decimals: 2) : rawValue
+            parts.append("ROW \(i + 1). \(playerName): \(formattedValue)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        let count = result.rows.count
+        parts.append("\n\(count) pitcher\(count == 1 ? "" : "s") matched.")
+
+        if ipMin != nil {
+            parts.append("_Min. qualified IP._")
+        }
+
+        let statName = stat.pillName
+        parts.append("\n[SUGGEST]\(season) \(statName) leaders[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - Pitching team stats (chat response builder)
+
+    static func buildPitchingTeamStats(teamCode: String, stat: PlayerNameMatcher.StatInfo?, season: Int) -> String {
+        let fullName = teamFullName(teamCode)
+        let nickname = teamNickname(teamCode)
+
+        if let stat {
+            let ipMin: String?
+            if stat.isRate {
+                ipMin = " AND sp.ip_outs >= 54"  // ~18 IP minimum for team pitching leaderboards
+            } else {
+                ipMin = nil
+            }
+            let ipFilter = ipMin ?? ""
+            let orderDir = (stat.displayAbbrev == "ERA" || stat.displayAbbrev == "WHIP" || stat.displayAbbrev == "BAA") ? "ASC" : "DESC"
+
+            let sql = """
+                SELECT p.name, sp.\(stat.dbColumn)
+                FROM season_pitching_stats sp
+                JOIN players p ON sp.player_id = p.player_id
+                WHERE (sp.team = '\(teamCode)' OR sp.team LIKE '\(teamCode)/%' OR sp.team LIKE '%/\(teamCode)')
+                      AND sp.season = \(season)\(ipFilter)
+                ORDER BY sp.\(stat.dbColumn) \(orderDir)
+                LIMIT 15
+                """
+            guard let result = try? db.execute(sql: sql),
+                  !result.rows.isEmpty else {
+                return "No \(stat.displayName) data found for the \(fullName) in \(season)."
+            }
+
+            var parts: [String] = []
+            parts.append("**\(fullName)** \u{2014} \(season) \(stat.displayName) Leaders (Pitching)\n")
+            parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+            parts.append("[LEADERBOARD]")
+            parts.append("HEADER: \(stat.displayAbbrev)")
+            for (i, row) in result.rows.enumerated() {
+                let playerName = row[0]
+                let rawValue = row[1]
+                let formattedValue = stat.isRate ? formatPitchingRate(rawValue, decimals: 2) : rawValue
+                parts.append("ROW \(i + 1). \(playerName): \(formattedValue)")
+            }
+            parts.append("[/LEADERBOARD]")
+
+            if ipMin != nil {
+                parts.append("\n_Min. 18 IP._")
+            }
+
+            let statName = stat.pillName
+            parts.append("\n[SUGGEST]\(season) \(statName) leaders[/SUGGEST]")
+            parts.append("[SUGGEST]\(nickname) pitchers[/SUGGEST]")
+
+            return parts.joined(separator: "\n")
+        } else {
+            // Team pitching overview sorted by ERA
+            let sql = """
+                SELECT p.name, sp.games, sp.innings_pitched, sp.wins, sp.losses, sp.era
+                FROM season_pitching_stats sp
+                JOIN players p ON sp.player_id = p.player_id
+                WHERE (sp.team = '\(teamCode)' OR sp.team LIKE '\(teamCode)/%' OR sp.team LIKE '%/\(teamCode)')
+                      AND sp.season = \(season) AND sp.ip_outs >= 54
+                ORDER BY sp.era ASC
+                LIMIT 15
+                """
+            guard let result = try? db.execute(sql: sql),
+                  !result.rows.isEmpty else {
+                return "No pitching data found for the \(fullName) in \(season)."
+            }
+
+            var parts: [String] = []
+            parts.append("**\(fullName)** \u{2014} \(season) Pitchers\n")
+            parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+            parts.append("[LEADERBOARD]")
+            parts.append("HEADER: G, IP, W, L, ERA")
+            for (i, row) in result.rows.enumerated() {
+                let playerName = row[0]
+                let g = row[1]
+                let ip = row[2]
+                let w = row[3]
+                let l = row[4]
+                let era = formatPitchingRate(row[5], decimals: 2)
+                parts.append("ROW \(i + 1). \(playerName): \(g), \(ip), \(w), \(l), \(era)")
+            }
+            parts.append("[/LEADERBOARD]")
+
+            parts.append("\n_Min. 18 IP._")
+            parts.append("\n[SUGGEST]\(nickname) ERA leaders[/SUGGEST]")
+            parts.append("[SUGGEST]\(nickname) strikeout leaders[/SUGGEST]")
+
+            return parts.joined(separator: "\n")
+        }
     }
 }
