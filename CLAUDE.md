@@ -7,10 +7,10 @@
 - **Current phase**: Phase 1 + Phase 2 + Phase 3 (iOS app) COMPLETE. Data pipeline swapped to Retrosheet (commercially viable). Compiles with zero errors/warnings.
 
 ### Data Pipeline (Retrosheet-native)
-- `data_pipeline/pull_stats.py` — pulls ALL data from Retrosheet: season stats (aggregated from game logs), game-level batting logs, platoon splits (via Chadwick Bureau retrosplits), and player bio data (birthdate, bats, throws from `biodata.zip`). **2024-2025 data loaded** (2,925 players, 1,799 with bio data, 2,924 season stat rows, 142,822 game log rows for ALL players, 2,602 platoon split rows).
+- `data_pipeline/pull_stats.py` — pulls ALL data from Retrosheet: season stats (batting + pitching), game-level logs, platoon splits (Chadwick Bureau), home/away splits, fielding stats, and player bio data. **2016-2025 data loaded (10 years)** — 3,782 players, 14,173 batting season stats, 8,233 pitching season stats, 661,313 batting game logs, 195,734 pitching game logs, 15,379 platoon splits, 16,391 pitching platoon splits, 27,558 home/away splits, 22,303 fielding stats.
 - `data_pipeline/pull_stats_fangraphs.py` — OLD FanGraphs pipeline, preserved for reference only. NOT used.
-- `data_pipeline/detect_streaks.py` — change-point detection using ruptures PELT on per-game OPS. **2,347 streak segments** (Tier 1) + **1,258 sensitive streaks** (Tier 2) + **2,137 current form entries**. Also detects "current form" — the stats from the last performance shift to end of season.
-- `baseball_stats.db` — SQLite DB, 9 tables: `players` (with `birthdate`, `bats`, `throws`), `season_batting_stats`, `league_averages`, `platoon_splits`, `game_batting_logs`, `streaks`, `streaks_sensitive`, `streaks_sliding`, `current_form`. Uses Retrosheet player IDs (e.g., `judga001`). OPS+ computed for all player-seasons. Team abbreviations use Retrosheet format (NYA, LAN, CHA, etc.).
+- `data_pipeline/detect_streaks.py` — change-point detection using ruptures PELT. Batting: **11,469 streaks** (T1) + **6,333 sensitive** (T2) + **7,509 sliding** (T3) + **10,335 current form**. Pitching: **30,764 streaks** + **207 sensitive** + **2,042 sliding** + **6,729 current form**.
+- `baseball_stats.db` — **153 MB** SQLite DB, ~20 tables covering batting, pitching, fielding, splits, and streaks. Uses Retrosheet player IDs (e.g., `judga001`). OPS+ and ERA+ computed for all player-seasons. Team abbreviations use Retrosheet format (NYA, LAN, CHA, etc.).
 - `schema_description.py` — plain-English schema description for Claude's system prompt (all tables)
 - `query_engine.py` — full pipeline: text-to-SQL → answer generation. Data-source agnostic.
 - `cli_poc.py` — interactive terminal CLI.
@@ -23,11 +23,13 @@
 - **wRC+ and WAR**: Columns kept in DB but always NULL (FanGraphs proprietary). Use OPS+ for league-adjusted offense.
 - **Old FanGraphs pipeline**: Backed up as `pull_stats_fangraphs.py`. NOT commercially licensed.
 
-### Two-tier streak detection
-- **Tier 1 (precomputed, penalty=3)**: Stored in `streaks` table. 2,347 segments.
-- **Tier 2 (precomputed, penalty=1.5)**: Stored in `streaks_sensitive` table. 1,258 sensitive streaks.
-- **Fallback flow**: streaks table → if single "average" segment → query `streaks_sensitive`.
-- **Data source agnostic**: PELT only needs game-level batting logs.
+### Three-tier streak detection (batting + pitching)
+- **Tier 1 (precomputed, penalty=3)**: `streaks` (11,469 batting) + `pitching_streaks` (30,764 pitching).
+- **Tier 2 (precomputed, penalty=1.5)**: `streaks_sensitive` (6,333) + `pitching_streaks_sensitive` (207). Only for player-seasons with single T1 segment.
+- **Tier 3 (sliding window)**: `streaks_sliding` (7,509) + `pitching_streaks_sliding` (2,042). Gap-fills missing hot/cold.
+- **Current form**: `current_form` (10,335 batting) + `pitching_current_form` (6,729 pitching).
+- **Fallback flow**: T1 → T2 → T3 for both batting and pitching.
+- **Data source agnostic**: PELT only needs game-level logs.
 
 ### Current Form detection
 - **`current_form` table**: 2,137 entries. Stores the "current form" for each player-season — stats from the last PELT change point to end of season.
@@ -43,7 +45,7 @@
 - **Key files**: `AppState.swift` (state), `QueryEngine.swift` (orchestrator), `AnthropicService.swift` (Claude API with SSE streaming), `DatabaseService.swift` (SQLite C API), `PromptStore.swift` (all prompts), `KeychainHelper.swift` (API key storage)
 - **Views**: `HomeView` (search + animated sample queries), `ResultsView` (results + follow-up), `ResultCard` (user/assistant/error styling), `APIKeySetupView` (first-launch + settings), `AnimatedPlaceholder`, `LoadingIndicator`
 - **Streaming**: SSE parsing via `URLSession.shared.bytes(for:)`, typewriter effect via callback-based `onChunk` pattern
-- **Database**: 24MB `baseball_stats.db` bundled in Resources (read-only)
+- **Database**: 153MB `baseball_stats.db` bundled in Resources (read-only, 2016-2025, 10 years)
 - **Stat grid**: 21 stats (G through BABIP, PA and SF excluded for compact 3-row display). Career rows show "--" for OPS+ (multi-season weighting not implemented).
 - **Player card bio**: Dynamic age computed from birthdate (updates on player's birthday). Header shows handedness (Bats R / Throws R). About section shows birth date.
 - **Query routing**: `simple_lookup`, `streak_finder`, `current_form`, `stat_explanation` — Claude classifies, then dispatches
@@ -70,24 +72,24 @@
 | Feature | Why it matters | Status |
 |---------|---------------|--------|
 | **OPS+** | League-adjusted offense metric, replaces wRC+ | DONE |
-| **Pitching stats** | Doubles addressable questions | NOT STARTED |
-| **Historical data (1898+)** | LLMs get increasingly wrong the further back you go | Pipeline ready, just run with wider year range |
+| **Pitching stats** | Doubles addressable questions | DONE (full pipeline + iOS) |
+| **Historical data (1898+)** | LLMs get increasingly wrong the further back you go | 10 years bundled (2016-2025); pre-2016 needs backend |
 | **Statcast data** (exit velo, launch angle, sprint speed) | LLMs are terrible at this; rich analytical queries | NOT STARTED (2025+ only) |
-| **Situational splits** (home/away, by month, RISP) | Beyond platoon; LLMs can't do this reliably | NOT STARTED |
+| **Situational splits** (home/away, by month, RISP) | Beyond platoon; LLMs can't do this reliably | Home/away DONE; month/RISP not started |
 | **Predictive/pace features** ("on pace for X") | Unique analytical value, not just lookup | BUILT (162-game projections in PlayerCardView) |
-| **Real-time/current season freshness** | LLM training data lags; pipeline can be near-real-time | Partial (2024-2025 loaded) |
+| **Real-time/current season freshness** | LLM training data lags; pipeline can be near-real-time | 2016-2025 loaded |
 
 ### Data Expansion Roadmap
 
-We download Retrosheet season ZIPs that contain 7 CSV files. We currently only use **batting.csv**, **allplayers.csv**, and supplement with **Chadwick Bureau retrosplits**. The remaining files are untapped.
+We download Retrosheet season ZIPs that contain 7 CSV files. We now use **batting.csv**, **pitching.csv**, **fielding.csv**, **allplayers.csv**, and supplement with **Chadwick Bureau retrosplits**.
 
 #### Retrosheet ZIP contents (per season):
 | File | Columns | Rows (2024) | Currently Using |
 |------|---------|-------------|-----------------|
-| batting.csv | 39 | ~71K game logs | 18 of 39 cols |
-| allplayers.csv | 24 | ~1,500 players | 17 of 24 cols (incl. bat, throw) |
-| pitching.csv | 42 | ~21K game logs | **None** |
-| fielding.csv | 28 | ~67K records | **None** |
+| batting.csv | 39 | ~71K game logs | YES — season stats, game logs, home/away splits |
+| allplayers.csv | 24 | ~1,500 players | YES — player info, positions, bats/throws |
+| pitching.csv | 42 | ~21K game logs | YES — season stats, game logs, home/away splits |
+| fielding.csv | 28 | ~67K records | YES — per-position season aggregates |
 | gameinfo.csv | 43 | ~2,500 games | **None** |
 | plays.csv | 177 | ~193K plate appearances | **None** |
 | teamstats.csv | 111 | ~5K team-games | **None** |
@@ -99,25 +101,11 @@ We download Retrosheet season ZIPs that contain 7 CSV files. We currently only u
 - ~~Add `bat` (L/R/B batter hand) from allplayers.csv to `players` table~~ DONE — `bats` and `throws` columns added, populated from allplayers.csv + biodata.zip
 - Derivable rate stats (BB%, K%, SB%) don't need new columns — Claude computes via SQL on the fly
 
-**Phase B: Home/Away splits**
-- `vishome` flag already in batting.csv game logs
-- Add to `game_batting_logs` table, create new `home_away_splits` table (or extend platoon_splits with a `context` dimension)
-- Enables: "Judge's home vs road stats", "Best road OPS", day/night with gameinfo.csv join
-- Design decision: separate table per split type, or unified splits table with a `split_type` column?
+**~~Phase B: Home/Away splits~~** DONE — `home_away_splits` (27,558 rows) + `pitching_home_away_splits` (15,538 rows)
 
-**Phase C: Pitching stats (mirrors batting system)**
-- `pitching.csv` has 42 cols: IP (as outs), H, R, ER, HR, BB, K, HBP, WP, BK, etc.
-- New tables: `season_pitching_stats` (aggregated), `game_pitching_logs` (per-game)
-- Computed fields: ERA, WHIP, K/9, BB/9, K/BB, H/9
-- Streak detection extends naturally (PELT on per-game ERA or K/9)
-- Schema description + PromptStore + iOS stat grid all need pitching equivalents
-- Design decision: separate PlayerCard view for pitchers, or unified card with batting/pitching tabs?
+**~~Phase C: Pitching stats~~** DONE — Full pitching pipeline: `season_pitching_stats` (8,233), `game_pitching_logs` (195,734), `pitching_platoon_splits` (16,391), pitching streaks (3 tiers + current form), ERA+ computed. PlayerCard has pitcher view + two-way player segmented control (Ohtani rule: PA >= 130 + IP >= 30).
 
-**Phase D: Fielding stats**
-- `fielding.csv`: putouts, assists, errors, double plays, catcher-specific stats (PB, SB/CS allowed)
-- New table: `season_fielding_stats` (player-position-season aggregates)
-- Computed: fielding percentage, range factor
-- Lower priority — niche audience, but completes the picture
+**~~Phase D: Fielding stats~~** DONE — `season_fielding_stats` (22,303 rows) with per-position aggregates, fielding pct.
 
 **Phase E: Play-by-play analytics (advanced)**
 - `plays.csv`: 177 columns per plate appearance — pitch counts, event outcomes, base states
@@ -137,9 +125,9 @@ We download Retrosheet season ZIPs that contain 7 CSV files. We currently only u
 - `first_g`, `last_g` — career date range. Could enable "active in year X" queries.
 
 ### Database size & bundling strategy
-Current DB (2024-2025 only): **37 MB** bundled in-app — fast, works offline. But full historical data (1898+) with game logs would be **~1.8 GB** — way too big to bundle. Game logs are ~90% of the size (~9.4M rows). Season-level stats alone for all history would only be ~25 MB.
+Current DB (2016-2025, 10 years): **153 MB** bundled in-app — fast, works offline. Full historical data (1898+) with game logs would be ~1.8 GB — too big to bundle. Game logs are ~85% of size. Season-level stats alone for all history: ~25 MB.
 
-**Plan: Bundle recent, backend for historical.** Bundle the last 5-10 years of data (~100-150 MB) for speed. Historical queries (pre-2015 or so) go through the backend server. This keeps the app fast for the most common queries while still supporting "who led the league in HR in 1961?" via the server. The backend is already needed for API key security, so this piggybacks on that infrastructure.
+**Strategy: 10 years bundled, backend for historical.** 153 MB compresses to ~65-75 MB in IPA, well under iOS 200 MB cellular limit. Historical queries (pre-2016) go through the backend server. Backend also needed for API key security.
 
 **Important:** When updating the bundled DB, always copy the rebuilt `baseball_stats.db` from the project root into `ios/BaseballStatsEngine/Resources/baseball_stats.db`. They are separate files — the pipeline writes to the project root, but the app bundles from Resources.
 
@@ -148,4 +136,5 @@ Current DB (2024-2025 only): **37 MB** bundled in-app — fast, works offline. B
 2. ~~Swap to commercially licensed data sources~~ DONE (Retrosheet + Chadwick Bureau)
 3. ~~League-adjusted offense metric~~ DONE (OPS+)
 4. ~~Add pitching stats~~ DONE (season stats, game logs, streaks, splits, current form, ERA+)
-5. Expand historical data (1898+) — via backend server for game logs, bundled for season stats
+5. ~~Expand data to 10 years~~ DONE (2016-2025, 153 MB bundled)
+6. Expand historical data (1898-2015) — via backend server for game logs, bundled for season stats
