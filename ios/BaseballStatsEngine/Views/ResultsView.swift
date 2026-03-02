@@ -7,6 +7,7 @@ struct ResultsView: View {
     @FocusState private var isInputFocused: Bool
     @State private var resultsContentHeight: CGFloat = 0
     @State private var selectedPlayerName: String? = nil
+    @State private var selectedTeamCode: String? = nil
     let initialQuestion: String
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
@@ -47,6 +48,9 @@ struct ResultsView: View {
                                             } else {
                                                 selectedPlayerName = name
                                             }
+                                        },
+                                        onTeamTap: { code in
+                                            selectedTeamCode = code
                                         },
                                         onQueryTap: { query in
                                             appState.sendQuestion(query)
@@ -160,6 +164,12 @@ struct ResultsView: View {
             set: { if !$0 { selectedPlayerName = nil } }
         )) {
             PlayerCardView(playerName: selectedPlayerName ?? "")
+        }
+        .navigationDestination(isPresented: Binding(
+            get: { selectedTeamCode != nil },
+            set: { if !$0 { selectedTeamCode = nil } }
+        )) {
+            TeamCardView(teamCode: selectedTeamCode ?? "")
         }
         .onAppear {
             if appState.messages.isEmpty && !initialQuestion.isEmpty {

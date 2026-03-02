@@ -6,6 +6,7 @@ struct ResultCard: View {
     var onBack: (() -> Void)? = nil
     var isStreaming: Bool = false
     var onPlayerTap: ((String) -> Void)? = nil
+    var onTeamTap: ((String) -> Void)? = nil
     var onQueryTap: ((String) -> Void)? = nil
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
@@ -104,7 +105,8 @@ struct ResultCard: View {
         case .text(let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                Text(LocalizedStringKey(PlayerNameMatcher.addLinks(to: trimmed)))
+                let withLinks = PlayerNameMatcher.addTeamLinks(to: PlayerNameMatcher.addLinks(to: trimmed))
+                Text(LocalizedStringKey(withLinks))
                     .font(.system(.body, design: .rounded))
                     .foregroundStyle(.primary.opacity(0.85))
                     .tint(deepBlue)
@@ -118,6 +120,12 @@ struct ResultCard: View {
                             onPlayerTap?(name)
                             return .handled
                         }
+                        if url.scheme == "statchat",
+                           url.host == "team",
+                           let code = url.pathComponents.dropFirst().first?.removingPercentEncoding {
+                            onTeamTap?(code)
+                            return .handled
+                        }
                         return .systemAction
                     })
             }
@@ -128,7 +136,7 @@ struct ResultCard: View {
                 .padding(.vertical, 6)
 
         case .leaderboard(let grid):
-            LeaderboardView(grid: grid, onPlayerTap: onPlayerTap)
+            LeaderboardView(grid: grid, onPlayerTap: onPlayerTap, onTeamTap: onTeamTap)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 6)
 

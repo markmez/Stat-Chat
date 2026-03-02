@@ -23,6 +23,7 @@ struct HomeView: View {
     /// Wrapper types for value-based navigationDestination
     private struct ResultsDestination: Hashable { let question: String }
     private struct PlayerCardDestination: Hashable { let name: String }
+    private struct TeamCardDestination: Hashable { let code: String }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -32,6 +33,9 @@ struct HomeView: View {
                 }
                 .navigationDestination(for: PlayerCardDestination.self) { dest in
                     PlayerCardView(playerName: dest.name)
+                }
+                .navigationDestination(for: TeamCardDestination.self) { dest in
+                    TeamCardView(teamCode: dest.code)
                 }
         }
     }

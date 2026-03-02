@@ -3,6 +3,7 @@ import SwiftUI
 struct LeaderboardView: View {
     let grid: StatGridParser.StatGrid
     var onPlayerTap: ((String) -> Void)? = nil
+    var onTeamTap: ((String) -> Void)? = nil
 
     @State private var visibleCount = 25
 
@@ -69,8 +70,21 @@ struct LeaderboardView: View {
                         .foregroundStyle(.secondary)
                         .frame(width: rankWidth, alignment: .trailing)
 
-                    // Player name (tappable)
-                    if let extractedName = PlayerNameExtractor.extract(playerName),
+                    // Player or team name (tappable)
+                    if let teamCode = PlayerCardService.teamCodeFromFullName(playerName),
+                       let tap = onTeamTap {
+                        Button {
+                            tap(teamCode)
+                        } label: {
+                            Text(playerName)
+                                .font(.system(.callout, design: .rounded, weight: .medium))
+                                .foregroundStyle(deepBlue)
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                        .frame(width: nameWidth, alignment: .leading)
+                        .padding(.leading, rankNameGap)
+                    } else if let extractedName = PlayerNameExtractor.extract(playerName),
                        let tap = onPlayerTap {
                         Button {
                             tap(extractedName)

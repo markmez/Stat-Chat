@@ -14,6 +14,7 @@ struct PlayerCardView: View {
     @State private var showFormProjection = false
     @State private var splitTab: SplitTab = .platoon
     @State private var priorSeasonTabs: [Int: SplitTab] = [:]
+    @State private var selectedTeamCode: String? = nil
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
@@ -62,7 +63,15 @@ struct PlayerCardView: View {
 
                             // Full team name + position + age + handedness
                             HStack(spacing: 0) {
-                                Text(card.fullTeamName)
+                                Button {
+                                    if let code = PlayerCardService.teamCodeFromFullName(card.fullTeamName) {
+                                        selectedTeamCode = code
+                                    }
+                                } label: {
+                                    Text(card.fullTeamName)
+                                        .foregroundStyle(deepBlue)
+                                }
+                                .buttonStyle(.plain)
                                 if let positions = card.positions {
                                     Text("  \u{00B7}  \(positions)")
                                 }
@@ -257,6 +266,12 @@ struct PlayerCardView: View {
             }
         }
         .swipeBack()
+        .navigationDestination(isPresented: Binding(
+            get: { selectedTeamCode != nil },
+            set: { if !$0 { selectedTeamCode = nil } }
+        )) {
+            TeamCardView(teamCode: selectedTeamCode ?? "")
+        }
         .task {
             playerCard = await PlayerCardService.fetch(name: playerName)
             isLoading = false

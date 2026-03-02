@@ -56,6 +56,32 @@ struct PlayerCard: Sendable {
     let bio: String?
 }
 
+// MARK: - Team Card models
+
+struct TeamCard: Sendable {
+    let teamCode: String
+    let fullName: String
+    let seasons: [TeamSeasonData]
+}
+
+struct RosterEntry: Sendable {
+    let name: String
+    let position: String
+}
+
+struct TeamSeasonData: Sendable {
+    let year: Int
+    let stats: StatGridParser.StatGrid
+    let leaders: [StatLeader]
+    let roster: [RosterEntry]
+}
+
+struct StatLeader: Sendable {
+    let category: String
+    let name: String
+    let value: String
+}
+
 @MainActor
 enum PlayerCardService {
 
@@ -1849,5 +1875,168 @@ enum PlayerCardService {
             return parts.map { teamFullName(String($0)) }.joined(separator: " / ")
         }
         return teamFullName(teamStr)
+    }
+
+    // MARK: - Reverse team lookup
+
+    /// Lazily-built reverse map: full team name → Retrosheet code
+    private static let reverseTeamMap: [String: String] = {
+        // Collect all (code → fullName) pairs from the forward map, then invert.
+        // If multiple codes map to the same fullName, the first one wins (fine for reverse lookup).
+        let teams: [String: String] = [
+            "ARI": "Arizona Diamondbacks", "ATL": "Atlanta Braves",
+            "BAL": "Baltimore Orioles", "BOS": "Boston Red Sox",
+            "CHN": "Chicago Cubs", "CHA": "Chicago White Sox",
+            "CIN": "Cincinnati Reds", "CLE": "Cleveland Guardians",
+            "COL": "Colorado Rockies", "DET": "Detroit Tigers",
+            "HOU": "Houston Astros", "KCA": "Kansas City Royals",
+            "ANA": "Los Angeles Angels", "LAN": "Los Angeles Dodgers",
+            "MIA": "Miami Marlins", "MIL": "Milwaukee Brewers",
+            "MIN": "Minnesota Twins", "NYN": "New York Mets",
+            "NYA": "New York Yankees", "OAK": "Oakland Athletics",
+            "PHI": "Philadelphia Phillies", "PIT": "Pittsburgh Pirates",
+            "SDN": "San Diego Padres", "SFN": "San Francisco Giants",
+            "SEA": "Seattle Mariners", "SLN": "St. Louis Cardinals",
+            "TBA": "Tampa Bay Rays", "TEX": "Texas Rangers",
+            "TOR": "Toronto Blue Jays", "WAS": "Washington Nationals",
+        ]
+        var reverse: [String: String] = [:]
+        for (code, name) in teams {
+            reverse[name] = code
+        }
+        return reverse
+    }()
+
+    /// Returns the Retrosheet team code for a full team name, or nil if not found.
+    static func teamCodeFromFullName(_ name: String) -> String? {
+        reverseTeamMap[name]
+    }
+
+    // MARK: - Team card fetch
+
+    static func fetchTeamCard(teamCode: String) -> TeamCard? {
+        let fullName = teamFullName(teamCode)
+
+        // Find all seasons this team has data for
+        let seasonsSql = """
+            SELECT DISTINCT s.season
+            FROM season_batting_stats s
+            WHERE s.team = '\(sanitize(teamCode))' OR s.team LIKE '\(sanitize(teamCode))/%' OR s.team LIKE '%/\(sanitize(teamCode))'
+            ORDER BY s.season DESC
+            """
+        guard let seasonsResult = try? db.execute(sql: seasonsSql),
+              !seasonsResult.rows.isEmpty else { return nil }
+
+        let years = seasonsResult.rows.compactMap { Int($0[0]) }
+        guard !years.isEmpty else { return nil }
+
+        var teamSeasons: [TeamSeasonData] = []
+        for year in years {
+            let teamFilter = "(s.team = '\(sanitize(teamCode))' OR s.team LIKE '\(sanitize(teamCode))/%' OR s.team LIKE '%/\(sanitize(teamCode))')"
+
+            // 2a. Team aggregate stats
+            let aggSql = """
+                SELECT SUM(s.games), SUM(s.at_bats), SUM(s.runs), SUM(s.hits),
+                       SUM(s.doubles), SUM(s.triples), SUM(s.home_runs), SUM(s.rbi),
+                       SUM(s.stolen_bases), SUM(s.walks), SUM(s.strikeouts)
+                FROM season_batting_stats s
+                WHERE \(teamFilter) AND s.season = \(year)
+                """
+            guard let aggResult = try? db.execute(sql: aggSql),
+                  let aggRow = aggResult.rows.first,
+                  aggRow.count >= 11 else { continue }
+
+            let g = aggRow[0], ab = aggRow[1], r = aggRow[2], h = aggRow[3]
+            let d = aggRow[4], t = aggRow[5], hr = aggRow[6], rbi = aggRow[7]
+            let sb = aggRow[8], bb = aggRow[9], so = aggRow[10]
+
+            let abVal = Double(ab) ?? 0
+            let hVal = Double(h) ?? 0
+            let bbVal = Double(bb) ?? 0
+            let dVal = Double(d) ?? 0
+            let tVal = Double(t) ?? 0
+            let hrVal = Double(hr) ?? 0
+
+            let avg = abVal > 0 ? hVal / abVal : 0
+            // Approximate PA for team OBP (no HBP/SF aggregation readily available at team level)
+            let pa = abVal + bbVal
+            let obp = pa > 0 ? (hVal + bbVal) / pa : 0
+            let tbVal = hVal + dVal + 2 * tVal + 3 * hrVal
+            let slg = abVal > 0 ? tbVal / abVal : 0
+            let ops = obp + slg
+
+            let teamHeaders = ["R", "H", "2B", "3B", "HR", "RBI", "SB", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+            let teamValues = [r, h, d, t, hr, rbi, sb, bb, so,
+                              formatRate(String(avg)), formatRate(String(obp)),
+                              formatRate(String(slg)), formatRate(String(ops))]
+            let statsGrid = StatGridParser.StatGrid(
+                headers: teamHeaders,
+                rows: [StatGridParser.StatGrid.Row(label: fullName, values: teamValues)]
+            )
+
+            // 2b. Leaders (top 3 per category)
+            let leaderCategories: [(label: String, col: String, isRate: Bool)] = [
+                ("HR", "home_runs", false),
+                ("SB", "stolen_bases", false),
+                ("H", "hits", false),
+                ("AVG", "batting_avg", true),
+                ("OBP", "obp", true),
+                ("OPS", "ops", true),
+            ]
+            var leaders: [StatLeader] = []
+            for cat in leaderCategories {
+                let leaderSql = """
+                    SELECT p.name, s.\(cat.col)
+                    FROM season_batting_stats s
+                    JOIN players p ON s.player_id = p.player_id
+                    WHERE \(teamFilter) AND s.season = \(year) AND s.plate_appearances >= 50
+                    ORDER BY s.\(cat.col) DESC
+                    LIMIT 20
+                    """
+                if let leaderResult = try? db.execute(sql: leaderSql) {
+                    for lRow in leaderResult.rows {
+                        let value = cat.isRate ? formatRate(lRow[1]) : lRow[1]
+                        leaders.append(StatLeader(category: cat.label, name: lRow[0], value: value))
+                    }
+                }
+            }
+
+            // 2c. Roster (name + position only)
+            let rosterSql = """
+                SELECT p.name, p.positions, s.plate_appearances
+                FROM season_batting_stats s
+                JOIN players p ON s.player_id = p.player_id
+                WHERE \(teamFilter) AND s.season = \(year)
+                ORDER BY s.plate_appearances DESC
+                """
+            var rosterEntries: [(name: String, position: String)] = []
+            if let rosterResult = try? db.execute(sql: rosterSql) {
+                for rRow in rosterResult.rows {
+                    let playerName = rRow[0]
+                    var pos = rRow[1]
+                    if pos.isEmpty {
+                        let posSql = """
+                            SELECT sfs.position FROM season_fielding_stats sfs
+                            JOIN players p ON sfs.player_id = p.player_id
+                            WHERE p.name = '\(sanitize(playerName))' AND sfs.season = \(year)
+                            ORDER BY sfs.games DESC LIMIT 1
+                            """
+                        if let posResult = try? db.execute(sql: posSql),
+                           let posRow = posResult.rows.first {
+                            pos = posRow[0]
+                        }
+                    }
+                    rosterEntries.append((name: playerName, position: pos))
+                }
+            }
+
+            let roster = rosterEntries.map { RosterEntry(name: $0.name, position: $0.position) }
+            teamSeasons.append(TeamSeasonData(
+                year: year, stats: statsGrid, leaders: leaders, roster: roster
+            ))
+        }
+
+        guard !teamSeasons.isEmpty else { return nil }
+        return TeamCard(teamCode: teamCode, fullName: fullName, seasons: teamSeasons)
     }
 }

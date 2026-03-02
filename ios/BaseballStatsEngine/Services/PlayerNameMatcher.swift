@@ -960,4 +960,44 @@ enum PlayerNameMatcher {
         }
         return result
     }
+
+    /// Wrap team full names with `statchat://team/CODE` markdown links.
+    /// Apply AFTER `addLinks(to:)` so player links are already in place.
+    static func addTeamLinks(to text: String) -> String {
+        // All 30 team full names sorted longest first (avoid partial matches)
+        let teamNames: [(name: String, code: String)] = [
+            ("Arizona Diamondbacks", "ARI"), ("Atlanta Braves", "ATL"),
+            ("Baltimore Orioles", "BAL"), ("Boston Red Sox", "BOS"),
+            ("Chicago Cubs", "CHN"), ("Chicago White Sox", "CHA"),
+            ("Cincinnati Reds", "CIN"), ("Cleveland Guardians", "CLE"),
+            ("Colorado Rockies", "COL"), ("Detroit Tigers", "DET"),
+            ("Houston Astros", "HOU"), ("Kansas City Royals", "KCA"),
+            ("Los Angeles Angels", "ANA"), ("Los Angeles Dodgers", "LAN"),
+            ("Miami Marlins", "MIA"), ("Milwaukee Brewers", "MIL"),
+            ("Minnesota Twins", "MIN"), ("New York Mets", "NYN"),
+            ("New York Yankees", "NYA"), ("Oakland Athletics", "OAK"),
+            ("Philadelphia Phillies", "PHI"), ("Pittsburgh Pirates", "PIT"),
+            ("San Diego Padres", "SDN"), ("San Francisco Giants", "SFN"),
+            ("Seattle Mariners", "SEA"), ("St. Louis Cardinals", "SLN"),
+            ("Tampa Bay Rays", "TBA"), ("Texas Rangers", "TEX"),
+            ("Toronto Blue Jays", "TOR"), ("Washington Nationals", "WAS"),
+        ].sorted { $0.name.count > $1.name.count }
+
+        var result = text
+        for (name, code) in teamNames {
+            guard result.range(of: name) != nil else { continue }
+            let escaped = NSRegularExpression.escapedPattern(for: name)
+            // Don't re-link if already inside a markdown link
+            let pattern = "(?<![\\[\\w])" + escaped + "(?![\\]\\w])"
+            let link = "[\(name)](statchat://team/\(code))"
+            if let regex = try? NSRegularExpression(pattern: pattern) {
+                result = regex.stringByReplacingMatches(
+                    in: result,
+                    range: NSRange(result.startIndex..., in: result),
+                    withTemplate: link
+                )
+            }
+        }
+        return result
+    }
 }
