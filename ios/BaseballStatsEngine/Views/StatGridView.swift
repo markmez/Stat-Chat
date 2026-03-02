@@ -30,7 +30,7 @@ struct StatGridView: View {
         let keptHeaders = headers.enumerated().compactMap { emptyColumns.contains($0.offset) ? nil : $0.element }
         let keptRows = grid.rows.map { row in
             let keptValues = row.values.enumerated().compactMap { emptyColumns.contains($0.offset) ? nil : $0.element }
-            return StatGridParser.StatGrid.Row(label: row.label, values: keptValues)
+            return StatGridParser.StatGrid.Row(label: row.label, values: keptValues, note: row.note)
         }
         return StatGridParser.StatGrid(headers: keptHeaders, rows: keptRows, formMetadata: grid.formMetadata)
     }
@@ -480,7 +480,16 @@ struct StatGridView: View {
                     }
                 }
                 .padding(.top, row.label.isEmpty && index == 0 ? 10 : 4)
-                .padding(.bottom, showProjection ? 4 : 10)
+                .padding(.bottom, row.note != nil ? 4 : (showProjection ? 4 : 10))
+
+                if let note = row.note {
+                    Text(note)
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .italic()
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, showProjection ? 4 : 10)
+                }
 
                 // Projected 162-game pace row
                 if showProjection && canProject {

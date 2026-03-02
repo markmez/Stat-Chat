@@ -669,7 +669,7 @@ enum PlayerCardService {
                        ss.at_bats, ss.hits, ss.walks, ss.strikeouts,
                        ss.batting_avg, ss.obp, ss.slg, ss.ops, ss.home_runs
                 FROM streaks_sensitive ss
-                JOIN players p ON ss.player_id = p.player_id
+                JOIN players p ON ss.player_id = ss.player_id
                 WHERE p.name LIKE '%\(sanitize(name))%' AND ss.season = \(season) AND ss.performance = '\(performance)'
                 ORDER BY ss.ops \(orderDir)
                 """
@@ -693,6 +693,17 @@ enum PlayerCardService {
         guard let result, !result.rows.isEmpty else { return nil }
 
         let headers = ["G", "AB", "H", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "HR"]
+
+        // Look up league average OPS for context notes on cold streaks
+        var leagueOps: Double?
+        if performance == "cold" {
+            let leagueSql = "SELECT league_ops FROM league_averages WHERE season = \(season)"
+            if let leagueResult = try? db.execute(sql: leagueSql),
+               let leagueRow = leagueResult.rows.first {
+                leagueOps = Double(leagueRow[0])
+            }
+        }
+
         var rows: [StatGridParser.StatGrid.Row] = []
         for row in result.rows.prefix(4) {
             let startDate = formatDate(row[0])
@@ -708,9 +719,16 @@ enum PlayerCardService {
             let slg = formatRate(row[9])
             let ops = formatRate(row[10])
             let hr = row[11]
+
+            var note: String?
+            if performance == "cold", let lgOps = leagueOps, let streakOps = Double(row[10]), streakOps > lgOps {
+                note = "This \"cold\" streak was still above the \(season) league average OPS of \(formatRate(String(lgOps)))"
+            }
+
             rows.append(StatGridParser.StatGrid.Row(
                 label: label,
-                values: [games, ab, hits, walks, so, avg, obp, slg, ops, hr]
+                values: [games, ab, hits, walks, so, avg, obp, slg, ops, hr],
+                note: note
             ))
         }
 
@@ -853,6 +871,9 @@ enum PlayerCardService {
         parts.append("HEADER: " + grid.headers.joined(separator: ", "))
         for row in grid.rows {
             parts.append("ROW \(row.label): " + row.values.joined(separator: ", "))
+            if let note = row.note {
+                parts.append("NOTE: \(note)")
+            }
         }
         parts.append("[/STATGRID]")
 
@@ -2569,6 +2590,17 @@ enum PlayerCardService {
         guard let result, !result.rows.isEmpty else { return nil }
 
         let headers = ["G", "IP", "H", "ER", "BB", "SO", "HR", "ERA", "WHIP", "K/9"]
+
+        // Look up league average ERA for context notes on cold streaks
+        var leagueEra: Double?
+        if performance == "cold" {
+            let leagueSql = "SELECT league_era FROM league_pitching_averages WHERE season = \(season)"
+            if let leagueResult = try? db.execute(sql: leagueSql),
+               let leagueRow = leagueResult.rows.first {
+                leagueEra = Double(leagueRow[0])
+            }
+        }
+
         var rows: [StatGridParser.StatGrid.Row] = []
         for row in result.rows.prefix(4) {
             let startDate = formatDate(row[0])
@@ -2584,9 +2616,16 @@ enum PlayerCardService {
             let era = formatPitchingRate(row[9], decimals: 2)
             let whip = formatPitchingRate(row[10], decimals: 2)
             let k9 = formatPitchingRate(row[11], decimals: 1)
+
+            var note: String?
+            if performance == "cold", let lgEra = leagueEra, let streakEra = Double(row[9]), streakEra < lgEra {
+                note = "This \"cold\" streak was still below the \(season) league average ERA of \(formatPitchingRate(String(lgEra), decimals: 2))"
+            }
+
             rows.append(StatGridParser.StatGrid.Row(
                 label: label,
-                values: [games, ip, h, er, bb, so, hr, era, whip, k9]
+                values: [games, ip, h, er, bb, so, hr, era, whip, k9],
+                note: note
             ))
         }
 
@@ -2823,6 +2862,9 @@ enum PlayerCardService {
         parts.append("HEADER: " + grid.headers.joined(separator: ", "))
         for row in grid.rows {
             parts.append("ROW \(row.label): " + row.values.joined(separator: ", "))
+            if let note = row.note {
+                parts.append("NOTE: \(note)")
+            }
         }
         parts.append("[/STATGRID]")
 

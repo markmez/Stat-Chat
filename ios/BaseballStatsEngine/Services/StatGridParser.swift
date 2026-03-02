@@ -10,6 +10,7 @@ enum StatGridParser {
         struct Row: Sendable {
             let label: String
             let values: [String]
+            var note: String?
         }
 
         struct FormMetadata: Sendable {
@@ -137,6 +138,12 @@ enum StatGridParser {
                 let parts = valuesStr.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
                 guard !parts.isEmpty else { continue }
                 rows.append(StatGrid.Row(label: label, values: parts))
+            } else if line.hasPrefix("NOTE:") {
+                // Attach note to the most recently parsed row
+                if !rows.isEmpty {
+                    let noteText = String(line.dropFirst("NOTE:".count)).trimmingCharacters(in: .whitespaces)
+                    rows[rows.count - 1].note = noteText
+                }
             } else if line.hasPrefix("FORM:") {
                 // Parse FORM: Player Name, season, autoDetectedGameNumber, totalGames[, teamGames]
                 let formContent = String(line.dropFirst("FORM:".count))
