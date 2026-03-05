@@ -39,14 +39,13 @@ class SqlRunner:
         """
         is_streak = "streaks" in sql.lower()
 
-        conn = sqlite3.connect(DB_PATH)
         try:
+            conn = sqlite3.connect(DB_PATH)
             cursor = conn.cursor()
             cursor.execute(sql)
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
             rows = cursor.fetchall()
         except Exception as e:
-            conn.close()
             raise RuntimeError(str(e)) from e
 
         # Streak fallback: filtered query returned nothing → try all streaks
