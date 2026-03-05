@@ -42,18 +42,51 @@
 - **Location**: `ios/`
 - **Xcode project**: Generated via XcodeGen (`project.yml`), iOS 17.0+, Swift 6, zero dependencies
 - **Architecture**: SwiftUI + @Observable + @MainActor for strict concurrency
-- **Key files**: `AppState.swift` (state), `QueryEngine.swift` (orchestrator), `AnthropicService.swift` (Claude API with SSE streaming), `DatabaseService.swift` (SQLite C API), `PromptStore.swift` (all prompts), `KeychainHelper.swift` (API key storage)
+- **Key files**: `AppState.swift` (state + local interception), `QueryEngine.swift` (orchestrator + local routing/stat explanations/name extraction), `AnthropicService.swift` (Claude API with SSE streaming, prompt caching, Haiku routing), `DatabaseService.swift` (SQLite C API), `PromptStore.swift` (all prompts), `KeychainHelper.swift` (API key storage), `StatDefinitions.swift` (local stat definitions for zero-cost explanations)
 - **Views**: `HomeView` (search + animated sample queries), `ResultsView` (results + follow-up), `ResultCard` (user/assistant/error styling), `APIKeySetupView` (first-launch + settings), `AnimatedPlaceholder`, `LoadingIndicator`
 - **Streaming**: SSE parsing via `URLSession.shared.bytes(for:)`, typewriter effect via callback-based `onChunk` pattern
 - **Database**: 153MB `baseball_stats.db` bundled in Resources (read-only, 2016-2025, 10 years)
 - **Stat grid**: 21 stats (G through BABIP, PA and SF excluded for compact 3-row display). Career rows show "--" for OPS+ (multi-season weighting not implemented).
 - **Player card bio**: Dynamic age computed from birthdate (updates on player's birthday). Header shows handedness (Bats R / Throws R). About section shows birth date.
-- **Query routing**: `simple_lookup`, `streak_finder`, `current_form`, `stat_explanation` — Claude classifies, then dispatches
+- **Query routing**: `simple_lookup`, `streak_finder`, `current_form`, `stat_explanation` — local `classifyLocally()` handles obvious patterns first, then Claude Haiku classifies the rest. `AppState` intercepts ~25% of queries locally before `QueryEngine`.
 - **ResultsView layout**: Follow-up input hidden during loading, appears inline below short results or pinned to bottom for long results
+
+### API Cost Optimization (implemented)
+At scale (500K queries/mo), Claude API costs dominate (~$7,500-9,000/mo unoptimized). Five optimizations reduce per-query costs ~55-60%:
+
+**1. Prompt caching on SQL generation & answer generation** — biggest impact
+- SQL gen system prompt is ~6,100 tokens (schema + instructions), answer gen is ~1,500 tokens. Both sent with `cache_control: {"type": "ephemeral"}` for 90% input cost discount on cache hits ($0.30/M vs $3/M).
+- Requires `anthropic-beta: prompt-caching-2024-07-31` header on cached requests.
+- **Critical**: JSON body must be byte-identical for cache hits. Replaced `JSONSerialization.data(withJSONObject:)` (non-deterministic key ordering) with `Encodable` structs + `JSONEncoder(outputFormatting: .sortedKeys)`. `SystemContent` enum encodes as plain string or structured `[CachedBlock]` array.
+- Savings: ~$6,300/mo at 375K Claude-routed queries.
+
+**2. Haiku for query routing** — `routingModel = "claude-haiku-4-5-20251001"`
+- Routing is a trivial JSON classification (~500 tokens in, ~20 out). Haiku is ~70% cheaper than Sonnet for this.
+- `callAPI()` accepts a `model` parameter; `routeQuery()` uses `routingModel`, everything else uses `model` (Sonnet).
+- Savings: ~$450/mo.
+
+**3. Local current form name extraction** — eliminates SQL gen call for current_form queries
+- `handleCurrentFormQuery()` used to call `anthropic.generateSQL()` just to extract a player name via regex from the SQL output. Now uses `extractPlayerNameLocally()` which searches `PlayerNameMatcher.sortedNames` and `lastNameIndex` with word-boundary matching.
+- Season extracted via `PlayerNameMatcher.detectSeason()` instead of SQL regex.
+- Falls back to `handleSQLQuery()` if local extraction fails.
+- Savings: ~$790/mo (eliminates ~$0.021/query for ~10% of Claude-routed queries).
+
+**4. Local pattern-based routing** — `classifyLocally()` in `QueryEngine.ask()`
+- Before calling Claude's router, checks for obvious keyword patterns: streak/slump → `streak_finder`, lately/recently → `current_form`, "what is"/"explain" + stat keyword (no player name) → `stat_explanation`.
+- Catches ~30-40% of routed queries, saving the Haiku routing call entirely.
+- Savings: ~$200-270/mo.
+
+**5. Local stat explanations** — `handleLocalStatExplanation()` in `QueryEngine`
+- When route is `stat_explanation`, looks up from `StatDefinitions` dictionary + `PlayerNameMatcher.statAliasMap`. Returns `**ABBREV** — definition` with zero API cost.
+- Falls back to Claude `explainStat()` if stat not in local dictionary.
+- Savings: ~$135/mo.
+
+**Total estimated savings**: ~$7,900-8,000/mo at 500K queries → reduced to ~$3,000-3,500/mo.
 
 ### Key technical notes
 - Claude Sonnet sometimes wraps SQL in markdown code fences — `SQLSanitizer.swift` strips them with regex
-- Using Claude Sonnet (`claude-sonnet-4-5-20250929`) for all LLM calls
+- Using Claude Sonnet (`claude-sonnet-4-5-20250929`) for SQL generation, answer generation, streak/form description
+- Using Claude Haiku (`claude-haiku-4-5-20251001`) for query routing only
 - Conversation history (last 5 Q&A pairs) for follow-up questions
 - PA minimums for rate stat leaderboards: >=400 full season, >=200 partial
 - `hasAPIKey` must be a stored property (not computed) for SwiftUI reactivity
@@ -131,10 +164,52 @@ Current DB (2016-2025, 10 years): **153 MB** bundled in-app — fast, works offl
 
 **Important:** When updating the bundled DB, always copy the rebuilt `baseball_stats.db` from the project root into `ios/BaseballStatsEngine/Resources/baseball_stats.db`. They are separate files — the pipeline writes to the project root, but the app bundles from Resources.
 
+### Monetization (decided)
+- **Free to download**, 5 free queries per week (resets weekly). All query types count equally — no distinction between local and Claude-handled queries from the user's perspective.
+- **$2.99/month** for unlimited queries.
+- **$19.99/year** option ($1.67/month effective) — locks users in through the offseason when monthly churn spikes. Clean psychological price point.
+- **Rationale**: 5/week is low enough that an excited first-time user burns through them in one session, hitting the paywall while still in the "wow" moment. Weekly reset keeps free users coming back (retention + repeated conversion opportunities) rather than a lifetime bank that runs out and leads to app deletion. $2.99 is still impulse pricing — research shows negligible conversion difference vs $1.99 at the "will I pay at all?" decision point, but 50% more revenue per subscriber. Comp set: FantasyPros basic tier ($2.99), GolfLogix ($49.99/yr), The Athletic ($9.99/mo) — $2.99 is low end of sports enthusiast tools. Not trying to capture serious/analytics fans at a premium tier yet; current stats compete against free alternatives (Baseball Reference, FanGraphs). When Statcast/play-by-play analytics are added (data you can't get free), a premium tier ($5.99+) makes sense.
+- **Unit economics**: Post-optimization, blended cost per query is ~$0.005-0.008 for Claude-routed queries, ~25%+ handled locally at zero cost. Free user costs ~$0.02-0.04/week. Paying user at ~100 queries/month costs ~$0.30-0.50/month → 80%+ margin at $2.99.
+
+### Attribution & Disclosure Requirements
+- **AI disclosure** (Anthropic policy): Must disclose to users that they're interacting with an AI system. One umbrella statement is sufficient — no per-response labeling. Place in App Store description (marketing-friendly framing, e.g., "Powered by advanced AI to deliver accurate, real-time baseball intelligence") and optionally in an About screen. Do NOT label individual responses as AI vs non-AI — keep the seam invisible.
+- **Retrosheet** (required, exact wording): "The information used here was obtained free of charge from and is copyrighted by Retrosheet. Interested parties may contact Retrosheet at www.retrosheet.org." Must be displayed "prominently" — an About/Data Sources screen in-app + App Store description.
+- **Chadwick Bureau** (Open Database License): Attribution required, no specific wording mandated. Include alongside Retrosheet notice in About screen.
+- **Implementation**: Add an "About" or "Data Sources" screen accessible from settings. Include all three attributions. Mirror in App Store description.
+
+### Backend Server Plan (NEXT UP — ready to build)
+
+Target: `backend/` directory in the project root. Python FastAPI app buildable and testable locally against `baseball_stats.db`.
+
+**What gets built (code):**
+- FastAPI app structure with `main.py`, `routers/`, `services/`
+- `/query` endpoint — proxies to Claude API (routing, SQL gen, answer gen). Streams SSE back to the iOS client.
+- SQLite integration — reuses `query_engine.py` logic (import directly or refactor into a service)
+- Free tier metering — device UUID tracked in a small SQLite table; 5 queries/week enforced server-side; resets weekly
+- StoreKit receipt validation — `/validate-receipt` endpoint hits Apple's App Store Server API to verify subscriptions; marks device as paid in DB
+- `Dockerfile` + `railway.toml` / `fly.toml` for deployment
+- `requirements.txt` / `pyproject.toml`
+
+**What Mark handles (account/infra):**
+- Railway or Fly.io account setup + billing
+- Moving `ANTHROPIC_API_KEY` to hosting platform env vars
+- Apple Developer account for App Store Server API credentials (needed for server-side receipt validation)
+- DNS / custom domain (optional)
+- Uploading historical DB to server (future — current 153MB is bundled in-app)
+
+**iOS changes needed after backend exists:**
+- Swap `AnthropicService` base URL from `api.anthropic.com` to backend URL
+- Pass device UUID in request headers for metering
+- Pass StoreKit receipt for subscription validation
+- Remove on-device API key (KeychainHelper becomes unnecessary)
+
 ### Before public/commercial release
 1. **Backend server for API key security + historical data** — POC uses direct Claude API calls with key on-device. Server also needed for historical data too large to bundle.
-2. ~~Swap to commercially licensed data sources~~ DONE (Retrosheet + Chadwick Bureau)
-3. ~~League-adjusted offense metric~~ DONE (OPS+)
-4. ~~Add pitching stats~~ DONE (season stats, game logs, streaks, splits, current form, ERA+)
-5. ~~Expand data to 10 years~~ DONE (2016-2025, 153 MB bundled)
-6. Expand historical data (1898-2015) — via backend server for game logs, bundled for season stats
+2. **Implement free tier metering + StoreKit subscription** — track weekly query count, paywall UI, $2.99/month + $19.99/year IAP.
+3. **App Store description** — AI disclosure (marketing-friendly), Retrosheet attribution (exact wording), Chadwick Bureau attribution.
+4. **In-app About/Data Sources screen** — all three attributions (AI, Retrosheet, Chadwick).
+5. ~~Swap to commercially licensed data sources~~ DONE (Retrosheet + Chadwick Bureau)
+6. ~~League-adjusted offense metric~~ DONE (OPS+)
+7. ~~Add pitching stats~~ DONE (season stats, game logs, streaks, splits, current form, ERA+)
+8. ~~Expand data to 10 years~~ DONE (2016-2025, 153 MB bundled)
+9. Expand historical data (1898-2015) — via backend server for game logs, bundled for season stats

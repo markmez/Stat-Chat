@@ -25,3 +25,7 @@ venv/
 
 # Environment
 .env
+
+# Data files (large binaries; copy manually into ios/Resources for app builds)
+baseball_stats.db
+backend/metering.db
