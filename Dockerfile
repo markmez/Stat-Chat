@@ -14,9 +14,9 @@ COPY schema_description.py .
 COPY backend/ .
 
 ENV DB_PATH=/data/baseball_stats.db
-ENV METERING_DB_PATH=/data/metering.db
+ENV METERING_DB_PATH=/app/metering.db
 ENV FREE_QUERIES_PER_WEEK=5
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
