@@ -1,0 +1,117 @@
+"""
+POST /query — the main endpoint.
+
+Accepts a question + device_id + conversation history.
+Returns a Server-Sent Events stream.
+
+SSE event format:
+  data: {"type": "text", "text": "..."}        ← streaming answer chunk
+  data: {"type": "done"}                        ← finished successfully
+  data: {"type": "error", "message": "..."}    ← error, stream ends
+  data: {"type": "quota_exceeded", "count": N, "reset": "YYYY-MM-DD"}
+"""
+
+import json
+import asyncio
+
+from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from services.llm import LLMService
+from services.sql_runner import SqlRunner
+from services.metering import check_quota, increment_count
+
+router = APIRouter()
+llm = LLMService()
+runner = SqlRunner()
+
+
+class QueryRequest(BaseModel):
+    question: str
+    device_id: str
+    history: list[dict] = []  # [{role: "user"|"assistant", content: "..."}]
+
+
+@router.post("/query")
+async def query(req: QueryRequest):
+    return StreamingResponse(
+        _stream(req.question, req.device_id, req.history),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _stream(question: str, device_id: str, history: list[dict]):
+    """Core pipeline: quota check → route → SQL → execute → stream answer."""
+
+    def event(data: dict) -> str:
+        return f"data: {json.dumps(data)}\n\n"
+
+    # 1. Quota check
+    quota = check_quota(device_id)
+    if not quota["allowed"]:
+        yield event({
+            "type": "quota_exceeded",
+            "count": quota["count"],
+            "reset": quota["reset"],
+        })
+        return
+
+    # 2. Route the question
+    try:
+        route = await llm.route_query(question, history)
+    except Exception as e:
+        yield event({"type": "error", "message": f"Routing error: {e}"})
+        return
+
+    # 3a. Stat explanation — no SQL needed
+    if route == "stat_explanation":
+        try:
+            answer = await llm.explain_stat(question)
+            yield event({"type": "text", "text": answer})
+            yield event({"type": "done"})
+            increment_count(device_id)
+        except Exception as e:
+            yield event({"type": "error", "message": str(e)})
+        return
+
+    # 3b. Generate SQL (routing, simple_lookup, streak_finder, current_form all go here)
+    try:
+        sql = await llm.generate_sql(question, history)
+    except Exception as e:
+        yield event({"type": "error", "message": f"SQL generation error: {e}"})
+        return
+
+    if "OFF_TOPIC" in sql:
+        yield event({"type": "text", "text": "I'm a baseball stats engine — ask me about player stats, leaders, averages, and more!"})
+        yield event({"type": "done"})
+        increment_count(device_id)
+        return
+
+    if "NO_DATA" in sql:
+        yield event({"type": "text", "text": "I don't have data for that yet. Try asking about batting stats, pitching stats, or streaks from 2016–2025."})
+        yield event({"type": "done"})
+        increment_count(device_id)
+        return
+
+    # 4. Execute SQL (blocking SQLite call → thread pool)
+    try:
+        loop = asyncio.get_event_loop()
+        result_text, is_streak = await loop.run_in_executor(
+            None, runner.execute_and_format, sql
+        )
+    except RuntimeError as e:
+        yield event({"type": "error", "message": f"I had trouble with that query. Could you rephrase? (SQL error: {e})"})
+        return
+
+    # 5. Stream the answer
+    try:
+        async for chunk in llm.stream_answer(question, sql, result_text, history, is_streak=is_streak):
+            yield event({"type": "text", "text": chunk})
+    except Exception as e:
+        yield event({"type": "error", "message": str(e)})
+        return
+
+    yield event({"type": "done"})
+    increment_count(device_id)
