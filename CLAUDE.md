@@ -203,6 +203,30 @@ Target: `backend/` directory in the project root. Python FastAPI app buildable a
 - Pass StoreKit receipt for subscription validation
 - Remove on-device API key (KeychainHelper becomes unnecessary)
 
+### AnthropicService Swap — Rollback Plan
+
+**This is the riskiest step.** All other backend work (backend/ code, Railway deploy) is purely additive and doesn't affect the iOS app. The swap is the one change that touches working iOS code.
+
+**Before starting the swap:**
+- Create a git tag on the last clean iOS commit: `git tag ios-direct-anthropic-stable`
+- This gives a hard rollback point independent of branch history
+
+**How to do the swap safely:**
+- Keep all changes in a single focused commit (or small PR off `feature/ios-backend-swap`)
+- The swap touches: `AnthropicService.swift` (new base URL + SSE format), `QueryEngine.swift` (remove local routing shortcuts — backend handles routing now), `AppState.swift` (add device UUID generation), `KeychainHelper.swift` (can be removed or repurposed)
+- New SSE format from backend: `{"type":"text","text":"..."}` chunks + `{"type":"done"}` + `{"type":"quota_exceeded","count":N,"reset":"YYYY-MM-DD"}`
+- `quota_exceeded` shows a placeholder paywall UI (full StoreKit is a separate track)
+
+**To roll back if swap goes wrong:**
+```
+git revert <swap-commit-hash>
+```
+or hard reset to the tag:
+```
+git checkout ios-direct-anthropic-stable
+```
+The backend keeps running regardless — rolling back iOS just means the app goes back to calling Anthropic directly.
+
 ### Before public/commercial release
 1. **Backend server for API key security + historical data** — POC uses direct Claude API calls with key on-device. Server also needed for historical data too large to bundle.
 2. **Implement free tier metering + StoreKit subscription** — track weekly query count, paywall UI, $2.99/month + $19.99/year IAP.
