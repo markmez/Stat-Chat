@@ -190,12 +190,21 @@ Target: `backend/` directory in the project root. Python FastAPI app buildable a
 - `Dockerfile` + `railway.toml` / `fly.toml` for deployment
 - `requirements.txt` / `pyproject.toml`
 
+**Railway deployment status:**
+- Live at `https://stat-chat-production.up.railway.app` — health check passes
+- Volume `stat-chat-volume` mounted at `/data` — but `baseball_stats.db` not yet there
+- `ANTHROPIC_API_KEY` set in Railway env vars
+- Railway CLI has no `volume upload` — need startup script to download DB from a hosted URL
+
+**NEXT: Get `baseball_stats.db` onto Railway**
+Plan: add a lifespan startup check in `main.py` — if `/data/baseball_stats.db` doesn't exist, download it from a URL. Need to host the 153MB file somewhere first (Google Drive direct link, S3, or GitHub Release asset). Once URL is known, add `httpx` download logic to the lifespan handler.
+
 **What Mark handles (account/infra):**
-- Railway or Fly.io account setup + billing
-- Moving `ANTHROPIC_API_KEY` to hosting platform env vars
+- ~~Railway account setup~~ DONE
+- ~~`ANTHROPIC_API_KEY` env var~~ DONE
+- ~~Volume mounted at `/data`~~ DONE
+- Host `baseball_stats.db` at a stable URL (Google Drive, S3, GitHub Releases)
 - Apple Developer account for App Store Server API credentials (needed for server-side receipt validation)
-- DNS / custom domain (optional)
-- Uploading historical DB to server (future — current 153MB is bundled in-app)
 
 **iOS changes needed after backend exists:**
 - Swap `AnthropicService` base URL from `api.anthropic.com` to backend URL
