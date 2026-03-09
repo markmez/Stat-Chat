@@ -88,4 +88,55 @@ final class BackendService: Sendable {
 
         return fullText
     }
+
+    // MARK: - Player Card
+
+    /// Structured JSON response from /player-card endpoint.
+    struct PlayerCardData: Decodable, Sendable {
+        let player_info: PlayerInfoData?
+        let batting_seasons: [BattingSeasonData]
+        let pitching_seasons: [PitchingSeasonData]
+        let is_pitcher: Bool
+        let is_two_way: Bool
+    }
+
+    struct PlayerInfoData: Decodable, Sendable {
+        let name: String
+        let team: String
+        let birthdate: String?
+        let bats: String?
+        let `throws`: String?
+        let positions: String?
+    }
+
+    struct BattingSeasonData: Decodable, Sendable {
+        let year: Int
+        let team: String
+        let age: Int
+        let G, AB, R, H, doubles, triples, HR, RBI, SB, CS, BB, IBB, SO, HBP: Int
+        let AVG, OBP, SLG, OPS, OPS_plus, ISO, BABIP: String
+    }
+
+    struct PitchingSeasonData: Decodable, Sendable {
+        let year: Int
+        let team: String
+        let W, L, SV, G, GS, GF, CG, QS: Int
+        let IP: String
+        let H, R, ER, HR, BB, IBB, SO, HBP, WP, BK, BF, SH, SF, SB_allowed, CS_allowed: Int
+        let ERA, WHIP, K9, BB9, K_BB, H9, HR9, BAA, ERA_plus: String
+    }
+
+    /// Fetch structured player card data from the backend.
+    func fetchPlayerCard(name: String) async throws -> PlayerCardData {
+        var components = URLComponents(url: baseURL.appendingPathComponent("player-card"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "name", value: name)]
+        let url = components.url!
+
+        let (data, response) = try await URLSession.shared.data(from: url)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            let body = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw ServiceError.httpError(http.statusCode, body)
+        }
+        return try JSONDecoder().decode(PlayerCardData.self, from: data)
+    }
 }

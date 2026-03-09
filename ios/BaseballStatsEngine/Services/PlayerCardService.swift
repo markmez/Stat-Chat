@@ -222,6 +222,14 @@ enum PlayerCardService {
 
         // Fetch batting stats (all synchronous SQL)
         let seasons = fetchAllSeasons(name: name)
+
+        // If local DB has no seasons (historical player), try backend
+        if seasons.isEmpty {
+            if let card = await fetchFromBackend(name: name) {
+                return card
+            }
+        }
+
         let career = fetchCareerTotals(name: name)
         let splits = fetchPlatoonSplits(name: name)
         let streakGrid = fetchStreaks(name: name)
@@ -283,6 +291,229 @@ enum PlayerCardService {
             isTwoWay: playerIsTwoWay,
             pitchingSeasons: pitchingSeasons,
             pitchingCareerTotals: pitchingCareer
+        )
+    }
+
+    // MARK: - Backend fallback for historical players
+
+    private static let backendService = BackendService()
+
+    /// Fetch player card data from the backend for players not in the local DB.
+    private static func fetchFromBackend(name: String) async -> PlayerCard? {
+        guard let data = try? await backendService.fetchPlayerCard(name: name) else {
+            return nil
+        }
+        // Must have actual season data from backend
+        guard !data.batting_seasons.isEmpty || !data.pitching_seasons.isEmpty else {
+            return nil
+        }
+
+        let info = data.player_info
+        let displayName = info?.name ?? name
+        let infoTeam = info?.team ?? ""
+
+        // Convert backend batting seasons to local SeasonData
+        let seasons = data.batting_seasons.map { s in
+            let values = [
+                "\(s.G)", "\(s.AB)", "\(s.R)", "\(s.H)", "\(s.doubles)", "\(s.triples)",
+                "\(s.HR)", "\(s.RBI)", "\(s.SB)", "\(s.CS)", "\(s.BB)", "\(s.IBB)",
+                "\(s.SO)", "\(s.HBP)", s.AVG, s.OBP, s.SLG, s.OPS, s.OPS_plus, s.ISO, s.BABIP
+            ]
+            let grid = StatGridParser.StatGrid(
+                headers: allHeaders,
+                rows: [StatGridParser.StatGrid.Row(label: "", values: values)]
+            )
+            let counting: [String: Double] = [
+                "G": Double(s.G), "AB": Double(s.AB), "R": Double(s.R), "H": Double(s.H),
+                "2B": Double(s.doubles), "3B": Double(s.triples), "HR": Double(s.HR),
+                "RBI": Double(s.RBI), "SB": Double(s.SB), "CS": Double(s.CS),
+                "BB": Double(s.BB), "IBB": Double(s.IBB), "SO": Double(s.SO), "HBP": Double(s.HBP),
+            ]
+            return SeasonData(
+                year: s.year, team: s.team, age: s.age, games: s.G, teamGames: 162,
+                stats: grid, countingValues: counting,
+                platoonSplits: nil, homeAwaySplits: nil, streaks: nil,
+                fieldingStats: nil, currentForm: nil
+            )
+        }
+
+        // Convert backend pitching seasons
+        let pitchingSeasons: [PitchingSeasonData]? = data.pitching_seasons.isEmpty ? nil : data.pitching_seasons.map { s in
+            let values = [
+                "\(s.W)", "\(s.L)", "\(s.SV)", "\(s.G)", "\(s.GS)", "\(s.GF)",
+                "\(s.CG)", "\(s.QS)", s.IP, "\(s.H)", "\(s.R)", "\(s.ER)",
+                "\(s.HR)", "\(s.BB)", "\(s.IBB)", "\(s.SO)", "\(s.HBP)", "\(s.WP)",
+                "\(s.BK)", "\(s.BF)", "\(s.SH)", "\(s.SF)", "\(s.SB_allowed)", "\(s.CS_allowed)",
+                s.ERA, s.WHIP, s.K9, s.BB9, s.K_BB, s.H9, s.HR9, s.BAA, s.ERA_plus
+            ]
+            let displayValues = filterPitchingForDisplay(values)
+            let grid = StatGridParser.StatGrid(
+                headers: pitchingHeaders,
+                rows: [StatGridParser.StatGrid.Row(label: "", values: displayValues)]
+            )
+            let counting: [String: Double] = [
+                "W": Double(s.W), "L": Double(s.L), "SV": Double(s.SV),
+                "G": Double(s.G), "GS": Double(s.GS), "SO": Double(s.SO),
+                "BB": Double(s.BB), "H": Double(s.H), "ER": Double(s.ER),
+                "HR": Double(s.HR), "IP": Double(s.IP) ?? 0,
+            ]
+            return PitchingSeasonData(
+                year: s.year, team: s.team, games: s.G, gamesStarted: s.GS,
+                teamGames: 162, stats: grid, countingValues: counting,
+                platoonSplits: nil, homeAwaySplits: nil, streaks: nil, currentForm: nil
+            )
+        }
+
+        // Determine header team from most recent season
+        let headerTeam: String
+        if let latest = seasons.first {
+            let parts = latest.team.split(separator: "/")
+            headerTeam = String(parts.last ?? Substring(infoTeam))
+        } else if let latest = pitchingSeasons?.first {
+            let parts = latest.team.split(separator: "/")
+            headerTeam = String(parts.last ?? Substring(infoTeam))
+        } else {
+            headerTeam = infoTeam
+        }
+
+        // Compute career totals from backend seasons
+        let career = buildCareerTotals(from: seasons)
+        let pitchingCareer = pitchingSeasons.flatMap { buildPitchingCareerTotals(from: $0) }
+
+        // Parse birthdate
+        var birthDate: Date?
+        var dynamicAge: Int?
+        if let bdString = info?.birthdate {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd"
+            if let date = fmt.date(from: bdString) {
+                birthDate = date
+                dynamicAge = Calendar.current.dateComponents([.year], from: date, to: Date()).year
+            }
+        }
+
+        let bio = await fetchWikipediaBio(name: displayName)
+
+        return PlayerCard(
+            name: displayName,
+            team: headerTeam,
+            fullTeamName: teamFullName(headerTeam),
+            age: dynamicAge,
+            birthdate: birthDate,
+            positions: info?.positions,
+            bats: info?.bats,
+            throws_: info?.throws,
+            seasons: seasons,
+            careerTotals: career,
+            platoonSplits: nil,
+            streaks: nil,
+            bio: bio,
+            isPitcher: data.is_pitcher,
+            isTwoWay: data.is_two_way,
+            pitchingSeasons: pitchingSeasons,
+            pitchingCareerTotals: pitchingCareer
+        )
+    }
+
+    /// Build career totals grid from an array of SeasonData (for backend-sourced players).
+    private static func buildCareerTotals(from seasons: [SeasonData]) -> StatGridParser.StatGrid? {
+        guard seasons.count > 1 else { return nil }
+        var totals: [String: Double] = [:]
+        let countingKeys = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "SB", "CS", "BB", "IBB", "SO", "HBP"]
+        for s in seasons {
+            for key in countingKeys {
+                totals[key, default: 0] += s.countingValues[key] ?? 0
+            }
+        }
+        let ab = totals["AB"] ?? 0
+        let h = totals["H"] ?? 0
+        let bb = totals["BB"] ?? 0
+        let hbp = totals["HBP"] ?? 0
+        let sf = 0.0  // not tracked in counting
+        let pa = ab + bb + hbp + sf
+        let singles = h - (totals["2B"] ?? 0) - (totals["3B"] ?? 0) - (totals["HR"] ?? 0)
+        let tb = singles + 2 * (totals["2B"] ?? 0) + 3 * (totals["3B"] ?? 0) + 4 * (totals["HR"] ?? 0)
+
+        let avg = ab > 0 ? h / ab : 0
+        let obp = pa > 0 ? (h + bb + hbp) / pa : 0
+        let slg = ab > 0 ? tb / ab : 0
+        let ops = obp + slg
+        let iso = slg - avg
+
+        // BABIP = (H - HR) / (AB - SO - HR + SF)
+        let babipDenom = ab - (totals["SO"] ?? 0) - (totals["HR"] ?? 0)
+        let babip = babipDenom > 0 ? (h - (totals["HR"] ?? 0)) / babipDenom : 0
+
+        let values = [
+            "\(Int(totals["G"] ?? 0))", "\(Int(ab))", "\(Int(totals["R"] ?? 0))",
+            "\(Int(h))", "\(Int(totals["2B"] ?? 0))", "\(Int(totals["3B"] ?? 0))",
+            "\(Int(totals["HR"] ?? 0))", "\(Int(totals["RBI"] ?? 0))",
+            "\(Int(totals["SB"] ?? 0))", "\(Int(totals["CS"] ?? 0))",
+            "\(Int(bb))", "\(Int(totals["IBB"] ?? 0))",
+            "\(Int(totals["SO"] ?? 0))", "\(Int(hbp))",
+            String(format: "%.3f", avg), String(format: "%.3f", obp),
+            String(format: "%.3f", slg), String(format: "%.3f", ops),
+            "--", String(format: "%.3f", iso), String(format: "%.3f", babip),
+        ]
+        return StatGridParser.StatGrid(
+            headers: allHeaders,
+            rows: [StatGridParser.StatGrid.Row(label: "\(seasons.count) Seasons", values: values)]
+        )
+    }
+
+    /// Build pitching career totals from an array of PitchingSeasonData.
+    private static func buildPitchingCareerTotals(from seasons: [PitchingSeasonData]) -> StatGridParser.StatGrid? {
+        guard seasons.count > 1 else { return nil }
+        var w = 0, l = 0, sv = 0, g = 0, gs = 0, cg = 0, qs = 0
+        var h = 0, r = 0, er = 0, hr = 0, bb = 0, so = 0, hbp = 0, wp = 0, bk = 0, bf = 0
+        var ibb = 0, sh = 0, sf = 0, sbA = 0, csA = 0, gf = 0
+        var totalIPOuts = 0.0  // approximate from IP string
+
+        for s in seasons {
+            w += Int(s.countingValues["W"] ?? 0)
+            l += Int(s.countingValues["L"] ?? 0)
+            sv += Int(s.countingValues["SV"] ?? 0)
+            g += s.games
+            gs += s.gamesStarted
+            so += Int(s.countingValues["SO"] ?? 0)
+            bb += Int(s.countingValues["BB"] ?? 0)
+            h += Int(s.countingValues["H"] ?? 0)
+            er += Int(s.countingValues["ER"] ?? 0)
+            hr += Int(s.countingValues["HR"] ?? 0)
+            // Parse IP string (e.g. "201.1") to outs
+            if let ipVal = s.countingValues["IP"] {
+                let whole = Int(ipVal)
+                let frac = ipVal - Double(whole)
+                // IP is formatted as X.Y where Y is thirds
+                totalIPOuts += Double(whole * 3) + (frac * 10).rounded()
+            }
+        }
+
+        let ip = totalIPOuts / 3.0
+        let ipDisplay = "\(Int(totalIPOuts) / 3).\(Int(totalIPOuts) % 3)"
+        let era = ip > 0 ? 9.0 * Double(er) / ip : 0
+        let whip = ip > 0 ? Double(bb + h) / ip : 0
+        let k9 = ip > 0 ? 9.0 * Double(so) / ip : 0
+        let bb9 = ip > 0 ? 9.0 * Double(bb) / ip : 0
+        let kbb = bb > 0 ? Double(so) / Double(bb) : 0
+        let h9 = ip > 0 ? 9.0 * Double(h) / ip : 0
+        let hr9 = ip > 0 ? 9.0 * Double(hr) / ip : 0
+        let baa = bf > 0 ? Double(h) / Double(bf - bb - hbp - sh - sf) : 0
+
+        let values = [
+            "\(w)", "\(l)", "\(sv)", "\(g)", "\(gs)", "\(gf)",
+            "\(cg)", "\(qs)", ipDisplay, "\(h)", "\(r)", "\(er)",
+            "\(hr)", "\(bb)", "\(ibb)", "\(so)", "\(hbp)", "\(wp)",
+            "\(bk)", "\(bf)", "\(sh)", "\(sf)", "\(sbA)", "\(csA)",
+            String(format: "%.2f", era), String(format: "%.2f", whip),
+            String(format: "%.1f", k9), String(format: "%.1f", bb9),
+            String(format: "%.2f", kbb), String(format: "%.1f", h9),
+            String(format: "%.1f", hr9), String(format: "%.3f", baa), "--",
+        ]
+        let displayValues = filterPitchingForDisplay(values)
+        return StatGridParser.StatGrid(
+            headers: pitchingHeaders,
+            rows: [StatGridParser.StatGrid.Row(label: "\(seasons.count) Seasons", values: displayValues)]
         )
     }
 
