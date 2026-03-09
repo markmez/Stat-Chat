@@ -128,6 +128,29 @@ enum PlayerCardService {
 
     private static let db = DatabaseService()
 
+    /// Check if a player has any season data in the local DB.
+    static func hasLocalData(name: String) -> Bool {
+        let sql = """
+            SELECT 1 FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            LIMIT 1
+            """
+        if let result = try? db.execute(sql: sql), !result.rows.isEmpty {
+            return true
+        }
+        let pitchSql = """
+            SELECT 1 FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            LIMIT 1
+            """
+        if let result = try? db.execute(sql: pitchSql), !result.rows.isEmpty {
+            return true
+        }
+        return false
+    }
+
     /// Check if a player is primarily a pitcher
     static func isPitcher(name: String) -> Bool {
         let sql = """
@@ -317,7 +340,7 @@ enum PlayerCardService {
             let values = [
                 "\(s.G)", "\(s.AB)", "\(s.R)", "\(s.H)", "\(s.doubles)", "\(s.triples)",
                 "\(s.HR)", "\(s.RBI)", "\(s.SB)", "\(s.CS)", "\(s.BB)", "\(s.IBB)",
-                "\(s.SO)", "\(s.HBP)", s.AVG, s.OBP, s.SLG, s.OPS, s.OPS_plus, s.ISO, s.BABIP
+                "\(s.SO)", "\(s.HBP)", formatRate(s.AVG), formatRate(s.OBP), formatRate(s.SLG), formatRate(s.OPS), s.OPS_plus, formatRate(s.ISO), formatRate(s.BABIP)
             ]
             let grid = StatGridParser.StatGrid(
                 headers: allHeaders,
@@ -451,9 +474,9 @@ enum PlayerCardService {
             "\(Int(totals["SB"] ?? 0))", "\(Int(totals["CS"] ?? 0))",
             "\(Int(bb))", "\(Int(totals["IBB"] ?? 0))",
             "\(Int(totals["SO"] ?? 0))", "\(Int(hbp))",
-            String(format: "%.3f", avg), String(format: "%.3f", obp),
-            String(format: "%.3f", slg), String(format: "%.3f", ops),
-            "--", String(format: "%.3f", iso), String(format: "%.3f", babip),
+            formatRate(String(format: "%.3f", avg)), formatRate(String(format: "%.3f", obp)),
+            formatRate(String(format: "%.3f", slg)), formatRate(String(format: "%.3f", ops)),
+            "--", formatRate(String(format: "%.3f", iso)), formatRate(String(format: "%.3f", babip)),
         ]
         return StatGridParser.StatGrid(
             headers: allHeaders,
@@ -508,7 +531,7 @@ enum PlayerCardService {
             String(format: "%.2f", era), String(format: "%.2f", whip),
             String(format: "%.1f", k9), String(format: "%.1f", bb9),
             String(format: "%.2f", kbb), String(format: "%.1f", h9),
-            String(format: "%.1f", hr9), String(format: "%.3f", baa), "--",
+            String(format: "%.1f", hr9), formatRate(String(format: "%.3f", baa)), "--",
         ]
         let displayValues = filterPitchingForDisplay(values)
         return StatGridParser.StatGrid(
@@ -534,20 +557,28 @@ enum PlayerCardService {
 
         let info1 = fetchPlayerInfo(name: player1)
         let info2 = fetchPlayerInfo(name: player2)
-        let label1 = "\(info1?.name ?? player1) (\(info1?.team ?? ""))"
-        let label2 = "\(info2?.name ?? player2) (\(info2?.team ?? ""))"
+        let name1 = info1?.name ?? player1
+        let name2 = info2?.name ?? player2
 
         var parts: [String] = []
 
-        // Current season grid
+        // Current season grid — year shown next to each player name
         if let s1 = season1, let s2 = season2 {
-            let year = s1.year
-            parts.append("\(year) Season:\n")
-            parts.append("[STATGRID]")
-            parts.append(header)
-            parts.append("ROW: \(label1), \(s1.values.joined(separator: ", "))")
-            parts.append("ROW: \(label2), \(s2.values.joined(separator: ", "))")
-            parts.append("[/STATGRID]")
+            if s1.year == s2.year {
+                parts.append("\(s1.year) Season:\n")
+                parts.append("[STATGRID]")
+                parts.append(header)
+                parts.append("ROW: \(name1), \(s1.values.joined(separator: ", "))")
+                parts.append("ROW: \(name2), \(s2.values.joined(separator: ", "))")
+                parts.append("[/STATGRID]")
+            } else {
+                parts.append("Best Seasons:\n")
+                parts.append("[STATGRID]")
+                parts.append(header)
+                parts.append("ROW: \(name1) (\(s1.year)), \(s1.values.joined(separator: ", "))")
+                parts.append("ROW: \(name2) (\(s2.year)), \(s2.values.joined(separator: ", "))")
+                parts.append("[/STATGRID]")
+            }
         }
 
         // Career grid (only if multi-season data exists for at least one)
@@ -555,8 +586,8 @@ enum PlayerCardService {
             parts.append("\nCareer:\n")
             parts.append("[STATGRID]")
             parts.append(header)
-            parts.append("ROW: \(label1), \(c1.joined(separator: ", "))")
-            parts.append("ROW: \(label2), \(c2.joined(separator: ", "))")
+            parts.append("ROW: \(name1), \(c1.joined(separator: ", "))")
+            parts.append("ROW: \(name2), \(c2.joined(separator: ", "))")
             parts.append("[/STATGRID]")
         }
 
@@ -564,12 +595,124 @@ enum PlayerCardService {
             return "I don't have enough data to compare these two players."
         }
 
-        let name1 = info1?.name ?? player1
-        let name2 = info2?.name ?? player2
         parts.append("\n[SUGGEST]\(name1) vs lefties[/SUGGEST]")
         parts.append("[SUGGEST]\(name2) vs lefties[/SUGGEST]")
 
         return parts.joined(separator: "\n")
+    }
+
+    /// Async comparison that fetches from backend for players not in local DB.
+    static func buildComparisonAsync(player1: String, player2: String) async -> String {
+        let header = "HEADER: " + allHeaders.joined(separator: ", ")
+
+        // Fetch data — local first, backend fallback
+        let (name1, latest1, career1) = await comparisonData(for: player1)
+        let (name2, latest2, career2) = await comparisonData(for: player2)
+
+        var parts: [String] = []
+
+        // Best season grid — year shown next to each player name
+        if let s1 = latest1, let s2 = latest2 {
+            if s1.year == s2.year {
+                parts.append("\(s1.year) Season:\n")
+                parts.append("[STATGRID]")
+                parts.append(header)
+                parts.append("ROW: \(name1), \(s1.values.joined(separator: ", "))")
+                parts.append("ROW: \(name2), \(s2.values.joined(separator: ", "))")
+                parts.append("[/STATGRID]")
+            } else {
+                parts.append("Best Seasons:\n")
+                parts.append("[STATGRID]")
+                parts.append(header)
+                parts.append("ROW: \(name1) (\(s1.year)), \(s1.values.joined(separator: ", "))")
+                parts.append("ROW: \(name2) (\(s2.year)), \(s2.values.joined(separator: ", "))")
+                parts.append("[/STATGRID]")
+            }
+        }
+
+        if let c1 = career1, let c2 = career2 {
+            parts.append("\nCareer:\n")
+            parts.append("[STATGRID]")
+            parts.append(header)
+            parts.append("ROW: \(name1), \(c1.joined(separator: ", "))")
+            parts.append("ROW: \(name2), \(c2.joined(separator: ", "))")
+            parts.append("[/STATGRID]")
+        }
+
+        if parts.isEmpty {
+            return "I don't have enough data to compare these two players."
+        }
+
+        parts.append("\n[SUGGEST]\(name1) vs lefties[/SUGGEST]")
+        parts.append("[SUGGEST]\(name2) vs lefties[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    /// Get comparison data for a single player — tries local DB, falls back to backend.
+    private static func comparisonData(for name: String) async -> (label: String, latest: (year: Int, values: [String])?, career: [String]?) {
+        // Try local first
+        if hasLocalData(name: name) {
+            let info = fetchPlayerInfo(name: name)
+            let displayName = info?.name ?? name
+            return (displayName, fetchLatestSeasonRow(name: name), fetchCareerRow(name: name))
+        }
+
+        // Backend fallback
+        guard let data = try? await backendService.fetchPlayerCard(name: name),
+              !data.batting_seasons.isEmpty else {
+            return (name, nil, nil)
+        }
+
+        let info = data.player_info
+        let displayName = info?.name ?? name
+
+        // Latest season → formatted values matching allHeaders order
+        let latest: (year: Int, values: [String])? = data.batting_seasons.first.map { s in
+            let values = [
+                "\(s.G)", "\(s.AB)", "\(s.R)", "\(s.H)", "\(s.doubles)", "\(s.triples)",
+                "\(s.HR)", "\(s.RBI)", "\(s.SB)", "\(s.CS)", "\(s.BB)", "\(s.IBB)",
+                "\(s.SO)", "\(s.HBP)",
+                formatRate(s.AVG), formatRate(s.OBP), formatRate(s.SLG), formatRate(s.OPS),
+                s.OPS_plus, formatRate(s.ISO), formatRate(s.BABIP)
+            ]
+            return (s.year, values)
+        }
+
+        // Career totals from all seasons
+        guard data.batting_seasons.count > 1 else {
+            return (displayName, latest, nil)
+        }
+        var totG = 0, totAB = 0, totR = 0, totH = 0, tot2B = 0, tot3B = 0
+        var totHR = 0, totRBI = 0, totSB = 0, totCS = 0, totBB = 0, totIBB = 0
+        var totSO = 0, totHBP = 0
+        for s in data.batting_seasons {
+            totG += s.G; totAB += s.AB; totR += s.R; totH += s.H
+            tot2B += s.doubles; tot3B += s.triples; totHR += s.HR; totRBI += s.RBI
+            totSB += s.SB; totCS += s.CS; totBB += s.BB; totIBB += s.IBB
+            totSO += s.SO; totHBP += s.HBP
+        }
+        let ab = Double(totAB), h = Double(totH), bb = Double(totBB), hbp = Double(totHBP)
+        let pa = ab + bb + hbp
+        let avg = ab > 0 ? h / ab : 0
+        let obp = pa > 0 ? (h + bb + hbp) / pa : 0
+        let tb = h - Double(tot2B) - Double(tot3B) - Double(totHR) + 2*Double(tot2B) + 3*Double(tot3B) + 4*Double(totHR)
+        let slg = ab > 0 ? tb / ab : 0
+        let ops = obp + slg
+        let iso = slg - avg
+        let babipDenom = ab - Double(totSO) - Double(totHR)
+        let babip = babipDenom > 0 ? (h - Double(totHR)) / babipDenom : 0
+
+        let career = [
+            "\(totG)", "\(totAB)", "\(totR)", "\(totH)", "\(tot2B)", "\(tot3B)",
+            "\(totHR)", "\(totRBI)", "\(totSB)", "\(totCS)", "\(totBB)", "\(totIBB)",
+            "\(totSO)", "\(totHBP)",
+            formatRate(String(format: "%.3f", avg)), formatRate(String(format: "%.3f", obp)),
+            formatRate(String(format: "%.3f", slg)), formatRate(String(format: "%.3f", ops)),
+            "--", formatRate(String(format: "%.3f", iso)), formatRate(String(format: "%.3f", babip)),
+        ]
+
+        return (displayName, latest, career)
     }
 
     /// Fetch the latest season's 21 formatted stat values for a player.

@@ -414,13 +414,22 @@ struct StatGridView: View {
                     }
                     if let playerName = PlayerNameExtractor.extract(row.label),
                        let tap = onPlayerTap {
-                        Button {
-                            tap(playerName)
-                        } label: {
-                            Text(row.label)
-                                .font(.system(.callout, design: .rounded, weight: .semibold))
-                                .foregroundStyle(deepBlue)
-                                .underline(true, color: deepBlue.opacity(0.4))
+                        HStack(spacing: 0) {
+                            Button {
+                                tap(playerName)
+                            } label: {
+                                Text(playerName)
+                                    .font(.system(.callout, design: .rounded, weight: .semibold))
+                                    .foregroundStyle(deepBlue)
+                                    .underline(true, color: deepBlue.opacity(0.4))
+                            }
+                            // Show any suffix (e.g. year) after the tappable name
+                            if row.label != playerName,
+                               let parenIdx = row.label.firstIndex(of: "(") {
+                                Text(" " + String(row.label[parenIdx...]))
+                                    .font(.system(.callout, design: .rounded, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         .padding(.horizontal, 10)
                         .padding(.top, index == 0 ? 8 : 10)

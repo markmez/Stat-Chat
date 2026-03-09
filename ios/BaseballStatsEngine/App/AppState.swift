@@ -43,18 +43,37 @@ final class AppState {
             addToSearchHistory(trimmed)
         }
 
-        // Intercept comparison queries — build response from DB, skip Claude
-        if let (p1, p2) = PlayerNameMatcher.parseComparison(trimmed) {
-            let response: String
-            if PlayerCardService.isPitcher(name: p1) && PlayerCardService.isPitcher(name: p2) {
-                response = PlayerCardService.buildPitchingComparison(player1: p1, player2: p2)
+        // Intercept comparison queries — build response from structured data
+        let compResult = PlayerNameMatcher.parseComparison(trimmed)
+        if let (p1, p2) = compResult {
+            let bothLocal = PlayerCardService.hasLocalData(name: p1) && PlayerCardService.hasLocalData(name: p2)
+            if bothLocal {
+                // Both in local DB — synchronous
+                let response: String
+                if PlayerCardService.isPitcher(name: p1) && PlayerCardService.isPitcher(name: p2) {
+                    response = PlayerCardService.buildPitchingComparison(player1: p1, player2: p2)
+                } else {
+                    response = PlayerCardService.buildComparison(player1: p1, player2: p2)
+                }
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                addToConversationHistory(question: trimmed, answer: "Compared \(p1) and \(p2). \(response)")
+                return
             } else {
-                response = PlayerCardService.buildComparison(player1: p1, player2: p2)
+                // One or both need backend data — async fetch
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: ""))
+                let loadingIndex = messages.count - 1
+                isLoading = true
+                currentQueryTask = Task {
+                    let response = await PlayerCardService.buildComparisonAsync(player1: p1, player2: p2)
+                    guard !Task.isCancelled else { return }
+                    messages[loadingIndex] = Message(role: .assistant, content: response)
+                    isLoading = false
+                    addToConversationHistory(question: trimmed, answer: "Compared \(p1) and \(p2). \(response)")
+                }
+                return
             }
-            messages.append(Message(role: .user, content: trimmed))
-            messages.append(Message(role: .assistant, content: response))
-            addToConversationHistory(question: trimmed, answer: "Compared \(p1) and \(p2). \(response)")
-            return
         }
 
         // Intercept streak history queries — build response from DB, skip Claude

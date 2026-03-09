@@ -261,8 +261,27 @@ enum PlayerNameMatcher {
             cleaned = String(cleaned.dropLast(" compare".count))
         }
 
+        // Strip trailing punctuation
+        cleaned = cleaned.trimmingCharacters(in: CharacterSet(charactersIn: "?.!"))
+
+        // Strip preamble before a question mark (e.g. "who had the better peak career? mantle or judge")
+        if let qIndex = cleaned.firstIndex(of: "?") {
+            let afterQ = String(cleaned[cleaned.index(after: qIndex)...]).trimmingCharacters(in: .whitespaces)
+            if !afterQ.isEmpty {
+                cleaned = afterQ
+            }
+        }
+
+        // Strip preamble before a comma (e.g. "who had the better career, rizzuto or mantle")
+        if let commaIndex = cleaned.lastIndex(of: ",") {
+            let afterComma = String(cleaned[cleaned.index(after: commaIndex)...]).trimmingCharacters(in: .whitespaces)
+            if !afterComma.isEmpty {
+                cleaned = afterComma
+            }
+        }
+
         // Try splitting on delimiters (longer first to avoid partial matches)
-        let delimiters = [" compared to ", " versus ", " vs. ", " vs ", " and ", " to ", " with "]
+        let delimiters = [" compared to ", " versus ", " vs. ", " vs ", " or ", " and ", " to ", " with "]
         for delimiter in delimiters {
             guard let range = cleaned.range(of: delimiter) else { continue }
             let part1 = String(cleaned[cleaned.startIndex..<range.lowerBound])
@@ -270,11 +289,49 @@ enum PlayerNameMatcher {
             let part2 = String(cleaned[range.upperBound...])
                 .trimmingCharacters(in: .whitespaces)
 
+            let m1 = matchPlayer(part1)
+            let m2 = matchPlayer(part2)
+
             guard !part1.isEmpty, !part2.isEmpty,
-                  let name1 = matchPlayer(part1),
-                  let name2 = matchPlayer(part2),
+                  let name1 = m1,
+                  let name2 = m2,
                   name1 != name2 else { continue }
             return (name1, name2)
+        }
+
+        // Fallback: find two distinct player names anywhere in the string.
+        // Handles cases like "who had the better career mantle or aaron judge"
+        // where the preamble can't be cleanly stripped.
+        let comparisonSignals = [" vs ", " vs. ", " versus ", " or ", " compared to ", " and ", " better than "]
+        let hasComparisonSignal = comparisonSignals.contains(where: { cleaned.contains($0) })
+        if hasComparisonSignal {
+            var found: [String] = []
+            var used: Set<String> = []
+            // Check full names first (longer names first since sortedNames is sorted by length desc)
+            for name in sortedNames {
+                let lower = name.lowercased()
+                if containsWord(lower, in: cleaned), !used.contains(lower) {
+                    found.append(name)
+                    used.insert(lower)
+                    if found.count == 2 { break }
+                }
+            }
+            // Try last names if we don't have two yet
+            if found.count < 2 {
+                for (lastName, players) in lastNameIndex {
+                    if players.count == 1, containsWord(lastName, in: cleaned) {
+                        let fullName = players[0]
+                        if !used.contains(fullName.lowercased()) {
+                            found.append(fullName)
+                            used.insert(fullName.lowercased())
+                            if found.count == 2 { break }
+                        }
+                    }
+                }
+            }
+            if found.count == 2 {
+                return (found[0], found[1])
+            }
         }
 
         return nil
@@ -606,6 +663,10 @@ enum PlayerNameMatcher {
         let leaderboardWords = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest", "lowest",
                                 "who led", "who leads", "who hit the most", "who had the most", "leading"]
         if leaderboardWords.contains(where: { lower.contains($0) }) { return nil }
+
+        // Exclude comparison patterns — those go to parseComparison or backend
+        let comparisonWords = [" vs ", " vs. ", " versus ", " compared to ", " or ", " better than ", " and "]
+        if comparisonWords.contains(where: { lower.contains($0) }) { return nil }
 
         // Must have a player name
         var playerName: String?
