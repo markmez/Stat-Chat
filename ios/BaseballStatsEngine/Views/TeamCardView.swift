@@ -54,6 +54,11 @@ struct TeamCardView: View {
 
                         // Current season (most recent)
                         if let current = card.seasons.first {
+                            Text("\(String(current.year)) Season")
+                                .font(.system(.headline, design: .rounded, weight: .bold))
+                                .foregroundStyle(.primary)
+                                .padding(.horizontal, 20)
+
                             seasonSection(season: current, expanded: true)
                         }
 

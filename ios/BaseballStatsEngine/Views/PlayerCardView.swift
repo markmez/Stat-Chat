@@ -355,51 +355,80 @@ struct PlayerCardView: View {
         searchQuestion = trimmed
     }
 
+    /// Whether a player's most recent season is recent enough to auto-expand (current or previous calendar year).
+    private var isRecentPlayer: Bool {
+        let currentYear = Calendar.current.component(.year, from: Date())
+        let battingYear = playerCard?.seasons.first?.year ?? 0
+        let pitchingYear = playerCard?.pitchingSeasons?.first?.year ?? 0
+        return max(battingYear, pitchingYear) >= currentYear - 1
+    }
+
+    /// Whether projections make sense (only for an in-progress season — current year, team hasn't played 162 yet).
+    private func isCurrentSeason(_ season: SeasonData) -> Bool {
+        let currentYear = Calendar.current.component(.year, from: Date())
+        return season.year == currentYear && season.teamGames < 162
+    }
+
     // MARK: - Batter Card Content
 
     @ViewBuilder
     private func batterCardContent(card: PlayerCard) -> some View {
-        // Current season
-        if let current = card.seasons.first {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("\(String(current.year)) Season")
-                    .font(.system(.headline, design: .rounded, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 20)
-
-                if let teamLabel = seasonTeamLabel(teamStr: current.team, headerTeam: card.team) {
-                    Text(teamLabel)
-                        .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(.secondary)
+        if isRecentPlayer {
+            // Recent player: show most recent season expanded with all details
+            if let current = card.seasons.first {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(String(current.year)) Season")
+                        .font(.system(.headline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.primary)
                         .padding(.horizontal, 20)
+
+                    if let teamLabel = seasonTeamLabel(teamStr: current.team, headerTeam: card.team) {
+                        Text(teamLabel)
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 20)
+                    }
+
+                    StatGridView(grid: current.stats)
+                        .padding(.horizontal, 6)
                 }
 
-                StatGridView(grid: current.stats)
-                    .padding(.horizontal, 6)
+                // Current form section (includes projection when present)
+                if current.currentForm != nil {
+                    currentFormSection(season: current)
+                } else if isCurrentSeason(current) {
+                    // Projections only for in-progress current season
+                    projectedStatsSection(season: current)
+                }
+
+                // Unified splits section (platoon / home-away / hot streaks)
+                splitsSection(
+                    season: current,
+                    tab: $splitTab
+                )
             }
 
-            // Current form section (includes projection when present)
-            if current.currentForm != nil {
-                currentFormSection(season: current)
-            } else {
-                // Projected stats only when no current form (hot streak has its own projection)
-                projectedStatsSection(season: current)
+            // Career totals
+            if let career = card.careerTotals {
+                sectionView(title: "Career", grid: career)
             }
 
-            // Unified splits section (platoon / home-away / hot streaks)
-            splitsSection(
-                season: current,
-                tab: $splitTab
-            )
-        }
+            // Prior seasons — expandable in place
+            let priorSeasons = Array(card.seasons.dropFirst())
+            expandableSeasonsSection(seasons: priorSeasons, card: card)
+        } else {
+            // Historical player: show career first, all seasons collapsible
+            if let career = card.careerTotals {
+                sectionView(title: "Career", grid: career)
+            }
 
-        // Career totals
-        if let career = card.careerTotals {
-            sectionView(title: "Career", grid: career)
+            expandableSeasonsSection(seasons: card.seasons, card: card)
         }
+    }
 
-        // Prior seasons — expandable in place
-        let priorSeasons = Array(card.seasons.dropFirst())
+    @ViewBuilder
+    private func expandableSeasonsSection(seasons: [SeasonData], card: PlayerCard) -> some View {
+        let priorSeasons = seasons
         if !priorSeasons.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(priorSeasons, id: \.year) { season in
@@ -460,44 +489,57 @@ struct PlayerCardView: View {
 
     @ViewBuilder
     private func pitcherCardContent(card: PlayerCard, pitchingSeasons: [PitchingSeasonData]) -> some View {
-        // Current season
-        if let current = pitchingSeasons.first {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("\(String(current.year)) Season")
-                    .font(.system(.headline, design: .rounded, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 20)
-
-                if let teamLabel = seasonTeamLabel(teamStr: current.team, headerTeam: card.team) {
-                    Text(teamLabel)
-                        .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(.secondary)
+        if isRecentPlayer {
+            // Recent pitcher: show most recent season expanded
+            if let current = pitchingSeasons.first {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(String(current.year)) Season")
+                        .font(.system(.headline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.primary)
                         .padding(.horizontal, 20)
+
+                    if let teamLabel = seasonTeamLabel(teamStr: current.team, headerTeam: card.team) {
+                        Text(teamLabel)
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 20)
+                    }
+
+                    StatGridView(grid: current.stats)
+                        .padding(.horizontal, 6)
                 }
 
-                StatGridView(grid: current.stats)
-                    .padding(.horizontal, 6)
+                // Pitching current form section
+                if current.currentForm != nil {
+                    pitchingFormSection(season: current)
+                }
+
+                // Pitching splits section
+                pitchingSplitsSection(season: current, tab: $splitTab)
             }
 
-            // Pitching current form section
-            if current.currentForm != nil {
-                pitchingFormSection(season: current)
+            // Pitching career totals
+            if let career = card.pitchingCareerTotals {
+                sectionView(title: "Career", grid: career)
             }
 
-            // Pitching splits section
-            pitchingSplitsSection(season: current, tab: $splitTab)
-        }
+            // Prior pitching seasons — expandable
+            expandablePitchingSeasonsSection(seasons: Array(pitchingSeasons.dropFirst()), card: card)
+        } else {
+            // Historical pitcher: career first, all seasons collapsible
+            if let career = card.pitchingCareerTotals {
+                sectionView(title: "Career", grid: career)
+            }
 
-        // Pitching career totals
-        if let career = card.pitchingCareerTotals {
-            sectionView(title: "Career", grid: career)
+            expandablePitchingSeasonsSection(seasons: pitchingSeasons, card: card)
         }
+    }
 
-        // Prior pitching seasons — expandable
-        let priorPitching = Array(pitchingSeasons.dropFirst())
-        if !priorPitching.isEmpty {
+    @ViewBuilder
+    private func expandablePitchingSeasonsSection(seasons: [PitchingSeasonData], card: PlayerCard) -> some View {
+        if !seasons.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(priorPitching, id: \.year) { season in
+                ForEach(seasons, id: \.year) { season in
                     let isExpanded = expandedSeasons.contains(season.year)
 
                     Button {
