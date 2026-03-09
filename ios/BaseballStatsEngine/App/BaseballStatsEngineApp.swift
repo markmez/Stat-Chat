@@ -8,13 +8,7 @@ struct StatChatApp: App {
     var body: some Scene {
         WindowGroup {
             ZStack {
-                if appState.hasAPIKey {
-                    HomeView()
-                } else {
-                    NavigationStack {
-                        APIKeySetupView(isInitialSetup: true)
-                    }
-                }
+                HomeView()
 
                 if showLaunch {
                     LaunchAnimationView {

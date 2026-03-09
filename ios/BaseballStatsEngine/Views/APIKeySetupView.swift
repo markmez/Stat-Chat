@@ -72,7 +72,7 @@ struct APIKeySetupView: View {
                 if !isInitialSetup, KeychainHelper.load() != nil {
                     Button("Delete Key", role: .destructive) {
                         _ = KeychainHelper.delete()
-                        appState.refreshAPIKeyStatus()
+
                         dismiss()
                     }
                     .font(.system(.subheadline, design: .rounded))
@@ -94,7 +94,7 @@ struct APIKeySetupView: View {
 
         if KeychainHelper.save(apiKey: trimmed) {
             apiKeyText = ""
-            appState.refreshAPIKeyStatus()
+
             if !isInitialSetup {
                 dismiss()
             }

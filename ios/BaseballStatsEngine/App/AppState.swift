@@ -6,25 +6,30 @@ final class AppState {
     var messages: [Message] = []
     var isLoading = false
     var currentStreamingText = ""
-    var showAPIKeySetup = false
     var searchHistory: [String] = []
     /// Stores (originalQuery, ambiguousLastName) when disambiguation is pending
     var pendingDisambiguation: (query: String, lastName: String)?
 
-    private let queryEngine = QueryEngine()
+    private let backendService = BackendService()
     private let historyKey = "searchHistory"
     private let maxHistoryItems = 50
     private var currentQueryTask: Task<Void, Never>?
+    private var conversationHistory: [(String, String)] = []
+    private let maxHistory = 5
 
-    var hasAPIKey: Bool = KeychainHelper.load() != nil
+    static let deviceId: String = {
+        let key = "statchat_device_id"
+        if let existing = UserDefaults.standard.string(forKey: key) {
+            return existing
+        }
+        let newId = UUID().uuidString
+        UserDefaults.standard.set(newId, forKey: key)
+        return newId
+    }()
 
     init() {
         searchHistory = UserDefaults.standard.stringArray(forKey: historyKey) ?? []
         PlayerNameMatcher.load()
-    }
-
-    func refreshAPIKeyStatus() {
-        hasAPIKey = KeychainHelper.load() != nil
     }
 
     func sendQuestion(_ question: String, followUpContext: String? = nil) {
@@ -48,7 +53,7 @@ final class AppState {
             }
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
-            queryEngine.injectHistory(question: trimmed, answer: "Compared \(p1) and \(p2). \(response)")
+            addToConversationHistory(question: trimmed, answer: "Compared \(p1) and \(p2). \(response)")
             return
         }
 
@@ -63,7 +68,7 @@ final class AppState {
             if let response {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
-                queryEngine.injectHistory(question: trimmed, answer: response)
+                addToConversationHistory(question: trimmed, answer: response)
                 return
             }
         }
@@ -79,7 +84,7 @@ final class AppState {
             if let response {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
-                queryEngine.injectHistory(question: trimmed, answer: response)
+                addToConversationHistory(question: trimmed, answer: response)
                 return
             }
         }
@@ -95,7 +100,7 @@ final class AppState {
             if let response {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
-                queryEngine.injectHistory(question: trimmed, answer: response)
+                addToConversationHistory(question: trimmed, answer: response)
                 return
             }
         }
@@ -111,7 +116,7 @@ final class AppState {
             if let response {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
-                queryEngine.injectHistory(question: trimmed, answer: response)
+                addToConversationHistory(question: trimmed, answer: response)
                 return
             }
         }
@@ -127,7 +132,7 @@ final class AppState {
             if let response {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
-                queryEngine.injectHistory(question: trimmed, answer: response)
+                addToConversationHistory(question: trimmed, answer: response)
                 return
             }
         }
@@ -143,7 +148,7 @@ final class AppState {
             if let response {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
-                queryEngine.injectHistory(question: trimmed, answer: response)
+                addToConversationHistory(question: trimmed, answer: response)
                 return
             }
         }
@@ -162,7 +167,7 @@ final class AppState {
             }
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
-            queryEngine.injectHistory(question: trimmed, answer: response)
+            addToConversationHistory(question: trimmed, answer: response)
             return
         }
 
@@ -172,7 +177,7 @@ final class AppState {
                 stat: teamRanking.stat, season: teamRanking.season)
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
-            queryEngine.injectHistory(question: trimmed, answer: response)
+            addToConversationHistory(question: trimmed, answer: response)
             return
         }
 
@@ -182,7 +187,7 @@ final class AppState {
                 teamCode: teamTotal.teamCode, stat: teamTotal.stat, season: teamTotal.season)
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
-            queryEngine.injectHistory(question: trimmed, answer: response)
+            addToConversationHistory(question: trimmed, answer: response)
             return
         }
 
@@ -198,7 +203,7 @@ final class AppState {
             }
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
-            queryEngine.injectHistory(question: trimmed, answer: response)
+            addToConversationHistory(question: trimmed, answer: response)
             return
         }
 
@@ -212,7 +217,7 @@ final class AppState {
             }
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
-            queryEngine.injectHistory(question: trimmed, answer: response)
+            addToConversationHistory(question: trimmed, answer: response)
             return
         }
 
@@ -222,7 +227,7 @@ final class AppState {
             let response = "**\(defn.abbrev)** — \(defn.definition)\n\n[SUGGEST]\(statName) leaders[/SUGGEST]\n[SUGGEST]career \(statName) leaders[/SUGGEST]"
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
-            queryEngine.injectHistory(question: trimmed, answer: response)
+            addToConversationHistory(question: trimmed, answer: response)
             return
         }
 
@@ -252,12 +257,17 @@ final class AppState {
 
         currentQueryTask = Task {
             do {
-                _ = try await queryEngine.ask(trimmed) { [self] chunk in
+                let answer = try await backendService.ask(
+                    question: trimmed,
+                    deviceId: Self.deviceId,
+                    history: conversationHistory
+                ) { [self] chunk in
                     guard !Task.isCancelled, streamingIndex < messages.count else { return }
                     currentStreamingText += chunk
                     messages[streamingIndex] = Message(role: .assistant, content: currentStreamingText)
                 }
                 guard !Task.isCancelled else { return }
+                addToConversationHistory(question: trimmed, answer: answer)
                 // Append contextual SUGGEST pills based on query content
                 if streamingIndex < messages.count {
                     let pills = buildFallbackPills(for: trimmed)
@@ -318,7 +328,14 @@ final class AppState {
         messages.removeAll()
         isLoading = false
         currentStreamingText = ""
-        queryEngine.clearHistory()
+        conversationHistory.removeAll()
+    }
+
+    private func addToConversationHistory(question: String, answer: String) {
+        conversationHistory.append((question, answer))
+        if conversationHistory.count > maxHistory {
+            conversationHistory = Array(conversationHistory.suffix(maxHistory))
+        }
     }
 
     func addToSearchHistory(_ query: String) {

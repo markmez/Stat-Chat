@@ -4,7 +4,7 @@
 - **Location**: `/Users/markmezrich/Documents/claude/BaseballStatsEngine/`
 - **Design doc**: `/Users/markmezrich/Documents/claude/baseball design doc.pdf`
 - **What it is**: iOS app (Swift/SwiftUI) that answers natural language baseball questions using real data. Claude translates questions to SQL, SQLite provides ground truth.
-- **Current phase**: Phase 1 + Phase 2 + Phase 3 (iOS app) COMPLETE. Data pipeline swapped to Retrosheet (commercially viable). Compiles with zero errors/warnings.
+- **Current phase**: iOS app + backend deployed. iOS backend swap built (`feature/ios-backend-swap`), pending e2e verification.
 
 ### Data Pipeline (Retrosheet-native)
 - `data_pipeline/pull_stats.py` — pulls ALL data from Retrosheet: season stats (batting + pitching), game-level logs, platoon splits (Chadwick Bureau), home/away splits, fielding stats, and player bio data. **2016-2025 data loaded (10 years)** — 3,782 players, 14,173 batting season stats, 8,233 pitching season stats, 661,313 batting game logs, 195,734 pitching game logs, 15,379 platoon splits, 16,391 pitching platoon splits, 27,558 home/away splits, 22,303 fielding stats.
@@ -107,10 +107,11 @@ At scale (500K queries/mo), Claude API costs dominate (~$7,500-9,000/mo unoptimi
 | **OPS+** | League-adjusted offense metric, replaces wRC+ | DONE |
 | **Pitching stats** | Doubles addressable questions | DONE (full pipeline + iOS) |
 | **Historical data (1898+)** | LLMs get increasingly wrong the further back you go | 10 years bundled (2016-2025); pre-2016 needs backend |
-| **Statcast data** (exit velo, launch angle, sprint speed) | LLMs are terrible at this; rich analytical queries | NOT STARTED (2025+ only) |
 | **Situational splits** (home/away, by month, RISP) | Beyond platoon; LLMs can't do this reliably | Home/away DONE; month/RISP not started |
 | **Predictive/pace features** ("on pace for X") | Unique analytical value, not just lookup | BUILT (162-game projections in PlayerCardView) |
-| **Real-time/current season freshness** | LLM training data lags; pipeline can be near-real-time | 2016-2025 loaded |
+| **In-season live data feed** | LLM training data lags; real-time stats are table stakes | Provider TBD (MySportsFeeds or similar) |
+
+**Dropped:** Statcast data — no viable commercial license path.
 
 ### Data Expansion Roadmap
 
@@ -177,72 +178,33 @@ Current DB (2016-2025, 10 years): **153 MB** bundled in-app — fast, works offl
 - **Chadwick Bureau** (Open Database License): Attribution required, no specific wording mandated. Include alongside Retrosheet notice in About screen.
 - **Implementation**: Add an "About" or "Data Sources" screen accessible from settings. Include all three attributions. Mirror in App Store description.
 
-### Backend Server Plan (NEXT UP — ready to build)
+### Backend — DEPLOYED & WORKING
+- **Live at** `https://stat-chat-production.up.railway.app`
+- **Railway setup**: project `stat-chat`, service `stat-chat`, volume `stat-chat-volume` mounted at `/data`
+- **DB hosting**: `baseball_stats.db` (153MB, 2016-2025) on S3 at `https://stat-chat.s3.us-east-2.amazonaws.com/baseball_stats.db`. Startup script downloads to `/data/` on first boot.
+- **Metering**: `services/metering.py` tracks device UUIDs, 5 free queries/week, weekly Monday reset
+- **SSE event format**: `{"type":"text","text":"..."}`, `{"type":"done"}`, `{"type":"error","message":"..."}`, `{"type":"quota_exceeded","count":N,"reset":"YYYY-MM-DD"}`
 
-Target: `backend/` directory in the project root. Python FastAPI app buildable and testable locally against `baseball_stats.db`.
+### iOS backend swap — BUILT, pending e2e verification
+- **Branch**: `feature/ios-backend-swap`
+- **Git tag** `ios-direct-anthropic-stable` — rollback point
+- Created `BackendService.swift` (POST /query, SSE parsing), replaced `QueryEngine` usage in `AppState` with `BackendService`, added `deviceId` (UUID in UserDefaults), removed `hasAPIKey` gate. All local intercepts unchanged.
+- `QueryEngine.swift` and `AnthropicService.swift` kept in project (unused) for easy rollback
+- **Rollback**: `git revert <swap-commit>` or `git checkout ios-direct-anthropic-stable`
 
-**What gets built (code):**
-- FastAPI app structure with `main.py`, `routers/`, `services/`
-- `/query` endpoint — proxies to Claude API (routing, SQL gen, answer gen). Streams SSE back to the iOS client.
-- SQLite integration — reuses `query_engine.py` logic (import directly or refactor into a service)
-- Free tier metering — device UUID tracked in a small SQLite table; 5 queries/week enforced server-side; resets weekly
-- StoreKit receipt validation — `/validate-receipt` endpoint hits Apple's App Store Server API to verify subscriptions; marks device as paid in DB
-- `Dockerfile` + `railway.toml` / `fly.toml` for deployment
-- `requirements.txt` / `pyproject.toml`
+### Priority roadmap (in order)
+1. **Historical data (pre-2016) via backend** — pipeline supports it. Full history (1898+) loaded into backend DB on Railway. iOS queries for pre-2016 route through backend; 2016-2025 stays bundled locally. MUST for launch.
+2. **In-season live data feed** — MySportsFeeds or similar paid provider for current-season real-time stats. Required so the app isn't stale during the season. Provider TBD.
+3. **StoreKit subscription + paywall** — $2.99/month, $19.99/year. `/validate-receipt` endpoint on backend.
+4. **About/Data Sources screen + App Store description** — Retrosheet attribution (exact wording), Chadwick Bureau, AI disclosure.
 
-**Railway deployment status:**
-- Live at `https://stat-chat-production.up.railway.app` — health check passes
-- Volume `stat-chat-volume` mounted at `/data` — but `baseball_stats.db` not yet there
-- `ANTHROPIC_API_KEY` set in Railway env vars
-- Railway CLI has no `volume upload` — need startup script to download DB from a hosted URL
+### What's explicitly NOT happening
+- **Statcast data** — no viable commercial license path. Dropped from roadmap.
 
-**NEXT: Get `baseball_stats.db` onto Railway**
-Plan: add a lifespan startup check in `main.py` — if `/data/baseball_stats.db` doesn't exist, download it from a URL. Need to host the 153MB file somewhere first (Google Drive direct link, S3, or GitHub Release asset). Once URL is known, add `httpx` download logic to the lifespan handler.
-
-**What Mark handles (account/infra):**
-- ~~Railway account setup~~ DONE
-- ~~`ANTHROPIC_API_KEY` env var~~ DONE
-- ~~Volume mounted at `/data`~~ DONE
-- Host `baseball_stats.db` at a stable URL (Google Drive, S3, GitHub Releases)
-- Apple Developer account for App Store Server API credentials (needed for server-side receipt validation)
-
-**iOS changes needed after backend exists:**
-- Swap `AnthropicService` base URL from `api.anthropic.com` to backend URL
-- Pass device UUID in request headers for metering
-- Pass StoreKit receipt for subscription validation
-- Remove on-device API key (KeychainHelper becomes unnecessary)
-
-### AnthropicService Swap — Rollback Plan
-
-**This is the riskiest step.** All other backend work (backend/ code, Railway deploy) is purely additive and doesn't affect the iOS app. The swap is the one change that touches working iOS code.
-
-**Before starting the swap:**
-- Create a git tag on the last clean iOS commit: `git tag ios-direct-anthropic-stable`
-- This gives a hard rollback point independent of branch history
-
-**How to do the swap safely:**
-- Keep all changes in a single focused commit (or small PR off `feature/ios-backend-swap`)
-- The swap touches: `AnthropicService.swift` (new base URL + SSE format), `QueryEngine.swift` (remove local routing shortcuts — backend handles routing now), `AppState.swift` (add device UUID generation), `KeychainHelper.swift` (can be removed or repurposed)
-- New SSE format from backend: `{"type":"text","text":"..."}` chunks + `{"type":"done"}` + `{"type":"quota_exceeded","count":N,"reset":"YYYY-MM-DD"}`
-- `quota_exceeded` shows a placeholder paywall UI (full StoreKit is a separate track)
-
-**To roll back if swap goes wrong:**
-```
-git revert <swap-commit-hash>
-```
-or hard reset to the tag:
-```
-git checkout ios-direct-anthropic-stable
-```
-The backend keeps running regardless — rolling back iOS just means the app goes back to calling Anthropic directly.
-
-### Before public/commercial release
-1. **Backend server for API key security + historical data** — POC uses direct Claude API calls with key on-device. Server also needed for historical data too large to bundle.
-2. **Implement free tier metering + StoreKit subscription** — track weekly query count, paywall UI, $2.99/month + $19.99/year IAP.
-3. **App Store description** — AI disclosure (marketing-friendly), Retrosheet attribution (exact wording), Chadwick Bureau attribution.
-4. **In-app About/Data Sources screen** — all three attributions (AI, Retrosheet, Chadwick).
-5. ~~Swap to commercially licensed data sources~~ DONE (Retrosheet + Chadwick Bureau)
-6. ~~League-adjusted offense metric~~ DONE (OPS+)
-7. ~~Add pitching stats~~ DONE (season stats, game logs, streaks, splits, current form, ERA+)
-8. ~~Expand data to 10 years~~ DONE (2016-2025, 153 MB bundled)
-9. Expand historical data (1898-2015) — via backend server for game logs, bundled for season stats
+### Other pre-release items
+- ~~Swap to commercially licensed data sources~~ DONE
+- ~~League-adjusted offense metric~~ DONE (OPS+)
+- ~~Pitching stats~~ DONE (full pipeline + iOS)
+- ~~Expand data to 10 years~~ DONE (2016-2025, 153 MB bundled)
+- ~~Backend server~~ DONE (Railway)
+- ~~iOS backend swap~~ BUILT (pending verification)
