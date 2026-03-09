@@ -31,7 +31,7 @@ import requests
 DEFAULT_START = 2024
 DEFAULT_END = 2025
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "baseball_stats.db")
+DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(os.path.dirname(__file__)), "baseball_stats.db"))
 CACHE_DIR = os.path.join(os.path.dirname(__file__), ".cache")
 
 # Retrosheet CSV download URLs
@@ -1667,8 +1667,13 @@ def load_bio_data(conn):
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-def pull_and_load(start_season, end_season):
-    """Pull all data and load into SQLite."""
+def pull_and_load(start_season, end_season, skip_game_logs=False):
+    """Pull all data and load into SQLite.
+
+    Args:
+        skip_game_logs: If True, skip game logs, home/away splits, and pitching
+            equivalents. Useful for historical data where streaks aren't needed.
+    """
     conn = sqlite3.connect(DB_PATH)
     create_tables(conn)
 
@@ -1701,11 +1706,14 @@ def pull_and_load(start_season, end_season):
     # Phase 1: Players + season stats from Retrosheet
     load_players_and_season_stats(conn, start_season, end_season)
 
-    # Phase 2: Game logs from Retrosheet
-    load_game_logs(conn, start_season, end_season)
+    if not skip_game_logs:
+        # Phase 2: Game logs from Retrosheet
+        load_game_logs(conn, start_season, end_season)
 
-    # Phase 2b: Home/away splits from Retrosheet
-    load_home_away_splits(conn, start_season, end_season)
+        # Phase 2b: Home/away splits from Retrosheet
+        load_home_away_splits(conn, start_season, end_season)
+    else:
+        print("Skipping game logs and home/away splits (--skip-game-logs)")
 
     # Phase 2c: Fielding stats from Retrosheet
     load_fielding_stats(conn, start_season, end_season)
@@ -1722,8 +1730,13 @@ def pull_and_load(start_season, end_season):
 
     # Pitching phases
     load_pitching_season_stats(conn, start_season, end_season)
-    load_pitching_game_logs(conn, start_season, end_season)
-    load_pitching_home_away_splits(conn, start_season, end_season)
+
+    if not skip_game_logs:
+        load_pitching_game_logs(conn, start_season, end_season)
+        load_pitching_home_away_splits(conn, start_season, end_season)
+    else:
+        print("Skipping pitching game logs and home/away splits (--skip-game-logs)")
+
     load_pitching_retrosplits(conn, start_season, end_season)
     compute_league_pitching_averages(conn)
     compute_era_plus(conn)
@@ -1733,6 +1746,9 @@ def pull_and_load(start_season, end_season):
 
 
 if __name__ == "__main__":
-    start = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_START
-    end = int(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_END
-    pull_and_load(start, end)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = [a for a in sys.argv[1:] if a.startswith("--")]
+    start = int(args[0]) if len(args) > 0 else DEFAULT_START
+    end = int(args[1]) if len(args) > 1 else DEFAULT_END
+    skip_gl = "--skip-game-logs" in flags
+    pull_and_load(start, end, skip_game_logs=skip_gl)

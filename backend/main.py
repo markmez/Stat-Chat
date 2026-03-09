@@ -29,10 +29,10 @@ from routers import health, query          # noqa: E402
 from services.metering import init_metering_db  # noqa: E402
 
 
-DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats.db")
+DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
 DB_DOWNLOAD_URL = os.getenv(
     "DB_DOWNLOAD_URL",
-    "https://stat-chat.s3.us-east-2.amazonaws.com/baseball_stats.db",
+    "https://stat-chat.s3.us-east-2.amazonaws.com/baseball_stats_full.db",
 )
 
 

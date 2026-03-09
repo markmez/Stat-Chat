@@ -193,10 +193,11 @@ Current DB (2016-2025, 10 years): **153 MB** bundled in-app — fast, works offl
 - **Rollback**: `git revert <swap-commit>` or `git checkout ios-direct-anthropic-stable`
 
 ### Priority roadmap (in order)
-1. **Historical data (pre-2016) via backend** — pipeline supports it. Full history (1898+) loaded into backend DB on Railway. iOS queries for pre-2016 route through backend; 2016-2025 stays bundled locally. MUST for launch.
+1. **Historical data (pre-2016) via backend** — pipeline running 1898-2025 into `baseball_stats_full.db`. Streak detection deferred for historical (low value). Upload to S3, update Railway. MUST for launch.
 2. **In-season live data feed** — MySportsFeeds or similar paid provider for current-season real-time stats. Required so the app isn't stale during the season. Provider TBD.
-3. **StoreKit subscription + paywall** — $2.99/month, $19.99/year. `/validate-receipt` endpoint on backend.
-4. **About/Data Sources screen + App Store description** — Retrosheet attribution (exact wording), Chadwick Bureau, AI disclosure.
+3. **Analytics** — Mixpanel (preferred). Single event per query from iOS side with `query_type` property (e.g. `local_comparison`, `local_leaderboard`, `backend_claude`). Full picture of all queries, filterable by type. Key metric: top searches.
+4. **StoreKit subscription + paywall** — $2.99/month, $19.99/year. `/validate-receipt` endpoint on backend.
+5. **About/Data Sources screen + App Store description** — Retrosheet attribution (exact wording), Chadwick Bureau, AI disclosure.
 
 ### What's explicitly NOT happening
 - **Statcast data** — no viable commercial license path. Dropped from roadmap.

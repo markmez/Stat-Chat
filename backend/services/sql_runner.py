@@ -14,7 +14,7 @@ import sqlite3
 
 DB_PATH = os.getenv(
     "DB_PATH",
-    os.path.join(os.path.dirname(__file__), "..", "..", "baseball_stats.db"),
+    os.path.join(os.path.dirname(__file__), "..", "..", "baseball_stats_full.db"),
 )
 
 MAX_ROWS = 50
