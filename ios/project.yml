@@ -18,6 +18,8 @@ targets:
         buildPhase: resources
       - path: BaseballStatsEngine/Resources/Assets.xcassets
         buildPhase: resources
+      - path: BaseballStatsEngine/Resources/all_players.json
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.statchat.app

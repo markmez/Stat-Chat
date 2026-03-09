@@ -190,9 +190,20 @@ enum PlayerNameMatcher {
     }
 
     static func load() {
-        let db = DatabaseService()
-        guard let result = try? db.execute(sql: "SELECT DISTINCT name FROM players", maxRows: 0) else { return }
-        let names = result.rows.compactMap { $0.first }
+        // Load names from bundled all_players.json (full historical, 22K+ players)
+        // Falls back to local DB if JSON not found
+        var names: [String] = []
+        if let url = Bundle.main.url(forResource: "all_players", withExtension: "json"),
+           let data = try? Data(contentsOf: url),
+           let players = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            names = players.compactMap { $0["name"] as? String }
+        } else {
+            let db = DatabaseService()
+            if let result = try? db.execute(sql: "SELECT DISTINCT name FROM players", maxRows: 0) {
+                names = result.rows.compactMap { $0.first }
+            }
+        }
+
         // Sort longest first so "Bobby Witt Jr." matches before "Bobby Witt"
         sortedNames = names.sorted { $0.count > $1.count }
 
