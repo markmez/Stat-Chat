@@ -11,6 +11,7 @@ Or from project root:
 
 import os
 import sys
+import urllib.request
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -28,8 +29,27 @@ from routers import health, query          # noqa: E402
 from services.metering import init_metering_db  # noqa: E402
 
 
+DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats.db")
+DB_DOWNLOAD_URL = os.getenv(
+    "DB_DOWNLOAD_URL",
+    "https://stat-chat.s3.us-east-2.amazonaws.com/baseball_stats.db",
+)
+
+
+def ensure_db():
+    """Download baseball_stats.db from S3 if it's not already on the volume."""
+    if os.path.exists(DB_PATH):
+        print(f"Database found at {DB_PATH}")
+        return
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    print(f"Downloading database from {DB_DOWNLOAD_URL} ...")
+    urllib.request.urlretrieve(DB_DOWNLOAD_URL, DB_PATH)
+    print(f"Database downloaded ({os.path.getsize(DB_PATH) // 1_000_000} MB)")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    ensure_db()
     init_metering_db()
     yield
 
