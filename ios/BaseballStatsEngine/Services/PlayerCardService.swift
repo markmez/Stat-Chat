@@ -1889,6 +1889,107 @@ enum PlayerCardService {
         return parts.joined(separator: "\n")
     }
 
+    // MARK: - Home/away splits (chat response builder)
+
+    /// Build a home/away splits response for a batter.
+    static func buildHomeAwaySplits(name: String, location: String?, season: Int) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        var splitFilter = ""
+        if let location {
+            splitFilter = " AND has.split = '\(location)'"
+        }
+
+        let sql = """
+            SELECT has.split, has.games, has.at_bats, has.runs, has.hits,
+                   has.doubles, has.triples, has.home_runs, has.rbi,
+                   has.walks, has.strikeouts,
+                   has.batting_avg, has.obp, has.slg, has.ops, has.iso, has.babip
+            FROM home_away_splits has
+            JOIN players p ON has.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND has.season = \(season)\(splitFilter)
+            ORDER BY has.split DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+
+        let subtitle: String
+        if let location {
+            subtitle = location == "home" ? "Home" : "Away"
+        } else {
+            subtitle = "Home vs Away"
+        }
+
+        var parts: [String] = []
+        parts.append("**\(displayName)** \u{2014} \(season) \(subtitle)\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + headers.joined(separator: ", "))
+        for row in result.rows.prefix(2) {
+            let splitLabel = row[0] == "home" ? "Home" : "Away"
+            let values = formatValues(headers: headers, values: Array(row.dropFirst()))
+            parts.append("ROW \(splitLabel): " + values.joined(separator: ", "))
+        }
+        parts.append("[/STATGRID]")
+
+        parts.append("\n[TIP]Tap a player name for their full profile.[/TIP]")
+        parts.append("\n[SUGGEST]\(displayName) \(season)[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    /// Build a home/away splits response for a pitcher.
+    static func buildPitchingHomeAwaySplits(name: String, location: String?, season: Int) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        var splitFilter = ""
+        if let location {
+            splitFilter = " AND phas.split = '\(location)'"
+        }
+
+        let sql = """
+            SELECT phas.split, phas.games, phas.games_started, phas.innings_pitched,
+                   phas.hits, phas.earned_runs, phas.home_runs, phas.walks, phas.strikeouts,
+                   phas.era, phas.whip, phas.k_per_9, phas.bb_per_9, phas.baa
+            FROM pitching_home_away_splits phas
+            JOIN players p ON phas.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND phas.season = \(season)\(splitFilter)
+            ORDER BY phas.split DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["G", "GS", "IP", "H", "ER", "HR", "BB", "SO", "ERA", "WHIP", "K/9", "BB/9", "BAA"]
+
+        let subtitle: String
+        if let location {
+            subtitle = location == "home" ? "Home" : "Away"
+        } else {
+            subtitle = "Home vs Away"
+        }
+
+        var parts: [String] = []
+        parts.append("**\(displayName)** \u{2014} \(season) \(subtitle)\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + headers.joined(separator: ", "))
+        for row in result.rows.prefix(2) {
+            let splitLabel = row[0] == "home" ? "Home" : "Away"
+            let values = formatPitchingValues(headers: headers, values: Array(row.dropFirst()))
+            parts.append("ROW \(splitLabel): " + values.joined(separator: ", "))
+        }
+        parts.append("[/STATGRID]")
+
+        parts.append("\n[TIP]Tap a player name for their full profile.[/TIP]")
+        parts.append("\n[SUGGEST]\(displayName) \(season)[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
     // MARK: - Leaderboard (chat response builder)
 
     /// Build a leaderboard for the given stat and scope (season, all-time single season, or career).

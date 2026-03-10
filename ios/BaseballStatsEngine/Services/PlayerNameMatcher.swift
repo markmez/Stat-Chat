@@ -154,8 +154,8 @@ enum PlayerNameMatcher {
     static func detectSeason(_ input: String, defaultToMostRecent: Bool = false) -> Int? {
         let lower = input.lowercased()
 
-        // Explicit year (2020-2029)
-        if let range = lower.range(of: "20[2][0-9]", options: .regularExpression),
+        // Explicit 4-digit year (1898-2029)
+        if let range = lower.range(of: "\\b(189[89]|19\\d{2}|20[0-2]\\d)\\b", options: .regularExpression),
            let year = Int(lower[range]) {
             return year
         }
@@ -744,6 +744,57 @@ enum PlayerNameMatcher {
 
         let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
         return (name, hand, season)
+    }
+
+    // MARK: - Home/away splits parser
+
+    /// Detect queries like "Judge home vs away", "Soto at home", "Ohtani road splits".
+    /// Returns player name, location filter (home/away/nil for both), and season.
+    static func parseHomeAwaySplits(_ input: String) -> (name: String, location: String?, season: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        let homeTriggers = ["at home", "home splits", "home stats", "home numbers",
+                            "at home field", "home games"]
+        let awayTriggers = ["on the road", "road splits", "road stats", "away splits",
+                            "away stats", "away games", "road numbers", "road games"]
+        let bothTriggers = ["home vs away", "home and away", "home/away", "home away splits",
+                            "home away", "home vs. away", "home or away"]
+
+        var location: String?
+        let hasBoth = bothTriggers.contains(where: { lower.contains($0) })
+        let hasHome = homeTriggers.contains(where: { lower.contains($0) })
+        let hasAway = awayTriggers.contains(where: { lower.contains($0) })
+
+        if hasBoth {
+            location = nil
+        } else if hasHome {
+            location = "home"
+        } else if hasAway {
+            location = "away"
+        } else {
+            return nil
+        }
+
+        // Must have a player name
+        var playerName: String?
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) {
+                playerName = name
+                break
+            }
+        }
+        if playerName == nil {
+            for (lastName, players) in lastNameIndex {
+                if containsWord(lastName, in: lower) && players.count == 1 {
+                    playerName = players[0]
+                    break
+                }
+            }
+        }
+        guard let name = playerName else { return nil }
+
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        return (name, location, season)
     }
 
     // MARK: - Leaderboard parser

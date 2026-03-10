@@ -172,6 +172,22 @@ final class AppState {
             }
         }
 
+        // Intercept home/away splits queries — "Judge home vs away", "Soto at home"
+        if let splits = PlayerNameMatcher.parseHomeAwaySplits(trimmed) {
+            let response: String?
+            if PlayerCardService.isPitcher(name: splits.name) {
+                response = PlayerCardService.buildPitchingHomeAwaySplits(name: splits.name, location: splits.location, season: splits.season)
+            } else {
+                response = PlayerCardService.buildHomeAwaySplits(name: splits.name, location: splits.location, season: splits.season)
+            }
+            if let response {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                addToConversationHistory(question: trimmed, answer: response)
+                return
+            }
+        }
+
         // Intercept threshold queries — "who hit 40 home runs?", "players batting over .300"
         if let threshold = PlayerNameMatcher.parseThreshold(trimmed) {
             let response: String
