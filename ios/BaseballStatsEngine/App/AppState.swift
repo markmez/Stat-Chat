@@ -20,6 +20,16 @@ final class AppState {
     private var conversationHistory: [(String, String)] = []
     private let maxHistory = 5
 
+    /// The actual calendar year (e.g. 2026).
+    private var currentSeasonYear: Int {
+        Calendar.current.component(.year, from: Date())
+    }
+
+    /// Whether the current calendar year's data is in the local bundled DB.
+    private var isCurrentSeasonLocal: Bool {
+        PlayerCardService.isLocalSeason(currentSeasonYear)
+    }
+
     static let deviceId: String = {
         let key = "statchat_device_id"
         if let existing = UserDefaults.standard.string(forKey: key) {
@@ -84,23 +94,28 @@ final class AppState {
         }
 
         // Intercept streak history queries — build response from DB, skip Claude
+        // Only intercept if the query targets a season we have locally
         if let streak = PlayerNameMatcher.parseStreakQuery(trimmed) {
-            let response: String?
-            if PlayerCardService.isPitcher(name: streak.name) {
-                response = PlayerCardService.buildPitchingStreakList(name: streak.name, performance: streak.performance, season: streak.season)
-            } else {
-                response = PlayerCardService.buildStreakList(name: streak.name, performance: streak.performance, season: streak.season)
-            }
-            if let response {
-                messages.append(Message(role: .user, content: trimmed))
-                messages.append(Message(role: .assistant, content: response))
-                addToConversationHistory(question: trimmed, answer: response)
-                return
+            let targetSeason = streak.season ?? currentSeasonYear
+            if PlayerCardService.isLocalSeason(targetSeason) {
+                let response: String?
+                if PlayerCardService.isPitcher(name: streak.name) {
+                    response = PlayerCardService.buildPitchingStreakList(name: streak.name, performance: streak.performance, season: streak.season)
+                } else {
+                    response = PlayerCardService.buildStreakList(name: streak.name, performance: streak.performance, season: streak.season)
+                }
+                if let response {
+                    messages.append(Message(role: .user, content: trimmed))
+                    messages.append(Message(role: .assistant, content: response))
+                    addToConversationHistory(question: trimmed, answer: response)
+                    return
+                }
             }
         }
 
         // Intercept current hot streak queries — build response from DB, skip Claude
-        if let playerName = PlayerNameMatcher.parseCurrentForm(trimmed) {
+        // Skip if current season isn't in local DB (falls through to backend for live data)
+        if isCurrentSeasonLocal, let playerName = PlayerNameMatcher.parseCurrentForm(trimmed) {
             let response: String?
             if PlayerCardService.isPitcher(name: playerName) {
                 response = PlayerCardService.buildPitchingCurrentHotStreak(name: playerName)
@@ -273,7 +288,8 @@ final class AppState {
         }
 
         // Intercept team ranking queries — "what team hit the most HR?"
-        if let teamRanking = PlayerNameMatcher.parseTeamRanking(trimmed) {
+        if let teamRanking = PlayerNameMatcher.parseTeamRanking(trimmed),
+           PlayerCardService.isLocalSeason(teamRanking.season) {
             let response = PlayerCardService.buildTeamRanking(
                 stat: teamRanking.stat, season: teamRanking.season)
             messages.append(Message(role: .user, content: trimmed))
@@ -283,7 +299,8 @@ final class AppState {
         }
 
         // Intercept team total queries — "how many HR did the Yankees hit?"
-        if let teamTotal = PlayerNameMatcher.parseTeamTotal(trimmed) {
+        if let teamTotal = PlayerNameMatcher.parseTeamTotal(trimmed),
+           PlayerCardService.isLocalSeason(teamTotal.season) {
             let response = PlayerCardService.buildTeamTotal(
                 teamCode: teamTotal.teamCode, stat: teamTotal.stat, season: teamTotal.season)
             messages.append(Message(role: .user, content: trimmed))
@@ -293,7 +310,8 @@ final class AppState {
         }
 
         // Intercept team stats queries — "Yankees hitters", "Dodgers OPS leaders"
-        if let teamQuery = PlayerNameMatcher.parseTeamStats(trimmed) {
+        if let teamQuery = PlayerNameMatcher.parseTeamStats(trimmed),
+           PlayerCardService.isLocalSeason(teamQuery.season) {
             let response: String
             if let stat = teamQuery.stat, PlayerNameMatcher.isPitchingStat(stat) {
                 response = PlayerCardService.buildPitchingTeamStats(
@@ -547,7 +565,7 @@ final class AppState {
         let detectedStat = PlayerNameMatcher.matchStat(lower)
 
         if let player = detectedPlayer {
-            let season = PlayerNameMatcher.detectSeason(lower, defaultToMostRecent: true) ?? 2025
+            let season = PlayerNameMatcher.detectSeason(lower, defaultToMostRecent: true) ?? currentSeasonYear
             pills.append("[SUGGEST]\(player) \(season)[/SUGGEST]")
             if detectedStat != nil {
                 pills.append("[SUGGEST]\(player) splits[/SUGGEST]")

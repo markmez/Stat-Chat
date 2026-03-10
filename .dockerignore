@@ -1,0 +1,9 @@
+ios/
+*.db
+data_pipeline/.cache/
+data_pipeline/pull_stats_fangraphs.py
+.git/
+.env
+__pycache__/
+*.pyc
+.DS_Store

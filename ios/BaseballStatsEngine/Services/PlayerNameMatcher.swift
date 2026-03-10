@@ -4,6 +4,13 @@ enum PlayerNameMatcher {
     nonisolated(unsafe) private(set) static var sortedNames: [String] = []
     nonisolated(unsafe) private(set) static var lastNameIndex: [String: [String]] = [:]
 
+    /// The actual calendar year — used as the default season when no year is specified.
+    /// This ensures queries like "Judge home runs" resolve to the current year (e.g. 2026),
+    /// which may be beyond the local DB range and should fall through to backend.
+    static var currentCalendarYear: Int {
+        Calendar.current.component(.year, from: Date())
+    }
+
     // MARK: - Stat alias infrastructure
 
     struct StatInfo: Sendable {
@@ -150,7 +157,7 @@ enum PlayerNameMatcher {
     }
 
     /// Extract a season year from input. If `defaultToMostRecent` is true and no explicit year
-    /// is found, returns the max season from the DB.
+    /// is found, returns the current calendar year (which may be beyond the local DB range).
     static func detectSeason(_ input: String, defaultToMostRecent: Bool = false) -> Int? {
         let lower = input.lowercased()
 
@@ -160,15 +167,9 @@ enum PlayerNameMatcher {
             return year
         }
 
-        // Relative patterns
-        let db = DatabaseService()
-        let currentYear: Int = {
-            if let result = try? db.execute(sql: "SELECT MAX(season) FROM season_batting_stats"),
-               let row = result.rows.first, let year = Int(row[0]) {
-                return year
-            }
-            return 2025
-        }()
+        // Relative patterns — use the actual calendar year so "this season" resolves to
+        // the real current year (e.g. 2026), not the local DB max (2025).
+        let currentYear = currentCalendarYear
 
         let relativePatterns: [(patterns: [String], offset: Int)] = [
             (["this year", "this season", "current season"], 0),
@@ -558,7 +559,7 @@ enum PlayerNameMatcher {
         }
         guard let name = playerName else { return nil }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
         return (name, stat, season)
     }
 
@@ -742,7 +743,7 @@ enum PlayerNameMatcher {
         }
         guard let name = playerName else { return nil }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
         return (name, hand, season)
     }
 
@@ -793,7 +794,7 @@ enum PlayerNameMatcher {
         }
         guard let name = playerName else { return nil }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
         return (name, location, season)
     }
 
@@ -840,7 +841,7 @@ enum PlayerNameMatcher {
         } else if lower.contains("all time") || lower.contains("all-time") || lower.contains("single season") {
             scope = .allTimeSingleSeason
         } else {
-            let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+            let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
             scope = .season(season)
         }
         return (stat, scope, limit)
@@ -941,7 +942,7 @@ enum PlayerNameMatcher {
             comparison = ">="
         }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
         return (stat, threshold, comparison, season)
     }
 
@@ -1011,7 +1012,7 @@ enum PlayerNameMatcher {
         }
 
         let stat = matchStat(lower)
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
         return (teamCode, stat, season)
     }
 
@@ -1044,7 +1045,7 @@ enum PlayerNameMatcher {
             if containsWord(lastName, in: lower) && players.count == 1 { return nil }
         }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
         return (teamCode, stat, season)
     }
 
@@ -1067,7 +1068,7 @@ enum PlayerNameMatcher {
         // Must have a stat keyword
         guard let stat = matchStat(lower) else { return nil }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? 2025
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
         return (stat, season)
     }
 

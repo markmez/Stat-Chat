@@ -6,9 +6,12 @@ Reads game logs from SQLite, detects performance shifts, and stores
 streak segments back into the database.
 
 Usage:
-    python3 detect_streaks.py
+    python3 detect_streaks.py                      # Process all seasons
+    python3 detect_streaks.py --season 2026         # Process only 2026
+    python3 detect_streaks.py --season 2026 --db /path/to/db
 """
 
+import argparse
 import sqlite3
 import os
 import numpy as np
@@ -52,14 +55,22 @@ def create_streaks_table(conn):
     conn.commit()
 
 
-def get_player_seasons(conn):
+def get_player_seasons(conn, season_filter=None):
     """Get all player-season combos that have game logs."""
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT DISTINCT player_id, season
-        FROM game_batting_logs
-        ORDER BY season, player_id
-    """)
+    if season_filter is not None:
+        cursor.execute("""
+            SELECT DISTINCT player_id, season
+            FROM game_batting_logs
+            WHERE season = ?
+            ORDER BY season, player_id
+        """, (season_filter,))
+    else:
+        cursor.execute("""
+            SELECT DISTINCT player_id, season
+            FROM game_batting_logs
+            ORDER BY season, player_id
+        """)
     return cursor.fetchall()
 
 
@@ -215,16 +226,19 @@ def label_performance(segment_ops, season_ops):
         return "average"
 
 
-def detect_all_streaks(conn):
+def detect_all_streaks(conn, season_filter=None):
     """Run streak detection for all player-seasons and store results."""
     create_streaks_table(conn)
     cursor = conn.cursor()
 
-    # Clear existing streaks
-    cursor.execute("DELETE FROM streaks")
+    # Clear existing streaks (only for target season if filtered)
+    if season_filter is not None:
+        cursor.execute("DELETE FROM streaks WHERE season = ?", (season_filter,))
+    else:
+        cursor.execute("DELETE FROM streaks")
     conn.commit()
 
-    player_seasons = get_player_seasons(conn)
+    player_seasons = get_player_seasons(conn, season_filter)
     print(f"Running streak detection for {len(player_seasons)} player-seasons...")
 
     total_streaks = 0
@@ -310,7 +324,7 @@ def create_streaks_sensitive_table(conn):
     conn.commit()
 
 
-def detect_sensitive_streaks(conn):
+def detect_sensitive_streaks(conn, season_filter=None):
     """Second pass: run PELT with lower penalty (1.5) and keep only 7-30 game segments.
 
     Only processes player-seasons that had a single segment (no change points)
@@ -320,16 +334,28 @@ def detect_sensitive_streaks(conn):
     cursor = conn.cursor()
 
     # Clear existing sensitive streaks
-    cursor.execute("DELETE FROM streaks_sensitive")
+    if season_filter is not None:
+        cursor.execute("DELETE FROM streaks_sensitive WHERE season = ?", (season_filter,))
+    else:
+        cursor.execute("DELETE FROM streaks_sensitive")
     conn.commit()
 
     # Find player-seasons with exactly 1 streak segment (no change points detected)
-    cursor.execute("""
-        SELECT player_id, season, COUNT(*) as seg_count
-        FROM streaks
-        GROUP BY player_id, season
-        HAVING seg_count = 1
-    """)
+    if season_filter is not None:
+        cursor.execute("""
+            SELECT player_id, season, COUNT(*) as seg_count
+            FROM streaks
+            WHERE season = ?
+            GROUP BY player_id, season
+            HAVING seg_count = 1
+        """, (season_filter,))
+    else:
+        cursor.execute("""
+            SELECT player_id, season, COUNT(*) as seg_count
+            FROM streaks
+            GROUP BY player_id, season
+            HAVING seg_count = 1
+        """)
     single_segment_players = cursor.fetchall()
     print(f"Running sensitive streak detection for {len(single_segment_players)} single-segment player-seasons...")
 
@@ -440,7 +466,7 @@ def find_best_worst_windows(games, season_ops):
     return best, worst
 
 
-def detect_sliding_streaks(conn):
+def detect_sliding_streaks(conn, season_filter=None):
     """Third pass: sliding window gap-filler for player-seasons missing hot or cold data.
 
     For each player-season, checks if hot and/or cold streaks exist in Tier 1 or 2.
@@ -451,10 +477,13 @@ def detect_sliding_streaks(conn):
     cursor = conn.cursor()
 
     # Clear existing
-    cursor.execute("DELETE FROM streaks_sliding")
+    if season_filter is not None:
+        cursor.execute("DELETE FROM streaks_sliding WHERE season = ?", (season_filter,))
+    else:
+        cursor.execute("DELETE FROM streaks_sliding")
     conn.commit()
 
-    player_seasons = get_player_seasons(conn)
+    player_seasons = get_player_seasons(conn, season_filter)
     print(f"Running sliding window gap-fill for {len(player_seasons)} player-seasons...")
 
     total_sliding = 0
@@ -529,12 +558,13 @@ CURRENT_FORM_MIN_SLICE = 10   # Minimum games in the form slice
 CURRENT_FORM_MAX_SLICE = 60   # Maximum games to scan back
 
 
-def create_current_form_table(conn):
+def create_current_form_table(conn, drop=True):
     """Create the current_form table."""
     cursor = conn.cursor()
-    cursor.execute("DROP TABLE IF EXISTS current_form")
+    if drop:
+        cursor.execute("DROP TABLE IF EXISTS current_form")
     cursor.execute("""
-        CREATE TABLE current_form (
+        CREATE TABLE IF NOT EXISTS current_form (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             player_id TEXT NOT NULL,
             season INTEGER NOT NULL,
@@ -576,7 +606,7 @@ def create_current_form_table(conn):
     conn.commit()
 
 
-def detect_current_form(conn):
+def detect_current_form(conn, season_filter=None):
     """Detect current form for all player-seasons.
 
     Algorithm: find the hottest tail slice — the start point (from the end
@@ -586,57 +616,71 @@ def detect_current_form(conn):
     Scans slice lengths from CURRENT_FORM_MIN_SLICE to CURRENT_FORM_MAX_SLICE
     and picks the one with the highest OPS.
     """
-    create_current_form_table(conn)
-    cursor = conn.cursor()
+    if season_filter is not None:
+        create_current_form_table(conn, drop=False)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM current_form WHERE season = ?", (season_filter,))
+        conn.commit()
+    else:
+        create_current_form_table(conn, drop=True)
+        cursor = conn.cursor()
 
-    player_seasons = get_player_seasons(conn)
+    player_seasons = get_player_seasons(conn, season_filter)
     print(f"Detecting current form for {len(player_seasons)} player-seasons...")
 
     total_forms = 0
     for i, (player_id, season) in enumerate(player_seasons):
         games = get_game_logs_extended(conn, player_id, season)
-        if len(games) < CURRENT_FORM_MIN_GAMES:
+        if len(games) < 1:
             continue
 
-        # Find the tail slice with the highest OPS
-        best_start_idx = None
-        best_ops = -1.0
-        max_slice = min(CURRENT_FORM_MAX_SLICE, len(games))
+        # Early season: if player has fewer than CURRENT_FORM_MIN_GAMES,
+        # use all their games as current form (enables "at this pace" projections
+        # from day 1). Normal algorithm kicks in once they cross the threshold.
+        if len(games) < CURRENT_FORM_MIN_GAMES:
+            form_start_idx = 0
+            # Skip the slice-scanning loop below
+            best_start_idx = 0
+        else:
+            # Find the tail slice with the highest OPS
+            best_start_idx = None
+            best_ops = -1.0
+            max_slice = min(CURRENT_FORM_MAX_SLICE, len(games))
 
-        for slice_len in range(CURRENT_FORM_MIN_SLICE, max_slice + 1):
-            start_idx = len(games) - slice_len
-            # Compute OPS for this tail slice
-            total_ab = 0
-            total_h = 0
-            total_2b = 0
-            total_3b = 0
-            total_hr = 0
-            total_bb = 0
-            total_pa = 0
-            for g in games[start_idx:]:
-                ab = g[1] or 0
-                h = g[2] or 0
-                total_ab += ab
-                total_h += h
-                total_2b += g[3] or 0
-                total_3b += g[4] or 0
-                total_hr += g[5] or 0
-                total_bb += g[6] or 0
-                total_pa += g[8] or 0
+            for slice_len in range(CURRENT_FORM_MIN_SLICE, max_slice + 1):
+                start_idx = len(games) - slice_len
+                # Compute OPS for this tail slice
+                total_ab = 0
+                total_h = 0
+                total_2b = 0
+                total_3b = 0
+                total_hr = 0
+                total_bb = 0
+                total_pa = 0
+                for g in games[start_idx:]:
+                    ab = g[1] or 0
+                    h = g[2] or 0
+                    total_ab += ab
+                    total_h += h
+                    total_2b += g[3] or 0
+                    total_3b += g[4] or 0
+                    total_hr += g[5] or 0
+                    total_bb += g[6] or 0
+                    total_pa += g[8] or 0
 
-            if total_ab > 0 and total_pa > 0:
-                tb = (total_h - total_2b - total_3b - total_hr) + 2 * total_2b + 3 * total_3b + 4 * total_hr
-                slg = tb / total_ab
-                obp = (total_h + total_bb) / total_pa
-                ops = obp + slg
-            else:
-                ops = 0.0
+                if total_ab > 0 and total_pa > 0:
+                    tb = (total_h - total_2b - total_3b - total_hr) + 2 * total_2b + 3 * total_3b + 4 * total_hr
+                    slg = tb / total_ab
+                    obp = (total_h + total_bb) / total_pa
+                    ops = obp + slg
+                else:
+                    ops = 0.0
 
-            if ops > best_ops:
-                best_ops = ops
-                best_start_idx = start_idx
+                if ops > best_ops:
+                    best_ops = ops
+                    best_start_idx = start_idx
 
-        form_start_idx = best_start_idx if best_start_idx is not None else max(0, len(games) - CURRENT_FORM_MIN_SLICE)
+            form_start_idx = best_start_idx if best_start_idx is not None else max(0, len(games) - CURRENT_FORM_MIN_SLICE)
 
         # Compute form stats
         form_stats = compute_segment_stats_extended(games, form_start_idx, len(games))
@@ -798,14 +842,22 @@ def create_pitching_streaks_sliding_table(conn):
     conn.commit()
 
 
-def get_pitching_player_seasons(conn):
+def get_pitching_player_seasons(conn, season_filter=None):
     """Get all pitcher-season combos that have game logs."""
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT DISTINCT player_id, season
-        FROM game_pitching_logs
-        ORDER BY season, player_id
-    """)
+    if season_filter is not None:
+        cursor.execute("""
+            SELECT DISTINCT player_id, season
+            FROM game_pitching_logs
+            WHERE season = ?
+            ORDER BY season, player_id
+        """, (season_filter,))
+    else:
+        cursor.execute("""
+            SELECT DISTINCT player_id, season
+            FROM game_pitching_logs
+            ORDER BY season, player_id
+        """)
     return cursor.fetchall()
 
 
@@ -905,14 +957,17 @@ def label_pitching_performance(segment_era, season_era):
         return "average"
 
 
-def detect_pitching_streaks(conn):
+def detect_pitching_streaks(conn, season_filter=None):
     """Run PELT streak detection for all pitcher-seasons."""
     create_pitching_streaks_table(conn)
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM pitching_streaks")
+    if season_filter is not None:
+        cursor.execute("DELETE FROM pitching_streaks WHERE season = ?", (season_filter,))
+    else:
+        cursor.execute("DELETE FROM pitching_streaks")
     conn.commit()
 
-    player_seasons = get_pitching_player_seasons(conn)
+    player_seasons = get_pitching_player_seasons(conn, season_filter)
     print(f"Running pitching streak detection for {len(player_seasons)} pitcher-seasons...")
 
     total_streaks = 0
@@ -979,19 +1034,31 @@ def detect_pitching_streaks(conn):
     print(f"Done! Detected {total_streaks} pitching streak segments.")
 
 
-def detect_pitching_sensitive_streaks(conn):
+def detect_pitching_sensitive_streaks(conn, season_filter=None):
     """Second pass: PELT with lower penalty for pitcher-seasons with no change points."""
     create_pitching_streaks_sensitive_table(conn)
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM pitching_streaks_sensitive")
+    if season_filter is not None:
+        cursor.execute("DELETE FROM pitching_streaks_sensitive WHERE season = ?", (season_filter,))
+    else:
+        cursor.execute("DELETE FROM pitching_streaks_sensitive")
     conn.commit()
 
-    cursor.execute("""
-        SELECT player_id, season, role, COUNT(*) as seg_count
-        FROM pitching_streaks
-        GROUP BY player_id, season
-        HAVING seg_count = 1
-    """)
+    if season_filter is not None:
+        cursor.execute("""
+            SELECT player_id, season, role, COUNT(*) as seg_count
+            FROM pitching_streaks
+            WHERE season = ?
+            GROUP BY player_id, season
+            HAVING seg_count = 1
+        """, (season_filter,))
+    else:
+        cursor.execute("""
+            SELECT player_id, season, role, COUNT(*) as seg_count
+            FROM pitching_streaks
+            GROUP BY player_id, season
+            HAVING seg_count = 1
+        """)
     single_segment_pitchers = cursor.fetchall()
     print(f"Running pitching sensitive streak detection for {len(single_segment_pitchers)} single-segment pitcher-seasons...")
 
@@ -1059,14 +1126,17 @@ def detect_pitching_sensitive_streaks(conn):
     print(f"Done! Detected {total_sensitive} pitching sensitive streak segments.")
 
 
-def detect_pitching_sliding_streaks(conn):
+def detect_pitching_sliding_streaks(conn, season_filter=None):
     """Third pass: sliding window gap-filler for pitcher-seasons missing hot or cold."""
     create_pitching_streaks_sliding_table(conn)
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM pitching_streaks_sliding")
+    if season_filter is not None:
+        cursor.execute("DELETE FROM pitching_streaks_sliding WHERE season = ?", (season_filter,))
+    else:
+        cursor.execute("DELETE FROM pitching_streaks_sliding")
     conn.commit()
 
-    player_seasons = get_pitching_player_seasons(conn)
+    player_seasons = get_pitching_player_seasons(conn, season_filter)
     print(f"Running pitching sliding window gap-fill for {len(player_seasons)} pitcher-seasons...")
 
     total_sliding = 0
@@ -1172,12 +1242,13 @@ PITCHING_FORM_RELIEVER_MIN = 5
 PITCHING_FORM_RELIEVER_MAX = 30
 
 
-def create_pitching_current_form_table(conn):
+def create_pitching_current_form_table(conn, drop=True):
     """Create the pitching_current_form table."""
     cursor = conn.cursor()
-    cursor.execute("DROP TABLE IF EXISTS pitching_current_form")
+    if drop:
+        cursor.execute("DROP TABLE IF EXISTS pitching_current_form")
     cursor.execute("""
-        CREATE TABLE pitching_current_form (
+        CREATE TABLE IF NOT EXISTS pitching_current_form (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             player_id TEXT NOT NULL,
             season INTEGER NOT NULL,
@@ -1215,16 +1286,22 @@ def create_pitching_current_form_table(conn):
     conn.commit()
 
 
-def detect_pitching_current_form(conn):
+def detect_pitching_current_form(conn, season_filter=None):
     """Detect current form for all pitcher-seasons.
 
     Algorithm: find the tail slice that minimizes ERA (optimistic fan, inverted).
     Starters: scan 3-15 starts. Relievers: scan 5-30 games.
     """
-    create_pitching_current_form_table(conn)
-    cursor = conn.cursor()
+    if season_filter is not None:
+        create_pitching_current_form_table(conn, drop=False)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM pitching_current_form WHERE season = ?", (season_filter,))
+        conn.commit()
+    else:
+        create_pitching_current_form_table(conn, drop=True)
+        cursor = conn.cursor()
 
-    player_seasons = get_pitching_player_seasons(conn)
+    player_seasons = get_pitching_player_seasons(conn, season_filter)
     print(f"Detecting pitching current form for {len(player_seasons)} pitcher-seasons...")
 
     total_forms = 0
@@ -1242,29 +1319,33 @@ def detect_pitching_current_form(conn):
             min_slice = PITCHING_FORM_RELIEVER_MIN
             max_slice = PITCHING_FORM_RELIEVER_MAX
 
-        if len(games) < min_slice:
+        if len(games) < 1:
             continue
 
-        # Find tail slice that minimizes ERA
-        best_start_idx = None
-        best_era = float('inf')
-        actual_max = min(max_slice, len(games))
+        # Early season: if fewer games than normal minimum, use all games
+        if len(games) < min_slice:
+            form_start_idx = 0
+        else:
+            # Find tail slice that minimizes ERA
+            best_start_idx = None
+            best_era = float('inf')
+            actual_max = min(max_slice, len(games))
 
-        for slice_len in range(min_slice, actual_max + 1):
-            start_idx = len(games) - slice_len
-            total_ip_outs = sum(g[1] or 0 for g in games[start_idx:])
-            total_er = sum(g[3] or 0 for g in games[start_idx:])
-            ip = total_ip_outs / 3.0
-            if ip > 0:
-                era = 9.0 * total_er / ip
-            else:
-                era = PITCHING_ERA_CAP
+            for slice_len in range(min_slice, actual_max + 1):
+                start_idx = len(games) - slice_len
+                total_ip_outs = sum(g[1] or 0 for g in games[start_idx:])
+                total_er = sum(g[3] or 0 for g in games[start_idx:])
+                ip = total_ip_outs / 3.0
+                if ip > 0:
+                    era = 9.0 * total_er / ip
+                else:
+                    era = PITCHING_ERA_CAP
 
-            if era < best_era:
-                best_era = era
-                best_start_idx = start_idx
+                if era < best_era:
+                    best_era = era
+                    best_start_idx = start_idx
 
-        form_start_idx = best_start_idx if best_start_idx is not None else max(0, len(games) - min_slice)
+            form_start_idx = best_start_idx if best_start_idx is not None else max(0, len(games) - min_slice)
 
         # Compute form stats
         form = compute_pitching_segment_stats(games, form_start_idx, len(games))
@@ -1310,18 +1391,28 @@ def detect_pitching_current_form(conn):
 
 
 if __name__ == "__main__":
-    conn = sqlite3.connect(DB_PATH)
+    parser = argparse.ArgumentParser(description="Detect streaks and current form from game logs")
+    parser.add_argument("--season", type=int, default=None,
+                        help="Process only this season (e.g. 2026). Omit for all seasons.")
+    parser.add_argument("--db", default=DB_PATH, help="Path to SQLite database")
+    args = parser.parse_args()
+
+    season_filter = args.season
+    if season_filter:
+        print(f"Processing season {season_filter} only")
+
+    conn = sqlite3.connect(args.db)
 
     # Batting streaks
-    detect_all_streaks(conn)
-    detect_sensitive_streaks(conn)
-    detect_sliding_streaks(conn)
-    detect_current_form(conn)
+    detect_all_streaks(conn, season_filter)
+    detect_sensitive_streaks(conn, season_filter)
+    detect_sliding_streaks(conn, season_filter)
+    detect_current_form(conn, season_filter)
 
     # Pitching streaks
-    detect_pitching_streaks(conn)
-    detect_pitching_sensitive_streaks(conn)
-    detect_pitching_sliding_streaks(conn)
-    detect_pitching_current_form(conn)
+    detect_pitching_streaks(conn, season_filter)
+    detect_pitching_sensitive_streaks(conn, season_filter)
+    detect_pitching_sliding_streaks(conn, season_filter)
+    detect_pitching_current_form(conn, season_filter)
 
     conn.close()

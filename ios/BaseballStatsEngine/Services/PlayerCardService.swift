@@ -131,7 +131,7 @@ enum PlayerCardService {
 
     /// The range of seasons available in the local bundled DB.
     static let localMinYear = 2016
-    static let localMaxYear = 2025
+    static let localMaxYear = 2026
 
     /// Whether a given season is within local DB range.
     static func isLocalSeason(_ year: Int) -> Bool {

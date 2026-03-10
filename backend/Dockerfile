@@ -11,11 +11,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy schema from project root (shared with iOS data pipeline)
 COPY schema_description.py .
 
+# Copy data pipeline scripts (for live data refresh + streak detection)
+COPY data_pipeline/ data_pipeline/
+
 # Copy backend application code
 COPY backend/ .
 
 # Database paths — override via env vars in Railway/Fly.io
-ENV DB_PATH=/data/baseball_stats.db
+ENV DB_PATH=/data/baseball_stats_full.db
 ENV METERING_DB_PATH=/data/metering.db
 ENV FREE_QUERIES_PER_WEEK=5
 

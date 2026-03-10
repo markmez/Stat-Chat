@@ -385,10 +385,10 @@ struct StatGridView: View {
                         value: Binding<Double>(
                             get: { Double(numGames) },
                             set: { newValue in
-                                formSliderNumGames = max(10, min(Int(newValue.rounded()), meta.totalGames))
+                                formSliderNumGames = max(1, min(Int(newValue.rounded()), meta.totalGames))
                             }
                         ),
-                        in: 10...Double(max(meta.totalGames, 11)),
+                        in: 1...Double(max(meta.totalGames, 2)),
                         step: 1
                     )
                     .tint(deepBlue)

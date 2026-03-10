@@ -5,3 +5,10 @@ builder = "dockerfile"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
+
+# Cron setup (configured in Railway dashboard, not in TOML):
+# - Create a separate Railway cron service running cron_refresh.py
+# - Preseason/Playoff: daily at 6:00 AM ET → cron: "0 11 * * *" (UTC)
+# - Regular season: every 4 hours → cron: "0 11,15,19,23,3 * * *" (UTC)
+# - Set env vars: BACKEND_URL, ADMIN_KEY, MSF_API_KEY
+# - See cron_refresh.py for the lightweight trigger script
