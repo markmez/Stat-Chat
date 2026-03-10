@@ -1,23 +1,22 @@
-# Build context: project root (not the backend/ subdirectory)
-# Build command: docker build -f backend/Dockerfile .
+# Build context: backend/ (Railway root directory)
 FROM python:3.12-slim
 
 WORKDIR /app
 
 # Install dependencies first (layer caching)
-COPY backend/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy schema from project root (shared with iOS data pipeline)
+# Copy schema (uploaded separately to backend/ for Docker context)
 COPY schema_description.py .
 
 # Copy data pipeline scripts (for live data refresh + streak detection)
 COPY data_pipeline/ data_pipeline/
 
 # Copy backend application code
-COPY backend/ .
+COPY . .
 
-# Database paths — override via env vars in Railway/Fly.io
+# Database paths — override via env vars in Railway
 ENV DB_PATH=/data/baseball_stats_full.db
 ENV METERING_DB_PATH=/data/metering.db
 ENV FREE_QUERIES_PER_WEEK=5
