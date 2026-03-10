@@ -199,9 +199,9 @@ struct HomeView: View {
                     }
 
                     NavigationLink {
-                        APIKeySetupView(isInitialSetup: false)
+                        AboutView()
                     } label: {
-                        Image(systemName: "gearshape")
+                        Image(systemName: "info.circle")
                             .font(.system(size: 13))
                             .foregroundStyle(.tertiary)
                     }
