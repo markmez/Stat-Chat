@@ -25,6 +25,7 @@
 		6DA656C612FFFC98992595AE /* StatGridParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12ED36FBBADEE2968B59C872 /* StatGridParser.swift */; };
 		725F4CA20FCDCC9874494AA9 /* DatabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94B9C740E67CB61B571A0B35 /* DatabaseService.swift */; };
 		7980858E751450598B53AA57 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A161890890E908E9407731BF /* Assets.xcassets */; };
+		7BB97C5EF392F16371B99621 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E27B973CF2B1F2C0AA67E7 /* SettingsView.swift */; };
 		9313A9F47DEDBCBF443DE969 /* SampleQuery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EC01A2500177D3B3A0CF048 /* SampleQuery.swift */; };
 		9FA34A551A1BB60CF2DCADBB /* StatGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C78343C60140872060772B21 /* StatGridView.swift */; };
 		ADDD8C0C367AE8A5F619DBF1 /* SQLSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 485259BB61F2E56F43AA82C1 /* SQLSanitizer.swift */; };
@@ -34,7 +35,6 @@
 		C6AFE0FAA7DB998AE525AE05 /* AnimatedPlaceholder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CB091836D4207BE27DEBA70 /* AnimatedPlaceholder.swift */; };
 		F1227A844E80C4AEF7A632A1 /* SwipeBackGesture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46EE2001B470FD5EC03920D6 /* SwipeBackGesture.swift */; };
 		F41238CACD8719488CD332C1 /* baseball_stats.db in Resources */ = {isa = PBXBuildFile; fileRef = FB9F66CC0E8964519268C478 /* baseball_stats.db */; };
-		F60167791F98CC4A22F3D9B1 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56B24E6B6728575CD16CDC40 /* AboutView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -49,8 +49,8 @@
 		4799F2E0A3FC480D16A23C9F /* BackendService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendService.swift; sourceTree = "<group>"; };
 		485259BB61F2E56F43AA82C1 /* SQLSanitizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLSanitizer.swift; sourceTree = "<group>"; };
 		56A2A2E05C215D0A3ADAAAAD /* ResultCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultCard.swift; sourceTree = "<group>"; };
-		56B24E6B6728575CD16CDC40 /* AboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutView.swift; sourceTree = "<group>"; };
 		6788FF565D12FAFC3C30AD38 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		68E27B973CF2B1F2C0AA67E7 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		6BB3CC48A319FDD80408F09F /* StatChat.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = StatChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		797994603DE35696E898BBDA /* LeaderboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaderboardView.swift; sourceTree = "<group>"; };
 		7CB091836D4207BE27DEBA70 /* AnimatedPlaceholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimatedPlaceholder.swift; sourceTree = "<group>"; };
@@ -146,7 +146,6 @@
 		FF56DA2F993343477886B37C /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				56B24E6B6728575CD16CDC40 /* AboutView.swift */,
 				7CB091836D4207BE27DEBA70 /* AnimatedPlaceholder.swift */,
 				6788FF565D12FAFC3C30AD38 /* HomeView.swift */,
 				ECFC73592230A429A6330F03 /* LaunchAnimationView.swift */,
@@ -155,6 +154,7 @@
 				B51AB0AF7813417184FAF96B /* PlayerCardView.swift */,
 				56A2A2E05C215D0A3ADAAAAD /* ResultCard.swift */,
 				CD18464AB4C998AEF89D1ADC /* ResultsView.swift */,
+				68E27B973CF2B1F2C0AA67E7 /* SettingsView.swift */,
 				C78343C60140872060772B21 /* StatGridView.swift */,
 				46EE2001B470FD5EC03920D6 /* SwipeBackGesture.swift */,
 				E5808AF2D60EBEB36D9CE0A5 /* TeamCardView.swift */,
@@ -234,7 +234,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F60167791F98CC4A22F3D9B1 /* AboutView.swift in Sources */,
 				C6AFE0FAA7DB998AE525AE05 /* AnimatedPlaceholder.swift in Sources */,
 				407B6D9C1E8862FAC51F5974 /* AppState.swift in Sources */,
 				6B88067E643A4E86CA80F3E5 /* BackendService.swift in Sources */,
@@ -254,6 +253,7 @@
 				455928344195A5334455240E /* ResultsView.swift in Sources */,
 				ADDD8C0C367AE8A5F619DBF1 /* SQLSanitizer.swift in Sources */,
 				9313A9F47DEDBCBF443DE969 /* SampleQuery.swift in Sources */,
+				7BB97C5EF392F16371B99621 /* SettingsView.swift in Sources */,
 				2EB618AB46A9AAA35344A5EA /* StatDefinitions.swift in Sources */,
 				6DA656C612FFFC98992595AE /* StatGridParser.swift in Sources */,
 				9FA34A551A1BB60CF2DCADBB /* StatGridView.swift in Sources */,

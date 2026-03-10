@@ -169,6 +169,17 @@ struct HomeView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.automatic, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    SettingsView()
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 
     private var historyCard: some View {
@@ -196,14 +207,6 @@ struct HomeView: View {
                         }
                         .font(.system(.caption, weight: .medium))
                         .foregroundStyle(.secondary)
-                    }
-
-                    NavigationLink {
-                        AboutView()
-                    } label: {
-                        Image(systemName: "info.circle")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.tertiary)
                     }
                 }
                 .padding(.horizontal, 20)

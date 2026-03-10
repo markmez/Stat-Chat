@@ -9,10 +9,13 @@ final class AppState {
     var searchHistory: [String] = []
     /// Stores (originalQuery, ambiguousLastName) when disambiguation is pending
     var pendingDisambiguation: (query: String, lastName: String)?
+    private(set) var weeklyQueryCount: Int = 0
 
     private let backendService = BackendService()
     private let historyKey = "searchHistory"
     private let maxHistoryItems = 50
+    private let weeklyCountKey = "weeklyQueryCount"
+    private let weekResetKey = "weeklyQueryResetDate"
     private var currentQueryTask: Task<Void, Never>?
     private var conversationHistory: [(String, String)] = []
     private let maxHistory = 5
@@ -29,12 +32,16 @@ final class AppState {
 
     init() {
         searchHistory = UserDefaults.standard.stringArray(forKey: historyKey) ?? []
+        resetWeeklyCountIfNeeded()
+        weeklyQueryCount = UserDefaults.standard.integer(forKey: weeklyCountKey)
         PlayerNameMatcher.load()
     }
 
     func sendQuestion(_ question: String, followUpContext: String? = nil) {
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+
+        incrementQueryCount()
 
         // For follow-ups, store with context prefix if the question looks contextual
         if let context = followUpContext, looksContextual(trimmed) {
@@ -487,6 +494,29 @@ final class AppState {
     func clearSearchHistory() {
         searchHistory.removeAll()
         UserDefaults.standard.removeObject(forKey: historyKey)
+    }
+
+    func incrementQueryCount() {
+        resetWeeklyCountIfNeeded()
+        weeklyQueryCount += 1
+        UserDefaults.standard.set(weeklyQueryCount, forKey: weeklyCountKey)
+    }
+
+    private func resetWeeklyCountIfNeeded() {
+        let calendar = Calendar.current
+        let now = Date()
+        if let lastReset = UserDefaults.standard.object(forKey: weekResetKey) as? Date {
+            // Reset on Monday (weekday 2)
+            let lastMonday = calendar.nextDate(after: lastReset, matching: DateComponents(weekday: 2), matchingPolicy: .nextTime, direction: .backward) ?? lastReset
+            let thisMonday = calendar.nextDate(after: now, matching: DateComponents(weekday: 2), matchingPolicy: .nextTime, direction: .backward) ?? now
+            if thisMonday > lastMonday {
+                UserDefaults.standard.set(0, forKey: weeklyCountKey)
+                UserDefaults.standard.set(now, forKey: weekResetKey)
+                weeklyQueryCount = 0
+            }
+        } else {
+            UserDefaults.standard.set(now, forKey: weekResetKey)
+        }
     }
 
     /// Build contextual SUGGEST pills for Claude fallthrough responses based on query content.
