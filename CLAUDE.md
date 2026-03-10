@@ -4,22 +4,24 @@
 - **Location**: `/Users/markmezrich/Documents/claude/BaseballStatsEngine/`
 - **Design doc**: `/Users/markmezrich/Documents/claude/baseball design doc.pdf`
 - **What it is**: iOS app (Swift/SwiftUI) that answers natural language baseball questions using real data. Claude translates questions to SQL, SQLite provides ground truth.
-- **Current phase**: iOS app + backend deployed. iOS backend swap built (`feature/ios-backend-swap`), pending e2e verification.
+- **Current phase**: iOS app + backend deployed with live data. MySportsFeeds integration live, cron refresh running every 4 hours.
 
 ### Data Pipeline (Retrosheet-native)
 - `data_pipeline/pull_stats.py` — pulls ALL data from Retrosheet: season stats (batting + pitching), game-level logs, platoon splits (Chadwick Bureau), home/away splits, fielding stats, and player bio data. **2016-2025 data loaded (10 years)** — 3,782 players, 14,173 batting season stats, 8,233 pitching season stats, 661,313 batting game logs, 195,734 pitching game logs, 15,379 platoon splits, 16,391 pitching platoon splits, 27,558 home/away splits, 22,303 fielding stats.
+- `data_pipeline/pull_live_stats.py` — pulls current-season stats from **MySportsFeeds** API v2.1. Season batting/pitching totals, daily game logs, OPS+/ERA+ computation. Auto-detects season (preseason before Mar 25, regular Apr-Sep, playoff Oct+). Calls `detect_streaks.py --season` after loading game logs. Rate-limit aware (3 retries, 2s delay between daily requests).
 - `data_pipeline/pull_stats_fangraphs.py` — OLD FanGraphs pipeline, preserved for reference only. NOT used.
-- `data_pipeline/detect_streaks.py` — change-point detection using ruptures PELT. Batting: **11,469 streaks** (T1) + **6,333 sensitive** (T2) + **7,509 sliding** (T3) + **10,335 current form**. Pitching: **30,764 streaks** + **207 sensitive** + **2,042 sliding** + **6,729 current form**.
-- `baseball_stats.db` — **153 MB** SQLite DB, ~20 tables covering batting, pitching, fielding, splits, and streaks. Uses Retrosheet player IDs (e.g., `judga001`). OPS+ and ERA+ computed for all player-seasons. Team abbreviations use Retrosheet format (NYA, LAN, CHA, etc.).
+- `data_pipeline/detect_streaks.py` — change-point detection using ruptures PELT. Supports `--season YYYY` for incremental updates (only processes/replaces that season's data). **Early-season current form**: 1-game minimum — uses all games as "current form" until player reaches 14+ games, then normal tail-slice algorithm kicks in. No date-based switch needed; per-player auto-graduation.
+- `baseball_stats.db` — **164 MB** SQLite DB, ~20 tables covering batting, pitching, fielding, splits, and streaks, now including 2026 spring training data. Uses Retrosheet player IDs (e.g., `judga001`). OPS+ and ERA+ computed for all player-seasons. Team abbreviations use Retrosheet format (NYA, LAN, CHA, etc.).
 - `schema_description.py` — plain-English schema description for Claude's system prompt (all tables)
 - `query_engine.py` — full pipeline: text-to-SQL → answer generation. Data-source agnostic.
 - `cli_poc.py` — interactive terminal CLI.
 - `data_pipeline/requirements.txt` — anthropic, requests, pandas (pybaseball removed)
 
 ### Data Sources (commercially viable)
-- **Retrosheet** (retrosheet.org) — game logs, season stats, player info. Free, commercial OK with attribution.
+- **Retrosheet** (retrosheet.org) — game logs, season stats, player info (2016-2025 historical). Free, commercial OK with attribution.
 - **Chadwick Bureau retrosplits** (Open Database License) — platoon splits (vs LHP/vs RHP), 1969+.
-- **OPS+**: Computed from Retrosheet data (league-adjusted, no park factors). 100 = average. Stored in `season_batting_stats.ops_plus`. League averages in `league_averages` table.
+- **MySportsFeeds** (mysportsfeeds.com) — current-season live stats (2026+). Paid STATS tier subscription. API key in `.env` and Railway env var `MSF_API_KEY`.
+- **OPS+**: Computed from Retrosheet data and live MSF data (league-adjusted, no park factors). 100 = average. Stored in `season_batting_stats.ops_plus`. League averages in `league_averages` table. Early-season note: OPS+ skipped until 100+ total games played.
 - **wRC+ and WAR**: Columns kept in DB but always NULL (FanGraphs proprietary). Use OPS+ for league-adjusted offense.
 - **Old FanGraphs pipeline**: Backed up as `pull_stats_fangraphs.py`. NOT commercially licensed.
 
@@ -45,7 +47,7 @@
 - **Key files**: `AppState.swift` (state + local interception), `QueryEngine.swift` (orchestrator + local routing/stat explanations/name extraction), `AnthropicService.swift` (Claude API with SSE streaming, prompt caching, Haiku routing), `DatabaseService.swift` (SQLite C API), `PromptStore.swift` (all prompts), `KeychainHelper.swift` (API key storage), `StatDefinitions.swift` (local stat definitions for zero-cost explanations)
 - **Views**: `HomeView` (search + animated sample queries), `ResultsView` (results + follow-up), `ResultCard` (user/assistant/error styling), `APIKeySetupView` (first-launch + settings), `AnimatedPlaceholder`, `LoadingIndicator`
 - **Streaming**: SSE parsing via `URLSession.shared.bytes(for:)`, typewriter effect via callback-based `onChunk` pattern
-- **Database**: 153MB `baseball_stats.db` bundled in Resources (read-only, 2016-2025, 10 years)
+- **Database**: 164MB `baseball_stats.db` bundled in Resources (read-only, 2016-2026 including spring training). `localMaxYear = 2026` in `PlayerCardService.swift`.
 - **Stat grid**: 21 stats (G through BABIP, PA and SF excluded for compact 3-row display). Career rows show "--" for OPS+ (multi-season weighting not implemented).
 - **Player card bio**: Dynamic age computed from birthdate (updates on player's birthday). Header shows handedness (Bats R / Throws R). About section shows birth date.
 - **Query routing**: `simple_lookup`, `streak_finder`, `current_form`, `stat_explanation` — local `classifyLocally()` handles obvious patterns first, then Claude Haiku classifies the rest. `AppState` intercepts ~25% of queries locally before `QueryEngine`.
@@ -109,7 +111,7 @@ At scale (500K queries/mo), Claude API costs dominate (~$7,500-9,000/mo unoptimi
 | **Historical data (1898+)** | LLMs get increasingly wrong the further back you go | 10 years bundled (2016-2025); pre-2016 needs backend |
 | **Situational splits** (home/away, by month, RISP) | Beyond platoon; LLMs can't do this reliably | Home/away DONE; month/RISP not started |
 | **Predictive/pace features** ("on pace for X") | Unique analytical value, not just lookup | BUILT (162-game projections in PlayerCardView) |
-| **In-season live data feed** | LLM training data lags; real-time stats are table stakes | Provider TBD (MySportsFeeds or similar) |
+| **In-season live data feed** | LLM training data lags; real-time stats are table stakes | DONE (MySportsFeeds, every 4 hours) |
 
 **Dropped:** Statcast data — no viable commercial license path.
 
@@ -159,9 +161,9 @@ We download Retrosheet season ZIPs that contain 7 CSV files. We now use **battin
 - `first_g`, `last_g` — career date range. Could enable "active in year X" queries.
 
 ### Database size & bundling strategy
-Current DB (2016-2025, 10 years): **153 MB** bundled in-app — fast, works offline. Full historical data (1898+) with game logs would be ~1.8 GB — too big to bundle. Game logs are ~85% of size. Season-level stats alone for all history: ~25 MB.
+Current DB (2016-2026): **164 MB** bundled in-app — fast, works offline. Includes 2026 spring training data from MySportsFeeds. Full historical data (1898+) with game logs would be ~1.8 GB — too big to bundle. Game logs are ~85% of size. Season-level stats alone for all history: ~25 MB.
 
-**Strategy: 10 years bundled, backend for historical.** 153 MB compresses to ~65-75 MB in IPA, well under iOS 200 MB cellular limit. Historical queries (pre-2016) go through the backend server. Backend also needed for API key security.
+**Strategy: recent data bundled, backend for historical + live refresh.** 164 MB compresses to ~70-80 MB in IPA, well under iOS 200 MB cellular limit. Historical queries (pre-2016) go through the backend server. Current-season data refreshed on backend every 4 hours via cron. Bundled DB updated with each app release.
 
 **Important:** When updating the bundled DB, always copy the rebuilt `baseball_stats.db` from the project root into `ios/BaseballStatsEngine/Resources/baseball_stats.db`. They are separate files — the pipeline writes to the project root, but the app bundles from Resources.
 
@@ -180,10 +182,28 @@ Current DB (2016-2025, 10 years): **153 MB** bundled in-app — fast, works offl
 
 ### Backend — DEPLOYED & WORKING
 - **Live at** `https://stat-chat-production.up.railway.app`
-- **Railway setup**: project `stat-chat`, service `stat-chat`, volume `stat-chat-volume` mounted at `/data`
-- **DB hosting**: `baseball_stats.db` (153MB, 2016-2025) on S3 at `https://stat-chat.s3.us-east-2.amazonaws.com/baseball_stats.db`. Startup script downloads to `/data/` on first boot.
+- **Railway setup**: project `stat-chat`, service `Stat-Chat`, volume mounted at `/data`
+- **DB hosting**: `baseball_stats_full.db` (171MB, 2016-2026) on S3 at `https://stat-chat.s3.us-east-2.amazonaws.com/baseball_stats_full.db`. Startup script downloads to `/data/` on first boot. `ENV DB_PATH=/data/baseball_stats_full.db`.
 - **Metering**: `services/metering.py` tracks device UUIDs, 5 free queries/week, weekly Monday reset
 - **SSE event format**: `{"type":"text","text":"..."}`, `{"type":"done"}`, `{"type":"error","message":"..."}`, `{"type":"quota_exceeded","count":N,"reset":"YYYY-MM-DD"}`
+- **Dockerfile**: Build context is `backend/`. Copies `data_pipeline/` (pipeline scripts duplicated in `backend/data_pipeline/`), `schema_description.py` (duplicated in `backend/`). When updating pipeline scripts, sync both copies.
+- **Railway env vars**: `ANTHROPIC_API_KEY`, `DB_PATH`, `FREE_QUERIES_PER_WEEK=1000`, `MSF_API_KEY`, `ADMIN_KEY`
+
+### Live Data Pipeline (MySportsFeeds)
+- **Provider**: MySportsFeeds v2.1 API, STATS tier subscription
+- **Auth**: Basic auth (`API_KEY:MYSPORTSFEEDS` base64-encoded)
+- **Season format**: `{year}-preseason` (before Mar 25), `{year}-regular` (Apr-Sep), `{year}-playoff` (Oct+). Auto-detected by both `pull_live_stats.py` and `admin.py`.
+- **MSF team mapping**: `MSF_TO_RETRO_TEAM` dict maps MSF abbreviations (NYY, LAD) → Retrosheet codes (NYA, LAN)
+- **Player matching**: Name-based lookup against existing Retrosheet players. New players get Retrosheet-style IDs (`last5first1001`).
+- **Admin endpoints**:
+  - `POST /admin/refresh` — triggers full pipeline (MSF pull → OPS+/ERA+ → game logs → streak detection). 10-min timeout. Protected by `ADMIN_KEY` Bearer token.
+  - `POST /admin/redownload-db` — force re-download DB from S3 (for when base DB is updated). Protected by `ADMIN_KEY`.
+  - `GET /admin/freshness` — returns `last_updated` timestamp and season from `data_freshness` table.
+  - `GET /admin/schedule` — returns current phase and schedule info.
+- **Cron service**: Railway service `cron-refresh`, root directory `cron/`, schedule `0 11,15,19,23,3 * * *` (every 4 hours: 6 AM, 10 AM, 2 PM, 6 PM, 10 PM ET). Runs `cron_refresh.py` which POSTs to `/admin/refresh`. Full pipeline takes ~4.5 minutes.
+- **ADMIN_KEY**: `I9-NNJ-GBen3SZ-wf8JkZX5-_zvvt8Qri2EtTxWUo-I`
+- **Pipeline flow**: season batting → league averages + OPS+ → season pitching → pitching averages + ERA+ → daily game logs → streak detection (all 8 passes filtered by season) → record freshness timestamp
+- **Pinned for later**: MSF also provides pitch-type breakdowns, batted ball profiles, swing/strike/miss data — could be a player card section for current + last 2 seasons
 
 ### iOS backend swap — BUILT, pending e2e verification
 - **Branch**: `feature/ios-backend-swap`
