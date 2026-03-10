@@ -1,27 +1,35 @@
 import SwiftUI
 
 struct AnimatedPlaceholder: View {
+    var searchHistory: [String] = []
     let onTap: (String) -> Void
 
     @State private var currentIndex = 0
     @State private var opacity: Double = 0
-
-    private let queries = SampleQuery.all
+    @State private var queries: [String] = []
     private let displayDuration: TimeInterval = 3.5
     private let fadeDuration: TimeInterval = 0.5
 
     var body: some View {
-        Button {
-            onTap(queries[currentIndex])
-        } label: {
-            Text(queries[currentIndex])
-                .font(.system(.subheadline, design: .rounded))
-                .foregroundStyle(.tertiary)
-                .opacity(opacity)
-                .lineLimit(1)
+        Group {
+            if !queries.isEmpty {
+                Button {
+                    onTap(queries[currentIndex % queries.count])
+                } label: {
+                    Text(queries[currentIndex % queries.count])
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.tertiary)
+                        .opacity(opacity)
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .buttonStyle(.plain)
-        .task { await startCycling() }
+        .task {
+            queries = SampleQuery.personalized(from: searchHistory)
+            if queries.isEmpty { queries = SampleQuery.all.shuffled() }
+            await startCycling()
+        }
     }
 
     @MainActor

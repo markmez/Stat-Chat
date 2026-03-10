@@ -146,7 +146,7 @@ struct HomeView: View {
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 24)
 
-                        AnimatedPlaceholder { query in
+                        AnimatedPlaceholder(searchHistory: appState.searchHistory) { query in
                             questionText = query
                         }
                     }
