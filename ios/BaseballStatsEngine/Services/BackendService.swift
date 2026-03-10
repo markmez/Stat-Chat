@@ -139,4 +139,95 @@ final class BackendService: Sendable {
         }
         return try JSONDecoder().decode(PlayerCardData.self, from: data)
     }
+
+    // MARK: - Stats endpoints (leaderboards, thresholds, milestones)
+
+    struct LeaderboardRow: Decodable, Sendable {
+        let rank: Int
+        let name: String
+        let value: String
+        let season: Int?
+    }
+
+    struct LeaderboardResponse: Decodable, Sendable {
+        let title: String
+        let stat: String
+        let rows: [LeaderboardRow]
+        let count: Int
+        let pa_min: Int?
+    }
+
+    struct MilestoneResponse: Decodable, Sendable {
+        let title: String
+        let stat: String
+        let count: Int
+        let rows: [LeaderboardRow]
+    }
+
+    /// Fetch a leaderboard from the backend (for pre-2016 or full historical queries).
+    func fetchLeaderboard(stat: String, season: Int?, scope: String, limit: Int, isPitching: Bool) async throws -> LeaderboardResponse {
+        var components = URLComponents(url: baseURL.appendingPathComponent("stats/leaderboard"), resolvingAgainstBaseURL: false)!
+        var items = [
+            URLQueryItem(name: "stat", value: stat),
+            URLQueryItem(name: "scope", value: scope),
+            URLQueryItem(name: "limit", value: "\(limit)"),
+            URLQueryItem(name: "is_pitching", value: isPitching ? "true" : "false"),
+        ]
+        if let season {
+            items.append(URLQueryItem(name: "season", value: "\(season)"))
+        }
+        components.queryItems = items
+        let url = components.url!
+
+        let (data, response) = try await URLSession.shared.data(from: url)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            let body = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw ServiceError.httpError(http.statusCode, body)
+        }
+        return try JSONDecoder().decode(LeaderboardResponse.self, from: data)
+    }
+
+    /// Fetch a threshold leaderboard from the backend.
+    func fetchThreshold(stat: String, value: Double, comparison: String, season: Int, isPitching: Bool, limit: Int) async throws -> LeaderboardResponse {
+        var components = URLComponents(url: baseURL.appendingPathComponent("stats/threshold"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "stat", value: stat),
+            URLQueryItem(name: "value", value: "\(value)"),
+            URLQueryItem(name: "comparison", value: comparison),
+            URLQueryItem(name: "season", value: "\(season)"),
+            URLQueryItem(name: "is_pitching", value: isPitching ? "true" : "false"),
+            URLQueryItem(name: "limit", value: "\(limit)"),
+        ]
+        let url = components.url!
+
+        let (data, response) = try await URLSession.shared.data(from: url)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            let body = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw ServiceError.httpError(http.statusCode, body)
+        }
+        return try JSONDecoder().decode(LeaderboardResponse.self, from: data)
+    }
+
+    /// Fetch a milestone query from the backend.
+    func fetchMilestone(stat: String, value: Double, since: Int?, isPitching: Bool, limit: Int) async throws -> MilestoneResponse {
+        var components = URLComponents(url: baseURL.appendingPathComponent("stats/milestone"), resolvingAgainstBaseURL: false)!
+        var items = [
+            URLQueryItem(name: "stat", value: stat),
+            URLQueryItem(name: "value", value: "\(value)"),
+            URLQueryItem(name: "is_pitching", value: isPitching ? "true" : "false"),
+            URLQueryItem(name: "limit", value: "\(limit)"),
+        ]
+        if let since {
+            items.append(URLQueryItem(name: "since", value: "\(since)"))
+        }
+        components.queryItems = items
+        let url = components.url!
+
+        let (data, response) = try await URLSession.shared.data(from: url)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            let body = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw ServiceError.httpError(http.statusCode, body)
+        }
+        return try JSONDecoder().decode(MilestoneResponse.self, from: data)
+    }
 }

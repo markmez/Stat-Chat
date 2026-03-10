@@ -127,6 +127,16 @@ struct StatLeader: Sendable {
 enum PlayerCardService {
 
     private static let db = DatabaseService()
+    private static let backendService = BackendService()
+
+    /// The range of seasons available in the local bundled DB.
+    static let localMinYear = 2016
+    static let localMaxYear = 2025
+
+    /// Whether a given season is within local DB range.
+    static func isLocalSeason(_ year: Int) -> Bool {
+        year >= localMinYear && year <= localMaxYear
+    }
 
     /// Check if a player has any season data in the local DB.
     static func hasLocalData(name: String) -> Bool {
@@ -318,8 +328,6 @@ enum PlayerCardService {
     }
 
     // MARK: - Backend fallback for historical players
-
-    private static let backendService = BackendService()
 
     /// Fetch player card data from the backend for players not in the local DB.
     private static func fetchFromBackend(name: String) async -> PlayerCard? {
@@ -1645,6 +1653,99 @@ enum PlayerCardService {
         let thresholdDisplay = stat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
         let sinceLabel = since.map { " since \($0)" } ?? ""
         return "No player has reached \(thresholdDisplay) \(stat.displayAbbrev)\(sinceLabel)."
+    }
+
+    // MARK: - Backend-backed formatters (for pre-2016 queries)
+
+    /// Format a backend leaderboard response into the same string format as local builders.
+    static func formatBackendLeaderboard(_ resp: BackendService.LeaderboardResponse, stat: PlayerNameMatcher.StatInfo) -> String {
+        guard !resp.rows.isEmpty else {
+            return "No results found for \(stat.displayName)."
+        }
+
+        var parts: [String] = []
+        parts.append("**\(resp.title)**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        let hasSeasons = resp.rows.contains(where: { $0.season != nil })
+        if hasSeasons {
+            parts.append("HEADER: Year, \(stat.displayAbbrev)")
+        } else {
+            parts.append("HEADER: \(stat.displayAbbrev)")
+        }
+        for row in resp.rows {
+            let formattedValue = stat.isRate ? formatRate(row.value) : row.value
+            if let season = row.season {
+                parts.append("ROW \(row.rank). \(row.name): \(season), \(formattedValue)")
+            } else {
+                parts.append("ROW \(row.rank). \(row.name): \(formattedValue)")
+            }
+        }
+        parts.append("[/LEADERBOARD]")
+
+        if let paMin = resp.pa_min {
+            parts.append("\n_Min. \(paMin) PA._")
+        }
+
+        let statName = stat.pillName
+        parts.append("\n[SUGGEST]\(statName) leaders[/SUGGEST]")
+        parts.append("[SUGGEST]career \(statName) leaders[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    /// Format a backend threshold response.
+    static func formatBackendThreshold(_ resp: BackendService.LeaderboardResponse, stat: PlayerNameMatcher.StatInfo) -> String {
+        guard !resp.rows.isEmpty else {
+            return "No players matched that threshold."
+        }
+
+        var parts: [String] = []
+        parts.append("**\(resp.title)**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: \(stat.displayAbbrev)")
+        for row in resp.rows {
+            let formattedValue = stat.isRate ? formatRate(row.value) : row.value
+            parts.append("ROW \(row.rank). \(row.name): \(formattedValue)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        let count = resp.count
+        parts.append("\n\(count) player\(count == 1 ? "" : "s") matched.")
+
+        return parts.joined(separator: "\n")
+    }
+
+    /// Format a backend milestone response.
+    static func formatBackendMilestone(_ resp: BackendService.MilestoneResponse, stat: PlayerNameMatcher.StatInfo) -> String {
+        guard !resp.rows.isEmpty else {
+            return "No player has reached that milestone."
+        }
+
+        var parts: [String] = []
+        parts.append("**\(resp.title)**\n")
+
+        let count = resp.count
+        parts.append("\(count) time\(count == 1 ? "" : "s") this milestone has been reached.\n")
+
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: Year, \(stat.displayAbbrev)")
+        for row in resp.rows {
+            let formattedValue = stat.isRate ? formatRate(row.value) : row.value
+            parts.append("ROW \(row.rank). \(row.name): \(row.season ?? 0), \(formattedValue)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        let statName = stat.pillName
+        parts.append("\n[SUGGEST]\(statName) leaders[/SUGGEST]")
+        parts.append("[SUGGEST]career \(statName) leaders[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
     }
 
     // MARK: - Team stats (chat response builder)
