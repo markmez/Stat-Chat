@@ -188,6 +188,18 @@ final class AppState {
             }
         }
 
+        // Intercept milestone queries — "how many times has someone hit 50 HR?"
+        if let milestone = PlayerNameMatcher.parseMilestone(trimmed) {
+            let isPitching = PlayerNameMatcher.isPitchingStat(milestone.stat)
+            let response = PlayerCardService.buildMilestone(
+                stat: milestone.stat, threshold: milestone.threshold,
+                since: milestone.since, isPitching: isPitching)
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            addToConversationHistory(question: trimmed, answer: response)
+            return
+        }
+
         // Intercept threshold queries — "who hit 40 home runs?", "players batting over .300"
         if let threshold = PlayerNameMatcher.parseThreshold(trimmed) {
             let response: String

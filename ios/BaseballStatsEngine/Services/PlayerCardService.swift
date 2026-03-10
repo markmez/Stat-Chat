@@ -1579,6 +1579,74 @@ enum PlayerCardService {
         return parts.joined(separator: "\n")
     }
 
+    // MARK: - Milestone query (chat response builder)
+
+    /// Build a cross-season milestone response: "how many times has someone hit 50 HR?"
+    static func buildMilestone(stat: PlayerNameMatcher.StatInfo, threshold: Double, since: Int?, isPitching: Bool) -> String {
+        let table = isPitching ? "season_pitching_stats" : "season_batting_stats"
+        let sinceFilter = since.map { " AND s.season >= \($0)" } ?? ""
+
+        // For pitching rate stats like ERA, lower is better
+        let lowerIsBetter = ["era", "whip", "bb_per_9", "hits_per_9", "hr_per_9"].contains(stat.dbColumn)
+        let comparison = lowerIsBetter ? "<=" : ">="
+
+        let sql = """
+            SELECT p.name, s.season, s.\(stat.dbColumn)
+            FROM \(table) s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE s.\(stat.dbColumn) \(comparison) \(threshold)\(sinceFilter)
+            ORDER BY s.season DESC, s.\(stat.dbColumn) \(lowerIsBetter ? "ASC" : "DESC")
+            """
+        guard let result = try? db.execute(sql: sql) else {
+            return buildMilestoneEmpty(stat: stat, threshold: threshold, since: since)
+        }
+
+        let rows = result.rows
+        if rows.isEmpty {
+            return buildMilestoneEmpty(stat: stat, threshold: threshold, since: since)
+        }
+
+        let thresholdDisplay = stat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
+        let sinceLabel = since.map { " since \($0)" } ?? ""
+        let verb = lowerIsBetter ? "or lower" : "or more"
+        let title = "\(thresholdDisplay)+ \(stat.displayName) Seasons\(sinceLabel)"
+
+        var parts: [String] = []
+        parts.append("**\(title)**\n")
+
+        let count = rows.count
+        parts.append("\(count) time\(count == 1 ? "" : "s") a player has recorded \(thresholdDisplay) \(verb) \(stat.displayAbbrev)\(sinceLabel).\n")
+
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: Year, \(stat.displayAbbrev)")
+        for (i, row) in rows.prefix(50).enumerated() {
+            let playerName = row[0]
+            let season = row[1]
+            let rawValue = row[2]
+            let formattedValue = stat.isRate ? formatRate(rawValue) : rawValue
+            parts.append("ROW \(i + 1). \(playerName): \(season), \(formattedValue)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        if rows.count > 50 {
+            parts.append("\n_Showing top 50 of \(rows.count) results._")
+        }
+
+        let statName = stat.pillName
+        parts.append("\n[SUGGEST]\(statName) leaders[/SUGGEST]")
+        parts.append("[SUGGEST]career \(statName) leaders[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    private static func buildMilestoneEmpty(stat: PlayerNameMatcher.StatInfo, threshold: Double, since: Int?) -> String {
+        let thresholdDisplay = stat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
+        let sinceLabel = since.map { " since \($0)" } ?? ""
+        return "No player has reached \(thresholdDisplay) \(stat.displayAbbrev)\(sinceLabel)."
+    }
+
     // MARK: - Team stats (chat response builder)
 
     /// Build a team leaderboard for "Yankees hitters" or "Dodgers OPS leaders".

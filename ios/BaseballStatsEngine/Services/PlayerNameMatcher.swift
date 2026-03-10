@@ -945,6 +945,53 @@ enum PlayerNameMatcher {
         return (stat, threshold, comparison, season)
     }
 
+    // MARK: - Milestone parser
+
+    /// Detect cross-season counting queries like "how many times has someone hit 50 HR?"
+    /// or "has anyone ever hit 60 home runs?". Returns stat, threshold, and optional year range.
+    static func parseMilestone(_ input: String) -> (stat: StatInfo, threshold: Double, since: Int?)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        let milestoneTriggers = ["how many times", "how many players", "how many seasons",
+                                 "how often", "has anyone ever", "has anybody ever",
+                                 "has anyone", "has a player ever", "ever hit", "ever had",
+                                 "ever batted", "ever pitched", "ever thrown", "ever won"]
+        guard milestoneTriggers.contains(where: { lower.contains($0) }) else { return nil }
+
+        // Reject if a specific player name is present
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) { return nil }
+        }
+        for (lastName, players) in lastNameIndex {
+            if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+        }
+
+        // Must have a stat keyword
+        guard let stat = matchStat(lower) else { return nil }
+
+        // Extract numeric threshold (skip years)
+        let numberPattern = try! NSRegularExpression(pattern: "(\\d+\\.?\\d*|\\.\\d+)\\+?")
+        let matches = numberPattern.matches(in: lower, range: NSRange(lower.startIndex..., in: lower))
+
+        var threshold: Double?
+        for match in matches {
+            guard let range = Range(match.range(at: 1), in: lower) else { continue }
+            let numStr = String(lower[range])
+            guard let num = Double(numStr) else { continue }
+            let intNum = Int(num)
+            if intNum >= 1898 && intNum <= 2099 && !numStr.contains(".") { continue }
+            threshold = num
+            break
+        }
+
+        guard let threshold else { return nil }
+
+        // Check for "since YYYY" constraint
+        let since = detectSeason(lower, defaultToMostRecent: false)
+
+        return (stat, threshold, since)
+    }
+
     // MARK: - Team stats parser
 
     /// Detect queries like "Yankees hitters", "Dodgers OPS leaders", "Mets home runs 2024".
