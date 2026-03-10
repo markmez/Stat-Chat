@@ -522,7 +522,7 @@ enum PlayerCardService {
         guard seasons.count > 1 else { return nil }
         var w = 0, l = 0, sv = 0, g = 0, gs = 0, cg = 0, qs = 0
         var h = 0, r = 0, er = 0, hr = 0, bb = 0, so = 0, hbp = 0, wp = 0, bk = 0, bf = 0
-        var ibb = 0, sh = 0, sf = 0, sbA = 0, csA = 0, gf = 0
+        let ibb = 0, sh = 0, sf = 0, sbA = 0, csA = 0, gf = 0
         var totalIPOuts = 0.0  // approximate from IP string
 
         for s in seasons {
@@ -554,7 +554,7 @@ enum PlayerCardService {
         let kbb = bb > 0 ? Double(so) / Double(bb) : 0
         let h9 = ip > 0 ? 9.0 * Double(h) / ip : 0
         let hr9 = ip > 0 ? 9.0 * Double(hr) / ip : 0
-        let baa = bf > 0 ? Double(h) / Double(bf - bb - hbp - sh - sf) : 0
+        let baa = 0.0  // BF not tracked in counting values; can't compute BAA for career
 
         let values = [
             "\(w)", "\(l)", "\(sv)", "\(g)", "\(gs)", "\(gf)",
@@ -2836,7 +2836,7 @@ enum PlayerCardService {
                   let aggRow = aggResult.rows.first,
                   aggRow.count >= 11 else { continue }
 
-            let g = aggRow[0], ab = aggRow[1], r = aggRow[2], h = aggRow[3]
+            let _ = aggRow[0], ab = aggRow[1], r = aggRow[2], h = aggRow[3]
             let d = aggRow[4], t = aggRow[5], hr = aggRow[6], rbi = aggRow[7]
             let sb = aggRow[8], bb = aggRow[9], so = aggRow[10]
 
@@ -3635,7 +3635,7 @@ enum PlayerCardService {
         let startGameNum = row[2]
         let totalGames = row[3]
         let numGames = Int(row[4]) ?? 0
-        let role = row[5]
+        let _ = row[5]  // role
         let ip = row[6], h = row[7], er = row[8]
         let bb = row[9], so = row[10], hr = row[11]
         let era = formatPitchingRate(row[12], decimals: 2)
