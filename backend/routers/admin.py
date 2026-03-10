@@ -48,7 +48,7 @@ async def refresh_live_data(
 
     cmd = [sys.executable, PIPELINE_SCRIPT, "--season", season, "--db", DB_PATH]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         return {
             "status": "ok" if result.returncode == 0 else "error",
             "season": season,
@@ -56,7 +56,33 @@ async def refresh_live_data(
             "stderr": result.stderr[-1000:] if result.stderr else "",
         }
     except subprocess.TimeoutExpired:
-        raise HTTPException(504, "Refresh timed out (5 min limit)")
+        raise HTTPException(504, "Refresh timed out (10 min limit)")
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/redownload-db")
+async def redownload_db(
+    authorization: str | None = Header(None),
+):
+    """Force re-download the database from S3."""
+    verify_admin(authorization)
+    import urllib.request
+    db_url = os.getenv("DB_DOWNLOAD_URL", "https://stat-chat.s3.us-east-2.amazonaws.com/baseball_stats_full.db")
+    try:
+        if os.path.exists(DB_PATH):
+            old_size = os.path.getsize(DB_PATH)
+            os.remove(DB_PATH)
+        else:
+            old_size = 0
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        urllib.request.urlretrieve(db_url, DB_PATH)
+        new_size = os.path.getsize(DB_PATH)
+        return {
+            "status": "ok",
+            "old_size_mb": old_size // 1_000_000,
+            "new_size_mb": new_size // 1_000_000,
+        }
     except Exception as e:
         raise HTTPException(500, str(e))
 
