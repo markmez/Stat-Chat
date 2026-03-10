@@ -138,6 +138,23 @@ enum PlayerCardService {
         year >= localMinYear && year <= localMaxYear
     }
 
+    /// Whether a player's career might extend beyond local DB range.
+    /// Returns true if their earliest local season is at the boundary (2016),
+    /// meaning they likely have pre-2016 data we're missing.
+    static func playerNeedsBackendForCareer(name: String) -> Bool {
+        let sql = """
+            SELECT MIN(s.season) FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              let minSeason = Int(row[0]) else {
+            return true  // no local data at all → needs backend
+        }
+        return minSeason <= localMinYear
+    }
+
     /// Check if a player has any season data in the local DB.
     static func hasLocalData(name: String) -> Bool {
         let sql = """
@@ -263,7 +280,15 @@ enum PlayerCardService {
             }
         }
 
-        let career = fetchCareerTotals(name: name)
+        // Career totals: use backend if player's career extends before local DB range
+        let career: StatGridParser.StatGrid?
+        if playerNeedsBackendForCareer(name: name) {
+            // Fetch full career from backend, fall back to local
+            let backendCareer = await backendCareerGrid(for: name)
+            career = backendCareer ?? fetchCareerTotals(name: name)
+        } else {
+            career = fetchCareerTotals(name: name)
+        }
         let splits = fetchPlatoonSplits(name: name)
         let streakGrid = fetchStreaks(name: name)
 
@@ -663,7 +688,15 @@ enum PlayerCardService {
         if hasLocalData(name: name) {
             let info = fetchPlayerInfo(name: name)
             let displayName = info?.name ?? name
-            return (displayName, fetchLatestSeasonRow(name: name), fetchCareerRow(name: name))
+            let latest = fetchLatestSeasonRow(name: name)
+
+            // If player's career extends beyond local range, get career from backend
+            if playerNeedsBackendForCareer(name: name) {
+                // Use local for latest season, backend for career totals
+                let backendCareer = await backendCareerTotals(for: name)
+                return (displayName, latest, backendCareer ?? fetchCareerRow(name: name))
+            }
+            return (displayName, latest, fetchCareerRow(name: name))
         }
 
         // Backend fallback
@@ -721,6 +754,50 @@ enum PlayerCardService {
         ]
 
         return (displayName, latest, career)
+    }
+
+    /// Fetch career totals from backend as a StatGrid (for player card display).
+    private static func backendCareerGrid(for name: String) async -> StatGridParser.StatGrid? {
+        guard let values = await backendCareerTotals(for: name) else { return nil }
+        return StatGridParser.StatGrid(
+            headers: allHeaders,
+            rows: [StatGridParser.StatGrid.Row(label: "Career", values: values)]
+        )
+    }
+
+    /// Fetch career totals from backend (for players whose career extends beyond local DB).
+    private static func backendCareerTotals(for name: String) async -> [String]? {
+        guard let data = try? await backendService.fetchPlayerCard(name: name),
+              data.batting_seasons.count > 1 else { return nil }
+
+        var totG = 0, totAB = 0, totR = 0, totH = 0, tot2B = 0, tot3B = 0
+        var totHR = 0, totRBI = 0, totSB = 0, totCS = 0, totBB = 0, totIBB = 0
+        var totSO = 0, totHBP = 0
+        for s in data.batting_seasons {
+            totG += s.G; totAB += s.AB; totR += s.R; totH += s.H
+            tot2B += s.doubles; tot3B += s.triples; totHR += s.HR; totRBI += s.RBI
+            totSB += s.SB; totCS += s.CS; totBB += s.BB; totIBB += s.IBB
+            totSO += s.SO; totHBP += s.HBP
+        }
+        let ab = Double(totAB), h = Double(totH), bb = Double(totBB), hbp = Double(totHBP)
+        let pa = ab + bb + hbp
+        let avg = ab > 0 ? h / ab : 0
+        let obp = pa > 0 ? (h + bb + hbp) / pa : 0
+        let tb = h - Double(tot2B) - Double(tot3B) - Double(totHR) + 2*Double(tot2B) + 3*Double(tot3B) + 4*Double(totHR)
+        let slg = ab > 0 ? tb / ab : 0
+        let ops = obp + slg
+        let iso = slg - avg
+        let babipDenom = ab - Double(totSO) - Double(totHR)
+        let babip = babipDenom > 0 ? (h - Double(totHR)) / babipDenom : 0
+
+        return [
+            "\(totG)", "\(totAB)", "\(totR)", "\(totH)", "\(tot2B)", "\(tot3B)",
+            "\(totHR)", "\(totRBI)", "\(totSB)", "\(totCS)", "\(totBB)", "\(totIBB)",
+            "\(totSO)", "\(totHBP)",
+            formatRate(String(format: "%.3f", avg)), formatRate(String(format: "%.3f", obp)),
+            formatRate(String(format: "%.3f", slg)), formatRate(String(format: "%.3f", ops)),
+            "--", formatRate(String(format: "%.3f", iso)), formatRate(String(format: "%.3f", babip)),
+        ]
     }
 
     /// Fetch the latest season's 21 formatted stat values for a player.
