@@ -35,6 +35,8 @@ struct PitchingSeasonData: Sendable {
     let platoonSplits: StatGridParser.StatGrid?
     let homeAwaySplits: StatGridParser.StatGrid?
     let streaks: StatGridParser.StatGrid?
+    let pitchTypeSplits: [StatGridParser.StatGrid]?
+    let countSplits: [StatGridParser.StatGrid]?
     let currentForm: PitchingCurrentFormData?
 }
 
@@ -73,6 +75,8 @@ struct SeasonData: Sendable {
     let homeAwaySplits: StatGridParser.StatGrid?
     let streaks: StatGridParser.StatGrid?
     let fieldingStats: StatGridParser.StatGrid?
+    let pitchTypeSplits: [StatGridParser.StatGrid]?
+    let countSplits: [StatGridParser.StatGrid]?
     let currentForm: CurrentFormData?
 }
 
@@ -407,7 +411,7 @@ enum PlayerCardService {
                 year: s.year, team: s.team, age: s.age, games: s.G, teamGames: 162,
                 stats: grid, countingValues: counting,
                 platoonSplits: nil, homeAwaySplits: nil, streaks: nil,
-                fieldingStats: nil, currentForm: nil
+                fieldingStats: nil, pitchTypeSplits: nil, countSplits: nil, currentForm: nil
             )
         }
 
@@ -434,7 +438,8 @@ enum PlayerCardService {
             return PitchingSeasonData(
                 year: s.year, team: s.team, games: s.G, gamesStarted: s.GS,
                 teamGames: 162, stats: grid, countingValues: counting,
-                platoonSplits: nil, homeAwaySplits: nil, streaks: nil, currentForm: nil
+                platoonSplits: nil, homeAwaySplits: nil, streaks: nil,
+                pitchTypeSplits: nil, countSplits: nil, currentForm: nil
             )
         }
 
@@ -895,7 +900,7 @@ enum PlayerCardService {
         if formatted.count >= 17 {
             let obp = Double(formatted[15]) ?? 0
             let slg = Double(formatted[16]) ?? 0
-            let ops = String(format: "%.3f", obp + slg)
+            let ops = formatRate(String(format: "%.3f", obp + slg))
             formatted.insert(ops, at: 17)
             formatted.insert("--", at: 18) // Career OPS+ not computed
         }
@@ -970,13 +975,16 @@ enum PlayerCardService {
             let homeAwaySplits = fetchHomeAwaySplitsForSeason(name: name, season: year)
             let streakGrid = fetchStreaksForSeason(name: name, season: year, performance: "hot")
             let fieldingGrid = fetchFieldingForSeason(name: name, season: year)
+            let pitchTypeGrids = fetchPitchTypeBattingSplitsForSeason(name: name, season: year)
+            let countGrids = fetchCountBattingSplitsForSeason(name: name, season: year)
             let currentForm = fetchCurrentFormForSeason(name: name, season: year)
 
             seasons.append(SeasonData(
                 year: year, team: team, age: age, games: games, teamGames: teamGames,
                 stats: grid, countingValues: counting,
                 platoonSplits: splits, homeAwaySplits: homeAwaySplits,
-                streaks: streakGrid, fieldingStats: fieldingGrid, currentForm: currentForm
+                streaks: streakGrid, fieldingStats: fieldingGrid,
+                pitchTypeSplits: pitchTypeGrids, countSplits: countGrids, currentForm: currentForm
             ))
         }
 
@@ -1026,7 +1034,7 @@ enum PlayerCardService {
         if withOPS.count >= 17 {
             let obp = Double(withOPS[15]) ?? 0
             let slg = Double(withOPS[16]) ?? 0
-            let ops = String(format: "%.3f", obp + slg)
+            let ops = formatRate(String(format: "%.3f", obp + slg))
             withOPS.insert(ops, at: 17)
             withOPS.insert("--", at: 18) // Career OPS+ not computed
         }
@@ -1127,13 +1135,13 @@ enum PlayerCardService {
             let obp = Double(formatted[9]) ?? 0
             let slg = Double(formatted[10]) ?? 0
             let avg = Double(formatted[8]) ?? 0
-            formatted.append(String(format: "%.3f", obp + slg)) // OPS
-            formatted.append(String(format: "%.3f", slg - avg)) // ISO
+            formatted.append(formatRate(String(format: "%.3f", obp + slg))) // OPS
+            formatted.append(formatRate(String(format: "%.3f", slg - avg))) // ISO
             // BABIP = (H - HR) / (AB - SO - HR)
             let h = Double(values[1]) ?? 0, hr = Double(values[4]) ?? 0
             let ab = Double(values[0]) ?? 0, so = Double(values[7]) ?? 0
             let babipDenom = ab - so - hr
-            formatted.append(babipDenom > 0 ? String(format: "%.3f", (h - hr) / babipDenom) : ".000")
+            formatted.append(babipDenom > 0 ? formatRate(String(format: "%.3f", (h - hr) / babipDenom)) : ".000")
             rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: formatted))
         }
 
@@ -1174,12 +1182,12 @@ enum PlayerCardService {
             let obp = Double(formatted[11]) ?? 0
             let slg = Double(formatted[12]) ?? 0
             let avg = Double(formatted[10]) ?? 0
-            formatted.append(String(format: "%.3f", obp + slg)) // OPS
-            formatted.append(String(format: "%.3f", slg - avg)) // ISO
+            formatted.append(formatRate(String(format: "%.3f", obp + slg))) // OPS
+            formatted.append(formatRate(String(format: "%.3f", slg - avg))) // ISO
             let h = Double(values[3]) ?? 0, hr = Double(values[6]) ?? 0
             let ab = Double(values[1]) ?? 0, so = Double(values[9]) ?? 0
             let babipDenom = ab - so - hr
-            formatted.append(babipDenom > 0 ? String(format: "%.3f", (h - hr) / babipDenom) : ".000")
+            formatted.append(babipDenom > 0 ? formatRate(String(format: "%.3f", (h - hr) / babipDenom)) : ".000")
             rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: formatted))
         }
 
@@ -1297,7 +1305,7 @@ enum PlayerCardService {
             let pb = row.count > 8 ? row[8] : "0"
             let fpct: String
             if let fpctVal = Double(row[9]) {
-                fpct = String(format: "%.3f", fpctVal)
+                fpct = formatRate(String(format: "%.3f", fpctVal))
             } else {
                 fpct = row[9]
             }
@@ -1311,6 +1319,126 @@ enum PlayerCardService {
 
         guard !rows.isEmpty else { return nil }
         return StatGridParser.StatGrid(headers: headers, rows: rows)
+    }
+
+    // MARK: - Per-season pitch type splits (batting)
+
+    private static func fetchPitchTypeBattingSplitsForSeason(name: String, season: Int) -> [StatGridParser.StatGrid]? {
+        let sql = """
+            SELECT pts.pitch_type, pts.at_bats, pts.hits,
+                   pts.doubles, pts.triples, pts.home_runs, pts.rbi,
+                   pts.walks, pts.strikeouts,
+                   pts.batting_avg, pts.obp, pts.slg, pts.ops
+            FROM pitch_type_batting_splits pts
+            JOIN players p ON pts.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND pts.season = \(season)
+            ORDER BY pts.at_bats DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        var grids: [StatGridParser.StatGrid] = []
+        for row in result.rows {
+            let label = row[0]  // e.g. "4-Seam", "Slider"
+            let values = formatValues(headers: headers, values: Array(row[1...]))
+            let grid = StatGridParser.StatGrid(
+                headers: headers,
+                rows: [StatGridParser.StatGrid.Row(label: label, values: values)]
+            )
+            grids.append(grid)
+        }
+        return grids.isEmpty ? nil : grids
+    }
+
+    // MARK: - Per-season count splits (batting)
+
+    private static func fetchCountBattingSplitsForSeason(name: String, season: Int) -> [StatGridParser.StatGrid]? {
+        let sql = """
+            SELECT cs.count_state, cs.at_bats, cs.hits,
+                   cs.doubles, cs.triples, cs.home_runs, cs.rbi,
+                   cs.walks, cs.strikeouts,
+                   cs.batting_avg, cs.obp, cs.slg, cs.ops
+            FROM count_batting_splits cs
+            JOIN players p ON cs.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND cs.season = \(season)
+            ORDER BY cs.count_state
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        var grids: [StatGridParser.StatGrid] = []
+        for row in result.rows {
+            let label = row[0]  // e.g. "0-0", "3-2"
+            let values = formatValues(headers: headers, values: Array(row[1...]))
+            let grid = StatGridParser.StatGrid(
+                headers: headers,
+                rows: [StatGridParser.StatGrid.Row(label: label, values: values)]
+            )
+            grids.append(grid)
+        }
+        return grids.isEmpty ? nil : grids
+    }
+
+    // MARK: - Per-season pitch type splits (pitching)
+
+    private static func fetchPitchTypePitchingSplitsForSeason(name: String, season: Int) -> [StatGridParser.StatGrid]? {
+        let sql = """
+            SELECT pts.pitch_type, pts.at_bats, pts.hits,
+                   pts.doubles, pts.triples, pts.home_runs,
+                   pts.walks, pts.strikeouts,
+                   pts.batting_avg_against, pts.obp_against, pts.slg_against, pts.ops_against
+            FROM pitch_type_pitching_splits pts
+            JOIN players p ON pts.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND pts.season = \(season)
+            ORDER BY pts.at_bats DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        var grids: [StatGridParser.StatGrid] = []
+        for row in result.rows {
+            let label = row[0]
+            let values = formatValues(headers: headers, values: Array(row[1...]))
+            let grid = StatGridParser.StatGrid(
+                headers: headers,
+                rows: [StatGridParser.StatGrid.Row(label: label, values: values)]
+            )
+            grids.append(grid)
+        }
+        return grids.isEmpty ? nil : grids
+    }
+
+    // MARK: - Per-season count splits (pitching)
+
+    private static func fetchCountPitchingSplitsForSeason(name: String, season: Int) -> [StatGridParser.StatGrid]? {
+        let sql = """
+            SELECT cs.count_state, cs.at_bats, cs.hits,
+                   cs.doubles, cs.triples, cs.home_runs,
+                   cs.walks, cs.strikeouts,
+                   cs.batting_avg_against, cs.obp_against, cs.slg_against, cs.ops_against
+            FROM count_pitching_splits cs
+            JOIN players p ON cs.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND cs.season = \(season)
+            ORDER BY cs.count_state
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        var grids: [StatGridParser.StatGrid] = []
+        for row in result.rows {
+            let label = row[0]
+            let values = formatValues(headers: headers, values: Array(row[1...]))
+            let grid = StatGridParser.StatGrid(
+                headers: headers,
+                rows: [StatGridParser.StatGrid.Row(label: label, values: values)]
+            )
+            grids.append(grid)
+        }
+        return grids.isEmpty ? nil : grids
     }
 
     // MARK: - Per-season streaks
@@ -2089,7 +2217,7 @@ enum PlayerCardService {
         } else {
             // Team overview sorted by OPS
             let sql = """
-                SELECT p.name, s.games, s.batting_avg, s.home_runs, s.rbi, s.ops
+                #imageLiteral(resourceName: "simulator_screenshot_BB683322-3664-4F78-80DC-D2EA7EAB435F.png")               SELECT p.name, s.games, s.batting_avg, s.home_runs, s.rbi, s.ops
                 FROM season_batting_stats s
                 JOIN players p ON s.player_id = p.player_id
                 WHERE (s.team = '\(teamCode)' OR s.team LIKE '\(teamCode)/%' OR s.team LIKE '%/\(teamCode)')
@@ -2453,6 +2581,8 @@ enum PlayerCardService {
             return buildSeasonLeaderboard(stat: stat, season: season, limit: limit)
         case .allTimeSingleSeason:
             return buildAllTimeSingleSeasonLeaderboard(stat: stat, limit: limit)
+        case .allTimeSince(let year):
+            return buildAllTimeSinceLeaderboard(stat: stat, sinceYear: year, limit: limit)
         case .career:
             if stat.displayAbbrev == "OPS+" {
                 return "Career OPS+ leaders require weighted season averaging, which isn't supported yet. Try **career OPS leaders** instead.\n\n[SUGGEST]career ops leaders[/SUGGEST]"
@@ -2554,6 +2684,47 @@ enum PlayerCardService {
 
         let statName = stat.pillName
         parts.append("\n[SUGGEST]career \(statName) leaders[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    private static func buildAllTimeSinceLeaderboard(stat: PlayerNameMatcher.StatInfo, sinceYear: Int, limit: Int) -> String {
+        let paFilter = stat.isRate ? " AND s.plate_appearances >= 400" : ""
+
+        let sql = """
+            SELECT p.name, s.\(stat.dbColumn), s.season
+            FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE s.season >= \(sinceYear)\(paFilter)
+            ORDER BY s.\(stat.dbColumn) DESC
+            LIMIT \(limit)
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else {
+            return "No \(stat.displayName) leaders found since \(sinceYear)."
+        }
+
+        var parts: [String] = []
+        parts.append("**\(stat.displayName) Leaders Since \(sinceYear)**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: \(stat.displayAbbrev), Year")
+        for (i, row) in result.rows.enumerated() {
+            let playerName = row[0]
+            let rawValue = row[1]
+            let season = row[2]
+            let formattedValue = stat.isRate ? formatRate(rawValue) : rawValue
+            parts.append("ROW \(i + 1). \(playerName): \(formattedValue), \(season)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        if stat.isRate {
+            parts.append("\n_Min. 400 PA._")
+        }
+
+        let statName = stat.pillName
+        parts.append("\n[SUGGEST]all-time single season \(statName) leaders[/SUGGEST]")
 
         return parts.joined(separator: "\n")
     }
@@ -3359,13 +3530,16 @@ enum PlayerCardService {
             let splits = fetchPitchingPlatoonSplitsForSeason(name: name, season: year)
             let homeAwaySplits = fetchPitchingHomeAwaySplitsForSeason(name: name, season: year)
             let streakGrid = fetchPitchingStreaksForSeason(name: name, season: year, performance: "hot")
+            let pitchTypeGrids = fetchPitchTypePitchingSplitsForSeason(name: name, season: year)
+            let countGrids = fetchCountPitchingSplitsForSeason(name: name, season: year)
             let currentForm = fetchPitchingCurrentFormForSeason(name: name, season: year)
 
             seasons.append(PitchingSeasonData(
                 year: year, team: team, games: games, gamesStarted: gamesStarted,
                 teamGames: teamGames, stats: grid, countingValues: counting,
                 platoonSplits: splits, homeAwaySplits: homeAwaySplits,
-                streaks: streakGrid, currentForm: currentForm
+                streaks: streakGrid, pitchTypeSplits: pitchTypeGrids, countSplits: countGrids,
+                currentForm: currentForm
             ))
         }
 
@@ -3963,6 +4137,8 @@ enum PlayerCardService {
             return buildPitchingSeasonLeaderboard(stat: stat, season: season, limit: limit)
         case .allTimeSingleSeason:
             return buildPitchingAllTimeSingleSeasonLeaderboard(stat: stat, limit: limit)
+        case .allTimeSince(let year):
+            return buildPitchingAllTimeSinceLeaderboard(stat: stat, sinceYear: year, limit: limit)
         case .career:
             return buildPitchingCareerLeaderboard(stat: stat, limit: limit)
         }
@@ -4044,6 +4220,45 @@ enum PlayerCardService {
 
         var parts: [String] = []
         parts.append("**All-Time Single Season \(stat.displayName) Leaders (Pitching)**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: \(stat.displayAbbrev), Year")
+        for (i, row) in result.rows.enumerated() {
+            let playerName = row[0]
+            let rawValue = row[1]
+            let season = row[2]
+            let formattedValue = stat.isRate ? formatPitchingRate(rawValue, decimals: 2) : rawValue
+            parts.append("ROW \(i + 1). \(playerName): \(formattedValue), \(season)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        if stat.isRate {
+            parts.append("\n_Min. 162 IP._")
+        }
+
+        return parts.joined(separator: "\n")
+    }
+
+    private static func buildPitchingAllTimeSinceLeaderboard(stat: PlayerNameMatcher.StatInfo, sinceYear: Int, limit: Int) -> String {
+        let ipFilter = stat.isRate ? " AND sp.ip_outs >= 486" : ""
+        let orderDir = (stat.displayAbbrev == "ERA" || stat.displayAbbrev == "WHIP" || stat.displayAbbrev == "BB/9" || stat.displayAbbrev == "BAA") ? "ASC" : "DESC"
+
+        let sql = """
+            SELECT p.name, sp.\(stat.dbColumn), sp.season
+            FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE sp.season >= \(sinceYear)\(ipFilter)
+            ORDER BY sp.\(stat.dbColumn) \(orderDir)
+            LIMIT \(limit)
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else {
+            return "No \(stat.displayName) leaders found since \(sinceYear)."
+        }
+
+        var parts: [String] = []
+        parts.append("**\(stat.displayName) Leaders Since \(sinceYear) (Pitching)**\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
         parts.append("[LEADERBOARD]")

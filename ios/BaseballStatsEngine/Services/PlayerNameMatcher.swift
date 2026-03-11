@@ -28,6 +28,7 @@ enum PlayerNameMatcher {
     enum LeaderboardScope: Sendable {
         case season(Int)
         case allTimeSingleSeason
+        case allTimeSince(Int)
         case career
     }
 
@@ -807,22 +808,76 @@ enum PlayerNameMatcher {
 
         let leaderboardTriggers = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest",
                                    "lowest", "who led", "who leads", "who hit the most", "who had the most",
-                                   "leading"]
+                                   "leading", "closest to", "come closest"]
         guard leaderboardTriggers.contains(where: { lower.contains($0) }) else { return nil }
 
         // Reject team-aggregate questions — "what team had the highest OPS" asks about teams, not players
         let teamAggregateTriggers = ["what team", "which team", "what teams", "which teams"]
         if teamAggregateTriggers.contains(where: { lower.contains($0) }) { return nil }
 
-        // Must have a stat keyword
-        guard let stat = matchStat(lower) else { return nil }
-
-        // Reject if any player name is found — that's a single-stat query
-        for name in sortedNames {
-            if containsWord(name.lowercased(), in: lower) { return nil }
+        // "closest to .400" → batting average
+        // "closest to 60 home runs" → home runs
+        var stat: StatInfo?
+        if lower.contains("closest to") || lower.contains("come closest") {
+            // Try to find a stat from the query
+            stat = matchStat(lower)
+            // If no explicit stat found but ".400" / ".300" mentioned, it's batting average
+            if stat == nil {
+                let ratePattern = try? NSRegularExpression(pattern: "\\.\\d{3}")
+                if let ratePattern, ratePattern.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) != nil {
+                    stat = statAliasMap["avg"] ?? statAliasMap["batting average"]
+                }
+            }
+        } else {
+            stat = matchStat(lower)
         }
-        for (lastName, players) in lastNameIndex {
-            if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+        guard let stat else { return nil }
+
+        // Check for "since [player name]" — resolve to year
+        var sinceYear: Int?
+        if lower.contains("since ") {
+            // Look for a player name after "since"
+            if let sinceRange = lower.range(of: "since ") {
+                let afterSince = String(lower[sinceRange.upperBound...])
+                // Check for player name match
+                for name in sortedNames {
+                    if afterSince.hasPrefix(name.lowercased()) || containsWord(name.lowercased(), in: afterSince) {
+                        // Look up player's last season
+                        let db = DatabaseService()
+                        let sanitized = name.replacingOccurrences(of: "'", with: "''")
+                        if let result = try? db.execute(sql: "SELECT MAX(season) FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE p.name LIKE '%\(sanitized)%'"),
+                           let row = result.rows.first, let year = Int(row[0]) {
+                            sinceYear = year
+                        }
+                        break
+                    }
+                }
+                // Also check last names
+                if sinceYear == nil {
+                    for (lastName, players) in lastNameIndex where players.count == 1 {
+                        if containsWord(lastName, in: afterSince) {
+                            let name = players[0]
+                            let db = DatabaseService()
+                            let sanitized = name.replacingOccurrences(of: "'", with: "''")
+                            if let result = try? db.execute(sql: "SELECT MAX(season) FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE p.name LIKE '%\(sanitized)%'"),
+                               let row = result.rows.first, let year = Int(row[0]) {
+                                sinceYear = year
+                            }
+                            break
+                        }
+                    }
+                }
+            }
+        }
+
+        // Only reject player names if not in "since [player]" context
+        if sinceYear == nil {
+            for name in sortedNames {
+                if containsWord(name.lowercased(), in: lower) { return nil }
+            }
+            for (lastName, players) in lastNameIndex {
+                if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+            }
         }
 
         // Extract limit from "top N" pattern (default 50 for pagination)
@@ -836,7 +891,9 @@ enum PlayerNameMatcher {
         }
 
         let scope: LeaderboardScope
-        if lower.contains("career") {
+        if let since = sinceYear {
+            scope = .allTimeSince(since)
+        } else if lower.contains("career") {
             scope = .career
         } else if lower.contains("all time") || lower.contains("all-time") || lower.contains("single season") {
             scope = .allTimeSingleSeason

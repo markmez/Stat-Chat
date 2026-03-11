@@ -344,6 +344,9 @@ final class AppState {
             case .allTimeSingleSeason:
                 isLocal = false  // all-time spans all history
                 scopeStr = "all_time"
+            case .allTimeSince:
+                isLocal = true  // full DB has all history
+                scopeStr = "all_time"
             }
 
             if isLocal {

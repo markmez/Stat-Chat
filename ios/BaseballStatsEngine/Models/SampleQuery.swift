@@ -14,7 +14,7 @@ enum SampleQuery {
         case milestone
     }
 
-    // MARK: - Templates for dynamic generation
+    // MARK: - Templates for dynamic generation (current players)
 
     private static let streakTemplates = [
         "Did {player} have any hot streaks last season?",
@@ -24,13 +24,13 @@ enum SampleQuery {
 
     private static let comparisonTemplates = [
         "{player1} vs {player2} last season",
-        "Compare {player1} and {player2}",
+        "Compare {player1} and {player2} last season",
     ]
 
     private static let splitsTemplates = [
-        "How does {player} hit against lefties?",
-        "{player} platoon splits",
-        "{player}'s splits vs left-handed pitching",
+        "How did {player} hit against lefties last season?",
+        "{player} platoon splits last season",
+        "{player}'s splits vs left-handed pitching last season",
     ]
 
     private static let homeAwayTemplates = [
@@ -41,6 +41,33 @@ enum SampleQuery {
     private static let playerLookupTemplates = [
         "How did {player} do last season?",
         "What was {player}'s slash line last season?",
+    ]
+
+    // MARK: - Templates for historical players (no longer active)
+
+    private static let historicalStreakTemplates = [
+        "Did {player} have any hot streaks in {year}?",
+        "When was {player}'s coldest stretch in {year}?",
+    ]
+
+    private static let historicalComparisonTemplates = [
+        "{player1} vs {player2} career stats",
+        "Compare {player1} and {player2}",
+    ]
+
+    private static let historicalSplitsTemplates = [
+        "How did {player} hit against lefties in his career?",
+        "{player} career platoon splits",
+    ]
+
+    private static let historicalHomeAwayTemplates = [
+        "{player} career home vs away splits",
+        "How did {player} hit at home in his career?",
+    ]
+
+    private static let historicalPlayerLookupTemplates = [
+        "How did {player} do in {year}?",
+        "{player} career stats",
     ]
 
     // These don't need player names
@@ -56,7 +83,7 @@ enum SampleQuery {
 
     private static let milestoneQueries = [
         "How many times has someone hit 50 home runs?",
-        "Has anyone ever batted .400?",
+        "Who has come closest to hitting .400 since Ted Williams?",
         "How many players have stolen 60 bases in a season?",
     ]
 
@@ -75,17 +102,20 @@ enum SampleQuery {
         let usedCategories = detectUsedCategories(in: history)
         let teamCounts = countTeams(from: searchedPlayers, history: history)
 
-        // Find teammate suggestions for top teams
-        let topTeams = teamCounts.sorted { $0.value > $1.value }.prefix(3).map(\.key)
+        // Find teammate suggestions for top teams (limited)
+        let topTeams = teamCounts.sorted { $0.value > $1.value }.prefix(2).map(\.key)
         let searchedNames = Set(searchedPlayers.map { $0.lowercased() })
         var teammates: [String] = []
         for team in topTeams {
             let stars = topPlayersForTeam(team, excluding: searchedNames)
-            teammates.append(contentsOf: stars)
+            teammates.append(contentsOf: stars.prefix(3))
         }
 
-        // Build the combined player pool: searched players + teammates
-        let allPlayers = searchedPlayers + teammates
+        // Add league-wide stars the user hasn't searched
+        let leagueStars = topLeagueStars(excluding: searchedNames)
+
+        // Build the combined player pool: searched players + some teammates + league stars
+        let allPlayers = searchedPlayers + teammates + leagueStars
         let unusedCategories = Set(Category.allCases).subtracting(usedCategories)
 
         var selected: [String] = []
@@ -108,10 +138,11 @@ enum SampleQuery {
             }
         }
 
-        // 3. Teammate suggestions (players they haven't searched yet)
-        for teammate in teammates.prefix(3) {
+        // 3. League stars the user hasn't looked at (mix with 1 teammate)
+        let discoveryPlayers = (leagueStars.shuffled().prefix(2) + teammates.shuffled().prefix(1))
+        for player in discoveryPlayers {
             let cat: Category = [.playerLookup, .splits, .streak, .homeAway].randomElement()!
-            if let query = generateForPlayer(teammate, category: cat, allPlayers: allPlayers, usedTexts: &usedTexts) {
+            if let query = generateForPlayer(player, category: cat, allPlayers: allPlayers, usedTexts: &usedTexts) {
                 selected.append(query)
             }
         }
@@ -211,6 +242,28 @@ enum SampleQuery {
         return players
     }
 
+    /// Top league-wide stars from the most recent season, excluding already-searched players.
+    private static func topLeagueStars(excluding: Set<String>) -> [String] {
+        let db = DatabaseService()
+        var stars: [String] = []
+        let sql = """
+            SELECT p.name FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE s.season = (SELECT MAX(season) FROM season_batting_stats)
+              AND s.at_bats >= 400
+            ORDER BY s.ops DESC LIMIT 15
+            """
+        if let result = try? db.execute(sql: sql) {
+            for row in result.rows {
+                let name = row[0]
+                if !excluding.contains(name.lowercased()) {
+                    stars.append(name)
+                }
+            }
+        }
+        return Array(stars.prefix(8))
+    }
+
     // MARK: - Category detection
 
     private static func detectUsedCategories(in history: [String]) -> Set<Category> {
@@ -281,17 +334,22 @@ enum SampleQuery {
     }
 
     private static func generateForPlayer(_ player: String, category: Category, allPlayers: [String], usedTexts: inout Set<String>) -> String? {
+        let historical = !isCurrentPlayer(player)
+        let lastYear = historical ? lastSeasonYear(for: player) : nil
+        let yearStr = lastYear.map { String($0) } ?? "his career"
+
         let templates: [String]
         switch category {
-        case .streak: templates = streakTemplates
-        case .splits: templates = splitsTemplates
-        case .homeAway: templates = homeAwayTemplates
-        case .playerLookup: templates = playerLookupTemplates
+        case .streak: templates = historical ? historicalStreakTemplates : streakTemplates
+        case .splits: templates = historical ? historicalSplitsTemplates : splitsTemplates
+        case .homeAway: templates = historical ? historicalHomeAwayTemplates : homeAwayTemplates
+        case .playerLookup: templates = historical ? historicalPlayerLookupTemplates : playerLookupTemplates
         case .comparison:
             // Need a second player
             let others = allPlayers.filter { $0 != player }
             guard let other = others.randomElement() else { return nil }
-            let template = comparisonTemplates.randomElement()!
+            let pool = historical ? historicalComparisonTemplates : comparisonTemplates
+            let template = pool.randomElement()!
             let query = template
                 .replacingOccurrences(of: "{player1}", with: player)
                 .replacingOccurrences(of: "{player2}", with: other)
@@ -307,7 +365,9 @@ enum SampleQuery {
         }
 
         guard let template = templates.randomElement() else { return nil }
-        let query = template.replacingOccurrences(of: "{player}", with: player)
+        let query = template
+            .replacingOccurrences(of: "{player}", with: player)
+            .replacingOccurrences(of: "{year}", with: yearStr)
         if usedTexts.contains(query) { return nil }
         usedTexts.insert(query)
         return query
@@ -332,6 +392,39 @@ enum SampleQuery {
         guard let pick = available.randomElement() else { return nil }
         usedTexts.insert(pick)
         return pick
+    }
+
+    // MARK: - Historical player detection
+
+    /// Returns the player's most recent season year, or nil if not found.
+    private static func lastSeasonYear(for player: String) -> Int? {
+        let db = DatabaseService()
+        let sanitized = player.replacingOccurrences(of: "'", with: "''")
+        if let result = try? db.execute(sql: """
+            SELECT MAX(season) FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitized)%'
+            """),
+           let row = result.rows.first, let year = Int(row[0]) {
+            return year
+        }
+        // Try pitching
+        if let result = try? db.execute(sql: """
+            SELECT MAX(season) FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitized)%'
+            """),
+           let row = result.rows.first, let year = Int(row[0]) {
+            return year
+        }
+        return nil
+    }
+
+    /// A player is "current" if they played within the last 2 years.
+    private static func isCurrentPlayer(_ player: String) -> Bool {
+        guard let lastYear = lastSeasonYear(for: player) else { return true } // assume current if unknown
+        let currentYear = Calendar.current.component(.year, from: Date())
+        return lastYear >= currentYear - 1
     }
 
     // MARK: - Team aliases
@@ -378,14 +471,14 @@ enum SampleQuery {
         "Who had the most stolen bases last season?",
         "How did Juan Soto do last year?",
         "Top 10 in OPS last season",
-        "How did Yordan Alvarez hit against lefties?",
+        "How did Yordan Alvarez hit against lefties last season?",
         "Compare Lindor and Bobby Witt Jr last season",
         "How many home runs did Ohtani hit last season?",
         "When was Bryce Harper's coldest stretch last season?",
         "Top 5 in batting average last season",
         "Judge home vs away last season",
-        "How many times has someone hit 50 home runs?",
+        "Who has come closest to hitting .400 since Ted Williams?",
         "Trea Turner vs Gunnar Henderson last season",
-        "Kyle Tucker's splits vs left-handed pitching",
+        "Kyle Tucker's splits vs left-handed pitching last season",
     ]
 }

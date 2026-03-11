@@ -65,6 +65,11 @@ def msf_get(endpoint, params=None):
             print(f"    Rate limited, waiting {wait}s...")
             time.sleep(wait)
             continue
+        if resp.status_code >= 500:
+            wait = 5 * (attempt + 1)
+            print(f"    Server error {resp.status_code}, retrying in {wait}s...")
+            time.sleep(wait)
+            continue
         resp.raise_for_status()
         if not resp.content:
             return None
@@ -370,7 +375,11 @@ def pull_game_logs(conn, season_str):
 
     for i, gdate in enumerate(game_dates):
         time.sleep(2)  # Rate limit courtesy
-        data = msf_get(f"{season_str}/date/{gdate}/player_gamelogs.json")
+        try:
+            data = msf_get(f"{season_str}/date/{gdate}/player_gamelogs.json")
+        except Exception as e:
+            print(f"    Skipping {gdate}: {e}")
+            continue
         if not data:
             continue
         logs = data.get("gamelogs", [])
@@ -616,21 +625,46 @@ def compute_pitching_home_away_splits(conn, season_year):
 
 
 def compute_platoon_splits(conn, season_str):
-    """Compute batting and pitching platoon splits from play-by-play data.
+    """Compute platoon, pitch type, and count splits from play-by-play data.
 
-    For each plate appearance, we know the pitcher handedness and batter handedness.
-    Batting platoon: group by (batter, pitcher_hand) → vs_LHP / vs_RHP
-    Pitching platoon: group by (pitcher, batter_hand) → vs_LHB / vs_RHB
+    All three split types are collected in a single pass over the play-by-play API
+    to avoid redundant API calls (the most expensive part of the pipeline).
+
+    Platoon: group by handedness → vs_LHP / vs_RHP / vs_LHB / vs_RHB
+    Pitch type: group by final pitch throwType → per pitch type PA outcomes
+    Count: group by ball-strike count when PA ended → per count PA outcomes
     """
     season_year = detect_season(season_str)
-    print(f"  Computing platoon splits from play-by-play for {season_year}...")
+    print(f"  Computing splits from play-by-play for {season_year}...")
 
     # Result types → counting stat mapping
     HIT_RESULTS = {"SINGLE", "DOUBLE", "TRIPLE", "HOMERUN"}
     OUT_RESULTS = {"FLYOUT", "GROUNDOUT", "LINEOUT", "POPOUT", "DOUBLE_PLAY"}
-    # These count as PA but not AB:
     NON_AB_RESULTS = {"WALK", "HIT_BY_PITCH", "SACRIFICE_FLY", "SACRIFICE_BUNT",
                       "CATCHER_INTERFERENCE"}
+
+    # Pitch result → count update
+    STRIKE_RESULTS = {"CALLED_STRIKE", "SWINGING_STRIKE", "SWINGING_STRIKE_BLOCKED"}
+    BALL_RESULTS = {"BALL", "BALL_IN_DIRT", "WILD_PITCH", "PASSED_BALL"}
+    FOUL_RESULTS = {"FOUL", "FOUL_TIP"}
+
+    # Normalize pitch type names for display
+    PITCH_TYPE_MAP = {
+        "FOUR_SEAM_FASTBALL": "4-Seam",
+        "SINKER": "Sinker",
+        "CUTTER": "Cutter",
+        "SLIDER": "Slider",
+        "CURVEBALL": "Curve",
+        "CHANGEUP": "Change",
+        "SPLITTER": "Split",
+        "KNUCKLE_CURVE": "Knuckle Curve",
+        "SWEEPER": "Sweeper",
+        "SCREWBALL": "Screwball",
+        "KNUCKLEBALL": "Knuckle",
+        "EEPHUS": "Eephus",
+        "TWO_SEAM_FASTBALL": "2-Seam",
+        "SLURVE": "Slurve",
+    }
 
     # Get all game IDs for this season
     data = msf_get(f"{season_str}/games.json")
@@ -641,14 +675,43 @@ def compute_platoon_splits(conn, season_str):
              if g.get("schedule", {}).get("playedStatus") == "COMPLETED"]
     print(f"    Found {len(games)} completed games to process")
 
-    # Accumulators: {(player_name, pitcher_hand): {stats}}
-    # We use MSF player IDs, then resolve to Retrosheet IDs at insert time
-    batting_splits = {}   # (msf_batter_id, batter_name, pitcher_hand) → stats
-    pitching_splits = {}  # (msf_pitcher_id, pitcher_name, batter_hand) → stats
+    # Accumulators
+    batting_splits = {}       # (msf_batter_id, batter_name, pitcher_hand) → stats
+    pitching_splits = {}      # (msf_pitcher_id, pitcher_name, batter_hand) → stats
+    bat_pitch_type = {}       # (msf_batter_id, batter_name, pitch_type) → stats
+    pitch_pitch_type = {}     # (msf_pitcher_id, pitcher_name, pitch_type) → stats
+    bat_count_splits = {}     # (msf_batter_id, batter_name, count_str) → stats
+    pitch_count_splits = {}   # (msf_pitcher_id, pitcher_name, count_str) → stats
 
     def empty_bat_stats():
         return {"pa": 0, "ab": 0, "h": 0, "2b": 0, "3b": 0, "hr": 0,
                 "rbi": 0, "bb": 0, "so": 0, "hbp": 0, "sf": 0}
+
+    def accumulate(bucket, result):
+        """Add a PA outcome to a stats bucket."""
+        is_hit = result in HIT_RESULTS
+        is_out = result in OUT_RESULTS or result == "STRIKEOUT"
+        is_ab = is_hit or is_out
+
+        bucket["pa"] += 1
+        if is_ab:
+            bucket["ab"] += 1
+        if is_hit:
+            bucket["h"] += 1
+        if result == "DOUBLE":
+            bucket["2b"] += 1
+        elif result == "TRIPLE":
+            bucket["3b"] += 1
+        elif result == "HOMERUN":
+            bucket["hr"] += 1
+        if result == "WALK":
+            bucket["bb"] += 1
+        if result == "STRIKEOUT":
+            bucket["so"] += 1
+        if result == "HIT_BY_PITCH":
+            bucket["hbp"] += 1
+        if result == "SACRIFICE_FLY":
+            bucket["sf"] += 1
 
     for i, gid in enumerate(games):
         if i > 0:
@@ -662,7 +725,32 @@ def compute_platoon_splits(conn, season_str):
             continue
 
         for ab in pbp.get("atBats", []):
-            for play in ab.get("atBatPlay", []):
+            # Track pitch sequence for this at-bat to find final pitch type and count
+            balls = 0
+            strikes = 0
+            last_pitch_type = None
+
+            all_plays = ab.get("atBatPlay", [])
+            for play in all_plays:
+                if not isinstance(play, dict):
+                    continue
+                pitch_data = play.get("pitch", {})
+                if pitch_data:
+                    # Track count
+                    pr = pitch_data.get("result", "")
+                    if pr in BALL_RESULTS:
+                        balls = min(balls + 1, 3)
+                    elif pr in STRIKE_RESULTS:
+                        strikes = min(strikes + 1, 2)
+                    elif pr in FOUL_RESULTS and strikes < 2:
+                        strikes += 1
+                    # Track pitch type (keep updating — last one wins)
+                    tt = pitch_data.get("throwType")
+                    if tt:
+                        last_pitch_type = tt
+
+            # Now find the batterUp play (PA outcome)
+            for play in all_plays:
                 if not isinstance(play, dict):
                     continue
                 bu = play.get("batterUp", {})
@@ -674,7 +762,6 @@ def compute_platoon_splits(conn, season_str):
                 batter_id = batter_info.get("id")
                 batter_name = f"{batter_info.get('firstName', '')} {batter_info.get('lastName', '')}".strip()
 
-                # Get pitcher from playStatus
                 ps = play.get("playStatus", {})
                 pitcher_info = ps.get("pitcher", {})
                 pitcher_id = pitcher_info.get("id")
@@ -683,129 +770,148 @@ def compute_platoon_splits(conn, season_str):
                 if not batter_id or not pitcher_id:
                     continue
 
-                # Get handedness from the pitch data or batterUp
+                # Get handedness
                 pitcher_hand = None
                 batter_hand = bu.get("standingLeftOrRight")
+                for p2 in all_plays:
+                    if isinstance(p2, dict):
+                        pd = p2.get("pitch", {})
+                        if pd and pd.get("throwingLeftOrRight"):
+                            pitcher_hand = pd["throwingLeftOrRight"]
+                            break
 
-                # Look through plays for pitch data with throwingLeftOrRight
-                for p2 in ab.get("atBatPlay", []):
-                    pitch_data = p2.get("pitch", {})
-                    if pitch_data and pitch_data.get("throwingLeftOrRight"):
-                        pitcher_hand = pitch_data["throwingLeftOrRight"]
-                        break
+                # --- Platoon splits (requires handedness) ---
+                if pitcher_hand and batter_hand:
+                    bkey = (batter_id, batter_name, pitcher_hand)
+                    if bkey not in batting_splits:
+                        batting_splits[bkey] = empty_bat_stats()
+                    accumulate(batting_splits[bkey], result)
 
-                if not pitcher_hand or not batter_hand:
-                    continue
+                    pkey = (pitcher_id, pitcher_name, batter_hand)
+                    if pkey not in pitching_splits:
+                        pitching_splits[pkey] = empty_bat_stats()
+                    accumulate(pitching_splits[pkey], result)
 
-                # --- Batting platoon: batter vs pitcher_hand ---
-                bkey = (batter_id, batter_name, pitcher_hand)
-                if bkey not in batting_splits:
-                    batting_splits[bkey] = empty_bat_stats()
-                bs = batting_splits[bkey]
+                # --- Pitch type splits (requires last pitch type) ---
+                if last_pitch_type:
+                    pt_label = PITCH_TYPE_MAP.get(last_pitch_type, last_pitch_type)
+                    bt_key = (batter_id, batter_name, pt_label)
+                    if bt_key not in bat_pitch_type:
+                        bat_pitch_type[bt_key] = empty_bat_stats()
+                    accumulate(bat_pitch_type[bt_key], result)
 
-                is_hit = result in HIT_RESULTS
-                is_out = result in OUT_RESULTS or result == "STRIKEOUT"
-                is_ab = is_hit or is_out  # AB = H + outs (excl walks, HBP, SF)
+                    pt_key = (pitcher_id, pitcher_name, pt_label)
+                    if pt_key not in pitch_pitch_type:
+                        pitch_pitch_type[pt_key] = empty_bat_stats()
+                    accumulate(pitch_pitch_type[pt_key], result)
 
-                bs["pa"] += 1
-                if is_ab:
-                    bs["ab"] += 1
-                if is_hit:
-                    bs["h"] += 1
-                if result == "DOUBLE":
-                    bs["2b"] += 1
-                elif result == "TRIPLE":
-                    bs["3b"] += 1
-                elif result == "HOMERUN":
-                    bs["hr"] += 1
-                if result == "WALK":
-                    bs["bb"] += 1
-                if result == "STRIKEOUT":
-                    bs["so"] += 1
-                if result == "HIT_BY_PITCH":
-                    bs["hbp"] += 1
-                if result == "SACRIFICE_FLY":
-                    bs["sf"] += 1
+                # --- Count splits ---
+                count_str = f"{balls}-{strikes}"
+                bc_key = (batter_id, batter_name, count_str)
+                if bc_key not in bat_count_splits:
+                    bat_count_splits[bc_key] = empty_bat_stats()
+                accumulate(bat_count_splits[bc_key], result)
 
-                # --- Pitching platoon: pitcher vs batter_hand ---
-                pkey = (pitcher_id, pitcher_name, batter_hand)
-                if pkey not in pitching_splits:
-                    pitching_splits[pkey] = empty_bat_stats()
-                ps_stats = pitching_splits[pkey]
+                pc_key = (pitcher_id, pitcher_name, count_str)
+                if pc_key not in pitch_count_splits:
+                    pitch_count_splits[pc_key] = empty_bat_stats()
+                accumulate(pitch_count_splits[pc_key], result)
 
-                ps_stats["pa"] += 1
-                if is_ab:
-                    ps_stats["ab"] += 1
-                if is_hit:
-                    ps_stats["h"] += 1
-                if result == "DOUBLE":
-                    ps_stats["2b"] += 1
-                elif result == "TRIPLE":
-                    ps_stats["3b"] += 1
-                elif result == "HOMERUN":
-                    ps_stats["hr"] += 1
-                if result == "WALK":
-                    ps_stats["bb"] += 1
-                if result == "STRIKEOUT":
-                    ps_stats["so"] += 1
-                if result == "HIT_BY_PITCH":
-                    ps_stats["hbp"] += 1
-                if result == "SACRIFICE_FLY":
-                    ps_stats["sf"] += 1
+                break  # Only process one batterUp per at-bat
 
         if (i + 1) % 50 == 0:
             print(f"    Processed {i + 1}/{len(games)} games...")
 
-    print(f"    Processed all {len(games)} games: {len(batting_splits)} batter splits, {len(pitching_splits)} pitcher splits")
+    print(f"    Processed all {len(games)} games: {len(batting_splits)} platoon, "
+          f"{len(bat_pitch_type)} pitch type, {len(bat_count_splits)} count splits")
 
-    # Now insert into tables, resolving MSF names to Retrosheet player IDs
+    # --- Insert into tables ---
     cursor = conn.cursor()
+
+    # Ensure new tables exist
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pitch_type_batting_splits (
+            player_id TEXT NOT NULL, season INTEGER NOT NULL, pitch_type TEXT NOT NULL,
+            plate_appearances INTEGER, at_bats INTEGER, hits INTEGER,
+            doubles INTEGER, triples INTEGER, home_runs INTEGER,
+            rbi INTEGER, walks INTEGER, strikeouts INTEGER,
+            hit_by_pitch INTEGER, sacrifice_flies INTEGER,
+            batting_avg REAL, obp REAL, slg REAL, ops REAL, iso REAL, babip REAL,
+            UNIQUE(player_id, season, pitch_type)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pitch_type_pitching_splits (
+            player_id TEXT NOT NULL, season INTEGER NOT NULL, pitch_type TEXT NOT NULL,
+            plate_appearances INTEGER, at_bats INTEGER, hits INTEGER,
+            doubles INTEGER, triples INTEGER, home_runs INTEGER,
+            walks INTEGER, strikeouts INTEGER, hit_by_pitch INTEGER, sacrifice_flies INTEGER,
+            batting_avg_against REAL, obp_against REAL, slg_against REAL, ops_against REAL,
+            UNIQUE(player_id, season, pitch_type)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS count_batting_splits (
+            player_id TEXT NOT NULL, season INTEGER NOT NULL, count_state TEXT NOT NULL,
+            plate_appearances INTEGER, at_bats INTEGER, hits INTEGER,
+            doubles INTEGER, triples INTEGER, home_runs INTEGER,
+            rbi INTEGER, walks INTEGER, strikeouts INTEGER,
+            hit_by_pitch INTEGER, sacrifice_flies INTEGER,
+            batting_avg REAL, obp REAL, slg REAL, ops REAL, iso REAL, babip REAL,
+            UNIQUE(player_id, season, count_state)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS count_pitching_splits (
+            player_id TEXT NOT NULL, season INTEGER NOT NULL, count_state TEXT NOT NULL,
+            plate_appearances INTEGER, at_bats INTEGER, hits INTEGER,
+            doubles INTEGER, triples INTEGER, home_runs INTEGER,
+            walks INTEGER, strikeouts INTEGER, hit_by_pitch INTEGER, sacrifice_flies INTEGER,
+            batting_avg_against REAL, obp_against REAL, slg_against REAL, ops_against REAL,
+            UNIQUE(player_id, season, count_state)
+        )
+    """)
+
+    # Clear existing data for this season
     cursor.execute("DELETE FROM platoon_splits WHERE season = ?", (season_year,))
     cursor.execute("DELETE FROM pitching_platoon_splits WHERE season = ?", (season_year,))
+    cursor.execute("DELETE FROM pitch_type_batting_splits WHERE season = ?", (season_year,))
+    cursor.execute("DELETE FROM pitch_type_pitching_splits WHERE season = ?", (season_year,))
+    cursor.execute("DELETE FROM count_batting_splits WHERE season = ?", (season_year,))
+    cursor.execute("DELETE FROM count_pitching_splits WHERE season = ?", (season_year,))
 
-    bat_count = 0
-    for (msf_id, name, pitcher_hand), stats in batting_splits.items():
-        # Resolve player ID by name
+    def resolve_player(name):
         cursor.execute("SELECT player_id FROM players WHERE name = ? LIMIT 1", (name,))
         row = cursor.fetchone()
-        if not row:
-            continue
-        pid = row[0]
+        return row[0] if row else None
 
+    # --- Insert platoon splits ---
+    bat_count = 0
+    for (msf_id, name, pitcher_hand), stats in batting_splits.items():
+        pid = resolve_player(name)
+        if not pid:
+            continue
         split = "vs_LHP" if pitcher_hand == "L" else "vs_RHP"
         h, ab, bb, hbp, sf = stats["h"], stats["ab"], stats["bb"], stats["hbp"], stats["sf"]
         doubles, triples, hr, so = stats["2b"], stats["3b"], stats["hr"], stats["so"]
-
-        pa_calc, avg, obp, slg, ops, iso, babip = compute_rate_stats(
-            h, ab, bb, hbp, sf, doubles, triples, hr, so
-        )
-
+        pa_calc, avg, obp, slg, ops, iso, babip = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so)
         cursor.execute("""
             INSERT OR REPLACE INTO platoon_splits
             (player_id, season, split, plate_appearances, at_bats,
              hits, doubles, triples, home_runs, rbi, walks, strikeouts,
              batting_avg, obp, slg, ops, iso, babip)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            pid, season_year, split, pa_calc, ab,
-            h, doubles, triples, hr, stats["rbi"], bb, so,
-            avg, obp, slg, ops, iso, babip,
-        ))
+        """, (pid, season_year, split, pa_calc, ab, h, doubles, triples, hr, stats["rbi"], bb, so, avg, obp, slg, ops, iso, babip))
         bat_count += 1
 
     pitch_count = 0
     for (msf_id, name, batter_hand), stats in pitching_splits.items():
-        cursor.execute("SELECT player_id FROM players WHERE name = ? LIMIT 1", (name,))
-        row = cursor.fetchone()
-        if not row:
+        pid = resolve_player(name)
+        if not pid:
             continue
-        pid = row[0]
-
         split = "vs_LHB" if batter_hand == "L" else "vs_RHB"
         h, ab, bb, hbp, sf = stats["h"], stats["ab"], stats["bb"], stats["hbp"], stats["sf"]
         doubles, triples, hr, so = stats["2b"], stats["3b"], stats["hr"], stats["so"]
-
-        # Compute batting-against rates
         avg_against = h / ab if ab > 0 else None
         obp_denom = ab + bb + hbp + sf
         obp_against = (h + bb + hbp) / obp_denom if obp_denom > 0 else None
@@ -813,7 +919,6 @@ def compute_platoon_splits(conn, season_str):
         tb = singles + 2 * doubles + 3 * triples + 4 * hr
         slg_against = tb / ab if ab > 0 else None
         ops_against = (obp_against or 0) + (slg_against or 0) if obp_against is not None and slg_against is not None else None
-
         cursor.execute("""
             INSERT OR REPLACE INTO pitching_platoon_splits
             (player_id, season, split, plate_appearances, at_bats,
@@ -821,16 +926,104 @@ def compute_platoon_splits(conn, season_str):
              strikeouts, hit_by_pitch, sacrifice_hits, sacrifice_flies,
              batting_avg_against, obp_against, slg_against, ops_against)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            pid, season_year, split, stats["pa"], ab,
-            h, doubles, triples, hr, bb, 0,
-            so, hbp, 0, sf,
-            avg_against, obp_against, slg_against, ops_against,
-        ))
+        """, (pid, season_year, split, stats["pa"], ab, h, doubles, triples, hr, bb, 0, so, hbp, 0, sf,
+              avg_against, obp_against, slg_against, ops_against))
         pitch_count += 1
 
+    # --- Insert pitch type batting splits ---
+    pt_bat_count = 0
+    for (msf_id, name, pt), stats in bat_pitch_type.items():
+        pid = resolve_player(name)
+        if not pid:
+            continue
+        h, ab, bb, hbp, sf = stats["h"], stats["ab"], stats["bb"], stats["hbp"], stats["sf"]
+        doubles, triples, hr, so = stats["2b"], stats["3b"], stats["hr"], stats["so"]
+        pa_calc, avg, obp, slg, ops, iso, babip = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so)
+        cursor.execute("""
+            INSERT OR REPLACE INTO pitch_type_batting_splits
+            (player_id, season, pitch_type, plate_appearances, at_bats,
+             hits, doubles, triples, home_runs, rbi, walks, strikeouts,
+             hit_by_pitch, sacrifice_flies, batting_avg, obp, slg, ops, iso, babip)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (pid, season_year, pt, pa_calc, ab, h, doubles, triples, hr, stats["rbi"], bb, so,
+              hbp, sf, avg, obp, slg, ops, iso, babip))
+        pt_bat_count += 1
+
+    # --- Insert pitch type pitching splits ---
+    pt_pitch_count = 0
+    for (msf_id, name, pt), stats in pitch_pitch_type.items():
+        pid = resolve_player(name)
+        if not pid:
+            continue
+        h, ab, bb, hbp, sf = stats["h"], stats["ab"], stats["bb"], stats["hbp"], stats["sf"]
+        doubles, triples, hr, so = stats["2b"], stats["3b"], stats["hr"], stats["so"]
+        avg_against = h / ab if ab > 0 else None
+        obp_denom = ab + bb + hbp + sf
+        obp_against = (h + bb + hbp) / obp_denom if obp_denom > 0 else None
+        singles = h - doubles - triples - hr
+        tb = singles + 2 * doubles + 3 * triples + 4 * hr
+        slg_against = tb / ab if ab > 0 else None
+        ops_against = (obp_against or 0) + (slg_against or 0) if obp_against is not None and slg_against is not None else None
+        cursor.execute("""
+            INSERT OR REPLACE INTO pitch_type_pitching_splits
+            (player_id, season, pitch_type, plate_appearances, at_bats,
+             hits, doubles, triples, home_runs, walks, strikeouts,
+             hit_by_pitch, sacrifice_flies,
+             batting_avg_against, obp_against, slg_against, ops_against)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (pid, season_year, pt, stats["pa"], ab, h, doubles, triples, hr, bb, so, hbp, sf,
+              avg_against, obp_against, slg_against, ops_against))
+        pt_pitch_count += 1
+
+    # --- Insert count batting splits ---
+    ct_bat_count = 0
+    for (msf_id, name, count_str), stats in bat_count_splits.items():
+        pid = resolve_player(name)
+        if not pid:
+            continue
+        h, ab, bb, hbp, sf = stats["h"], stats["ab"], stats["bb"], stats["hbp"], stats["sf"]
+        doubles, triples, hr, so = stats["2b"], stats["3b"], stats["hr"], stats["so"]
+        pa_calc, avg, obp, slg, ops, iso, babip = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so)
+        cursor.execute("""
+            INSERT OR REPLACE INTO count_batting_splits
+            (player_id, season, count_state, plate_appearances, at_bats,
+             hits, doubles, triples, home_runs, rbi, walks, strikeouts,
+             hit_by_pitch, sacrifice_flies, batting_avg, obp, slg, ops, iso, babip)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (pid, season_year, count_str, pa_calc, ab, h, doubles, triples, hr, stats["rbi"], bb, so,
+              hbp, sf, avg, obp, slg, ops, iso, babip))
+        ct_bat_count += 1
+
+    # --- Insert count pitching splits ---
+    ct_pitch_count = 0
+    for (msf_id, name, count_str), stats in pitch_count_splits.items():
+        pid = resolve_player(name)
+        if not pid:
+            continue
+        h, ab, bb, hbp, sf = stats["h"], stats["ab"], stats["bb"], stats["hbp"], stats["sf"]
+        doubles, triples, hr, so = stats["2b"], stats["3b"], stats["hr"], stats["so"]
+        avg_against = h / ab if ab > 0 else None
+        obp_denom = ab + bb + hbp + sf
+        obp_against = (h + bb + hbp) / obp_denom if obp_denom > 0 else None
+        singles = h - doubles - triples - hr
+        tb = singles + 2 * doubles + 3 * triples + 4 * hr
+        slg_against = tb / ab if ab > 0 else None
+        ops_against = (obp_against or 0) + (slg_against or 0) if obp_against is not None and slg_against is not None else None
+        cursor.execute("""
+            INSERT OR REPLACE INTO count_pitching_splits
+            (player_id, season, count_state, plate_appearances, at_bats,
+             hits, doubles, triples, home_runs, walks, strikeouts,
+             hit_by_pitch, sacrifice_flies,
+             batting_avg_against, obp_against, slg_against, ops_against)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (pid, season_year, count_str, stats["pa"], ab, h, doubles, triples, hr, bb, so, hbp, sf,
+              avg_against, obp_against, slg_against, ops_against))
+        ct_pitch_count += 1
+
     conn.commit()
-    print(f"    Generated {bat_count} batting platoon + {pitch_count} pitching platoon split rows")
+    print(f"    Platoon: {bat_count} batting + {pitch_count} pitching")
+    print(f"    Pitch type: {pt_bat_count} batting + {pt_pitch_count} pitching")
+    print(f"    Count: {ct_bat_count} batting + {ct_pitch_count} pitching")
     return bat_count, pitch_count
 
 

@@ -11,29 +11,33 @@ struct AnimatedPlaceholder: View {
     private let fadeDuration: TimeInterval = 0.5
 
     var body: some View {
-        Group {
-            if !queries.isEmpty {
-                Button {
-                    onTap(queries[currentIndex % queries.count])
-                } label: {
-                    Text(queries[currentIndex % queries.count])
-                        .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(.tertiary)
-                        .opacity(opacity)
-                        .lineLimit(1)
-                }
-                .buttonStyle(.plain)
+        if !queries.isEmpty {
+            Button {
+                onTap(queries[currentIndex % queries.count])
+            } label: {
+                Text(queries[currentIndex % queries.count])
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(.tertiary)
+                    .opacity(opacity)
+                    .lineLimit(1)
             }
-        }
-        .task {
-            queries = SampleQuery.personalized(from: searchHistory)
-            if queries.isEmpty { queries = SampleQuery.all.shuffled() }
-            await startCycling()
+            .buttonStyle(.plain)
+            .task(id: "cycle") {
+                await startCycling()
+            }
+        } else {
+            Color.clear.frame(height: 20)
+                .task {
+                    queries = SampleQuery.personalized(from: searchHistory)
+                    if queries.isEmpty { queries = SampleQuery.all.shuffled() }
+                }
         }
     }
 
     @MainActor
     private func startCycling() async {
+        // Small delay to ensure view is laid out before animating
+        try? await Task.sleep(for: .milliseconds(100))
         withAnimation(.easeIn(duration: fadeDuration)) {
             opacity = 1.0
         }

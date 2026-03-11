@@ -14,6 +14,10 @@ struct PlayerCardView: View {
     @State private var showFormProjection = false
     @State private var splitTab: SplitTab = .platoon
     @State private var priorSeasonTabs: [Int: SplitTab] = [:]
+    @State private var pitchTypeIndex: Int = 0
+    @State private var countSplitIndex: Int = 0
+    @State private var priorPitchTypeIndex: [Int: Int] = [:]
+    @State private var priorCountSplitIndex: [Int: Int] = [:]
     @State private var selectedTeamCode: String? = nil
 
     // Two-way player state
@@ -47,9 +51,10 @@ struct PlayerCardView: View {
 
     enum SplitTab: String, CaseIterable {
         case platoon = "Platoon"
-        case homeAway = "Home / Away"
-        case streaks = "Hot Streaks"
-        case fielding = "Fielding"
+        case homeAway = "Home\nAway"
+        case streaks = "Streaks"
+        case byPitch = "By Pitch"
+        case byCount = "By Count"
     }
 
     var body: some View {
@@ -401,11 +406,16 @@ struct PlayerCardView: View {
                     projectedStatsSection(season: current)
                 }
 
-                // Unified splits section (platoon / home-away / hot streaks)
+                // Unified splits section
                 splitsSection(
                     season: current,
-                    tab: $splitTab
+                    tab: $splitTab,
+                    pitchIdx: $pitchTypeIndex,
+                    countIdx: $countSplitIndex
                 )
+
+                // Fielding (collapsed)
+                fieldingSection(season: current)
             }
 
             // Career totals
@@ -480,8 +490,18 @@ struct PlayerCardView: View {
                                 tab: Binding(
                                     get: { priorSeasonTabs[season.year] ?? .platoon },
                                     set: { priorSeasonTabs[season.year] = $0 }
+                                ),
+                                pitchIdx: Binding(
+                                    get: { priorPitchTypeIndex[season.year] ?? 0 },
+                                    set: { priorPitchTypeIndex[season.year] = $0 }
+                                ),
+                                countIdx: Binding(
+                                    get: { priorCountSplitIndex[season.year] ?? 0 },
+                                    set: { priorCountSplitIndex[season.year] = $0 }
                                 )
                             )
+
+                            fieldingSection(season: season)
                         }
                         .padding(.bottom, 8)
                     }
@@ -520,7 +540,10 @@ struct PlayerCardView: View {
                 }
 
                 // Pitching splits section
-                pitchingSplitsSection(season: current, tab: $splitTab)
+                pitchingSplitsSection(
+                    season: current, tab: $splitTab,
+                    pitchIdx: $pitchTypeIndex, countIdx: $countSplitIndex
+                )
             }
 
             // Pitching career totals
@@ -593,6 +616,14 @@ struct PlayerCardView: View {
                                 tab: Binding(
                                     get: { priorSeasonTabs[season.year] ?? .platoon },
                                     set: { priorSeasonTabs[season.year] = $0 }
+                                ),
+                                pitchIdx: Binding(
+                                    get: { priorPitchTypeIndex[season.year] ?? 0 },
+                                    set: { priorPitchTypeIndex[season.year] = $0 }
+                                ),
+                                countIdx: Binding(
+                                    get: { priorCountSplitIndex[season.year] ?? 0 },
+                                    set: { priorCountSplitIndex[season.year] = $0 }
                                 )
                             )
                         }
@@ -608,43 +639,49 @@ struct PlayerCardView: View {
     @ViewBuilder
     private func pitchingSplitsSection(
         season: PitchingSeasonData,
-        tab: Binding<SplitTab>
+        tab: Binding<SplitTab>,
+        pitchIdx: Binding<Int>? = nil,
+        countIdx: Binding<Int>? = nil
     ) -> some View {
         let hasData = season.platoonSplits != nil || season.homeAwaySplits != nil || season.streaks != nil
+            || (season.pitchTypeSplits != nil && !season.pitchTypeSplits!.isEmpty)
+            || (season.countSplits != nil && !season.countSplits!.isEmpty)
 
         if hasData {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 0) {
-                    let tabs: [SplitTab] = [.platoon, .homeAway, .streaks]
-                    ForEach(tabs, id: \.self) { t in
-                        let available = pitchingTabHasData(t, season: season)
-                        Button {
-                            if available {
-                                withAnimation(.easeInOut(duration: 0.15)) {
-                                    tab.wrappedValue = t
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        ForEach(SplitTab.allCases, id: \.self) { t in
+                            let available = pitchingTabHasData(t, season: season)
+                            Button {
+                                if available {
+                                    withAnimation(.easeInOut(duration: 0.15)) {
+                                        tab.wrappedValue = t
+                                    }
                                 }
+                            } label: {
+                                Text(t.rawValue)
+                                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(tab.wrappedValue == t
+                                                  ? deepBlue.opacity(0.12)
+                                                  : Color.clear)
+                                    )
+                                    .foregroundStyle(tab.wrappedValue == t ? deepBlue : .secondary)
+                                    .opacity(available ? 1.0 : 0.4)
                             }
-                        } label: {
-                            Text(t.rawValue)
-                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(tab.wrappedValue == t
-                                              ? deepBlue.opacity(0.12)
-                                              : Color.clear)
-                                )
-                                .foregroundStyle(tab.wrappedValue == t ? deepBlue : .secondary)
-                                .opacity(available ? 1.0 : 0.4)
+                            .disabled(!available)
                         }
-                        .disabled(!available)
                     }
+                    .padding(.horizontal, 8)
                 }
-                .padding(.horizontal, 8)
                 .onAppear {
                     if !pitchingTabHasData(tab.wrappedValue, season: season) {
-                        for t in [SplitTab.platoon, .homeAway, .streaks] {
+                        for t in SplitTab.allCases {
                             if pitchingTabHasData(t, season: season) {
                                 tab.wrappedValue = t
                                 break
@@ -653,7 +690,11 @@ struct PlayerCardView: View {
                     }
                 }
 
-                if let grid = pitchingGridForTab(tab.wrappedValue, season: season) {
+                if tab.wrappedValue == .byPitch, let grids = season.pitchTypeSplits, !grids.isEmpty {
+                    splitArrayContent(grids: grids, index: pitchIdx ?? $pitchTypeIndex)
+                } else if tab.wrappedValue == .byCount, let grids = season.countSplits, !grids.isEmpty {
+                    splitArrayContent(grids: grids, index: countIdx ?? $countSplitIndex)
+                } else if let grid = pitchingGridForTab(tab.wrappedValue, season: season) {
                     StatGridView(grid: grid, seasonGames: season.games)
                         .padding(.horizontal, 6)
                 }
@@ -662,7 +703,11 @@ struct PlayerCardView: View {
     }
 
     private func pitchingTabHasData(_ tab: SplitTab, season: PitchingSeasonData) -> Bool {
-        pitchingGridForTab(tab, season: season) != nil
+        switch tab {
+        case .byPitch: return season.pitchTypeSplits != nil && !(season.pitchTypeSplits!.isEmpty)
+        case .byCount: return season.countSplits != nil && !(season.countSplits!.isEmpty)
+        default: return pitchingGridForTab(tab, season: season) != nil
+        }
     }
 
     private func pitchingGridForTab(_ tab: SplitTab, season: PitchingSeasonData) -> StatGridParser.StatGrid? {
@@ -670,7 +715,7 @@ struct PlayerCardView: View {
         case .platoon: return season.platoonSplits
         case .homeAway: return season.homeAwaySplits
         case .streaks: return season.streaks
-        case .fielding: return nil
+        case .byPitch, .byCount: return nil  // Handled separately with sub-selectors
         }
     }
 
@@ -903,42 +948,48 @@ struct PlayerCardView: View {
     @ViewBuilder
     private func splitsSection(
         season: SeasonData,
-        tab: Binding<SplitTab>
+        tab: Binding<SplitTab>,
+        pitchIdx: Binding<Int>? = nil,
+        countIdx: Binding<Int>? = nil
     ) -> some View {
-        let hasData = season.platoonSplits != nil || season.homeAwaySplits != nil || season.streaks != nil || season.fieldingStats != nil
+        let hasData = season.platoonSplits != nil || season.homeAwaySplits != nil || season.streaks != nil
+            || (season.pitchTypeSplits != nil && !season.pitchTypeSplits!.isEmpty)
+            || (season.countSplits != nil && !season.countSplits!.isEmpty)
 
         if hasData {
             VStack(alignment: .leading, spacing: 8) {
-                // Segmented control
-                HStack(spacing: 0) {
-                    ForEach(SplitTab.allCases, id: \.self) { t in
-                        let available = tabHasData(t, season: season)
-                        Button {
-                            if available {
-                                withAnimation(.easeInOut(duration: 0.15)) {
-                                    tab.wrappedValue = t
+                // Scrollable tab bar
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        ForEach(SplitTab.allCases, id: \.self) { t in
+                            let available = tabHasData(t, season: season)
+                            Button {
+                                if available {
+                                    withAnimation(.easeInOut(duration: 0.15)) {
+                                        tab.wrappedValue = t
+                                    }
                                 }
+                            } label: {
+                                Text(t.rawValue)
+                                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(tab.wrappedValue == t
+                                                  ? deepBlue.opacity(0.12)
+                                                  : Color.clear)
+                                    )
+                                    .foregroundStyle(tab.wrappedValue == t ? deepBlue : .secondary)
+                                    .opacity(available ? 1.0 : 0.4)
                             }
-                        } label: {
-                            Text(t.rawValue)
-                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(tab.wrappedValue == t
-                                              ? deepBlue.opacity(0.12)
-                                              : Color.clear)
-                                )
-                                .foregroundStyle(tab.wrappedValue == t ? deepBlue : .secondary)
-                                .opacity(available ? 1.0 : 0.4)
+                            .disabled(!available)
                         }
-                        .disabled(!available)
                     }
+                    .padding(.horizontal, 8)
                 }
-                .padding(.horizontal, 8)
                 .onAppear {
-                    // Auto-select first tab that has data if current selection is empty
                     if !tabHasData(tab.wrappedValue, season: season) {
                         for t in SplitTab.allCases {
                             if tabHasData(t, season: season) {
@@ -950,14 +1001,74 @@ struct PlayerCardView: View {
                 }
 
                 // Content for selected tab
-                if let grid = gridForTab(tab.wrappedValue, season: season) {
+                if tab.wrappedValue == .byPitch, let grids = season.pitchTypeSplits, !grids.isEmpty {
+                    splitArrayContent(grids: grids, index: pitchIdx ?? $pitchTypeIndex)
+                } else if tab.wrappedValue == .byCount, let grids = season.countSplits, !grids.isEmpty {
+                    splitArrayContent(grids: grids, index: countIdx ?? $countSplitIndex)
+                } else if let grid = gridForTab(tab.wrappedValue, season: season) {
                     StatGridView(
                         grid: grid,
-                        seasonGames: tab.wrappedValue == .fielding ? nil : season.games
+                        seasonGames: season.games
                     )
                     .padding(.horizontal, 6)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func splitArrayContent(grids: [StatGridParser.StatGrid], index: Binding<Int>) -> some View {
+        let safeIndex = min(max(index.wrappedValue, 0), grids.count - 1)
+        let grid = grids[safeIndex]
+
+        VStack(alignment: .leading, spacing: 8) {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 16) {
+                        ForEach(0..<grids.count, id: \.self) { i in
+                            let label = grids[i].rows.first?.label ?? ""
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    index.wrappedValue = i
+                                }
+                            } label: {
+                                VStack(spacing: 4) {
+                                    Text(label)
+                                        .font(.system(.subheadline, design: .rounded, weight: i == safeIndex ? .semibold : .regular))
+                                        .foregroundStyle(i == safeIndex ? deepBlue : .secondary)
+                                    Rectangle()
+                                        .fill(i == safeIndex ? deepBlue : Color.clear)
+                                        .frame(height: 2)
+                                }
+                            }
+                            .id(i)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .onChange(of: index.wrappedValue) { _, newVal in
+                    withAnimation { proxy.scrollTo(newVal, anchor: .center) }
+                }
+            }
+
+            StatGridView(grid: grid)
+                .padding(.horizontal, 6)
+        }
+    }
+
+    @ViewBuilder
+    private func fieldingSection(season: SeasonData) -> some View {
+        if let grid = season.fieldingStats {
+            DisclosureGroup {
+                StatGridView(grid: grid)
+                    .padding(.horizontal, 6)
+                    .padding(.top, 4)
+            } label: {
+                Text("Fielding")
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
         }
     }
 
@@ -1028,7 +1139,11 @@ struct PlayerCardView: View {
     }
 
     private func tabHasData(_ tab: SplitTab, season: SeasonData) -> Bool {
-        gridForTab(tab, season: season) != nil
+        switch tab {
+        case .byPitch: return season.pitchTypeSplits != nil && !(season.pitchTypeSplits!.isEmpty)
+        case .byCount: return season.countSplits != nil && !(season.countSplits!.isEmpty)
+        default: return gridForTab(tab, season: season) != nil
+        }
     }
 
     private func gridForTab(_ tab: SplitTab, season: SeasonData) -> StatGridParser.StatGrid? {
@@ -1036,7 +1151,7 @@ struct PlayerCardView: View {
         case .platoon: return season.platoonSplits
         case .homeAway: return season.homeAwaySplits
         case .streaks: return season.streaks
-        case .fielding: return season.fieldingStats
+        case .byPitch, .byCount: return nil  // Handled separately with sub-selectors
         }
     }
 
