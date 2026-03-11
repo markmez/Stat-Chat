@@ -87,6 +87,8 @@ struct PlayerCard: Sendable {
     let throws_: String?
     let seasons: [SeasonData]
     let careerTotals: StatGridParser.StatGrid?
+    let careerPlatoonSplits: StatGridParser.StatGrid?
+    let careerHomeAwaySplits: StatGridParser.StatGrid?
     let platoonSplits: StatGridParser.StatGrid?
     let streaks: StatGridParser.StatGrid?
     let bio: String?
@@ -94,6 +96,8 @@ struct PlayerCard: Sendable {
     let isTwoWay: Bool
     let pitchingSeasons: [PitchingSeasonData]?
     let pitchingCareerTotals: StatGridParser.StatGrid?
+    let pitchingCareerPlatoonSplits: StatGridParser.StatGrid?
+    let pitchingCareerHomeAwaySplits: StatGridParser.StatGrid?
 }
 
 // MARK: - Team Card models
@@ -152,7 +156,7 @@ enum PlayerCardService {
               let minSeason = Int(row[0]) else {
             return true  // no local data at all → needs backend
         }
-        return minSeason <= localMinYear
+        return minSeason < localMinYear
     }
 
     /// Check if a player has any season data in the local DB.
@@ -292,15 +296,25 @@ enum PlayerCardService {
         let splits = fetchPlatoonSplits(name: name)
         let streakGrid = fetchStreaks(name: name)
 
+        // Career splits (only meaningful with multiple seasons)
+        let careerPlatoon = fetchCareerPlatoonSplits(name: name)
+        let careerHomeAway = fetchCareerHomeAwaySplits(name: name)
+
         // Fetch pitching stats if pitcher or two-way player
         let pitchingSeasons: [PitchingSeasonData]?
         let pitchingCareer: StatGridParser.StatGrid?
+        let pitchingCareerPlatoon: StatGridParser.StatGrid?
+        let pitchingCareerHomeAway: StatGridParser.StatGrid?
         if playerIsPitcher || playerIsTwoWay {
             pitchingSeasons = fetchPitchingAllSeasons(name: name)
             pitchingCareer = fetchPitchingCareerTotals(name: name)
+            pitchingCareerPlatoon = fetchPitchingCareerPlatoonSplits(name: name)
+            pitchingCareerHomeAway = fetchPitchingCareerHomeAwaySplits(name: name)
         } else {
             pitchingSeasons = nil
             pitchingCareer = nil
+            pitchingCareerPlatoon = nil
+            pitchingCareerHomeAway = nil
         }
 
         // Use most recent season's team for header (players.team can be stale)
@@ -342,13 +356,17 @@ enum PlayerCardService {
             throws_: playerInfo?.throws_,
             seasons: seasons,
             careerTotals: career,
+            careerPlatoonSplits: careerPlatoon,
+            careerHomeAwaySplits: careerHomeAway,
             platoonSplits: splits,
             streaks: streakGrid,
             bio: bio,
             isPitcher: playerIsPitcher,
             isTwoWay: playerIsTwoWay,
             pitchingSeasons: pitchingSeasons,
-            pitchingCareerTotals: pitchingCareer
+            pitchingCareerTotals: pitchingCareer,
+            pitchingCareerPlatoonSplits: pitchingCareerPlatoon,
+            pitchingCareerHomeAwaySplits: pitchingCareerHomeAway
         )
     }
 
@@ -450,6 +468,12 @@ enum PlayerCardService {
 
         let bio = await fetchWikipediaBio(name: displayName)
 
+        // Convert backend split grids to StatGridParser.StatGrid
+        let careerPlatoon = data.career_platoon_splits.map { convertSplitGrid($0) }
+        let careerHomeAway = data.career_home_away_splits.map { convertSplitGrid($0) }
+        let pitchingCareerPlatoon = data.pitching_career_platoon_splits.map { convertSplitGrid($0) }
+        let pitchingCareerHomeAway = data.pitching_career_home_away_splits.map { convertSplitGrid($0) }
+
         return PlayerCard(
             name: displayName,
             team: headerTeam,
@@ -461,14 +485,26 @@ enum PlayerCardService {
             throws_: info?.throws,
             seasons: seasons,
             careerTotals: career,
+            careerPlatoonSplits: careerPlatoon,
+            careerHomeAwaySplits: careerHomeAway,
             platoonSplits: nil,
             streaks: nil,
             bio: bio,
             isPitcher: data.is_pitcher,
             isTwoWay: data.is_two_way,
             pitchingSeasons: pitchingSeasons,
-            pitchingCareerTotals: pitchingCareer
+            pitchingCareerTotals: pitchingCareer,
+            pitchingCareerPlatoonSplits: pitchingCareerPlatoon,
+            pitchingCareerHomeAwaySplits: pitchingCareerHomeAway
         )
+    }
+
+    /// Convert a backend SplitGridData to StatGridParser.StatGrid.
+    private static func convertSplitGrid(_ grid: BackendService.SplitGridData) -> StatGridParser.StatGrid {
+        let rows = grid.rows.map { row in
+            StatGridParser.StatGrid.Row(label: row.label, values: row.values)
+        }
+        return StatGridParser.StatGrid(headers: grid.headers, rows: rows)
     }
 
     /// Build career totals grid from an array of SeasonData (for backend-sourced players).
@@ -1050,6 +1086,177 @@ enum PlayerCardService {
         for row in result.rows.prefix(2) {
             let splitLabel = row[0] == "home" ? "Home" : "Away"
             let values = formatValues(headers: headers, values: Array(row.dropFirst()))
+            rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: values))
+        }
+
+        guard !rows.isEmpty else { return nil }
+        return StatGridParser.StatGrid(headers: headers, rows: rows)
+    }
+
+    // MARK: - Career platoon splits
+
+    private static func fetchCareerPlatoonSplits(name: String) -> StatGridParser.StatGrid? {
+        let sql = """
+            SELECT ps.split,
+                   SUM(ps.at_bats), SUM(ps.hits),
+                   SUM(ps.doubles), SUM(ps.triples), SUM(ps.home_runs),
+                   SUM(ps.rbi), SUM(ps.walks), SUM(ps.strikeouts),
+                   ROUND(CAST(SUM(ps.hits) AS REAL) / NULLIF(SUM(ps.at_bats), 0), 3),
+                   ROUND(CAST(SUM(ps.hits) + SUM(ps.walks) AS REAL) /
+                         NULLIF(SUM(ps.plate_appearances), 0), 3),
+                   ROUND(CAST(SUM(ps.hits - ps.doubles - ps.triples - ps.home_runs) +
+                              2 * SUM(ps.doubles) + 3 * SUM(ps.triples) + 4 * SUM(ps.home_runs) AS REAL) /
+                         NULLIF(SUM(ps.at_bats), 0), 3)
+            FROM platoon_splits ps
+            JOIN players p ON ps.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            GROUP BY ps.split
+            HAVING COUNT(DISTINCT ps.season) > 1
+            ORDER BY ps.split
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+        var rows: [StatGridParser.StatGrid.Row] = []
+        for row in result.rows {
+            let splitLabel = row[0] == "vs_LHP" ? "vs LHP" : "vs RHP"
+            // Compute OPS, ISO, BABIP in Swift from the SQL values
+            let values = Array(row.dropFirst())
+            var formatted = formatValues(headers: ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG"], values: values)
+            let obp = Double(formatted[9]) ?? 0
+            let slg = Double(formatted[10]) ?? 0
+            let avg = Double(formatted[8]) ?? 0
+            formatted.append(String(format: "%.3f", obp + slg)) // OPS
+            formatted.append(String(format: "%.3f", slg - avg)) // ISO
+            // BABIP = (H - HR) / (AB - SO - HR)
+            let h = Double(values[1]) ?? 0, hr = Double(values[4]) ?? 0
+            let ab = Double(values[0]) ?? 0, so = Double(values[7]) ?? 0
+            let babipDenom = ab - so - hr
+            formatted.append(babipDenom > 0 ? String(format: "%.3f", (h - hr) / babipDenom) : ".000")
+            rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: formatted))
+        }
+
+        guard !rows.isEmpty else { return nil }
+        return StatGridParser.StatGrid(headers: headers, rows: rows)
+    }
+
+    // MARK: - Career home/away splits
+
+    private static func fetchCareerHomeAwaySplits(name: String) -> StatGridParser.StatGrid? {
+        let sql = """
+            SELECT has.split,
+                   SUM(has.games), SUM(has.at_bats), SUM(has.runs), SUM(has.hits),
+                   SUM(has.doubles), SUM(has.triples), SUM(has.home_runs),
+                   SUM(has.rbi), SUM(has.walks), SUM(has.strikeouts),
+                   ROUND(CAST(SUM(has.hits) AS REAL) / NULLIF(SUM(has.at_bats), 0), 3),
+                   ROUND(CAST(SUM(has.hits) + SUM(has.walks) + SUM(has.hit_by_pitch) AS REAL) /
+                         NULLIF(SUM(has.at_bats) + SUM(has.walks) + SUM(has.hit_by_pitch) + SUM(has.sacrifice_flies), 0), 3),
+                   ROUND(CAST(SUM(has.hits - has.doubles - has.triples - has.home_runs) +
+                              2 * SUM(has.doubles) + 3 * SUM(has.triples) + 4 * SUM(has.home_runs) AS REAL) /
+                         NULLIF(SUM(has.at_bats), 0), 3)
+            FROM home_away_splits has
+            JOIN players p ON has.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            GROUP BY has.split
+            HAVING COUNT(DISTINCT has.season) > 1
+            ORDER BY has.split DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+        var rows: [StatGridParser.StatGrid.Row] = []
+        for row in result.rows {
+            let splitLabel = row[0] == "home" ? "Home" : "Away"
+            let values = Array(row.dropFirst())
+            var formatted = formatValues(headers: ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG"], values: values)
+            let obp = Double(formatted[11]) ?? 0
+            let slg = Double(formatted[12]) ?? 0
+            let avg = Double(formatted[10]) ?? 0
+            formatted.append(String(format: "%.3f", obp + slg)) // OPS
+            formatted.append(String(format: "%.3f", slg - avg)) // ISO
+            let h = Double(values[3]) ?? 0, hr = Double(values[6]) ?? 0
+            let ab = Double(values[1]) ?? 0, so = Double(values[9]) ?? 0
+            let babipDenom = ab - so - hr
+            formatted.append(babipDenom > 0 ? String(format: "%.3f", (h - hr) / babipDenom) : ".000")
+            rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: formatted))
+        }
+
+        guard !rows.isEmpty else { return nil }
+        return StatGridParser.StatGrid(headers: headers, rows: rows)
+    }
+
+    // MARK: - Career pitching platoon splits
+
+    private static func fetchPitchingCareerPlatoonSplits(name: String) -> StatGridParser.StatGrid? {
+        let sql = """
+            SELECT pps.split,
+                   SUM(pps.at_bats), SUM(pps.hits),
+                   SUM(pps.doubles), SUM(pps.triples), SUM(pps.home_runs),
+                   SUM(pps.walks), SUM(pps.strikeouts),
+                   ROUND(CAST(SUM(pps.hits) AS REAL) / NULLIF(SUM(pps.at_bats), 0), 3),
+                   ROUND(CAST(SUM(pps.hits) + SUM(pps.walks) + SUM(pps.hit_by_pitch) AS REAL) /
+                         NULLIF(SUM(pps.at_bats) + SUM(pps.walks) + SUM(pps.hit_by_pitch) + SUM(pps.sacrifice_flies), 0), 3),
+                   ROUND(CAST(SUM(pps.hits - pps.doubles - pps.triples - pps.home_runs) +
+                              2 * SUM(pps.doubles) + 3 * SUM(pps.triples) + 4 * SUM(pps.home_runs) AS REAL) /
+                         NULLIF(SUM(pps.at_bats), 0), 3),
+                   ROUND(CAST(SUM(pps.hits) + SUM(pps.walks) + SUM(pps.hit_by_pitch) AS REAL) /
+                         NULLIF(SUM(pps.at_bats) + SUM(pps.walks) + SUM(pps.hit_by_pitch) + SUM(pps.sacrifice_flies), 0) +
+                         CAST(SUM(pps.hits - pps.doubles - pps.triples - pps.home_runs) +
+                              2 * SUM(pps.doubles) + 3 * SUM(pps.triples) + 4 * SUM(pps.home_runs) AS REAL) /
+                         NULLIF(SUM(pps.at_bats), 0), 3)
+            FROM pitching_platoon_splits pps
+            JOIN players p ON pps.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            GROUP BY pps.split
+            HAVING COUNT(DISTINCT pps.season) > 1
+            ORDER BY pps.split
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        var rows: [StatGridParser.StatGrid.Row] = []
+        for row in result.rows {
+            let splitLabel = row[0] == "vs_LHB" ? "vs LHB" : "vs RHB"
+            let values = formatValues(headers: headers, values: Array(row.dropFirst()))
+            rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: values))
+        }
+
+        guard !rows.isEmpty else { return nil }
+        return StatGridParser.StatGrid(headers: headers, rows: rows)
+    }
+
+    // MARK: - Career pitching home/away splits
+
+    private static func fetchPitchingCareerHomeAwaySplits(name: String) -> StatGridParser.StatGrid? {
+        let sql = """
+            SELECT phas.split,
+                   SUM(phas.games), SUM(phas.games_started),
+                   CAST(SUM(phas.ip_outs) / 3 AS TEXT) || '.' || CAST(SUM(phas.ip_outs) % 3 AS TEXT),
+                   SUM(phas.hits), SUM(phas.earned_runs), SUM(phas.home_runs),
+                   SUM(phas.walks), SUM(phas.strikeouts),
+                   ROUND(9.0 * CAST(SUM(phas.earned_runs) AS REAL) / NULLIF(SUM(phas.ip_outs) / 3.0, 0), 2),
+                   ROUND(CAST(SUM(phas.walks) + SUM(phas.hits) AS REAL) / NULLIF(SUM(phas.ip_outs) / 3.0, 0), 2),
+                   ROUND(9.0 * CAST(SUM(phas.strikeouts) AS REAL) / NULLIF(SUM(phas.ip_outs) / 3.0, 0), 1),
+                   ROUND(9.0 * CAST(SUM(phas.walks) AS REAL) / NULLIF(SUM(phas.ip_outs) / 3.0, 0), 1),
+                   ROUND(CAST(SUM(phas.hits) AS REAL) / NULLIF(SUM(phas.games) * 3, 0), 3)
+            FROM pitching_home_away_splits phas
+            JOIN players p ON phas.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+            GROUP BY phas.split
+            HAVING COUNT(DISTINCT phas.season) > 1
+            ORDER BY phas.split DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["G", "GS", "IP", "H", "ER", "HR", "BB", "SO", "ERA", "WHIP", "K/9", "BB/9", "BAA"]
+        var rows: [StatGridParser.StatGrid.Row] = []
+        for row in result.rows {
+            let splitLabel = row[0] == "home" ? "Home" : "Away"
+            let values = formatPitchingValues(headers: headers, values: Array(row.dropFirst()))
             rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: values))
         }
 

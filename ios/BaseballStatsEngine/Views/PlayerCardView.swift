@@ -413,6 +413,9 @@ struct PlayerCardView: View {
                 sectionView(title: "Career", grid: career)
             }
 
+            // Career splits
+            careerSplitsSection(card: card)
+
             // Prior seasons — expandable in place
             let priorSeasons = Array(card.seasons.dropFirst())
             expandableSeasonsSection(seasons: priorSeasons, card: card)
@@ -421,6 +424,8 @@ struct PlayerCardView: View {
             if let career = card.careerTotals {
                 sectionView(title: "Career", grid: career)
             }
+
+            careerSplitsSection(card: card)
 
             expandableSeasonsSection(seasons: card.seasons, card: card)
         }
@@ -523,6 +528,9 @@ struct PlayerCardView: View {
                 sectionView(title: "Career", grid: career)
             }
 
+            // Pitching career splits
+            pitchingCareerSplitsSection(card: card)
+
             // Prior pitching seasons — expandable
             expandablePitchingSeasonsSection(seasons: Array(pitchingSeasons.dropFirst()), card: card)
         } else {
@@ -530,6 +538,8 @@ struct PlayerCardView: View {
             if let career = card.pitchingCareerTotals {
                 sectionView(title: "Career", grid: career)
             }
+
+            pitchingCareerSplitsSection(card: card)
 
             expandablePitchingSeasonsSection(seasons: pitchingSeasons, card: card)
         }
@@ -946,6 +956,72 @@ struct PlayerCardView: View {
                         seasonGames: tab.wrappedValue == .fielding ? nil : season.games
                     )
                     .padding(.horizontal, 6)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func careerSplitsSection(card: PlayerCard) -> some View {
+        let hasPlatoon = card.careerPlatoonSplits != nil
+        let hasHomeAway = card.careerHomeAwaySplits != nil
+
+        if hasPlatoon || hasHomeAway {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Career Splits")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .padding(.horizontal, 20)
+                    .padding(.top, 4)
+
+                if let grid = card.careerPlatoonSplits {
+                    Text("Platoon")
+                        .font(.system(.subheadline, design: .rounded, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 20)
+                    StatGridView(grid: grid)
+                        .padding(.horizontal, 6)
+                }
+
+                if let grid = card.careerHomeAwaySplits {
+                    Text("Home / Away")
+                        .font(.system(.subheadline, design: .rounded, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 20)
+                    StatGridView(grid: grid)
+                        .padding(.horizontal, 6)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func pitchingCareerSplitsSection(card: PlayerCard) -> some View {
+        let hasPlatoon = card.pitchingCareerPlatoonSplits != nil
+        let hasHomeAway = card.pitchingCareerHomeAwaySplits != nil
+
+        if hasPlatoon || hasHomeAway {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Career Splits")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .padding(.horizontal, 20)
+                    .padding(.top, 4)
+
+                if let grid = card.pitchingCareerPlatoonSplits {
+                    Text("Platoon")
+                        .font(.system(.subheadline, design: .rounded, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 20)
+                    StatGridView(grid: grid)
+                        .padding(.horizontal, 6)
+                }
+
+                if let grid = card.pitchingCareerHomeAwaySplits {
+                    Text("Home / Away")
+                        .font(.system(.subheadline, design: .rounded, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 20)
+                    StatGridView(grid: grid)
+                        .padding(.horizontal, 6)
                 }
             }
         }

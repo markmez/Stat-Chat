@@ -92,12 +92,26 @@ final class BackendService: Sendable {
     // MARK: - Player Card
 
     /// Structured JSON response from /player-card endpoint.
+    struct SplitRowData: Decodable, Sendable {
+        let label: String
+        let values: [String]
+    }
+
+    struct SplitGridData: Decodable, Sendable {
+        let headers: [String]
+        let rows: [SplitRowData]
+    }
+
     struct PlayerCardData: Decodable, Sendable {
         let player_info: PlayerInfoData?
         let batting_seasons: [BattingSeasonData]
         let pitching_seasons: [PitchingSeasonData]
         let is_pitcher: Bool
         let is_two_way: Bool
+        let career_platoon_splits: SplitGridData?
+        let career_home_away_splits: SplitGridData?
+        let pitching_career_platoon_splits: SplitGridData?
+        let pitching_career_home_away_splits: SplitGridData?
     }
 
     struct PlayerInfoData: Decodable, Sendable {
@@ -132,7 +146,9 @@ final class BackendService: Sendable {
         components.queryItems = [URLQueryItem(name: "name", value: name)]
         let url = components.url!
 
-        let (data, response) = try await URLSession.shared.data(from: url)
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10  // Don't hang if backend is down
+        let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             let body = String(data: data, encoding: .utf8) ?? "Unknown error"
             throw ServiceError.httpError(http.statusCode, body)

@@ -3,7 +3,7 @@ builder = "dockerfile"
 
 [deploy]
 healthcheckPath = "/health"
-healthcheckTimeout = 30
+healthcheckTimeout = 60
 restartPolicyType = "on_failure"
 
 # Cron setup (configured in Railway dashboard, not in TOML):
