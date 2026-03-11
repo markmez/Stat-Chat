@@ -409,14 +409,15 @@ def pull_game_logs(conn, season_str):
                     INSERT OR REPLACE INTO game_batting_logs
                     (player_id, season, date, opponent, vishome, plate_appearances, at_bats,
                      hits, doubles, triples, home_runs, runs, rbi, walks, strikeouts,
+                     hit_by_pitch, sacrifice_flies,
                      batting_avg, obp, slg, ops)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     pid, season_year, game_date, retro_team(opponent), vishome,
                     pa, ab, h, doubles, triples, hr,
                     safe_int(bat.get("runs")),
                     safe_int(bat.get("runsBattedIn")),
-                    bb, so, avg, obp, slg, ops,
+                    bb, so, hbp, sf, avg, obp, slg, ops,
                 ))
                 bat_count += 1
 
@@ -516,6 +517,101 @@ def pull_player_info(conn, season_str):
 
     conn.commit()
     print(f"    Updated {count} player records")
+    return count
+
+
+def compute_batting_home_away_splits(conn, season_year):
+    """Compute batting home/away splits from game logs for this season."""
+    print(f"  Computing batting home/away splits for {season_year}...")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM home_away_splits WHERE season = ?", (season_year,))
+
+    cursor.execute("""
+        SELECT player_id, vishome,
+               COUNT(*) as games,
+               SUM(plate_appearances), SUM(at_bats), SUM(hits),
+               SUM(doubles), SUM(triples), SUM(home_runs),
+               SUM(runs), SUM(rbi), SUM(walks), SUM(strikeouts),
+               SUM(COALESCE(hit_by_pitch, 0)), SUM(COALESCE(sacrifice_flies, 0))
+        FROM game_batting_logs
+        WHERE season = ?
+        GROUP BY player_id, vishome
+    """, (season_year,))
+
+    count = 0
+    for row in cursor.fetchall():
+        pid, vh, games, pa, ab, h, doubles, triples, hr, r, rbi, bb, so, hbp, sf = row
+        split = "home" if vh == "H" else "away"
+
+        pa_calc, avg, obp, slg, ops, iso, babip = compute_rate_stats(
+            h, ab, bb, hbp, sf, doubles, triples, hr, so
+        )
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO home_away_splits
+            (player_id, season, split, games, plate_appearances, at_bats,
+             hits, doubles, triples, home_runs, runs, rbi, walks, strikeouts,
+             hit_by_pitch, sacrifice_flies, batting_avg, obp, slg, ops, iso, babip)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            pid, season_year, split, games, pa_calc, ab,
+            h, doubles, triples, hr, r, rbi, bb, so,
+            hbp, sf, avg, obp, slg, ops, iso, babip,
+        ))
+        count += 1
+
+    conn.commit()
+    print(f"    Generated {count} batting home/away split rows")
+    return count
+
+
+def compute_pitching_home_away_splits(conn, season_year):
+    """Compute pitching home/away splits from game logs for this season."""
+    print(f"  Computing pitching home/away splits for {season_year}...")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM pitching_home_away_splits WHERE season = ?", (season_year,))
+
+    cursor.execute("""
+        SELECT player_id, vishome,
+               COUNT(*) as games,
+               SUM(CASE WHEN is_start = 1 THEN 1 ELSE 0 END),
+               SUM(ip_outs), SUM(hits), SUM(earned_runs), SUM(home_runs),
+               SUM(walks), SUM(strikeouts), SUM(batters_faced)
+        FROM game_pitching_logs
+        WHERE season = ?
+        GROUP BY player_id, vishome
+    """, (season_year,))
+
+    count = 0
+    for row in cursor.fetchall():
+        pid, vh, games, gs, ip_outs, h, er, hr, bb, so, bf = row
+        split = "home" if vh == "H" else "away"
+        ip = ip_outs / 3.0 if ip_outs else 0
+
+        era = (er * 9.0) / ip if ip > 0 else None
+        whip = (h + bb) / ip if ip > 0 else None
+        k9 = (so * 9.0) / ip if ip > 0 else None
+        bb9 = (bb * 9.0) / ip if ip > 0 else None
+        ab_approx = (bf or 0) - (bb or 0)
+        baa = h / ab_approx if ab_approx > 0 else None
+
+        ip_whole = ip_outs // 3
+        ip_frac = ip_outs % 3
+        innings_text = f"{ip_whole}.{ip_frac}"
+
+        cursor.execute("""
+            INSERT OR REPLACE INTO pitching_home_away_splits
+            (player_id, season, split, games, games_started, ip_outs, innings_pitched,
+             hits, earned_runs, home_runs, walks, strikeouts, era, whip, k_per_9, bb_per_9, baa)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            pid, season_year, split, games, gs, ip_outs, innings_text,
+            h, er, hr, bb, so, era, whip, k9, bb9, baa,
+        ))
+        count += 1
+
+    conn.commit()
+    print(f"    Generated {count} pitching home/away split rows")
     return count
 
 
@@ -715,6 +811,11 @@ def main():
         pull_season_pitching(conn, args.season)
         compute_pitching_league_averages(conn, season_year)
         pull_game_logs(conn, args.season)
+
+        # Compute home/away splits from game logs
+        compute_batting_home_away_splits(conn, season_year)
+        compute_pitching_home_away_splits(conn, season_year)
+
         record_last_update(conn, args.season)
         conn.close()
 
