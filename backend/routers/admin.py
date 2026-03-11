@@ -110,6 +110,47 @@ async def refresh_schedule():
     }
 
 
+@router.get("/volume-usage")
+async def volume_usage(authorization: str | None = Header(None)):
+    """List files on the volume with sizes."""
+    verify_admin(authorization)
+    data_dir = os.path.dirname(DB_PATH)
+    files = []
+    total = 0
+    try:
+        for f in os.listdir(data_dir):
+            path = os.path.join(data_dir, f)
+            size = os.path.getsize(path) if os.path.isfile(path) else 0
+            files.append({"name": f, "size_mb": round(size / 1_000_000, 1)})
+            total += size
+    except Exception as e:
+        return {"error": str(e)}
+    files.sort(key=lambda x: x["size_mb"], reverse=True)
+    return {"total_mb": round(total / 1_000_000, 1), "files": files}
+
+
+@router.delete("/volume-cleanup")
+async def volume_cleanup(authorization: str | None = Header(None)):
+    """Delete orphaned files on the volume (anything not actively used)."""
+    verify_admin(authorization)
+    data_dir = os.path.dirname(DB_PATH)
+    active_db = os.path.basename(DB_PATH)
+    deleted = []
+    # Keep: the active DB + its WAL/journal, metering.db, lost+found
+    keep = {active_db, f"{active_db}-wal", f"{active_db}-journal", f"{active_db}-shm", "metering.db", "lost+found"}
+    try:
+        for f in os.listdir(data_dir):
+            if f not in keep:
+                path = os.path.join(data_dir, f)
+                if os.path.isfile(path):
+                    size = os.path.getsize(path)
+                    os.remove(path)
+                    deleted.append({"name": f, "size_mb": round(size / 1_000_000, 1)})
+    except Exception as e:
+        return {"error": str(e), "deleted": deleted}
+    return {"deleted": deleted, "freed_mb": round(sum(d["size_mb"] for d in deleted), 1)}
+
+
 @router.get("/freshness")
 async def data_freshness():
     """Return when live data was last updated."""
