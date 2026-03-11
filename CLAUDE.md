@@ -161,11 +161,13 @@ We download Retrosheet season ZIPs that contain 7 CSV files. We now use **battin
 - `first_g`, `last_g` — career date range. Could enable "active in year X" queries.
 
 ### Database size & bundling strategy
-Current DB (2016-2026): **164 MB** bundled in-app — fast, works offline. Includes 2026 spring training data from MySportsFeeds. Full historical data (1898+) with game logs would be ~1.8 GB — too big to bundle. Game logs are ~85% of size. Season-level stats alone for all history: ~25 MB.
+Current DB (1898-2026): **76 MB** bundled in-app — full historical data + 2026 spring training. All three copies must stay in sync: project root `baseball_stats.db`, iOS bundle `ios/.../Resources/baseball_stats.db`, and S3 `baseball_stats_full.db`.
 
-**Strategy: recent data bundled, backend for historical + live refresh.** 164 MB compresses to ~70-80 MB in IPA, well under iOS 200 MB cellular limit. Historical queries (pre-2016) go through the backend server. Current-season data refreshed on backend every 4 hours via cron. Bundled DB updated with each app release.
+**Strategy: full DB everywhere + live refresh.** 76 MB compresses to ~35-40 MB in IPA, well under iOS 200 MB cellular limit. Current-season data refreshed on backend every 4 hours via cron. Bundled DB updated with each app release.
 
 **Important:** When updating the bundled DB, always copy the rebuilt `baseball_stats.db` from the project root into `ios/BaseballStatsEngine/Resources/baseball_stats.db`. They are separate files — the pipeline writes to the project root, but the app bundles from Resources.
+
+**DANGER: Do NOT re-run `pull_stats.py` (Retrosheet pipeline) without precaution.** It rebuilds `baseball_stats.db` from scratch with only 2016-2025 Retrosheet data, wiping all historical (pre-2016) and live (2026) data. If you need to rerun it, back up `baseball_stats.db` first and merge the results. `pull_live_stats.py` (MSF) is safe — it only inserts/updates current-season rows.
 
 ### Monetization (decided)
 - **Free to download**, 5 free queries per week (resets weekly). All query types count equally — no distinction between local and Claude-handled queries from the user's perspective.
