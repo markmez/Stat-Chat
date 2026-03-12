@@ -32,6 +32,8 @@ final class AppState {
     var searchHistory: [String] = []
     /// Stores (originalQuery, ambiguousLastName) when disambiguation is pending
     var pendingDisambiguation: (query: String, lastName: String)?
+    /// Set by resolveDisambiguation when the corrected query is just a player name — ResultsView observes this to navigate to player card
+    var disambiguatedPlayerName: String?
     private(set) var weeklyQueryCount: Int = 0
     var appearanceMode: AppearanceMode = .system {
         didSet { UserDefaults.standard.set(appearanceMode.rawValue, forKey: appearanceModeKey) }
@@ -530,6 +532,13 @@ final class AppState {
         }
 
         pendingDisambiguation = nil
+
+        // If the corrected query is just a player name, navigate directly to player card
+        if PlayerNameMatcher.matchPlayer(correctedQuery) != nil {
+            disambiguatedPlayerName = fullName
+            return
+        }
+
         sendQuestion(correctedQuery)
     }
 

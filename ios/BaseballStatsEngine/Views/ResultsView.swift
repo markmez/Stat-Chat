@@ -88,6 +88,12 @@ struct ResultsView: View {
                         .onPreferenceChange(ResultsHeightKey.self) { height in
                             resultsContentHeight = height
                         }
+                        .onChange(of: appState.disambiguatedPlayerName) { _, name in
+                            if let name {
+                                appState.disambiguatedPlayerName = nil
+                                selectedPlayerName = name
+                            }
+                        }
                         .onChange(of: appState.messages.count) {
                             // Scroll to the latest user question — but only for follow-ups, not the initial query
                             let userMessages = visibleMessages.filter { $0.role == .user }

@@ -169,6 +169,13 @@ Current DB (1898-2026): **220 MB** bundled in-app — full historical data + 202
 
 **DANGER: Do NOT re-run `pull_stats.py` (Retrosheet pipeline) without precaution.** It rebuilds `baseball_stats.db` from scratch with only 2016-2025 Retrosheet data, wiping all historical (pre-2016) and live (2026) data. If you need to rerun it, back up `baseball_stats.db` first and merge the results. `pull_live_stats.py` (MSF) is safe — it only inserts/updates current-season rows.
 
+### Known data issues
+- **Ken Griffey Sr./Jr.**: Both stored as "Ken Griffey" (`grifk001` 1973-1991, `grifk002` 1989-2010). Can't disambiguate in UI since both have identical names. Fix: rename `grifk002` to "Ken Griffey Jr." in the `players` table (and all join tables). Aliases in `PlayerNameMatcher` route "Ken Griffey Jr."/"Sr." to "Ken Griffey" but can't distinguish which one.
+- **Bobby Witt Jr. split IDs**: `wittb001` = father (1986-2001), `wittb002` = Jr. data under father's name (2022-2024), `wittjb001` = Jr. from MSF (2025-2026). Jr.'s career is split across two player IDs. Fix: merge `wittb002` data into `wittjb001`.
+- **Jazz Chisholm / Jasrado Chisholm Jr.**: `chisj001` = "Jazz Chisholm" (Retrosheet, 2020-2024), `chishj001` = "Jasrado Chisholm Jr." (MSF, 2025-2026). Same player, two IDs. Fix: merge into one ID.
+- **Ronald Acuña**: `acunr001` = "Ronald Acuna" (Retrosheet, 2018-2024), `acuñar001` = "Ronald Acuña Jr." (MSF, 2025-2026). Same player, accent mismatch. Fix: merge into one ID.
+- **Workaround**: `PlayerNameMatcher` has `nicknameAliases` and `disambigSrJrMap` to handle these at the search layer. Proper fix is merging player IDs in the DB so career stats are unified.
+
 ### Monetization (decided)
 - **Free to download**, 5 free queries per week (resets weekly). All query types count equally — no distinction between local and Claude-handled queries from the user's perspective.
 - **$2.99/month** for unlimited queries.

@@ -4,6 +4,48 @@ enum PlayerNameMatcher {
     nonisolated(unsafe) private(set) static var sortedNames: [String] = []
     nonisolated(unsafe) private(set) static var lastNameIndex: [String: [String]] = [:]
 
+    // MARK: - Nickname / alias mapping
+    // Maps common names, nicknames, and informal variants to canonical DB names.
+    // Keys must be lowercased.
+    private static let nicknameAliases: [String: String] = [
+        // Jazz Chisholm — Retrosheet uses "Jazz Chisholm", MSF uses legal name
+        "jazz chisholm jr.": "Jazz Chisholm",
+        "jazz chisholm jr": "Jazz Chisholm",
+        "jasrado chisholm": "Jasrado Chisholm Jr.",
+        // Ronald Acuña — Retrosheet uses "Ronald Acuna", MSF uses "Ronald Acuña Jr."
+        "ronald acuña": "Ronald Acuña Jr.",
+        "ronald acuna jr.": "Ronald Acuna",
+        "ronald acuna jr": "Ronald Acuna",
+        "acuna jr.": "Ronald Acuna",
+        "acuna jr": "Ronald Acuna",
+        "acuña jr.": "Ronald Acuña Jr.",
+        "acuña jr": "Ronald Acuña Jr.",
+        // Giancarlo Stanton — played as "Mike Stanton" early career
+        "mike stanton": "Giancarlo Stanton",
+        // Ken Griffey — both stored as "Ken Griffey" with no Jr. suffix
+        "ken griffey jr.": "Ken Griffey",    // grifk002 (1989-2010) — resolved by disambigSrJrMap
+        "ken griffey jr": "Ken Griffey",
+        "ken griffey senior": "Ken Griffey",
+        "ken griffey sr.": "Ken Griffey",
+        "ken griffey sr": "Ken Griffey",
+        // Common "junior" suffix variant
+        "bobby witt junior": "Bobby Witt Jr.",
+        "fernando tatis junior": "Fernando Tatis Jr.",
+        "vladimir guerrero junior": "Vladimir Guerrero Jr.",
+        "lance mccullers junior": "Lance McCullers Jr.",
+    ]
+
+    /// Sr./Jr. pairs where the base name (without suffix) should trigger disambiguation.
+    /// Maps the shared base name (lowercased) to the list of full names to offer.
+    /// Both players are legitimate searches, so we let the user choose.
+    private static let disambigSrJrMap: [String: [String]] = [
+        "bobby witt": ["Bobby Witt Jr.", "Bobby Witt"],
+        "fernando tatis": ["Fernando Tatis Jr.", "Fernando Tatis"],
+        "vladimir guerrero": ["Vladimir Guerrero Jr.", "Vladimir Guerrero"],
+        // Note: Ken Griffey Sr./Jr. are both stored as "Ken Griffey" — can't disambiguate until DB is fixed
+        "lance mccullers": ["Lance McCullers Jr.", "Lance McCullers"],
+    ]
+
     /// The actual calendar year — used as the default season when no year is specified.
     /// This ensures queries like "Judge home runs" resolve to the current year (e.g. 2026),
     /// which may be beyond the local DB range and should fall through to backend.
@@ -226,14 +268,82 @@ enum PlayerNameMatcher {
         lastNameIndex = index
     }
 
+    /// For embedded name extraction (queries like "Bobby Witt home runs"), prefer the Jr.
+    /// when the base name matches a known Sr./Jr. pair — current stats are more commonly asked about.
+    private static func resolveEmbeddedName(_ name: String) -> String {
+        let lower = name.lowercased()
+        if let candidates = disambigSrJrMap[lower] {
+            return candidates[0]  // Jr. is always first in the list
+        }
+        return name
+    }
+
+    /// Find a player name embedded in text. Checks aliases, sortedNames, and lastNameIndex.
+    /// For Sr./Jr. pairs, defaults to Jr. (the active player) since embedded queries
+    /// are typically about current stats. Direct lookups use matchPlayer() which triggers disambiguation.
+    static func findPlayerInText(_ text: String) -> String? {
+        let lower = text.lowercased()
+
+        // Check nickname aliases first (longest first)
+        for (alias, canonical) in nicknameAliases.sorted(by: { $0.key.count > $1.key.count }) {
+            if containsWord(alias, in: lower) {
+                return canonical
+            }
+        }
+
+        // Check full names (longest first, already sorted)
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) {
+                return resolveEmbeddedName(name)
+            }
+        }
+
+        // Try unambiguous last name
+        for (lastName, players) in lastNameIndex {
+            if containsWord(lastName, in: lower) && players.count == 1 {
+                return resolveEmbeddedName(players[0])
+            }
+        }
+
+        return nil
+    }
+
+    /// Normalize suffix variants: "jr" → "jr.", "sr" → "sr.", etc.
+    private static func normalizeSuffix(_ input: String) -> String {
+        let parts = input.split(separator: " ")
+        guard parts.count >= 2 else { return input }
+        let last = parts.last!.lowercased()
+        // Add period to bare suffixes
+        if last == "jr" || last == "sr" {
+            return parts.dropLast().joined(separator: " ") + " " + last.capitalized + "."
+        }
+        return input
+    }
+
     /// If the input is just a player name (full or unambiguous last name), return the canonical name.
     static func matchPlayer(_ input: String) -> String? {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let lower = trimmed.lowercased()
 
+        // Check nickname/alias map first
+        if let canonical = nicknameAliases[lower] {
+            return canonical
+        }
+
+        // Sr./Jr. pairs — return nil so findAmbiguousPlayers triggers disambiguation
+        if disambigSrJrMap[lower] != nil {
+            return nil
+        }
+
         // Exact full name match (case-insensitive)
         if let match = sortedNames.first(where: { $0.lowercased() == lower }) {
+            return match
+        }
+
+        // Try with normalized suffix — "Bobby Witt jr" → "Bobby Witt Jr."
+        let normalized = normalizeSuffix(trimmed).lowercased()
+        if normalized != lower, let match = sortedNames.first(where: { $0.lowercased() == normalized }) {
             return match
         }
 
@@ -307,32 +417,12 @@ enum PlayerNameMatcher {
         let comparisonSignals = [" vs ", " vs. ", " versus ", " or ", " compared to ", " and ", " better than "]
         let hasComparisonSignal = comparisonSignals.contains(where: { cleaned.contains($0) })
         if hasComparisonSignal {
-            var found: [String] = []
-            var used: Set<String> = []
-            // Check full names first (longer names first since sortedNames is sorted by length desc)
-            for name in sortedNames {
-                let lower = name.lowercased()
-                if containsWord(lower, in: cleaned), !used.contains(lower) {
-                    found.append(name)
-                    used.insert(lower)
-                    if found.count == 2 { break }
+            if let first = findPlayerInText(cleaned) {
+                // Remove the first player's name from the text and search again
+                let remaining = cleaned.replacingOccurrences(of: first.lowercased(), with: "")
+                if let second = findPlayerInText(remaining), second != first {
+                    return (first, second)
                 }
-            }
-            // Try last names if we don't have two yet
-            if found.count < 2 {
-                for (lastName, players) in lastNameIndex {
-                    if players.count == 1, containsWord(lastName, in: cleaned) {
-                        let fullName = players[0]
-                        if !used.contains(fullName.lowercased()) {
-                            found.append(fullName)
-                            used.insert(fullName.lowercased())
-                            if found.count == 2 { break }
-                        }
-                    }
-                }
-            }
-            if found.count == 2 {
-                return (found[0], found[1])
             }
         }
 
@@ -409,26 +499,8 @@ enum PlayerNameMatcher {
             }
         }
 
-        // Find player name — full name first (word-boundary aware)
-        var playerName: String?
-        for name in sortedNames {
-            if containsWord(name.lowercased(), in: lower) {
-                playerName = name
-                break
-            }
-        }
-
-        // Try last name — unambiguous only
-        if playerName == nil {
-            for (lastName, players) in lastNameIndex {
-                if containsWord(lastName, in: lower) && players.count == 1 {
-                    playerName = players[0]
-                    break
-                }
-            }
-        }
-
-        guard let name = playerName else { return nil }
+        // Find player name
+        guard let name = findPlayerInText(lower) else { return nil }
         return (name, performance, targetSeason)
     }
 
@@ -448,21 +520,7 @@ enum PlayerNameMatcher {
         guard triggers.contains(where: { lower.contains($0) }) else { return nil }
 
         // Try to find a player name in the input
-        // First try: exact match against known full names (word-boundary aware)
-        for name in sortedNames {
-            if containsWord(name.lowercased(), in: lower) {
-                return name
-            }
-        }
-
-        // Second try: last name match (word-boundary aware to avoid "rea" in "streak", etc.)
-        for (lastName, players) in lastNameIndex {
-            if containsWord(lastName, in: lower) && players.count == 1 {
-                return players[0]
-            }
-        }
-
-        return nil
+        return findPlayerInText(lower)
     }
 
     /// Detect season lookup queries like "How did Judge do last year?" or "Soto 2024 stats".
@@ -501,26 +559,8 @@ enum PlayerNameMatcher {
         }
         guard let season = targetSeason else { return nil }
 
-        // Find a player name — try full name first
-        var playerName: String?
-        for name in sortedNames {
-            if containsWord(name.lowercased(), in: lower) {
-                playerName = name
-                break
-            }
-        }
-
-        // Try last name — unambiguous only
-        if playerName == nil {
-            for (lastName, players) in lastNameIndex {
-                if containsWord(lastName, in: lower) && players.count == 1 {
-                    playerName = players[0]
-                    break
-                }
-            }
-        }
-
-        guard let name = playerName else { return nil }
+        // Find a player name
+        guard let name = findPlayerInText(lower) else { return nil }
         return (name, season)
     }
 
@@ -543,22 +583,7 @@ enum PlayerNameMatcher {
         guard let stat = matchStat(lower) else { return nil }
 
         // Must have a player name
-        var playerName: String?
-        for name in sortedNames {
-            if containsWord(name.lowercased(), in: lower) {
-                playerName = name
-                break
-            }
-        }
-        if playerName == nil {
-            for (lastName, players) in lastNameIndex {
-                if containsWord(lastName, in: lower) && players.count == 1 {
-                    playerName = players[0]
-                    break
-                }
-            }
-        }
-        guard let name = playerName else { return nil }
+        guard let name = findPlayerInText(lower) else { return nil }
 
         let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
         return (name, stat, season)
@@ -671,22 +696,7 @@ enum PlayerNameMatcher {
         if comparisonWords.contains(where: { lower.contains($0) }) { return nil }
 
         // Must have a player name
-        var playerName: String?
-        for name in sortedNames {
-            if containsWord(name.lowercased(), in: lower) {
-                playerName = name
-                break
-            }
-        }
-        if playerName == nil {
-            for (lastName, players) in lastNameIndex {
-                if containsWord(lastName, in: lower) && players.count == 1 {
-                    playerName = players[0]
-                    break
-                }
-            }
-        }
-        guard let name = playerName else { return nil }
+        guard let name = findPlayerInText(lower) else { return nil }
 
         // Optional stat keyword
         let stat = matchStat(lower)
@@ -727,22 +737,7 @@ enum PlayerNameMatcher {
         }
 
         // Must have a player name
-        var playerName: String?
-        for name in sortedNames {
-            if containsWord(name.lowercased(), in: lower) {
-                playerName = name
-                break
-            }
-        }
-        if playerName == nil {
-            for (lastName, players) in lastNameIndex {
-                if containsWord(lastName, in: lower) && players.count == 1 {
-                    playerName = players[0]
-                    break
-                }
-            }
-        }
-        guard let name = playerName else { return nil }
+        guard let name = findPlayerInText(lower) else { return nil }
 
         let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
         return (name, hand, season)
@@ -778,22 +773,7 @@ enum PlayerNameMatcher {
         }
 
         // Must have a player name
-        var playerName: String?
-        for name in sortedNames {
-            if containsWord(name.lowercased(), in: lower) {
-                playerName = name
-                break
-            }
-        }
-        if playerName == nil {
-            for (lastName, players) in lastNameIndex {
-                if containsWord(lastName, in: lower) && players.count == 1 {
-                    playerName = players[0]
-                    break
-                }
-            }
-        }
-        guard let name = playerName else { return nil }
+        guard let name = findPlayerInText(lower) else { return nil }
 
         let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
         return (name, location, season)
@@ -1166,26 +1146,8 @@ enum PlayerNameMatcher {
         // Exclude career queries
         if containsWord("career", in: lower) { return nil }
 
-        // Find a player name — try full name first
-        var playerName: String?
-        for name in sortedNames {
-            if containsWord(name.lowercased(), in: lower) {
-                playerName = name
-                break
-            }
-        }
-
-        // Try last name — unambiguous only
-        if playerName == nil {
-            for (lastName, players) in lastNameIndex {
-                if containsWord(lastName, in: lower) && players.count == 1 {
-                    playerName = players[0]
-                    break
-                }
-            }
-        }
-
-        guard let name = playerName else { return nil }
+        // Find a player name
+        guard let name = findPlayerInText(lower) else { return nil }
 
         let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
         return (name, month, season)
@@ -1250,9 +1212,32 @@ enum PlayerNameMatcher {
     static func findAmbiguousPlayers(_ input: String) -> [String]? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
+        // If an alias resolves it, it's not ambiguous
+        if nicknameAliases[lower] != nil {
+            return nil
+        }
+
+        // Also check with normalized suffix
+        let normalized = normalizeSuffix(input.trimmingCharacters(in: .whitespacesAndNewlines)).lowercased()
+        if normalized != lower && nicknameAliases[normalized] != nil {
+            return nil
+        }
+
+        // Sr./Jr. pairs — trigger disambiguation with the known candidates
+        if let candidates = disambigSrJrMap[lower] {
+            return candidates
+        }
+
         // If a full name matches, it's not ambiguous
         for name in sortedNames {
             if containsWord(name.lowercased(), in: lower) { return nil }
+        }
+
+        // Also check normalized suffix against full names
+        if normalized != lower {
+            for name in sortedNames {
+                if containsWord(name.lowercased(), in: normalized) { return nil }
+            }
         }
 
         // Check for ambiguous last names
