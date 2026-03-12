@@ -8,6 +8,7 @@ struct HomeView: View {
     @FocusState private var isInputFocused: Bool
     @State private var suggestedPlayers: [String] = []
     @State private var pendingQuery: String?
+    @State private var isDisambiguation = false
     @State private var lastNameSearchCount: Int = UserDefaults.standard.integer(forKey: "lastNameSearchCount")
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
@@ -319,15 +320,15 @@ struct HomeView: View {
     @ViewBuilder
     private var didYouMeanCard: some View {
         if let query = pendingQuery, !suggestedPlayers.isEmpty {
-            VStack(spacing: 6) {
-                Text("Did you mean:")
+            VStack(spacing: 10) {
+                Text(isDisambiguation ? "Multiple players match:" : "Did you mean:")
                     .font(.system(.subheadline, design: .rounded))
                     .foregroundStyle(.secondary)
 
                 ForEach(suggestedPlayers, id: \.self) { name in
                     Button {
                         let n = name
-                        withAnimation { suggestedPlayers = []; pendingQuery = nil }
+                        withAnimation { suggestedPlayers = []; pendingQuery = nil; isDisambiguation = false }
                         appState.addToSearchHistory(n)
                         path.append(PlayerCardDestination(name: n))
                     } label: {
@@ -337,19 +338,21 @@ struct HomeView: View {
                     }
                 }
 
-                Button {
-                    let q = query
-                    withAnimation { suggestedPlayers = []; pendingQuery = nil }
-                    appState.addToSearchHistory(q)
-                    path.append(ResultsDestination(question: q))
-                } label: {
-                    (Text("Or search \"")
-                        .foregroundStyle(.secondary)
-                     + Text(query)
-                        .foregroundStyle(lightBlue)
-                     + Text("\"")
-                        .foregroundStyle(.secondary))
-                        .font(.system(.subheadline, design: .rounded))
+                if !isDisambiguation {
+                    Button {
+                        let q = query
+                        withAnimation { suggestedPlayers = []; pendingQuery = nil }
+                        appState.addToSearchHistory(q)
+                        path.append(ResultsDestination(question: q))
+                    } label: {
+                        (Text("Or search \"")
+                            .foregroundStyle(.secondary)
+                         + Text(query)
+                            .foregroundStyle(lightBlue)
+                         + Text("\"")
+                            .foregroundStyle(.secondary))
+                            .font(.system(.subheadline, design: .rounded))
+                    }
                 }
             }
             .padding(.vertical, 14)
@@ -369,6 +372,7 @@ struct HomeView: View {
         questionText = ""
         suggestedPlayers = []
         pendingQuery = nil
+        isDisambiguation = false
 
         // Direct-to-profile shortcut: skip Claude if input is just a player name
         if let playerName = PlayerNameMatcher.matchPlayer(trimmed) {
@@ -383,18 +387,18 @@ struct HomeView: View {
             appState.addToSearchHistory(trimmed)
             path.append(TeamCardDestination(code: teamCode))
         } else if let ambiguous = PlayerNameMatcher.findAmbiguousPlayers(trimmed) {
-            // Ambiguous name (e.g. "Judge" matches both Aaron Judge and Joe Judge)
             withAnimation(.easeOut(duration: 0.25)) {
                 suggestedPlayers = ambiguous
                 pendingQuery = trimmed
+                isDisambiguation = true
             }
         } else {
             let fuzzyMatches = PlayerNameMatcher.fuzzyMatch(trimmed)
             if !fuzzyMatches.isEmpty {
-                // Don't add misspelling to history — the correction or "search anyway" will
                 withAnimation(.easeOut(duration: 0.25)) {
                     suggestedPlayers = fuzzyMatches
                     pendingQuery = trimmed
+                    isDisambiguation = false
                 }
             } else {
                 appState.addToSearchHistory(trimmed)
