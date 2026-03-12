@@ -41,6 +41,7 @@ enum SampleQuery {
     private static let playerLookupTemplates = [
         "How did {player} do last season?",
         "What was {player}'s slash line last season?",
+        "How did {player} hit in July last season?",
     ]
 
     // MARK: - Templates for historical players (no longer active)
@@ -68,6 +69,7 @@ enum SampleQuery {
     private static let historicalPlayerLookupTemplates = [
         "How did {player} do in {year}?",
         "{player} career stats",
+        "How did {player} hit in September {year}?",
     ]
 
     // These don't need player names
@@ -480,5 +482,7 @@ enum SampleQuery {
         "Who has come closest to hitting .400 since Ted Williams?",
         "Trea Turner vs Gunnar Henderson last season",
         "Kyle Tucker's splits vs left-handed pitching last season",
+        "How did Juan Soto hit in August last season?",
+        "Judge with runners in scoring position last season",
     ]
 }

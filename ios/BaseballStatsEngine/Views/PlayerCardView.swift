@@ -27,6 +27,12 @@ struct PlayerCardView: View {
     @State private var pitchingFormSliderGameNumber: Int? = nil
     @State private var pitchingGameLogs: [PitchingGameLog]? = nil
     @State private var showPitchingFormProjection = false
+    @State private var careerStartYear: Int? = nil   // nil = full career
+    @State private var careerEndYear: Int? = nil
+    @State private var pitchingCareerStartYear: Int? = nil
+    @State private var pitchingCareerEndYear: Int? = nil
+    @State private var careerRangeExpanded = false
+    @State private var pitchingCareerRangeExpanded = false
 
     // Floating search bar state
     @State private var searchText = ""
@@ -52,6 +58,7 @@ struct PlayerCardView: View {
     enum SplitTab: String, CaseIterable {
         case platoon = "Platoon"
         case homeAway = "Home\nAway"
+        case risp = "RISP"
         case streaks = "Streaks"
         case byPitch = "By Pitch"
         case byCount = "By Count"
@@ -418,10 +425,8 @@ struct PlayerCardView: View {
                 fieldingSection(season: current)
             }
 
-            // Career totals
-            if let career = card.careerTotals {
-                sectionView(title: "Career", grid: career)
-            }
+            // Career totals + 162-game pace
+            careerWithPaceSection(card: card)
 
             // Career splits
             careerSplitsSection(card: card)
@@ -430,10 +435,8 @@ struct PlayerCardView: View {
             let priorSeasons = Array(card.seasons.dropFirst())
             expandableSeasonsSection(seasons: priorSeasons, card: card)
         } else {
-            // Historical player: show career first, all seasons collapsible
-            if let career = card.careerTotals {
-                sectionView(title: "Career", grid: career)
-            }
+            // Historical player: career + pace, all seasons collapsible
+            careerWithPaceSection(card: card)
 
             careerSplitsSection(card: card)
 
@@ -546,10 +549,8 @@ struct PlayerCardView: View {
                 )
             }
 
-            // Pitching career totals
-            if let career = card.pitchingCareerTotals {
-                sectionView(title: "Career", grid: career)
-            }
+            // Pitching career totals + 162-game pace
+            pitchingCareerWithPaceSection(card: card, pitchingSeasons: pitchingSeasons)
 
             // Pitching career splits
             pitchingCareerSplitsSection(card: card)
@@ -557,10 +558,8 @@ struct PlayerCardView: View {
             // Prior pitching seasons — expandable
             expandablePitchingSeasonsSection(seasons: Array(pitchingSeasons.dropFirst()), card: card)
         } else {
-            // Historical pitcher: career first, all seasons collapsible
-            if let career = card.pitchingCareerTotals {
-                sectionView(title: "Career", grid: career)
-            }
+            // Historical pitcher: career + pace, all seasons collapsible
+            pitchingCareerWithPaceSection(card: card, pitchingSeasons: pitchingSeasons)
 
             pitchingCareerSplitsSection(card: card)
 
@@ -714,6 +713,7 @@ struct PlayerCardView: View {
         switch tab {
         case .platoon: return season.platoonSplits
         case .homeAway: return season.homeAwaySplits
+        case .risp: return season.rispSplits
         case .streaks: return season.streaks
         case .byPitch, .byCount: return nil  // Handled separately with sub-selectors
         }
@@ -1150,6 +1150,7 @@ struct PlayerCardView: View {
         switch tab {
         case .platoon: return season.platoonSplits
         case .homeAway: return season.homeAwaySplits
+        case .risp: return season.rispSplits
         case .streaks: return season.streaks
         case .byPitch, .byCount: return nil  // Handled separately with sub-selectors
         }
@@ -1550,6 +1551,514 @@ struct PlayerCardView: View {
                 projected.append(String(Int(proj.rounded())))
             } else {
                 // Rate stats stay as-is
+                projected.append(original)
+            }
+        }
+
+        return StatGridParser.StatGrid(
+            headers: headers,
+            rows: [StatGridParser.StatGrid.Row(label: "", values: projected)]
+        )
+    }
+
+    // MARK: - Career + 162-Game Pace (combined container)
+
+    @ViewBuilder
+    private func careerWithPaceSection(card: PlayerCard) -> some View {
+        let seasons = card.seasons
+        if let career = card.careerTotals {
+            if seasons.count > 1 {
+                let years = seasons.map(\.year).sorted()
+                let minYear = years.first!
+                let maxYear = years.last!
+                let startYear = careerStartYear ?? minYear
+                let endYear = careerEndYear ?? maxYear
+                let isFullCareer = careerStartYear == nil && careerEndYear == nil
+                let sourceGrid: StatGridParser.StatGrid? = isFullCareer
+                    ? career
+                    : buildBattingTotalsFromSeasons(seasons.filter { $0.year >= startYear && $0.year <= endYear })
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Career")
+                        .font(.system(.headline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 20)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        StatGridView(grid: career, suppressBackground: true)
+
+                        if let sourceGrid {
+                            let games = extractGames(from: sourceGrid)
+                            if games > 0 {
+                                let projected = buildCareerProjectedGrid(career: sourceGrid)
+
+                                Rectangle()
+                                    .fill(Color(uiColor: .separator).opacity(0.3))
+                                    .frame(height: 1)
+                                    .padding(.horizontal, 14)
+
+                                paceHeaderWithDropdown(
+                                    years: years,
+                                    startYear: startYear, endYear: endYear,
+                                    minYear: minYear, maxYear: maxYear,
+                                    isExpanded: $careerRangeExpanded,
+                                    onStartChange: { y in
+                                        withAnimation(.easeInOut(duration: 0.15)) {
+                                            careerStartYear = y == minYear && (careerEndYear == nil || careerEndYear == maxYear) ? nil : y
+                                            if y > endYear { careerEndYear = y }
+                                        }
+                                    },
+                                    onEndChange: { y in
+                                        withAnimation(.easeInOut(duration: 0.15)) {
+                                            careerEndYear = y == maxYear && (careerStartYear == nil || careerStartYear == minYear) ? nil : y
+                                            if y < startYear { careerStartYear = y }
+                                        }
+                                    },
+                                    onReset: {
+                                        withAnimation(.easeInOut(duration: 0.15)) {
+                                            careerStartYear = nil
+                                            careerEndYear = nil
+                                            careerRangeExpanded = false
+                                        }
+                                    }
+                                )
+
+                                StatGridView(grid: projected, suppressBackground: true)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(uiColor: .secondarySystemBackground))
+                    )
+                    .padding(.horizontal, 6)
+                }
+            } else {
+                sectionView(title: "Career", grid: career)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func pitchingCareerWithPaceSection(card: PlayerCard, pitchingSeasons: [PitchingSeasonData]) -> some View {
+        if let career = card.pitchingCareerTotals {
+            if pitchingSeasons.count > 1 {
+                let years = pitchingSeasons.map(\.year).sorted()
+                let minYear = years.first!
+                let maxYear = years.last!
+                let startYear = pitchingCareerStartYear ?? minYear
+                let endYear = pitchingCareerEndYear ?? maxYear
+                let isFullCareer = pitchingCareerStartYear == nil && pitchingCareerEndYear == nil
+                let sourceGrid: StatGridParser.StatGrid? = isFullCareer
+                    ? career
+                    : buildPitchingTotalsFromSeasons(pitchingSeasons.filter { $0.year >= startYear && $0.year <= endYear })
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Career")
+                        .font(.system(.headline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 20)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        StatGridView(grid: career, suppressBackground: true)
+
+                        if let sourceGrid {
+                            let games = extractGames(from: sourceGrid)
+                            if games > 0 {
+                                let projected = buildPitchingCareerProjectedGrid(career: sourceGrid)
+
+                                Rectangle()
+                                    .fill(Color(uiColor: .separator).opacity(0.3))
+                                    .frame(height: 1)
+                                    .padding(.horizontal, 14)
+
+                                paceHeaderWithDropdown(
+                                    years: years,
+                                    startYear: startYear, endYear: endYear,
+                                    minYear: minYear, maxYear: maxYear,
+                                    isExpanded: $pitchingCareerRangeExpanded,
+                                    onStartChange: { y in
+                                        withAnimation(.easeInOut(duration: 0.15)) {
+                                            pitchingCareerStartYear = y == minYear && (pitchingCareerEndYear == nil || pitchingCareerEndYear == maxYear) ? nil : y
+                                            if y > endYear { pitchingCareerEndYear = y }
+                                        }
+                                    },
+                                    onEndChange: { y in
+                                        withAnimation(.easeInOut(duration: 0.15)) {
+                                            pitchingCareerEndYear = y == maxYear && (pitchingCareerStartYear == nil || pitchingCareerStartYear == minYear) ? nil : y
+                                            if y < startYear { pitchingCareerStartYear = y }
+                                        }
+                                    },
+                                    onReset: {
+                                        withAnimation(.easeInOut(duration: 0.15)) {
+                                            pitchingCareerStartYear = nil
+                                            pitchingCareerEndYear = nil
+                                            pitchingCareerRangeExpanded = false
+                                        }
+                                    }
+                                )
+
+                                StatGridView(grid: projected, suppressBackground: true)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(uiColor: .secondarySystemBackground))
+                    )
+                    .padding(.horizontal, 6)
+                }
+            } else {
+                sectionView(title: "Career", grid: career)
+            }
+        }
+    }
+
+    // MARK: - Pace Header with Inline Dropdown
+
+    @ViewBuilder
+    private func paceHeaderWithDropdown(
+        years: [Int],
+        startYear: Int, endYear: Int,
+        minYear: Int, maxYear: Int,
+        isExpanded: Binding<Bool>,
+        onStartChange: @escaping (Int) -> Void,
+        onEndChange: @escaping (Int) -> Void,
+        onReset: @escaping () -> Void
+    ) -> some View {
+        let isFullRange = startYear == minYear && endYear == maxYear
+        let yearDesc = isFullRange
+            ? "\(minYear)-\(maxYear)"
+            : (startYear == endYear ? "\(startYear)" : "\(startYear)-\(endYear)")
+
+        // Header line with inline dropdown
+        HStack(alignment: .center, spacing: 8) {
+            Text("162-Game Pace")
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .foregroundStyle(.primary)
+
+            HStack(alignment: .center, spacing: 5) {
+                Text("Based on:")
+                    .font(.system(.caption2, design: .rounded))
+                    .foregroundStyle(.secondary)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isExpanded.wrappedValue.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(yearDesc)
+                            .font(.system(.caption, design: .rounded, weight: .semibold))
+                        Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        LinearGradient(
+                            colors: [lightBlue, deepBlue],
+                            startPoint: .leading, endPoint: .trailing
+                        ),
+                        in: Capsule()
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+            .offset(y: 1.5)
+
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .overlay(alignment: .topLeading) {
+            if isExpanded.wrappedValue {
+                // Dismiss tap area behind the floating picker
+                Color.black.opacity(0.001)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .fixedSize(horizontal: false, vertical: false)
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isExpanded.wrappedValue = false
+                        }
+                    }
+                    .ignoresSafeArea()
+
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("From")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Menu {
+                            ForEach(years.filter { $0 <= endYear }, id: \.self) { year in
+                                Button {
+                                    onStartChange(year)
+                                } label: {
+                                    if year == startYear {
+                                        Label(String(year), systemImage: "checkmark")
+                                    } else {
+                                        Text(String(year))
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(String(startYear))
+                                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .foregroundStyle(deepBlue)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+
+                    Divider().padding(.horizontal, 14)
+
+                    HStack {
+                        Text("To")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Menu {
+                            ForEach(years.filter { $0 >= startYear }, id: \.self) { year in
+                                Button {
+                                    onEndChange(year)
+                                } label: {
+                                    if year == endYear {
+                                        Label(String(year), systemImage: "checkmark")
+                                    } else {
+                                        Text(String(year))
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(String(endYear))
+                                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .foregroundStyle(deepBlue)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+
+                    if !isFullRange {
+                        Divider().padding(.horizontal, 14)
+
+                        Button {
+                            onReset()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("All Seasons")
+                                    .font(.system(.caption, design: .rounded, weight: .medium))
+                            }
+                            .foregroundStyle(deepBlue.opacity(0.7))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(uiColor: .tertiarySystemBackground))
+                        .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 0.5)
+                )
+                .padding(.horizontal, 14)
+                .offset(y: 32)
+                .zIndex(10)
+                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
+            }
+        }
+        .zIndex(isExpanded.wrappedValue ? 10 : 0)
+    }
+
+    // MARK: - Build totals from season subsets
+
+    private func buildBattingTotalsFromSeasons(_ seasons: [SeasonData]) -> StatGridParser.StatGrid? {
+        guard !seasons.isEmpty else { return nil }
+        let countingKeys = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "SB", "CS", "BB", "IBB", "SO", "HBP"]
+        var totals: [String: Double] = [:]
+        for s in seasons {
+            for key in countingKeys {
+                totals[key, default: 0] += s.countingValues[key] ?? 0
+            }
+        }
+        let ab = totals["AB"] ?? 0
+        let h = totals["H"] ?? 0
+        let bb = totals["BB"] ?? 0
+        let hbp = totals["HBP"] ?? 0
+        let pa = ab + bb + hbp
+        let singles = h - (totals["2B"] ?? 0) - (totals["3B"] ?? 0) - (totals["HR"] ?? 0)
+        let tb = singles + 2 * (totals["2B"] ?? 0) + 3 * (totals["3B"] ?? 0) + 4 * (totals["HR"] ?? 0)
+
+        let avg = ab > 0 ? h / ab : 0
+        let obp = pa > 0 ? (h + bb + hbp) / pa : 0
+        let slg = ab > 0 ? tb / ab : 0
+        let ops = obp + slg
+        let iso = slg - avg
+        let babipDenom = ab - (totals["SO"] ?? 0) - (totals["HR"] ?? 0)
+        let babip = babipDenom > 0 ? (h - (totals["HR"] ?? 0)) / babipDenom : 0
+
+        let values = [
+            "\(Int(totals["G"] ?? 0))", "\(Int(ab))", "\(Int(totals["R"] ?? 0))",
+            "\(Int(h))", "\(Int(totals["2B"] ?? 0))", "\(Int(totals["3B"] ?? 0))",
+            "\(Int(totals["HR"] ?? 0))", "\(Int(totals["RBI"] ?? 0))",
+            "\(Int(totals["SB"] ?? 0))", "\(Int(totals["CS"] ?? 0))",
+            "\(Int(bb))", "\(Int(totals["IBB"] ?? 0))",
+            "\(Int(totals["SO"] ?? 0))", "\(Int(hbp))",
+            formatRate(avg), formatRate(obp), formatRate(slg), formatRate(ops),
+            "--", formatRate(iso), formatRate(babip),
+        ]
+        let headers = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "SB", "CS",
+                        "BB", "IBB", "SO", "HBP", "AVG", "OBP", "SLG", "OPS", "OPS+", "ISO", "BABIP"]
+        return StatGridParser.StatGrid(
+            headers: headers,
+            rows: [StatGridParser.StatGrid.Row(label: "", values: values)]
+        )
+    }
+
+    private func buildPitchingTotalsFromSeasons(_ seasons: [PitchingSeasonData]) -> StatGridParser.StatGrid? {
+        guard !seasons.isEmpty else { return nil }
+        var w = 0, l = 0, sv = 0, g = 0, gs = 0, cg = 0, qs = 0
+        var h = 0, r = 0, er = 0, hr = 0, bb = 0, so = 0, hbp = 0, wp = 0, bk = 0
+        var totalIPOuts = 0.0
+
+        for s in seasons {
+            w += Int(s.countingValues["W"] ?? 0)
+            l += Int(s.countingValues["L"] ?? 0)
+            sv += Int(s.countingValues["SV"] ?? 0)
+            g += s.games
+            gs += s.gamesStarted
+            so += Int(s.countingValues["SO"] ?? 0)
+            bb += Int(s.countingValues["BB"] ?? 0)
+            h += Int(s.countingValues["H"] ?? 0)
+            er += Int(s.countingValues["ER"] ?? 0)
+            hr += Int(s.countingValues["HR"] ?? 0)
+            hbp += Int(s.countingValues["HBP"] ?? 0)
+            wp += Int(s.countingValues["WP"] ?? 0)
+            bk += Int(s.countingValues["BK"] ?? 0)
+            cg += Int(s.countingValues["CG"] ?? 0)
+            qs += Int(s.countingValues["QS"] ?? 0)
+            if let ipVal = s.countingValues["IP"] {
+                let whole = Int(ipVal)
+                let frac = ipVal - Double(whole)
+                totalIPOuts += Double(whole * 3) + (frac * 10).rounded()
+            }
+        }
+
+        let ip = totalIPOuts / 3.0
+        let ipDisplay = "\(Int(totalIPOuts) / 3).\(Int(totalIPOuts) % 3)"
+        let era = ip > 0 ? 9.0 * Double(er) / ip : 0
+        let whip = ip > 0 ? Double(bb + h) / ip : 0
+        let k9 = ip > 0 ? 9.0 * Double(so) / ip : 0
+        let bb9 = ip > 0 ? 9.0 * Double(bb) / ip : 0
+        let h9 = ip > 0 ? 9.0 * Double(h) / ip : 0
+        let hr9 = ip > 0 ? 9.0 * Double(hr) / ip : 0
+
+        // Use the display headers (filtered set matching what PlayerCardService uses)
+        let headers = ["W", "L", "SV", "G", "GS", "CG", "QS", "IP", "H", "R", "ER",
+                        "HR", "BB", "SO", "HBP", "WP", "BK", "SB", "CS",
+                        "ERA", "WHIP", "K/9", "BB/9", "H/9", "HR/9", "BAA", "ERA+"]
+        let values = [
+            "\(w)", "\(l)", "\(sv)", "\(g)", "\(gs)",
+            "\(cg)", "\(qs)", ipDisplay, "\(h)", "\(r)", "\(er)",
+            "\(hr)", "\(bb)", "\(so)", "\(hbp)", "\(wp)",
+            "\(bk)", "0", "0",
+            String(format: "%.2f", era), String(format: "%.2f", whip),
+            String(format: "%.1f", k9), String(format: "%.1f", bb9),
+            String(format: "%.1f", h9), String(format: "%.1f", hr9), ".000", "--",
+        ]
+        return StatGridParser.StatGrid(
+            headers: headers,
+            rows: [StatGridParser.StatGrid.Row(label: "", values: values)]
+        )
+    }
+
+    private func formatRate(_ value: Double) -> String {
+        let str = String(format: "%.3f", value)
+        if str.hasPrefix("0.") { return String(str.dropFirst()) }
+        if str.hasPrefix("-0.") { return "-" + String(str.dropFirst(2)) }
+        return str
+    }
+
+    // MARK: - Career projection helpers
+
+    private func extractGames(from grid: StatGridParser.StatGrid) -> Double {
+        guard let gIdx = grid.headers.firstIndex(of: "G"),
+              let values = grid.rows.first?.values,
+              gIdx < values.count,
+              let g = Double(values[gIdx]) else { return 0 }
+        return g
+    }
+
+    private func buildCareerProjectedGrid(career: StatGridParser.StatGrid) -> StatGridParser.StatGrid {
+        let countingStats: Set<String> = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "SB", "CS",
+                                           "BB", "IBB", "SO", "HBP"]
+        let games = extractGames(from: career)
+        guard games > 0 else { return career }
+        let factor = 162.0 / games
+
+        let headers = career.headers
+        let originalValues = career.rows.first?.values ?? []
+
+        var projected: [String] = []
+        for (idx, header) in headers.enumerated() {
+            guard idx < originalValues.count else { break }
+            let original = originalValues[idx]
+
+            if countingStats.contains(header), let val = Double(original) {
+                projected.append(String(Int((val * factor).rounded())))
+            } else {
+                projected.append(original)
+            }
+        }
+
+        return StatGridParser.StatGrid(
+            headers: headers,
+            rows: [StatGridParser.StatGrid.Row(label: "", values: projected)]
+        )
+    }
+
+    private func buildPitchingCareerProjectedGrid(career: StatGridParser.StatGrid) -> StatGridParser.StatGrid {
+        let countingStats: Set<String> = ["W", "L", "SV", "G", "GS", "CG", "QS", "H", "R", "ER",
+                                           "HR", "BB", "SO", "HBP", "WP", "BK", "SB", "CS"]
+        let games = extractGames(from: career)
+        guard games > 0 else { return career }
+        let factor = 162.0 / games
+
+        let headers = career.headers
+        let originalValues = career.rows.first?.values ?? []
+
+        var projected: [String] = []
+        for (idx, header) in headers.enumerated() {
+            guard idx < originalValues.count else { break }
+            let original = originalValues[idx]
+
+            if header == "IP" {
+                let parts = original.split(separator: ".")
+                let whole = Int(parts[0]) ?? 0
+                let thirds = parts.count > 1 ? (Int(parts[1]) ?? 0) : 0
+                let totalOuts = Double(whole * 3 + thirds) * factor
+                let projWhole = Int(totalOuts) / 3
+                let projThirds = Int(totalOuts) % 3
+                projected.append("\(projWhole).\(projThirds)")
+            } else if countingStats.contains(header), let val = Double(original) {
+                projected.append(String(Int((val * factor).rounded())))
+            } else {
                 projected.append(original)
             }
         }

@@ -235,7 +235,7 @@ Home and away pitching splits aggregated from game logs. Available for seasons 2
 - era, whip, k_per_9, bb_per_9, baa (REAL) — rate stats
 
 ### pitch_type_batting_splits
-Batter performance broken down by the final pitch type of each plate appearance. Available for current season (2026) only — from MySportsFeeds play-by-play data.
+Batter performance broken down by the final pitch type of each plate appearance. Available for 2025-2026 — from MySportsFeeds play-by-play data.
 - player_id (TEXT) — references players table
 - season (INTEGER) — year
 - pitch_type (TEXT) — normalized pitch type: "4-Seam", "Sinker", "Cutter", "Slider", "Curveball", "Changeup", "Splitter", "Knuckle", "Sweeper", or other
@@ -243,7 +243,7 @@ Batter performance broken down by the final pitch type of each plate appearance.
 - batting_avg, obp, slg, ops, iso, babip (REAL) — rate stats
 
 ### pitch_type_pitching_splits
-How batters performed against each pitcher broken down by the final pitch type of each plate appearance. Available for current season (2026) only.
+How batters performed against each pitcher broken down by the final pitch type of each plate appearance. Available for 2025-2026.
 - player_id (TEXT) — references players table (the pitcher)
 - season (INTEGER) — year
 - pitch_type (TEXT) — normalized pitch type (same values as pitch_type_batting_splits)
@@ -251,7 +251,7 @@ How batters performed against each pitcher broken down by the final pitch type o
 - batting_avg_against, obp_against, slg_against, ops_against (REAL)
 
 ### count_batting_splits
-Batter performance broken down by the ball-strike count when the plate appearance ended. Available for current season (2026) only.
+Batter performance broken down by the ball-strike count when the plate appearance ended. Available for 2025-2026.
 - player_id (TEXT) — references players table
 - season (INTEGER) — year
 - count_state (TEXT) — ball-strike count like "0-0", "1-2", "3-2", etc. Format is "balls-strikes".
@@ -259,10 +259,26 @@ Batter performance broken down by the ball-strike count when the plate appearanc
 - batting_avg, obp, slg, ops, iso, babip (REAL)
 
 ### count_pitching_splits
-How batters performed against each pitcher broken down by the ball-strike count when the PA ended. Available for current season (2026) only.
+How batters performed against each pitcher broken down by the ball-strike count when the PA ended. Available for 2025-2026.
 - player_id (TEXT) — references players table (the pitcher)
 - season (INTEGER) — year
 - count_state (TEXT) — ball-strike count (same format as count_batting_splits)
+- plate_appearances, at_bats, hits, doubles, triples, home_runs, walks, strikeouts, hit_by_pitch, sacrifice_flies (INTEGER)
+- batting_avg_against, obp_against, slg_against, ops_against (REAL)
+
+### risp_batting_splits
+Batter performance with Runners In Scoring Position (2nd and/or 3rd base occupied) vs Non-RISP. Available for 2025-2026.
+- player_id (TEXT) — references players table
+- season (INTEGER) — year
+- split (TEXT) — "RISP" or "Non-RISP"
+- plate_appearances, at_bats, hits, doubles, triples, home_runs, rbi, walks, strikeouts, hit_by_pitch, sacrifice_flies (INTEGER)
+- batting_avg, obp, slg, ops, iso, babip (REAL)
+
+### risp_pitching_splits
+How batters performed against each pitcher with RISP vs Non-RISP. Available for 2025-2026.
+- player_id (TEXT) — references players table (the pitcher)
+- season (INTEGER) — year
+- split (TEXT) — "RISP" or "Non-RISP"
 - plate_appearances, at_bats, hits, doubles, triples, home_runs, walks, strikeouts, hit_by_pitch, sacrifice_flies (INTEGER)
 - batting_avg_against, obp_against, slg_against, ops_against (REAL)
 

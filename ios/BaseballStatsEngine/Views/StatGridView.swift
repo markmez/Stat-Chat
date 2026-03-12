@@ -7,6 +7,8 @@ struct StatGridView: View {
     /// When set, enables "Project Over 162 Games" toggle using this as the divisor (player's season games).
     /// Counting stats scale by 162 / seasonGames. Rate stats stay unchanged.
     var seasonGames: Int? = nil
+    /// When true, suppresses the default rounded-rect background (for embedding inside a shared container)
+    var suppressBackground: Bool = false
 
     /// 1-line summary: the 7 key batting stats shown when compact
     static let summaryHeaders = ["G", "AB", "AVG", "OBP", "SLG", "OPS", "HR"]
@@ -694,14 +696,16 @@ struct StatGridView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(uiColor: .secondarySystemBackground))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 0.5)
-                )
-        )
+        .background {
+            if !suppressBackground {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(uiColor: .secondarySystemBackground))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 0.5)
+                    )
+            }
+        }
         .overlay {
             if let stat = selectedStat, let definition = StatDefinitions.lookup(stat) {
                 ZStack {

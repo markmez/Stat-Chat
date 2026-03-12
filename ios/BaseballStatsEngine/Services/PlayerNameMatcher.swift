@@ -876,7 +876,8 @@ enum PlayerNameMatcher {
                 if containsWord(name.lowercased(), in: lower) { return nil }
             }
             for (lastName, players) in lastNameIndex {
-                if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+                if containsWord(lastName, in: lower) && players.count == 1
+                    && !commonWordLastNames.contains(lastName) { return nil }
             }
         }
 
@@ -1129,6 +1130,67 @@ enum PlayerNameMatcher {
         return (stat, season)
     }
 
+    // MARK: - Month query parser
+
+    /// Detect queries like "How did Judge hit in September?", "Ohtani's stats in July",
+    /// "Judge in April 2025", "Soto September stats", "Judge in May last season".
+    /// Returns (playerName, month 1-12, season).
+    static func parseMonthQuery(_ input: String) -> (playerName: String, month: Int, season: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Must mention a month
+        let months: [(names: [String], number: Int)] = [
+            (["january", "jan"], 1), (["february", "feb"], 2), (["march", "mar"], 3),
+            (["april", "apr"], 4), (["may"], 5), (["june", "jun"], 6),
+            (["july", "jul"], 7), (["august", "aug"], 8), (["september", "sept", "sep"], 9),
+            (["october", "oct"], 10), (["november", "nov"], 11), (["december", "dec"], 12),
+        ]
+
+        var detectedMonth: Int?
+        for (names, number) in months {
+            for monthName in names {
+                if containsWord(monthName, in: lower) {
+                    detectedMonth = number
+                    break
+                }
+            }
+            if detectedMonth != nil { break }
+        }
+        guard let month = detectedMonth else { return nil }
+
+        // Exclude leaderboard patterns
+        let leaderboardWords = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest", "lowest",
+                                "who led", "who leads", "who hit the most", "who had the most", "leading"]
+        if leaderboardWords.contains(where: { lower.contains($0) }) { return nil }
+
+        // Exclude career queries
+        if containsWord("career", in: lower) { return nil }
+
+        // Find a player name — try full name first
+        var playerName: String?
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) {
+                playerName = name
+                break
+            }
+        }
+
+        // Try last name — unambiguous only
+        if playerName == nil {
+            for (lastName, players) in lastNameIndex {
+                if containsWord(lastName, in: lower) && players.count == 1 {
+                    playerName = players[0]
+                    break
+                }
+            }
+        }
+
+        guard let name = playerName else { return nil }
+
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
+        return (name, month, season)
+    }
+
     // MARK: - Fuzzy matching
 
     /// Find closest player names within edit distance threshold (for "did you mean?" suggestions).
@@ -1177,6 +1239,14 @@ enum PlayerNameMatcher {
     }
 
     /// If the input contains an ambiguous last name (matches multiple players), return those player names.
+    /// Last names that are extremely common English adjectives/adverbs — these almost never
+    /// refer to a player when used in natural language baseball queries like "best hitter",
+    /// "most home runs", "good season". Notable player last names (Rice, Young, Hill, Bell,
+    /// Park, etc.) are intentionally NOT here.
+    private static let commonWordLastNames: Set<String> = [
+        "best", "most", "good", "long", "strong", "more",
+    ]
+
     static func findAmbiguousPlayers(_ input: String) -> [String]? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
@@ -1188,6 +1258,10 @@ enum PlayerNameMatcher {
         // Check for ambiguous last names
         for (lastName, players) in lastNameIndex {
             if containsWord(lastName, in: lower) && players.count > 1 {
+                // Skip common English words unless they look like intentional name usage
+                if commonWordLastNames.contains(lastName) {
+                    continue
+                }
                 return players
             }
         }

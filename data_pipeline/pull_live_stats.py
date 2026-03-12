@@ -682,6 +682,8 @@ def compute_platoon_splits(conn, season_str):
     pitch_pitch_type = {}     # (msf_pitcher_id, pitcher_name, pitch_type) → stats
     bat_count_splits = {}     # (msf_batter_id, batter_name, count_str) → stats
     pitch_count_splits = {}   # (msf_pitcher_id, pitcher_name, count_str) → stats
+    bat_risp_splits = {}      # (msf_batter_id, batter_name, "RISP"/"Non-RISP") → stats
+    pitch_risp_splits = {}    # (msf_pitcher_id, pitcher_name, "RISP"/"Non-RISP") → stats
 
     def empty_bat_stats():
         return {"pa": 0, "ab": 0, "h": 0, "2b": 0, "3b": 0, "hr": 0,
@@ -817,13 +819,26 @@ def compute_platoon_splits(conn, season_str):
                     pitch_count_splits[pc_key] = empty_bat_stats()
                 accumulate(pitch_count_splits[pc_key], result)
 
+                # --- RISP splits (runners on 2nd and/or 3rd) ---
+                has_risp = ps.get("secondBaseRunner") is not None or ps.get("thirdBaseRunner") is not None
+                risp_label = "RISP" if has_risp else "Non-RISP"
+                br_key = (batter_id, batter_name, risp_label)
+                if br_key not in bat_risp_splits:
+                    bat_risp_splits[br_key] = empty_bat_stats()
+                accumulate(bat_risp_splits[br_key], result)
+
+                pr_key = (pitcher_id, pitcher_name, risp_label)
+                if pr_key not in pitch_risp_splits:
+                    pitch_risp_splits[pr_key] = empty_bat_stats()
+                accumulate(pitch_risp_splits[pr_key], result)
+
                 break  # Only process one batterUp per at-bat
 
         if (i + 1) % 50 == 0:
             print(f"    Processed {i + 1}/{len(games)} games...")
 
     print(f"    Processed all {len(games)} games: {len(batting_splits)} platoon, "
-          f"{len(bat_pitch_type)} pitch type, {len(bat_count_splits)} count splits")
+          f"{len(bat_pitch_type)} pitch type, {len(bat_count_splits)} count, {len(bat_risp_splits)} RISP splits")
 
     # --- Insert into tables ---
     cursor = conn.cursor()
@@ -872,6 +887,28 @@ def compute_platoon_splits(conn, season_str):
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS risp_batting_splits (
+            player_id TEXT NOT NULL, season INTEGER NOT NULL, split TEXT NOT NULL,
+            plate_appearances INTEGER, at_bats INTEGER, hits INTEGER,
+            doubles INTEGER, triples INTEGER, home_runs INTEGER,
+            rbi INTEGER, walks INTEGER, strikeouts INTEGER,
+            hit_by_pitch INTEGER, sacrifice_flies INTEGER,
+            batting_avg REAL, obp REAL, slg REAL, ops REAL, iso REAL, babip REAL,
+            UNIQUE(player_id, season, split)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS risp_pitching_splits (
+            player_id TEXT NOT NULL, season INTEGER NOT NULL, split TEXT NOT NULL,
+            plate_appearances INTEGER, at_bats INTEGER, hits INTEGER,
+            doubles INTEGER, triples INTEGER, home_runs INTEGER,
+            walks INTEGER, strikeouts INTEGER, hit_by_pitch INTEGER, sacrifice_flies INTEGER,
+            batting_avg_against REAL, obp_against REAL, slg_against REAL, ops_against REAL,
+            UNIQUE(player_id, season, split)
+        )
+    """)
+
     # Clear existing data for this season
     cursor.execute("DELETE FROM platoon_splits WHERE season = ?", (season_year,))
     cursor.execute("DELETE FROM pitching_platoon_splits WHERE season = ?", (season_year,))
@@ -879,6 +916,8 @@ def compute_platoon_splits(conn, season_str):
     cursor.execute("DELETE FROM pitch_type_pitching_splits WHERE season = ?", (season_year,))
     cursor.execute("DELETE FROM count_batting_splits WHERE season = ?", (season_year,))
     cursor.execute("DELETE FROM count_pitching_splits WHERE season = ?", (season_year,))
+    cursor.execute("DELETE FROM risp_batting_splits WHERE season = ?", (season_year,))
+    cursor.execute("DELETE FROM risp_pitching_splits WHERE season = ?", (season_year,))
 
     def resolve_player(name):
         cursor.execute("SELECT player_id FROM players WHERE name = ? LIMIT 1", (name,))
@@ -1020,10 +1059,56 @@ def compute_platoon_splits(conn, season_str):
               avg_against, obp_against, slg_against, ops_against))
         ct_pitch_count += 1
 
+    # --- Insert RISP batting splits ---
+    risp_bat_count = 0
+    for (msf_id, name, risp_label), stats in bat_risp_splits.items():
+        pid = resolve_player(name)
+        if not pid:
+            continue
+        h, ab, bb, hbp, sf = stats["h"], stats["ab"], stats["bb"], stats["hbp"], stats["sf"]
+        doubles, triples, hr, so = stats["2b"], stats["3b"], stats["hr"], stats["so"]
+        pa_calc, avg, obp, slg, ops, iso, babip = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so)
+        cursor.execute("""
+            INSERT OR REPLACE INTO risp_batting_splits
+            (player_id, season, split, plate_appearances, at_bats,
+             hits, doubles, triples, home_runs, rbi, walks, strikeouts,
+             hit_by_pitch, sacrifice_flies, batting_avg, obp, slg, ops, iso, babip)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (pid, season_year, risp_label, pa_calc, ab, h, doubles, triples, hr, stats["rbi"], bb, so,
+              hbp, sf, avg, obp, slg, ops, iso, babip))
+        risp_bat_count += 1
+
+    # --- Insert RISP pitching splits ---
+    risp_pitch_count = 0
+    for (msf_id, name, risp_label), stats in pitch_risp_splits.items():
+        pid = resolve_player(name)
+        if not pid:
+            continue
+        h, ab, bb, hbp, sf = stats["h"], stats["ab"], stats["bb"], stats["hbp"], stats["sf"]
+        doubles, triples, hr, so = stats["2b"], stats["3b"], stats["hr"], stats["so"]
+        avg_against = h / ab if ab > 0 else None
+        obp_denom = ab + bb + hbp + sf
+        obp_against = (h + bb + hbp) / obp_denom if obp_denom > 0 else None
+        singles = h - doubles - triples - hr
+        tb = singles + 2 * doubles + 3 * triples + 4 * hr
+        slg_against = tb / ab if ab > 0 else None
+        ops_against = (obp_against or 0) + (slg_against or 0) if obp_against is not None and slg_against is not None else None
+        cursor.execute("""
+            INSERT OR REPLACE INTO risp_pitching_splits
+            (player_id, season, split, plate_appearances, at_bats,
+             hits, doubles, triples, home_runs, walks, strikeouts,
+             hit_by_pitch, sacrifice_flies,
+             batting_avg_against, obp_against, slg_against, ops_against)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (pid, season_year, risp_label, stats["pa"], ab, h, doubles, triples, hr, bb, so, hbp, sf,
+              avg_against, obp_against, slg_against, ops_against))
+        risp_pitch_count += 1
+
     conn.commit()
     print(f"    Platoon: {bat_count} batting + {pitch_count} pitching")
     print(f"    Pitch type: {pt_bat_count} batting + {pt_pitch_count} pitching")
     print(f"    Count: {ct_bat_count} batting + {ct_pitch_count} pitching")
+    print(f"    RISP: {risp_bat_count} batting + {risp_pitch_count} pitching")
     return bat_count, pitch_count
 
 

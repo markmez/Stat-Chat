@@ -105,8 +105,9 @@ struct ResultCard: View {
         case .text(let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                let withLinks = PlayerNameMatcher.addTeamLinks(to: PlayerNameMatcher.addLinks(to: trimmed))
-                Text(LocalizedStringKey(withLinks))
+                // Skip expensive link detection during streaming to keep rendering fast
+                let displayText = isStreaming ? trimmed : PlayerNameMatcher.addTeamLinks(to: PlayerNameMatcher.addLinks(to: trimmed))
+                Text(LocalizedStringKey(displayText))
                     .font(.system(.body, design: .rounded))
                     .foregroundStyle(.primary.opacity(0.85))
                     .tint(deepBlue)

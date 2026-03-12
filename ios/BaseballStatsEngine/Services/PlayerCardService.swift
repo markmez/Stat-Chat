@@ -34,6 +34,7 @@ struct PitchingSeasonData: Sendable {
     let countingValues: [String: Double]
     let platoonSplits: StatGridParser.StatGrid?
     let homeAwaySplits: StatGridParser.StatGrid?
+    let rispSplits: StatGridParser.StatGrid?
     let streaks: StatGridParser.StatGrid?
     let pitchTypeSplits: [StatGridParser.StatGrid]?
     let countSplits: [StatGridParser.StatGrid]?
@@ -73,6 +74,7 @@ struct SeasonData: Sendable {
     let countingValues: [String: Double]
     let platoonSplits: StatGridParser.StatGrid?
     let homeAwaySplits: StatGridParser.StatGrid?
+    let rispSplits: StatGridParser.StatGrid?
     let streaks: StatGridParser.StatGrid?
     let fieldingStats: StatGridParser.StatGrid?
     let pitchTypeSplits: [StatGridParser.StatGrid]?
@@ -410,7 +412,7 @@ enum PlayerCardService {
             return SeasonData(
                 year: s.year, team: s.team, age: s.age, games: s.G, teamGames: 162,
                 stats: grid, countingValues: counting,
-                platoonSplits: nil, homeAwaySplits: nil, streaks: nil,
+                platoonSplits: nil, homeAwaySplits: nil, rispSplits: nil, streaks: nil,
                 fieldingStats: nil, pitchTypeSplits: nil, countSplits: nil, currentForm: nil
             )
         }
@@ -438,7 +440,7 @@ enum PlayerCardService {
             return PitchingSeasonData(
                 year: s.year, team: s.team, games: s.G, gamesStarted: s.GS,
                 teamGames: 162, stats: grid, countingValues: counting,
-                platoonSplits: nil, homeAwaySplits: nil, streaks: nil,
+                platoonSplits: nil, homeAwaySplits: nil, rispSplits: nil, streaks: nil,
                 pitchTypeSplits: nil, countSplits: nil, currentForm: nil
             )
         }
@@ -973,6 +975,7 @@ enum PlayerCardService {
             // Per-season splits, streaks, fielding, and current form
             let splits = fetchPlatoonSplitsForSeason(name: name, season: year)
             let homeAwaySplits = fetchHomeAwaySplitsForSeason(name: name, season: year)
+            let rispSplits = fetchRISPBattingSplitsForSeason(name: name, season: year)
             let streakGrid = fetchStreaksForSeason(name: name, season: year, performance: "hot")
             let fieldingGrid = fetchFieldingForSeason(name: name, season: year)
             let pitchTypeGrids = fetchPitchTypeBattingSplitsForSeason(name: name, season: year)
@@ -982,7 +985,7 @@ enum PlayerCardService {
             seasons.append(SeasonData(
                 year: year, team: team, age: age, games: games, teamGames: teamGames,
                 stats: grid, countingValues: counting,
-                platoonSplits: splits, homeAwaySplits: homeAwaySplits,
+                platoonSplits: splits, homeAwaySplits: homeAwaySplits, rispSplits: rispSplits,
                 streaks: streakGrid, fieldingStats: fieldingGrid,
                 pitchTypeSplits: pitchTypeGrids, countSplits: countGrids, currentForm: currentForm
             ))
@@ -1093,6 +1096,34 @@ enum PlayerCardService {
         var rows: [StatGridParser.StatGrid.Row] = []
         for row in result.rows.prefix(2) {
             let splitLabel = row[0] == "home" ? "Home" : "Away"
+            let values = formatValues(headers: headers, values: Array(row.dropFirst()))
+            rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: values))
+        }
+
+        guard !rows.isEmpty else { return nil }
+        return StatGridParser.StatGrid(headers: headers, rows: rows)
+    }
+
+    // MARK: - Per-season RISP batting splits
+
+    private static func fetchRISPBattingSplitsForSeason(name: String, season: Int) -> StatGridParser.StatGrid? {
+        let sql = """
+            SELECT rs.split, rs.at_bats, rs.hits,
+                   rs.doubles, rs.triples, rs.home_runs, rs.rbi,
+                   rs.walks, rs.strikeouts,
+                   rs.batting_avg, rs.obp, rs.slg, rs.ops, rs.iso, rs.babip
+            FROM risp_batting_splits rs
+            JOIN players p ON rs.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND rs.season = \(season)
+            ORDER BY rs.split DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+        var rows: [StatGridParser.StatGrid.Row] = []
+        for row in result.rows.prefix(2) {
+            let splitLabel = row[0] == "RISP" ? "RISP" : "Non-RISP"
             let values = formatValues(headers: headers, values: Array(row.dropFirst()))
             rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: values))
         }
@@ -3046,6 +3077,142 @@ enum PlayerCardService {
         return min(val, 162)
     }
 
+    // MARK: - Month stats (game log aggregation)
+
+    /// Build a stat summary for a player in a specific month by aggregating game logs.
+    /// Returns a formatted STATGRID response, or nil if no data found.
+    static func buildMonthStats(name: String, month: Int, season: Int) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+        let monthPad = String(format: "%02d", month)
+        let monthNames = ["", "January", "February", "March", "April", "May", "June",
+                          "July", "August", "September", "October", "November", "December"]
+        let monthName = month >= 1 && month <= 12 ? monthNames[month] : "Month \(month)"
+
+        // Try batting first
+        let battingSql = """
+            SELECT COUNT(*) as g,
+                   SUM(g.at_bats) as ab, SUM(g.hits) as h, SUM(g.doubles) as d2b,
+                   SUM(g.triples) as d3b, SUM(g.home_runs) as hr,
+                   SUM(g.runs) as r, SUM(g.rbi) as rbi,
+                   SUM(g.walks) as bb, SUM(g.strikeouts) as so,
+                   SUM(g.plate_appearances) as pa,
+                   SUM(g.hit_by_pitch) as hbp, SUM(g.sacrifice_flies) as sf
+            FROM game_batting_logs g
+            JOIN players p ON g.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+              AND g.season = \(season)
+              AND substr(g.date, 6, 2) = '\(monthPad)'
+            """
+        if let result = try? db.execute(sql: battingSql),
+           let row = result.rows.first,
+           let games = Int(row[0]), games > 0 {
+            let ab = Int(row[1]) ?? 0
+            let h = Int(row[2]) ?? 0
+            let d2b = Int(row[3]) ?? 0
+            let d3b = Int(row[4]) ?? 0
+            let hr = Int(row[5]) ?? 0
+            let r = Int(row[6]) ?? 0
+            let rbi = Int(row[7]) ?? 0
+            let bb = Int(row[8]) ?? 0
+            let so = Int(row[9]) ?? 0
+            let pa = Int(row[10]) ?? 0
+            let hbp = Int(row[11]) ?? 0
+            let sf = Int(row[12]) ?? 0
+
+            // Compute rate stats
+            let avg = ab > 0 ? Double(h) / Double(ab) : 0.0
+            let obpDenom = ab + bb + hbp + sf
+            let obp = obpDenom > 0 ? Double(h + bb + hbp) / Double(obpDenom) : 0.0
+            let tb = h + d2b + 2 * d3b + 3 * hr
+            let slg = ab > 0 ? Double(tb) / Double(ab) : 0.0
+            let ops = obp + slg
+
+            let avgStr = formatRate(String(format: "%.3f", avg))
+            let obpStr = formatRate(String(format: "%.3f", obp))
+            let slgStr = formatRate(String(format: "%.3f", slg))
+            let opsStr = formatRate(String(format: "%.3f", ops))
+
+            var parts: [String] = []
+            parts.append("**\(displayName)** \u{2014} \(monthName) \(season)\n")
+
+            parts.append("[STATGRID]")
+            parts.append("HEADER: G, AB, R, H, 2B, 3B, HR, RBI, BB, SO, AVG, OBP, SLG, OPS")
+            parts.append("ROW: \(games), \(ab), \(r), \(h), \(d2b), \(d3b), \(hr), \(rbi), \(bb), \(so), \(avgStr), \(obpStr), \(slgStr), \(opsStr)")
+            parts.append("[/STATGRID]")
+
+            parts.append("\n[SUGGEST]\(displayName) \(season)[/SUGGEST]")
+            parts.append("[SUGGEST]how is \(displayName) doing lately[/SUGGEST]")
+
+            return parts.joined(separator: "\n")
+        }
+
+        // Try pitching
+        let pitchingSql = """
+            SELECT COUNT(*) as g,
+                   SUM(g.ip_outs) as ip_outs, SUM(g.hits) as h,
+                   SUM(g.earned_runs) as er, SUM(g.walks) as bb,
+                   SUM(g.strikeouts) as so, SUM(g.home_runs) as hr,
+                   SUM(g.hit_batters) as hb,
+                   SUM(g.wins) as w, SUM(g.losses) as l, SUM(g.saves) as sv,
+                   SUM(g.games_started) as gs
+            FROM game_pitching_logs g
+            JOIN players p ON g.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%'
+              AND g.season = \(season)
+              AND substr(g.date, 6, 2) = '\(monthPad)'
+            """
+        if let result = try? db.execute(sql: pitchingSql),
+           let row = result.rows.first,
+           let games = Int(row[0]), games > 0 {
+            let ipOuts = Int(row[1]) ?? 0
+            let h = Int(row[2]) ?? 0
+            let er = Int(row[3]) ?? 0
+            let bb = Int(row[4]) ?? 0
+            let so = Int(row[5]) ?? 0
+            let hr = Int(row[6]) ?? 0
+            let w = Int(row[8]) ?? 0
+            let l = Int(row[9]) ?? 0
+            let sv = Int(row[10]) ?? 0
+            let gs = Int(row[11]) ?? 0
+
+            // IP from outs
+            let fullInnings = ipOuts / 3
+            let remainder = ipOuts % 3
+            let ipStr = remainder == 0 ? "\(fullInnings)" : "\(fullInnings).\(remainder)"
+            let ipDouble = Double(ipOuts) / 3.0
+
+            // ERA = (ER / IP) * 9
+            let era = ipDouble > 0 ? (Double(er) / ipDouble) * 9.0 : 0.0
+            // WHIP = (BB + H) / IP
+            let whip = ipDouble > 0 ? Double(bb + h) / ipDouble : 0.0
+            // K/9 = (SO / IP) * 9
+            let kPer9 = ipDouble > 0 ? (Double(so) / ipDouble) * 9.0 : 0.0
+            // BB/9 = (BB / IP) * 9
+            let bbPer9 = ipDouble > 0 ? (Double(bb) / ipDouble) * 9.0 : 0.0
+
+            let eraStr = String(format: "%.2f", era)
+            let whipStr = String(format: "%.2f", whip)
+            let kPer9Str = String(format: "%.1f", kPer9)
+            let bbPer9Str = String(format: "%.1f", bbPer9)
+
+            var parts: [String] = []
+            parts.append("**\(displayName)** \u{2014} \(monthName) \(season)\n")
+
+            parts.append("[STATGRID]")
+            parts.append("HEADER: W, L, SV, G, GS, IP, H, ER, BB, SO, HR, ERA, WHIP, K/9, BB/9")
+            parts.append("ROW: \(w), \(l), \(sv), \(games), \(gs), \(ipStr), \(h), \(er), \(bb), \(so), \(hr), \(eraStr), \(whipStr), \(kPer9Str), \(bbPer9Str)")
+            parts.append("[/STATGRID]")
+
+            parts.append("\n[SUGGEST]\(displayName) \(season)[/SUGGEST]")
+            parts.append("[SUGGEST]how is \(displayName) doing lately[/SUGGEST]")
+
+            return parts.joined(separator: "\n")
+        }
+
+        return nil
+    }
+
     // MARK: - Helpers
 
     private static func sanitize(_ name: String) -> String {
@@ -3529,6 +3696,7 @@ enum PlayerCardService {
             let teamGames = fetchTeamGames(team: team, season: year)
             let splits = fetchPitchingPlatoonSplitsForSeason(name: name, season: year)
             let homeAwaySplits = fetchPitchingHomeAwaySplitsForSeason(name: name, season: year)
+            let rispSplits = fetchRISPPitchingSplitsForSeason(name: name, season: year)
             let streakGrid = fetchPitchingStreaksForSeason(name: name, season: year, performance: "hot")
             let pitchTypeGrids = fetchPitchTypePitchingSplitsForSeason(name: name, season: year)
             let countGrids = fetchCountPitchingSplitsForSeason(name: name, season: year)
@@ -3537,7 +3705,7 @@ enum PlayerCardService {
             seasons.append(PitchingSeasonData(
                 year: year, team: team, games: games, gamesStarted: gamesStarted,
                 teamGames: teamGames, stats: grid, countingValues: counting,
-                platoonSplits: splits, homeAwaySplits: homeAwaySplits,
+                platoonSplits: splits, homeAwaySplits: homeAwaySplits, rispSplits: rispSplits,
                 streaks: streakGrid, pitchTypeSplits: pitchTypeGrids, countSplits: countGrids,
                 currentForm: currentForm
             ))
@@ -3639,6 +3807,34 @@ enum PlayerCardService {
         for row in result.rows.prefix(2) {
             let splitLabel = row[0] == "home" ? "Home" : "Away"
             let values = formatPitchingValues(headers: headers, values: Array(row.dropFirst()))
+            rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: values))
+        }
+
+        guard !rows.isEmpty else { return nil }
+        return StatGridParser.StatGrid(headers: headers, rows: rows)
+    }
+
+    // MARK: - Per-season RISP pitching splits
+
+    private static func fetchRISPPitchingSplitsForSeason(name: String, season: Int) -> StatGridParser.StatGrid? {
+        let sql = """
+            SELECT rps.split, rps.at_bats, rps.hits,
+                   rps.doubles, rps.triples, rps.home_runs,
+                   rps.walks, rps.strikeouts,
+                   rps.batting_avg_against, rps.obp_against, rps.slg_against, rps.ops_against
+            FROM risp_pitching_splits rps
+            JOIN players p ON rps.player_id = p.player_id
+            WHERE p.name LIKE '%\(sanitize(name))%' AND rps.season = \(season)
+            ORDER BY rps.split DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        var rows: [StatGridParser.StatGrid.Row] = []
+        for row in result.rows.prefix(2) {
+            let splitLabel = row[0] == "RISP" ? "RISP" : "Non-RISP"
+            let values = formatValues(headers: headers, values: Array(row.dropFirst()))
             rows.append(StatGridParser.StatGrid.Row(label: splitLabel, values: values))
         }
 

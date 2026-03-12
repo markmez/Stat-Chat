@@ -204,7 +204,7 @@ Current DB (1898-2026): **220 MB** bundled in-app — full historical data + 202
 - **Cron service**: Railway service `cron-refresh`, root directory `cron/`, schedule `0 11,15,19,23,3 * * *` (every 4 hours: 6 AM, 10 AM, 2 PM, 6 PM, 10 PM ET). Runs `cron_refresh.py` which POSTs to `/admin/refresh`. Graceful error handling — exits 0 on connection errors/timeouts to avoid crash notifications. Full pipeline takes ~4.5 minutes.
 - **ADMIN_KEY**: `I9-NNJ-GBen3SZ-wf8JkZX5-_zvvt8Qri2EtTxWUo-I`
 - **Pipeline flow**: season batting → league averages + OPS+ → season pitching → pitching averages + ERA+ → daily game logs → home/away splits (from game logs) → platoon splits (from play-by-play) → streak detection (all 8 passes filtered by season) → record freshness timestamp
-- **Next feature**: Pitch-type and count splits from MSF play-by-play data. BA/SLG/whiff rate by pitch type (fastball, slider, curve, etc.) and by count (hitter's counts vs pitcher's counts) for both batters and pitchers. Covers 2024-2026 (MSF DETAILS tier historical access). Key differentiator if presented simply — data that's hard to get from free sources. Player card section, potential premium tier feature.
+- **Play-by-play derived splits (2025-2026)**: Pitch type splits (4-Seam, Sinker, Slider, etc.), count splits (all 12 ball-strike counts), RISP splits (runners in scoring position vs non-RISP) — all derived from MSF play-by-play `atBat` data. Tables: `pitch_type_batting_splits`, `pitch_type_pitching_splits`, `count_batting_splits`, `count_pitching_splits`, `risp_batting_splits`, `risp_pitching_splits`. Player card tabs: "By Pitch", "By Count", "RISP".
 
 ### iOS backend integration
 - `BackendService.swift`: POST /query (SSE streaming), GET /player-card (structured JSON with career splits), 10s timeout on player card requests
@@ -219,6 +219,9 @@ Current DB (1898-2026): **220 MB** bundled in-app — full historical data + 202
 3. **Analytics** — Mixpanel (preferred). Single event per query from iOS side with `query_type` property (e.g. `local_comparison`, `local_leaderboard`, `backend_claude`). Full picture of all queries, filterable by type. Key metric: top searches.
 4. **StoreKit subscription + paywall** — $2.99/month, $19.99/year. `/validate-receipt` endpoint on backend.
 5. ~~**About/Data Sources screen**~~ DONE — AboutView with Retrosheet, Chadwick Bureau, AI disclosure.
+
+### Upcoming features
+- **"Close & Late" splits** — situational stats for at-bats in 7th inning or later when the batting team is tied, ahead by 1, or the tying run is at least on deck. Requires tracking running score through play-by-play data. MSF play-by-play has inning/half data and runner state; score can be derived by accumulating runs. New tables: `close_late_batting_splits`, `close_late_pitching_splits`. Pipeline addition to `pull_live_stats.py`. iOS player card tab.
 
 ### What's explicitly NOT happening
 - **Statcast data** — no viable commercial license path. Dropped from roadmap.

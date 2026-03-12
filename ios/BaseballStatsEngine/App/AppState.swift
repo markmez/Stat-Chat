@@ -6,6 +6,7 @@ final class AppState {
     var messages: [Message] = []
     var isLoading = false
     var currentStreamingText = ""
+    private var lastStreamingFlush: ContinuousClock.Instant = .now
     var searchHistory: [String] = []
     /// Stores (originalQuery, ambiguousLastName) when disambiguation is pending
     var pendingDisambiguation: (query: String, lastName: String)?
@@ -203,6 +204,17 @@ final class AppState {
                 response = PlayerCardService.buildHomeAwaySplits(name: splits.name, location: splits.location, season: splits.season)
             }
             if let response {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                addToConversationHistory(question: trimmed, answer: response)
+                return
+            }
+        }
+
+        // Intercept month stats queries — "Judge in September", "Ohtani's stats in July"
+        if let monthQuery = PlayerNameMatcher.parseMonthQuery(trimmed),
+           PlayerCardService.isLocalSeason(monthQuery.season) {
+            if let response = PlayerCardService.buildMonthStats(name: monthQuery.playerName, month: monthQuery.month, season: monthQuery.season) {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
@@ -425,6 +437,15 @@ final class AppState {
                 ) { [self] chunk in
                     guard !Task.isCancelled, streamingIndex < messages.count else { return }
                     currentStreamingText += chunk
+                    // Throttle UI updates to ~80ms intervals to avoid expensive re-renders per token
+                    let now = ContinuousClock.Instant.now
+                    if now - lastStreamingFlush >= .milliseconds(80) {
+                        lastStreamingFlush = now
+                        messages[streamingIndex] = Message(role: .assistant, content: currentStreamingText)
+                    }
+                }
+                // Final flush to ensure all text is shown
+                if streamingIndex < messages.count {
                     messages[streamingIndex] = Message(role: .assistant, content: currentStreamingText)
                 }
                 guard !Task.isCancelled else { return }
