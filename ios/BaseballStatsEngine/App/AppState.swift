@@ -497,9 +497,10 @@ final class AppState {
                 currentStreamingText = ""
                 guard streamingIndex < messages.count else { return }
                 let pills = buildFallbackPills(for: trimmed)
+                let friendly = Self.friendlyErrorMessage(error)
                 let errorContent = pills.isEmpty
-                    ? error.localizedDescription
-                    : error.localizedDescription + "\n\n" + pills
+                    ? friendly
+                    : friendly + "\n\n" + pills
                 messages[streamingIndex] = Message(role: .error, content: errorContent)
             }
         }
@@ -508,21 +509,38 @@ final class AppState {
     func resolveDisambiguation(with fullName: String) {
         guard let pending = pendingDisambiguation else { return }
 
-        // Replace the ambiguous last name with the full name in the original query
+        // Build corrected query by replacing the ambiguous part with the chosen full name
         let correctedQuery: String
         if pending.lastName.isEmpty {
             correctedQuery = fullName
         } else {
-            // Case-insensitive replacement of the ambiguous last name with the full name
-            let lower = pending.query.lowercased()
-            if let range = lower.range(of: pending.lastName) {
-                var result = pending.query
-                let startIdx = pending.query.index(pending.query.startIndex, offsetBy: lower.distance(from: lower.startIndex, to: range.lowerBound))
-                let endIdx = pending.query.index(startIdx, offsetBy: pending.lastName.count)
-                result.replaceSubrange(startIdx..<endIdx, with: fullName)
-                correctedQuery = result
+            // Check if the original query is essentially just the ambiguous name
+            // (e.g. "Bobby Witt" → should become "Bobby Witt Jr.", not "Bobby Bobby Witt Jr.")
+            let queryWords = pending.query.lowercased()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .split(separator: " ")
+                .map(String.init)
+            let nameWords = fullName.lowercased()
+                .split(separator: " ")
+                .map(String.init)
+            let queryIsJustName = queryWords.allSatisfy { word in
+                nameWords.contains(word) || ["jr.", "jr", "sr.", "sr", "junior", "senior"].contains(word)
+            }
+
+            if queryIsJustName {
+                correctedQuery = fullName
             } else {
-                correctedQuery = pending.query
+                // Query has additional context (e.g. "Witt home runs") — replace just the last name
+                let lower = pending.query.lowercased()
+                if let range = lower.range(of: pending.lastName) {
+                    var result = pending.query
+                    let startIdx = pending.query.index(pending.query.startIndex, offsetBy: lower.distance(from: lower.startIndex, to: range.lowerBound))
+                    let endIdx = pending.query.index(startIdx, offsetBy: pending.lastName.count)
+                    result.replaceSubrange(startIdx..<endIdx, with: fullName)
+                    correctedQuery = result
+                } else {
+                    correctedQuery = fullName
+                }
             }
         }
 
@@ -534,11 +552,13 @@ final class AppState {
         pendingDisambiguation = nil
 
         // If the corrected query is just a player name, navigate directly to player card
-        if PlayerNameMatcher.matchPlayer(correctedQuery) != nil {
+        if correctedQuery.lowercased() == fullName.lowercased()
+            || PlayerNameMatcher.matchPlayer(correctedQuery) != nil {
             disambiguatedPlayerName = fullName
             return
         }
 
+        // Otherwise re-send with the full name inserted (e.g. "Bobby Witt Jr. home runs")
         sendQuestion(correctedQuery)
     }
 
@@ -597,6 +617,37 @@ final class AppState {
         } else {
             UserDefaults.standard.set(now, forKey: weekResetKey)
         }
+    }
+
+    /// Convert raw error messages to user-friendly text.
+    private static func friendlyErrorMessage(_ error: Error) -> String {
+        let raw = error.localizedDescription
+
+        // SQL errors — hide technical details
+        if raw.contains("SQL error") || raw.contains("no such column") || raw.contains("no such table")
+            || raw.contains("syntax error") || raw.contains("near \"") {
+            return "Sorry, I couldn't process that question. Try rephrasing it."
+        }
+
+        // Network errors
+        if raw.contains("network") || raw.contains("offline") || raw.contains("internet")
+            || raw.contains("timed out") || raw.contains("Could not connect") {
+            return "Couldn't reach the server. Check your connection and try again."
+        }
+
+        // Server errors
+        if raw.contains("Server error") || raw.contains("500") || raw.contains("502")
+            || raw.contains("503") || raw.contains("504") {
+            return "The server is having trouble right now. Please try again in a moment."
+        }
+
+        // Quota exceeded — already user-friendly from ServiceError
+        if raw.contains("free queries") {
+            return raw
+        }
+
+        // Generic fallback
+        return "Something went wrong. Please try again."
     }
 
     /// Build contextual SUGGEST pills for Claude fallthrough responses based on query content.

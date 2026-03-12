@@ -176,6 +176,16 @@ Current DB (1898-2026): **220 MB** bundled in-app — full historical data + 202
 - **Ronald Acuña**: `acunr001` = "Ronald Acuna" (Retrosheet, 2018-2024), `acuñar001` = "Ronald Acuña Jr." (MSF, 2025-2026). Same player, accent mismatch. Fix: merge into one ID.
 - **Workaround**: `PlayerNameMatcher` has `nicknameAliases` and `disambigSrJrMap` to handle these at the search layer. Proper fix is merging player IDs in the DB so career stats are unified.
 
+### User-facing error messages
+Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The mapping:
+| User sees | Underlying cause |
+|-----------|-----------------|
+| "Sorry, I couldn't process that question. Try rephrasing it." | SQL error — bad column, table, or syntax from generated query |
+| "Couldn't reach the server. Check your connection and try again." | Network timeout, offline, connection refused |
+| "The server is having trouble right now. Please try again in a moment." | HTTP 500/502/503/504 from backend |
+| "You've used all N free queries this week. Resets [date]." | Quota exceeded (passed through from `ServiceError.quotaExceeded`) |
+| "Something went wrong. Please try again." | Any other unrecognized error |
+
 ### Monetization (decided)
 - **Free to download**, 5 free queries per week (resets weekly). All query types count equally — no distinction between local and Claude-handled queries from the user's perspective.
 - **$2.99/month** for unlimited queries.

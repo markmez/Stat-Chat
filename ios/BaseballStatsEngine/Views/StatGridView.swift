@@ -708,31 +708,42 @@ struct StatGridView: View {
         }
         .overlay {
             if let stat = selectedStat, let definition = StatDefinitions.lookup(stat) {
-                ZStack {
-                    // Dismiss background
-                    Color.black.opacity(0.01)
-                        .onTapGesture { selectedStat = nil }
+                // Dismiss layer covers the stat grid area
+                Color.black.opacity(0.01)
+                    .contentShape(Rectangle())
+                    .onTapGesture { selectedStat = nil }
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(stat)
-                            .font(.system(.headline, design: .rounded, weight: .bold))
-                            .foregroundStyle(.primary)
-                        Text(definition)
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(14)
-                    .frame(maxWidth: 280, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(.ultraThinMaterial)
-                            .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
-                    )
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(stat)
+                        .font(.system(.headline, design: .rounded, weight: .bold))
+                        .foregroundStyle(.primary)
+                    Text(definition)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .padding(14)
+                .frame(maxWidth: 280, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(.ultraThinMaterial)
+                        .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+                )
+                .onTapGesture { selectedStat = nil }
             }
         }
         .animation(.easeOut(duration: 0.15), value: selectedStat)
+        // Auto-dismiss after a delay so it doesn't get stuck
+        .onChange(of: selectedStat) {
+            if selectedStat != nil {
+                let shown = selectedStat
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                    if selectedStat == shown {
+                        selectedStat = nil
+                    }
+                }
+            }
+        }
     }
 }
 
