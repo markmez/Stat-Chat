@@ -8,6 +8,7 @@ struct HomeView: View {
     @FocusState private var isInputFocused: Bool
     @State private var suggestedPlayers: [String] = []
     @State private var pendingQuery: String?
+    @State private var lastNameSearchCount: Int = UserDefaults.standard.integer(forKey: "lastNameSearchCount")
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
@@ -97,10 +98,6 @@ struct HomeView: View {
                                 .offset(x: 11, y: 11)
                         }
                     }
-
-                    Text("Baseball stats, answered instantly")
-                        .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(.secondary)
                 }
                 .padding(.bottom, 36)
 
@@ -112,7 +109,7 @@ struct HomeView: View {
                         .padding(.top, 2)
 
                     TextField("", text: $questionText, prompt:
-                        Text("Ask anything...")
+                        Text("Search by name or ask any question...")
                             .foregroundStyle(Color(uiColor: .placeholderText)),
                         axis: .vertical
                     )
@@ -150,17 +147,22 @@ struct HomeView: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.95)))
                 } else {
                     VStack(spacing: 12) {
-                        Text("Search for player stats by name or ask any question.")
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 24)
+                        if lastNameSearchCount < 2 {
+                            HStack(spacing: 6) {
+                                Image(systemName: "lightbulb.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.yellow)
+                                Text("You can search for player stats by just last name.")
+                                    .font(.system(.caption, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
 
                         AnimatedPlaceholder(searchHistory: appState.searchHistory) { query in
                             questionText = query
                         }
                     }
-                    .padding(.top, 20)
+                    .padding(.top, 16)
                 }
 
                 Spacer()
@@ -371,10 +373,21 @@ struct HomeView: View {
         // Direct-to-profile shortcut: skip Claude if input is just a player name
         if let playerName = PlayerNameMatcher.matchPlayer(trimmed) {
             appState.addToSearchHistory(trimmed)
+            // Track last-name-only searches to dismiss the tip after 2
+            if !trimmed.contains(" ") {
+                lastNameSearchCount += 1
+                UserDefaults.standard.set(lastNameSearchCount, forKey: "lastNameSearchCount")
+            }
             path.append(PlayerCardDestination(name: playerName))
         } else if let teamCode = PlayerNameMatcher.matchTeamExact(trimmed) {
             appState.addToSearchHistory(trimmed)
             path.append(TeamCardDestination(code: teamCode))
+        } else if let ambiguous = PlayerNameMatcher.findAmbiguousPlayers(trimmed) {
+            // Ambiguous name (e.g. "Judge" matches both Aaron Judge and Joe Judge)
+            withAnimation(.easeOut(duration: 0.25)) {
+                suggestedPlayers = ambiguous
+                pendingQuery = trimmed
+            }
         } else {
             let fuzzyMatches = PlayerNameMatcher.fuzzyMatch(trimmed)
             if !fuzzyMatches.isEmpty {

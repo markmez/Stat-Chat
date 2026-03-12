@@ -248,8 +248,9 @@ enum PlayerNameMatcher {
             }
         }
 
-        // Sort longest first so "Bobby Witt Jr." matches before "Bobby Witt"
-        sortedNames = names.sorted { $0.count > $1.count }
+        // Deduplicate and sort longest first so "Bobby Witt Jr." matches before "Bobby Witt"
+        let unique = Array(Set(names))
+        sortedNames = unique.sorted { $0.count > $1.count }
 
         // Build last name index for fast lookup
         // Skip suffixes like Jr., Sr., II, III, IV, V to find the actual last name
@@ -345,6 +346,22 @@ enum PlayerNameMatcher {
         let normalized = normalizeSuffix(trimmed).lowercased()
         if normalized != lower, let match = sortedNames.first(where: { $0.lowercased() == normalized }) {
             return match
+        }
+
+        // "LastName Jr/Sr" pattern — e.g. "Witt Jr" should find "Bobby Witt Jr."
+        let suffixPatterns: [(String, String)] = [("jr", "jr."), ("jr.", "jr."), ("sr", "sr."), ("sr.", "sr."),
+                                                   ("ii", "ii"), ("iii", "iii")]
+        for (suffix, normalizedSuffix) in suffixPatterns {
+            if lower.hasSuffix(" \(suffix)") {
+                let baseName = String(lower.dropLast(suffix.count + 1))  // strip " jr" etc.
+                // Find players with this last name + suffix
+                if let candidates = lastNameIndex[baseName] {
+                    let withSuffix = candidates.filter { $0.lowercased().hasSuffix(normalizedSuffix) }
+                    if withSuffix.count == 1 {
+                        return withSuffix[0]
+                    }
+                }
+            }
         }
 
         // Last name only — must be unambiguous (exactly one match)
@@ -1221,6 +1238,18 @@ enum PlayerNameMatcher {
         let normalized = normalizeSuffix(input.trimmingCharacters(in: .whitespacesAndNewlines)).lowercased()
         if normalized != lower && nicknameAliases[normalized] != nil {
             return nil
+        }
+
+        // "LastName Jr/Sr" pattern — if it resolves to a single player, not ambiguous
+        let suffixPatterns: [(String, String)] = [("jr", "jr."), ("jr.", "jr."), ("sr", "sr."), ("sr.", "sr.")]
+        for (suffix, normalizedSuffix) in suffixPatterns {
+            if lower.hasSuffix(" \(suffix)") {
+                let baseName = String(lower.dropLast(suffix.count + 1))
+                if let candidates = lastNameIndex[baseName] {
+                    let withSuffix = candidates.filter { $0.lowercased().hasSuffix(normalizedSuffix) }
+                    if withSuffix.count == 1 { return nil }
+                }
+            }
         }
 
         // Sr./Jr. pairs — trigger disambiguation with the known candidates
