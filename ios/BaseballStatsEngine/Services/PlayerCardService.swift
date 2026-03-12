@@ -3258,7 +3258,7 @@ enum PlayerCardService {
         return formatted
     }
 
-    private static func teamFullName(_ abbreviation: String) -> String {
+    static func teamFullName(_ abbreviation: String) -> String {
         let teams: [String: String] = [
             // Standard abbreviations
             "ARI": "Arizona Diamondbacks", "ATL": "Atlanta Braves",
@@ -3292,6 +3292,18 @@ enum PlayerCardService {
             "ATH": "Oakland Athletics",
         ]
         return teams[abbreviation] ?? abbreviation
+    }
+
+    /// Convert Retrosheet code to common display abbreviation (e.g., NYA→NYY, LAN→LAD, SFN→SF)
+    static func displayAbbreviation(_ code: String) -> String {
+        let map: [String: String] = [
+            "NYA": "NYY", "NYN": "NYM", "LAN": "LAD", "SFN": "SF", "SDN": "SD",
+            "CHA": "CWS", "CHN": "CHC", "TBA": "TB", "KCA": "KC", "SLN": "STL",
+            "ANA": "LAA", "WAS": "WSH", "MON": "MTL", "FLO": "FLA", "CAL": "CAL",
+            "BSN": "BSN", "BRO": "BRO", "PHA": "PHA", "SLA": "SLB", "WS1": "WSH",
+            "ML4": "MIL", "SE1": "SEA", "NYG": "NYG", "PHI": "PHI",
+        ]
+        return map[code] ?? code
     }
 
     /// Expand a team string that may contain "/" for multi-team seasons (e.g., "MIA/NYA" → "Miami Marlins / New York Yankees")

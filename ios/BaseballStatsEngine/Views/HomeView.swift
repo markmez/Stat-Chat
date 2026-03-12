@@ -5,6 +5,7 @@ struct HomeView: View {
     @State private var questionText = ""
     @State private var historyExpanded = false
     @State private var path = NavigationPath()
+    @FocusState private var isInputFocused: Bool
     @State private var suggestedPlayers: [String] = []
     @State private var pendingQuery: String?
 
@@ -37,6 +38,14 @@ struct HomeView: View {
                 .navigationDestination(for: TeamCardDestination.self) { dest in
                     TeamCardView(teamCode: dest.code)
                 }
+        }
+        .onChange(of: path) { _, newPath in
+            if newPath.isEmpty {
+                isInputFocused = false
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    historyExpanded = false
+                }
+            }
         }
     }
 
@@ -110,6 +119,7 @@ struct HomeView: View {
                     .font(.system(.body, design: .rounded))
                     .foregroundStyle(.primary)
                     .lineLimit(1...10)
+                    .focused($isInputFocused)
                     .onSubmit { submitQuestion() }
 
                     if !questionText.isEmpty {

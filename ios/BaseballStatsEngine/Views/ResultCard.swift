@@ -213,7 +213,7 @@ struct ResultCard: View {
 // MARK: - Flow layout for wrapping pills
 
 /// A horizontal wrapping layout — items flow left-to-right, wrapping to the next line when needed.
-private struct FlowLayout: Layout {
+struct FlowLayout: Layout {
     var spacing: CGFloat = 8
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

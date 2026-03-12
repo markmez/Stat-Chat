@@ -36,6 +36,9 @@ struct SettingsView: View {
                 // Subscription
                 subscriptionSection
 
+                // Appearance
+                appearanceSection
+
                 // AI Disclosure
                 infoSection(title: "Powered by AI") {
                     Text("StatChat uses advanced AI to translate your questions into precise database queries. Every stat is computed from real historical data \u{2014} never generated or estimated.")
@@ -181,6 +184,29 @@ struct SettingsView: View {
                 }
                 .frame(maxWidth: .infinity)
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color(uiColor: .separator).opacity(0.2), lineWidth: 0.5)
+        )
+    }
+
+    private var appearanceSection: some View {
+        @Bindable var state = appState
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Appearance")
+                .font(.system(.headline, design: .rounded))
+                .foregroundStyle(.primary)
+
+            Picker("", selection: $state.appearanceMode) {
+                ForEach(AppearanceMode.allCases, id: \.self) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)

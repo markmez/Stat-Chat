@@ -1,5 +1,27 @@
 import SwiftUI
 
+enum AppearanceMode: Int, CaseIterable {
+    case system = 0
+    case light = 1
+    case dark = 2
+
+    var label: String {
+        switch self {
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class AppState {
@@ -11,12 +33,16 @@ final class AppState {
     /// Stores (originalQuery, ambiguousLastName) when disambiguation is pending
     var pendingDisambiguation: (query: String, lastName: String)?
     private(set) var weeklyQueryCount: Int = 0
+    var appearanceMode: AppearanceMode = .system {
+        didSet { UserDefaults.standard.set(appearanceMode.rawValue, forKey: appearanceModeKey) }
+    }
 
     private let backendService = BackendService()
     private let historyKey = "searchHistory"
     private let maxHistoryItems = 50
     private let weeklyCountKey = "weeklyQueryCount"
     private let weekResetKey = "weeklyQueryResetDate"
+    private let appearanceModeKey = "appearanceMode"
     private var currentQueryTask: Task<Void, Never>?
     private var conversationHistory: [(String, String)] = []
     private let maxHistory = 5
@@ -45,6 +71,7 @@ final class AppState {
         searchHistory = UserDefaults.standard.stringArray(forKey: historyKey) ?? []
         resetWeeklyCountIfNeeded()
         weeklyQueryCount = UserDefaults.standard.integer(forKey: weeklyCountKey)
+        appearanceMode = AppearanceMode(rawValue: UserDefaults.standard.integer(forKey: appearanceModeKey)) ?? .system
         PlayerNameMatcher.load()
     }
 
@@ -340,7 +367,9 @@ final class AppState {
 
         // Intercept leaderboard queries — "HR leaders", "top 5 OPS"
         if let board = PlayerNameMatcher.parseLeaderboard(trimmed) {
-            let isPitching = PlayerNameMatcher.isPitchingStat(board.stat)
+            let lowerQuery = trimmed.lowercased()
+            let pitchingContext = ["pitched", "pitching", "pitcher", "pitchers"].contains(where: { lowerQuery.contains($0) })
+            let isPitching = PlayerNameMatcher.isPitchingStat(board.stat) || pitchingContext
             // Check if this is within local data range
             let isLocal: Bool
             let scopeStr: String

@@ -90,29 +90,64 @@ struct PlayerCardView: View {
                                     .foregroundStyle(.primary)
                             }
 
-                            // Full team name + position + age + handedness
-                            HStack(spacing: 0) {
-                                Button {
-                                    if let code = PlayerCardService.teamCodeFromFullName(card.fullTeamName) {
-                                        selectedTeamCode = code
+                            // Team(s) + position + age + handedness
+                            if isRecentPlayer {
+                                HStack(spacing: 0) {
+                                    Button {
+                                        if let code = PlayerCardService.teamCodeFromFullName(card.fullTeamName) {
+                                            selectedTeamCode = code
+                                        }
+                                    } label: {
+                                        Text(card.fullTeamName)
+                                            .foregroundStyle(deepBlue)
                                     }
-                                } label: {
-                                    Text(card.fullTeamName)
-                                        .foregroundStyle(deepBlue)
+                                    .buttonStyle(.plain)
+                                    if let positions = card.positions {
+                                        Text("  \u{00B7}  \(positions)")
+                                    }
+                                    if let age = card.age {
+                                        Text("  \u{00B7}  Age \(age)")
+                                    }
+                                    if let bats = card.bats, let throws_ = card.throws_ {
+                                        Text("  \u{00B7}  B/T: \(bats)/\(throws_)")
+                                    }
                                 }
-                                .buttonStyle(.plain)
-                                if let positions = card.positions {
-                                    Text("  \u{00B7}  \(positions)")
-                                }
-                                if let age = card.age {
-                                    Text("  \u{00B7}  Age \(age)")
-                                }
-                                if let bats = card.bats, let throws_ = card.throws_ {
-                                    Text("  \u{00B7}  B/T: \(bats)/\(throws_)")
+                                .font(.system(.subheadline, design: .rounded))
+                                .foregroundStyle(.secondary)
+                            } else {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    FlowLayout(spacing: 4) {
+                                        let teamCodes = allCareerTeamCodes(card: card)
+                                        ForEach(Array(teamCodes.enumerated()), id: \.offset) { idx, code in
+                                            Button {
+                                                selectedTeamCode = code
+                                            } label: {
+                                                HStack(spacing: 0) {
+                                                    if idx > 0 {
+                                                        Text(", ")
+                                                            .foregroundStyle(.secondary)
+                                                    }
+                                                    Text(PlayerCardService.teamFullName(code))
+                                                        .foregroundStyle(deepBlue)
+                                                }
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                    }
+                                    .font(.system(.subheadline, design: .rounded))
+
+                                    HStack(spacing: 0) {
+                                        if let positions = card.positions {
+                                            Text(positions)
+                                        }
+                                        if let bats = card.bats, let throws_ = card.throws_ {
+                                            Text("  \u{00B7}  B/T: \(bats)/\(throws_)")
+                                        }
+                                    }
+                                    .font(.system(.subheadline, design: .rounded))
+                                    .foregroundStyle(.secondary)
                                 }
                             }
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
                         }
                         .padding(.horizontal, 20)
 
@@ -435,12 +470,12 @@ struct PlayerCardView: View {
             let priorSeasons = Array(card.seasons.dropFirst())
             expandableSeasonsSection(seasons: priorSeasons, card: card)
         } else {
-            // Historical player: career + pace, all seasons collapsible
+            // Historical player: career + pace, all seasons chronological
             careerWithPaceSection(card: card)
 
             careerSplitsSection(card: card)
 
-            expandableSeasonsSection(seasons: card.seasons, card: card)
+            expandableSeasonsSection(seasons: card.seasons.reversed(), card: card)
         }
     }
 
@@ -558,12 +593,12 @@ struct PlayerCardView: View {
             // Prior pitching seasons — expandable
             expandablePitchingSeasonsSection(seasons: Array(pitchingSeasons.dropFirst()), card: card)
         } else {
-            // Historical pitcher: career + pace, all seasons collapsible
+            // Historical pitcher: career + pace, all seasons chronological
             pitchingCareerWithPaceSection(card: card, pitchingSeasons: pitchingSeasons)
 
             pitchingCareerSplitsSection(card: card)
 
-            expandablePitchingSeasonsSection(seasons: pitchingSeasons, card: card)
+            expandablePitchingSeasonsSection(seasons: pitchingSeasons.reversed(), card: card)
         }
     }
 
@@ -650,13 +685,10 @@ struct PlayerCardView: View {
             VStack(alignment: .leading, spacing: 8) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
-                        ForEach(SplitTab.allCases, id: \.self) { t in
-                            let available = pitchingTabHasData(t, season: season)
+                        ForEach(SplitTab.allCases.filter { pitchingTabHasData($0, season: season) }, id: \.self) { t in
                             Button {
-                                if available {
-                                    withAnimation(.easeInOut(duration: 0.15)) {
-                                        tab.wrappedValue = t
-                                    }
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    tab.wrappedValue = t
                                 }
                             } label: {
                                 Text(t.rawValue)
@@ -671,9 +703,7 @@ struct PlayerCardView: View {
                                                   : Color.clear)
                                     )
                                     .foregroundStyle(tab.wrappedValue == t ? deepBlue : .secondary)
-                                    .opacity(available ? 1.0 : 0.4)
                             }
-                            .disabled(!available)
                         }
                     }
                     .padding(.horizontal, 8)
@@ -961,13 +991,10 @@ struct PlayerCardView: View {
                 // Scrollable tab bar
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
-                        ForEach(SplitTab.allCases, id: \.self) { t in
-                            let available = tabHasData(t, season: season)
+                        ForEach(SplitTab.allCases.filter { tabHasData($0, season: season) }, id: \.self) { t in
                             Button {
-                                if available {
-                                    withAnimation(.easeInOut(duration: 0.15)) {
-                                        tab.wrappedValue = t
-                                    }
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    tab.wrappedValue = t
                                 }
                             } label: {
                                 Text(t.rawValue)
@@ -982,9 +1009,7 @@ struct PlayerCardView: View {
                                                   : Color.clear)
                                     )
                                     .foregroundStyle(tab.wrappedValue == t ? deepBlue : .secondary)
-                                    .opacity(available ? 1.0 : 0.4)
                             }
-                            .disabled(!available)
                         }
                     }
                     .padding(.horizontal, 8)
@@ -1666,7 +1691,7 @@ struct PlayerCardView: View {
                         if let sourceGrid {
                             let games = extractGames(from: sourceGrid)
                             if games > 0 {
-                                let projected = buildPitchingCareerProjectedGrid(career: sourceGrid)
+                                let projection = buildPitchingCareerProjectedGrid(career: sourceGrid)
 
                                 Rectangle()
                                     .fill(Color(uiColor: .separator).opacity(0.3))
@@ -1678,6 +1703,7 @@ struct PlayerCardView: View {
                                     startYear: startYear, endYear: endYear,
                                     minYear: minYear, maxYear: maxYear,
                                     isExpanded: $pitchingCareerRangeExpanded,
+                                    paceLabel: projection.label,
                                     onStartChange: { y in
                                         withAnimation(.easeInOut(duration: 0.15)) {
                                             pitchingCareerStartYear = y == minYear && (pitchingCareerEndYear == nil || pitchingCareerEndYear == maxYear) ? nil : y
@@ -1699,7 +1725,7 @@ struct PlayerCardView: View {
                                     }
                                 )
 
-                                StatGridView(grid: projected, suppressBackground: true)
+                                StatGridView(grid: projection.grid, suppressBackground: true)
                             }
                         }
                     }
@@ -1724,6 +1750,7 @@ struct PlayerCardView: View {
         startYear: Int, endYear: Int,
         minYear: Int, maxYear: Int,
         isExpanded: Binding<Bool>,
+        paceLabel: String = "162-Game Pace",
         onStartChange: @escaping (Int) -> Void,
         onEndChange: @escaping (Int) -> Void,
         onReset: @escaping () -> Void
@@ -1735,7 +1762,7 @@ struct PlayerCardView: View {
 
         // Header line with inline dropdown
         HStack(alignment: .center, spacing: 8) {
-            Text("162-Game Pace")
+            Text(paceLabel)
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
                 .foregroundStyle(.primary)
 
@@ -2033,15 +2060,48 @@ struct PlayerCardView: View {
         )
     }
 
-    private func buildPitchingCareerProjectedGrid(career: StatGridParser.StatGrid) -> StatGridParser.StatGrid {
+    /// Determines if pitcher is primarily a starter or reliever, and returns (projectedGrid, paceLabel).
+    private func buildPitchingCareerProjectedGrid(career: StatGridParser.StatGrid) -> (grid: StatGridParser.StatGrid, label: String) {
         let countingStats: Set<String> = ["W", "L", "SV", "G", "GS", "CG", "QS", "H", "R", "ER",
                                            "HR", "BB", "SO", "HBP", "WP", "BK", "SB", "CS"]
-        let games = extractGames(from: career)
-        guard games > 0 else { return career }
-        let factor = 162.0 / games
-
         let headers = career.headers
         let originalValues = career.rows.first?.values ?? []
+
+        // Extract G and GS from the grid
+        let games = extractGames(from: career)
+        let gs: Int = {
+            if let idx = headers.firstIndex(of: "GS"), idx < originalValues.count {
+                return Int(originalValues[idx]) ?? 0
+            }
+            return 0
+        }()
+
+        let gamesInt = Int(games)
+        guard gamesInt > 0 else { return (career, "Season Pace") }
+
+        // Determine role: starter if GS > half of G
+        let isStarter = gs > gamesInt / 2
+        let targetApps: Double
+        let paceLabel: String
+        let divisor: Double
+
+        if isStarter {
+            // Scale based on starts: project to 33-start season
+            targetApps = 33.0
+            paceLabel = "33-Start Pace"
+            divisor = Double(max(gs, 1))
+        } else {
+            // Scale based on relief appearances: project to 65-game season
+            let reliefApps = gamesInt - gs
+            targetApps = 65.0
+            paceLabel = "65-Game Pace"
+            divisor = Double(max(reliefApps, 1))
+        }
+
+        // Number of seasons to normalize per-season
+        // We want: (career stat / seasons) scaled to target apps
+        // But simpler: career stat * (targetApps / totalRelevantApps)
+        let factor = targetApps / divisor
 
         var projected: [String] = []
         for (idx, header) in headers.enumerated() {
@@ -2063,13 +2123,40 @@ struct PlayerCardView: View {
             }
         }
 
-        return StatGridParser.StatGrid(
+        let grid = StatGridParser.StatGrid(
             headers: headers,
             rows: [StatGridParser.StatGrid.Row(label: "", values: projected)]
         )
+        return (grid, paceLabel)
     }
 
     /// Returns a team label for a season, or nil if the team matches the header (no context needed).
+    /// All unique team codes across a player's career, in chronological order of first appearance.
+    private func allCareerTeamCodes(card: PlayerCard) -> [String] {
+        var seen = Set<String>()
+        var codes: [String] = []
+        let allSeasons = card.seasons.reversed()
+        for season in allSeasons {
+            for code in season.team.split(separator: "/").map(String.init) {
+                if !seen.contains(code) {
+                    seen.insert(code)
+                    codes.append(code)
+                }
+            }
+        }
+        if let pitchingSeasons = card.pitchingSeasons {
+            for season in pitchingSeasons.reversed() {
+                for code in season.team.split(separator: "/").map(String.init) {
+                    if !seen.contains(code) {
+                        seen.insert(code)
+                        codes.append(code)
+                    }
+                }
+            }
+        }
+        return codes
+    }
+
     private func seasonTeamLabel(teamStr: String, headerTeam: String) -> String? {
         let isMultiTeam = teamStr.contains("/")
         let lastTeam = teamStr.split(separator: "/").last.map(String.init) ?? teamStr
@@ -2081,3 +2168,4 @@ struct PlayerCardView: View {
         return nil
     }
 }
+
