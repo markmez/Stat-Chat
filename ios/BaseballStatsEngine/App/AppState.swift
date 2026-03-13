@@ -435,7 +435,7 @@ final class AppState {
             return
         }
 
-        // Ambiguous last name — show "Did you mean?" with tappable player links
+        // Ambiguous last name — show disambiguation with tappable player links
         if let candidates = PlayerNameMatcher.findAmbiguousPlayers(trimmed) {
             let (sorted, dominant) = PlayerNameMatcher.sortByProminence(candidates)
 
@@ -478,6 +478,25 @@ final class AppState {
             pendingDisambiguation = (query: trimmed, lastName: ambiguousLast)
             let links = sorted.map { "[\($0)](statchat://player/\($0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? $0))" }
             let response = "Multiple players match:\n\n" + links.joined(separator: "\n\n")
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            return
+        }
+
+        // Fuzzy match — "Did you mean?" with tappable player links
+        let fuzzyMatches = PlayerNameMatcher.fuzzyMatch(trimmed)
+        if !fuzzyMatches.isEmpty {
+            let (sorted, dominant) = PlayerNameMatcher.sortByProminence(fuzzyMatches)
+
+            if let idx = dominant {
+                let chosenName = sorted[idx]
+                disambiguatedPlayerName = chosenName
+                return
+            }
+
+            pendingDisambiguation = (query: trimmed, lastName: "")
+            let links = sorted.map { "[\($0)](statchat://player/\($0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? $0))" }
+            let response = "Did you mean?\n\n" + links.joined(separator: "\n\n")
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             return

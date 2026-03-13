@@ -6,9 +6,6 @@ struct HomeView: View {
     @State private var historyExpanded = false
     @State private var path = NavigationPath()
     @FocusState private var isInputFocused: Bool
-    @State private var suggestedPlayers: [String] = []
-    @State private var pendingQuery: String?
-    @State private var isDisambiguation = false
     @State private var lastNameSearchCount: Int = UserDefaults.standard.integer(forKey: "lastNameSearchCount")
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
@@ -142,30 +139,24 @@ struct HomeView: View {
                 )
                 .padding(.horizontal, 24)
 
-                // "Did you mean?" or sample queries
-                if !suggestedPlayers.isEmpty {
-                    didYouMeanCard
-                        .padding(.top, 14)
-                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                } else {
-                    VStack(spacing: 12) {
-                        if lastNameSearchCount < 2 {
-                            HStack(spacing: 6) {
-                                Image(systemName: "lightbulb.fill")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.yellow)
-                                Text("You can search for player stats by just last name.")
-                                    .font(.system(.caption, design: .rounded))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-
-                        AnimatedPlaceholder(searchHistory: appState.searchHistory) { query in
-                            questionText = query
+                // Sample queries + tip
+                VStack(spacing: 12) {
+                    if lastNameSearchCount < 2 {
+                        HStack(spacing: 6) {
+                            Image(systemName: "lightbulb.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.yellow)
+                            Text("You can search for player stats by just last name.")
+                                .font(.system(.caption, design: .rounded))
+                                .foregroundStyle(.secondary)
                         }
                     }
-                    .padding(.top, 16)
+
+                    AnimatedPlaceholder(searchHistory: appState.searchHistory) { query in
+                        questionText = query
+                    }
                 }
+                .padding(.top, 16)
 
                 Spacer()
 
@@ -318,45 +309,10 @@ struct HomeView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: historyExpanded)
     }
 
-    @ViewBuilder
-    private var didYouMeanCard: some View {
-        if let query = pendingQuery, !suggestedPlayers.isEmpty {
-            VStack(spacing: 10) {
-                Text("Multiple players match:")
-                    .font(.system(.subheadline, design: .rounded))
-                    .foregroundStyle(.secondary)
-
-                ForEach(suggestedPlayers, id: \.self) { name in
-                    Button {
-                        let n = name
-                        withAnimation { suggestedPlayers = []; pendingQuery = nil; isDisambiguation = false }
-                        appState.addToSearchHistory(n)
-                        path.append(PlayerCardDestination(name: n))
-                    } label: {
-                        Text(name)
-                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                            .foregroundStyle(deepBlue)
-                    }
-                }
-            }
-            .padding(.vertical, 14)
-            .padding(.horizontal, 20)
-            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 0.5)
-            )
-            .padding(.horizontal, 24)
-        }
-    }
-
     private func submitQuestion() {
         let trimmed = questionText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         questionText = ""
-        suggestedPlayers = []
-        pendingQuery = nil
-        isDisambiguation = false
 
         // Direct-to-profile shortcut: skip Claude if input is just a player name
         if let playerName = PlayerNameMatcher.matchPlayer(trimmed) {
@@ -377,31 +333,14 @@ struct HomeView: View {
                 let others = sorted.enumerated().filter { $0.offset != idx }.map(\.element)
                 path.append(PlayerCardDestination(name: sorted[idx], alternatives: others))
             } else {
-                withAnimation(.easeOut(duration: 0.25)) {
-                    suggestedPlayers = sorted
-                    pendingQuery = trimmed
-                    isDisambiguation = true
-                }
-            }
-        } else {
-            let fuzzyMatches = PlayerNameMatcher.fuzzyMatch(trimmed)
-            if !fuzzyMatches.isEmpty {
-                let (sorted, dominant) = PlayerNameMatcher.sortByProminence(fuzzyMatches)
-                if let idx = dominant {
-                    appState.addToSearchHistory(sorted[idx])
-                    let others = sorted.enumerated().filter { $0.offset != idx }.map(\.element)
-                    path.append(PlayerCardDestination(name: sorted[idx], alternatives: others))
-                } else {
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        suggestedPlayers = sorted
-                        pendingQuery = trimmed
-                        isDisambiguation = false
-                    }
-                }
-            } else {
-                appState.addToSearchHistory(trimmed)
+                // Navigate to ResultsView — AppState.ask() handles disambig display
                 path.append(ResultsDestination(question: trimmed))
             }
+        } else {
+            // Fuzzy match, general question, or no match — all go to ResultsView
+            // AppState.ask() handles fuzzy "Did you mean?" display locally
+            appState.addToSearchHistory(trimmed)
+            path.append(ResultsDestination(question: trimmed))
         }
     }
 }
