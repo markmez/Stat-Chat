@@ -8,16 +8,18 @@ enum PlayerNameMatcher {
     // Maps common names, nicknames, and informal variants to canonical DB names.
     // Keys must be lowercased.
     private static let nicknameAliases: [String: String] = [
-        // Jazz Chisholm — Retrosheet uses "Jazz Chisholm", MSF uses legal name
-        "jazz chisholm jr.": "Jazz Chisholm",
-        "jazz chisholm jr": "Jazz Chisholm",
-        "jasrado chisholm": "Jasrado Chisholm Jr.",
-        // Ronald Acuña — Retrosheet uses "Ronald Acuna", MSF uses "Ronald Acuña Jr."
+        // Jazz Chisholm — merged under "Jazz Chisholm Jr."
+        "jazz chisholm": "Jazz Chisholm Jr.",
+        "jasrado chisholm": "Jazz Chisholm Jr.",
+        "jasrado chisholm jr.": "Jazz Chisholm Jr.",
+        "jasrado chisholm jr": "Jazz Chisholm Jr.",
+        // Ronald Acuña — merged under "Ronald Acuña Jr."
         "ronald acuña": "Ronald Acuña Jr.",
-        "ronald acuna jr.": "Ronald Acuna",
-        "ronald acuna jr": "Ronald Acuna",
-        "acuna jr.": "Ronald Acuna",
-        "acuna jr": "Ronald Acuna",
+        "ronald acuna": "Ronald Acuña Jr.",
+        "ronald acuna jr.": "Ronald Acuña Jr.",
+        "ronald acuna jr": "Ronald Acuña Jr.",
+        "acuna jr.": "Ronald Acuña Jr.",
+        "acuna jr": "Ronald Acuña Jr.",
         "acuña jr.": "Ronald Acuña Jr.",
         "acuña jr": "Ronald Acuña Jr.",
         // Giancarlo Stanton — played as "Mike Stanton" early career
