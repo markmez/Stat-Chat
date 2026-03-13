@@ -3,6 +3,8 @@ import Foundation
 enum PlayerNameMatcher {
     nonisolated(unsafe) private(set) static var sortedNames: [String] = []
     nonisolated(unsafe) private(set) static var lastNameIndex: [String: [String]] = [:]
+    /// Fast lookup: ASCII-lowercased name → canonical name (for O(1) exact match instead of scanning sortedNames)
+    nonisolated(unsafe) private(set) static var nameExactLookup: [String: String] = [:]
 
     // MARK: - Nickname / alias mapping
     // Maps common names, nicknames, and informal variants to canonical DB names.
@@ -305,6 +307,16 @@ enum PlayerNameMatcher {
         }
         lastNameIndex = index
         firstNameIndex = fnIndex
+
+        // Build exact lookup: ASCII-lowercased → canonical name (first match wins, longest names first)
+        var exact: [String: String] = [:]
+        for name in sortedNames {
+            let key = stripDiacritics(name.lowercased())
+            if exact[key] == nil {
+                exact[key] = name
+            }
+        }
+        nameExactLookup = exact
     }
 
     /// For embedded name extraction (queries like "Bobby Witt home runs"), prefer the Jr.
@@ -375,10 +387,10 @@ enum PlayerNameMatcher {
             return nil
         }
 
-        // Exact full name match (case-insensitive, accent-insensitive)
+        // Exact full name match (case-insensitive, accent-insensitive) — O(1) via dictionary
         // Skip single-word names that collide with a last name shared by multiple players
         let ascii = stripDiacritics(lower)
-        if let match = sortedNames.first(where: { stripDiacritics($0.lowercased()) == ascii }) {
+        if let match = nameExactLookup[ascii] {
             let isSingleWord = !match.contains(" ")
             let lookupKey = stripDiacritics(match.split(separator: " ").last?.lowercased() ?? lower)
             if !isSingleWord || (lastNameIndex[lookupKey]?.count ?? 0) <= 1 {
@@ -389,7 +401,7 @@ enum PlayerNameMatcher {
         // Try with normalized suffix — "Bobby Witt jr" → "Bobby Witt Jr."
         let normalized = normalizeSuffix(trimmed).lowercased()
         let normalizedAscii = stripDiacritics(normalized)
-        if normalizedAscii != ascii, let match = sortedNames.first(where: { stripDiacritics($0.lowercased()) == normalizedAscii }) {
+        if normalizedAscii != ascii, let match = nameExactLookup[normalizedAscii] {
             return match
         }
 
@@ -1327,27 +1339,19 @@ enum PlayerNameMatcher {
             return candidates
         }
 
-        // If a multi-word full name matches (accent-insensitive), it's not ambiguous
+        // If an exact full name matches (accent-insensitive), it's not ambiguous
         // (Skip single-word names that collide with last names shared by multiple players)
-        for name in sortedNames {
-            let nameAscii = stripDiacritics(name.lowercased())
-            if containsWord(nameAscii, in: ascii) {
-                if name.contains(" ") || (lastNameIndex[nameAscii]?.count ?? 0) <= 1 {
-                    return nil
-                }
+        if let match = nameExactLookup[ascii] {
+            if match.contains(" ") || (lastNameIndex[ascii]?.count ?? 0) <= 1 {
+                return nil
             }
         }
 
         // Also check normalized suffix against full names
         let normalizedAscii = stripDiacritics(normalized)
-        if normalizedAscii != ascii {
-            for name in sortedNames {
-                let nameAscii = stripDiacritics(name.lowercased())
-                if containsWord(nameAscii, in: normalizedAscii) {
-                    if name.contains(" ") || (lastNameIndex[nameAscii]?.count ?? 0) <= 1 {
-                        return nil
-                    }
-                }
+        if normalizedAscii != ascii, let match = nameExactLookup[normalizedAscii] {
+            if match.contains(" ") || (lastNameIndex[normalizedAscii]?.count ?? 0) <= 1 {
+                return nil
             }
         }
 
