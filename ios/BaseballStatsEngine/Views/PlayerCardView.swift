@@ -1271,6 +1271,7 @@ struct PlayerCardView: View {
                             step: 1
                         )
                         .tint(deepBlue)
+                        .disabled(form.totalSeasonGames < 2)
 
                         // Tick mark at detected position — only visible when slider has moved away
                         if formSliderGameNumber != nil {
