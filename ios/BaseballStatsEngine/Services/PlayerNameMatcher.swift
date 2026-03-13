@@ -338,8 +338,13 @@ enum PlayerNameMatcher {
         }
 
         // Exact full name match (case-insensitive)
+        // Skip single-word names that collide with a last name shared by multiple players
+        // (e.g. bare "Wells" entry should not block disambiguation for Austin Wells, Ed Wells, etc.)
         if let match = sortedNames.first(where: { $0.lowercased() == lower }) {
-            return match
+            let isSingleWord = !match.contains(" ")
+            if !isSingleWord || (lastNameIndex[lower]?.count ?? 0) <= 1 {
+                return match
+            }
         }
 
         // Try with normalized suffix — "Bobby Witt jr" → "Bobby Witt Jr."
@@ -1257,15 +1262,26 @@ enum PlayerNameMatcher {
             return candidates
         }
 
-        // If a full name matches, it's not ambiguous
+        // If a multi-word full name matches, it's not ambiguous
+        // (Skip single-word names that collide with last names shared by multiple players)
         for name in sortedNames {
-            if containsWord(name.lowercased(), in: lower) { return nil }
+            let nameLower = name.lowercased()
+            if containsWord(nameLower, in: lower) {
+                if name.contains(" ") || (lastNameIndex[nameLower]?.count ?? 0) <= 1 {
+                    return nil
+                }
+            }
         }
 
         // Also check normalized suffix against full names
         if normalized != lower {
             for name in sortedNames {
-                if containsWord(name.lowercased(), in: normalized) { return nil }
+                let nameLower = name.lowercased()
+                if containsWord(nameLower, in: normalized) {
+                    if name.contains(" ") || (lastNameIndex[nameLower]?.count ?? 0) <= 1 {
+                        return nil
+                    }
+                }
             }
         }
 
