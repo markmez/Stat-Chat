@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TeamCardView: View {
     let teamCode: String
+    @Binding var navigationPath: NavigationPath
 
     @Environment(\.dismiss) private var dismiss
     @State private var teamCard: TeamCard?
@@ -130,7 +131,7 @@ struct TeamCardView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Button { dismiss() } label: {
+                Button { navigationPath = NavigationPath() } label: {
                     HStack(spacing: 6) {
                         Text("StatChat")
                             .font(.system(.subheadline, weight: .semibold))
@@ -175,19 +176,19 @@ struct TeamCardView: View {
             get: { selectedPlayerName != nil },
             set: { if !$0 { selectedPlayerName = nil } }
         )) {
-            PlayerCardView(playerName: selectedPlayerName ?? "")
+            PlayerCardView(playerName: selectedPlayerName ?? "", navigationPath: $navigationPath)
         }
         .navigationDestination(isPresented: Binding(
             get: { searchTeamCode != nil },
             set: { if !$0 { searchTeamCode = nil } }
         )) {
-            TeamCardView(teamCode: searchTeamCode ?? "")
+            TeamCardView(teamCode: searchTeamCode ?? "", navigationPath: $navigationPath)
         }
         .navigationDestination(isPresented: Binding(
             get: { searchQuestion != nil },
             set: { if !$0 { searchQuestion = nil } }
         )) {
-            ResultsView(initialQuestion: searchQuestion ?? "")
+            ResultsView(initialQuestion: searchQuestion ?? "", navigationPath: $navigationPath)
         }
         .task {
             teamCard = PlayerCardService.fetchTeamCard(teamCode: teamCode)

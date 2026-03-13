@@ -29,13 +29,13 @@ struct HomeView: View {
         NavigationStack(path: $path) {
             mainContent
                 .navigationDestination(for: ResultsDestination.self) { dest in
-                    ResultsView(initialQuestion: dest.question)
+                    ResultsView(initialQuestion: dest.question, navigationPath: $path)
                 }
                 .navigationDestination(for: PlayerCardDestination.self) { dest in
-                    PlayerCardView(playerName: dest.name, alternatives: dest.alternatives)
+                    PlayerCardView(playerName: dest.name, alternatives: dest.alternatives, navigationPath: $path)
                 }
                 .navigationDestination(for: TeamCardDestination.self) { dest in
-                    TeamCardView(teamCode: dest.code)
+                    TeamCardView(teamCode: dest.code, navigationPath: $path)
                 }
         }
         .onChange(of: path) { _, newPath in

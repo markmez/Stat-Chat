@@ -9,6 +9,7 @@ struct ResultsView: View {
     @State private var selectedPlayerName: String? = nil
     @State private var selectedTeamCode: String? = nil
     let initialQuestion: String
+    @Binding var navigationPath: NavigationPath
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
@@ -125,7 +126,7 @@ struct ResultsView: View {
         .toolbarBackground(.automatic, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Button { dismiss() } label: {
+                Button { navigationPath = NavigationPath() } label: {
                     HStack(spacing: 6) {
                         Text("StatChat")
                             .font(.system(.subheadline, weight: .semibold))
@@ -169,13 +170,13 @@ struct ResultsView: View {
             get: { selectedPlayerName != nil },
             set: { if !$0 { selectedPlayerName = nil } }
         )) {
-            PlayerCardView(playerName: selectedPlayerName ?? "")
+            PlayerCardView(playerName: selectedPlayerName ?? "", navigationPath: $navigationPath)
         }
         .navigationDestination(isPresented: Binding(
             get: { selectedTeamCode != nil },
             set: { if !$0 { selectedTeamCode = nil } }
         )) {
-            TeamCardView(teamCode: selectedTeamCode ?? "")
+            TeamCardView(teamCode: selectedTeamCode ?? "", navigationPath: $navigationPath)
         }
         .onAppear {
             if appState.messages.isEmpty && !initialQuestion.isEmpty {
