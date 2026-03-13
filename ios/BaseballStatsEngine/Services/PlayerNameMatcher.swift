@@ -235,6 +235,14 @@ enum PlayerNameMatcher {
         return nil
     }
 
+    /// Strip diacritics: "Acuña" → "Acuna", "Ramírez" → "Ramirez"
+    static func stripDiacritics(_ s: String) -> String {
+        s.folding(options: .diacriticInsensitive, locale: .current)
+    }
+
+    /// First name index for first-name-only searches (e.g., "Gleyber" → "Gleyber Torres")
+    nonisolated(unsafe) private(set) static var firstNameIndex: [String: [String]] = [:]
+
     static func load() {
         // Load names from bundled all_players.json (full historical, 22K+ players)
         // Falls back to local DB if JSON not found
@@ -256,8 +264,10 @@ enum PlayerNameMatcher {
 
         // Build last name index for fast lookup
         // Skip suffixes like Jr., Sr., II, III, IV, V to find the actual last name
+        // Index under both accented and stripped-diacritics keys, and handle hyphens
         let suffixes: Set<String> = ["jr.", "jr", "sr.", "sr", "ii", "iii", "iv", "v"]
         var index: [String: [String]] = [:]
+        var fnIndex: [String: [String]] = [:]
         for name in sortedNames {
             let parts = name.split(separator: " ")
             // Walk backwards past any suffix to find the real last name
@@ -265,10 +275,36 @@ enum PlayerNameMatcher {
             while lastIdx > 0 && suffixes.contains(parts[lastIdx].lowercased()) {
                 lastIdx -= 1
             }
-            let key = parts[lastIdx].lowercased()
-            index[key, default: []].append(name)
+            let rawKey = parts[lastIdx].lowercased()
+            let asciiKey = stripDiacritics(rawKey)
+
+            // Add under both accented and ASCII keys
+            index[rawKey, default: []].append(name)
+            if asciiKey != rawKey {
+                index[asciiKey, default: []].append(name)
+            }
+
+            // Hyphenated names: also index without hyphen (e.g., "crow-armstrong" → "crowarmstrong")
+            // and with hyphen replaced by space for multi-word lookup
+            if rawKey.contains("-") {
+                let noHyphen = rawKey.replacingOccurrences(of: "-", with: "")
+                index[noHyphen, default: []].append(name)
+            }
+            if asciiKey.contains("-") {
+                let noHyphen = asciiKey.replacingOccurrences(of: "-", with: "")
+                if index[noHyphen] == nil || !index[noHyphen]!.contains(name) {
+                    index[noHyphen, default: []].append(name)
+                }
+            }
+
+            // Build first name index (only for multi-word names)
+            if parts.count >= 2 {
+                let firstName = stripDiacritics(parts[0].lowercased())
+                fnIndex[firstName, default: []].append(name)
+            }
         }
         lastNameIndex = index
+        firstNameIndex = fnIndex
     }
 
     /// For embedded name extraction (queries like "Bobby Witt home runs"), prefer the Jr.
@@ -339,19 +375,21 @@ enum PlayerNameMatcher {
             return nil
         }
 
-        // Exact full name match (case-insensitive)
+        // Exact full name match (case-insensitive, accent-insensitive)
         // Skip single-word names that collide with a last name shared by multiple players
-        // (e.g. bare "Wells" entry should not block disambiguation for Austin Wells, Ed Wells, etc.)
-        if let match = sortedNames.first(where: { $0.lowercased() == lower }) {
+        let ascii = stripDiacritics(lower)
+        if let match = sortedNames.first(where: { stripDiacritics($0.lowercased()) == ascii }) {
             let isSingleWord = !match.contains(" ")
-            if !isSingleWord || (lastNameIndex[lower]?.count ?? 0) <= 1 {
+            let lookupKey = stripDiacritics(match.split(separator: " ").last?.lowercased() ?? lower)
+            if !isSingleWord || (lastNameIndex[lookupKey]?.count ?? 0) <= 1 {
                 return match
             }
         }
 
         // Try with normalized suffix — "Bobby Witt jr" → "Bobby Witt Jr."
         let normalized = normalizeSuffix(trimmed).lowercased()
-        if normalized != lower, let match = sortedNames.first(where: { $0.lowercased() == normalized }) {
+        let normalizedAscii = stripDiacritics(normalized)
+        if normalizedAscii != ascii, let match = sortedNames.first(where: { stripDiacritics($0.lowercased()) == normalizedAscii }) {
             return match
         }
 
@@ -360,7 +398,7 @@ enum PlayerNameMatcher {
                                                    ("ii", "ii"), ("iii", "iii")]
         for (suffix, normalizedSuffix) in suffixPatterns {
             if lower.hasSuffix(" \(suffix)") {
-                let baseName = String(lower.dropLast(suffix.count + 1))  // strip " jr" etc.
+                let baseName = stripDiacritics(String(lower.dropLast(suffix.count + 1)))
                 // Find players with this last name + suffix
                 if let candidates = lastNameIndex[baseName] {
                     let withSuffix = candidates.filter { $0.lowercased().hasSuffix(normalizedSuffix) }
@@ -372,7 +410,16 @@ enum PlayerNameMatcher {
         }
 
         // Last name only — must be unambiguous (exactly one match)
-        if let matches = lastNameIndex[lower], matches.count == 1 {
+        // Try both accented and ASCII-normalized keys, plus hyphen variants
+        let lastNameKey = stripDiacritics(lower).replacingOccurrences(of: " ", with: "-")
+        for key in [lower, ascii, lastNameKey, ascii.replacingOccurrences(of: " ", with: "")] {
+            if let matches = lastNameIndex[key], matches.count == 1 {
+                return matches[0]
+            }
+        }
+
+        // First name only — must be unambiguous (exactly one match)
+        if let matches = firstNameIndex[ascii], matches.count == 1 {
             return matches[0]
         }
 
@@ -1185,16 +1232,17 @@ enum PlayerNameMatcher {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 3 else { return [] }
         let lower = trimmed.lowercased()
-        let threshold = lower.count >= 4 ? 2 : 1
+        let ascii = stripDiacritics(lower)
+        let threshold = ascii.count >= 4 ? 2 : 1
 
-        // Check against full names first — single best match
+        // Check against full names first (accent-insensitive) — single best match
         var bestMatch: String? = nil
         var bestDistance = Int.max
 
         for name in sortedNames {
-            let nameLower = name.lowercased()
-            guard abs(nameLower.count - lower.count) <= threshold else { continue }
-            let dist = editDistance(lower, nameLower)
+            let nameAscii = stripDiacritics(name.lowercased())
+            guard abs(nameAscii.count - ascii.count) <= threshold else { continue }
+            let dist = editDistance(ascii, nameAscii)
             if dist > 0 && dist <= threshold && dist < bestDistance {
                 bestDistance = dist
                 bestMatch = name
@@ -1209,8 +1257,8 @@ enum PlayerNameMatcher {
         bestDistance = Int.max
 
         for lastName in lastNameIndex.keys {
-            guard abs(lastName.count - lower.count) <= threshold else { continue }
-            let dist = editDistance(lower, lastName)
+            guard abs(lastName.count - ascii.count) <= threshold else { continue }
+            let dist = editDistance(ascii, lastName)
             if dist > 0 && dist <= threshold && dist < bestDistance {
                 bestDistance = dist
                 bestLastName = lastName
@@ -1218,6 +1266,20 @@ enum PlayerNameMatcher {
         }
 
         if let key = bestLastName, let players = lastNameIndex[key] {
+            return players
+        }
+
+        // Check first names as fuzzy match
+        for firstName in firstNameIndex.keys {
+            guard abs(firstName.count - ascii.count) <= threshold else { continue }
+            let dist = editDistance(ascii, firstName)
+            if dist > 0 && dist <= threshold && dist < bestDistance {
+                bestDistance = dist
+                bestLastName = firstName
+            }
+        }
+
+        if let key = bestLastName, let players = firstNameIndex[key] {
             return players
         }
 
@@ -1235,9 +1297,10 @@ enum PlayerNameMatcher {
 
     static func findAmbiguousPlayers(_ input: String) -> [String]? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let ascii = stripDiacritics(lower)
 
         // If an alias resolves it, it's not ambiguous
-        if nicknameAliases[lower] != nil {
+        if nicknameAliases[lower] != nil || nicknameAliases[ascii] != nil {
             return nil
         }
 
@@ -1251,7 +1314,7 @@ enum PlayerNameMatcher {
         let suffixPatterns: [(String, String)] = [("jr", "jr."), ("jr.", "jr."), ("sr", "sr."), ("sr.", "sr.")]
         for (suffix, normalizedSuffix) in suffixPatterns {
             if lower.hasSuffix(" \(suffix)") {
-                let baseName = String(lower.dropLast(suffix.count + 1))
+                let baseName = stripDiacritics(String(lower.dropLast(suffix.count + 1)))
                 if let candidates = lastNameIndex[baseName] {
                     let withSuffix = candidates.filter { $0.lowercased().hasSuffix(normalizedSuffix) }
                     if withSuffix.count == 1 { return nil }
@@ -1260,43 +1323,50 @@ enum PlayerNameMatcher {
         }
 
         // Sr./Jr. pairs — trigger disambiguation with the known candidates
-        if let candidates = disambigSrJrMap[lower] {
+        if let candidates = disambigSrJrMap[lower] ?? disambigSrJrMap[ascii] {
             return candidates
         }
 
-        // If a multi-word full name matches, it's not ambiguous
+        // If a multi-word full name matches (accent-insensitive), it's not ambiguous
         // (Skip single-word names that collide with last names shared by multiple players)
         for name in sortedNames {
-            let nameLower = name.lowercased()
-            if containsWord(nameLower, in: lower) {
-                if name.contains(" ") || (lastNameIndex[nameLower]?.count ?? 0) <= 1 {
+            let nameAscii = stripDiacritics(name.lowercased())
+            if containsWord(nameAscii, in: ascii) {
+                if name.contains(" ") || (lastNameIndex[nameAscii]?.count ?? 0) <= 1 {
                     return nil
                 }
             }
         }
 
         // Also check normalized suffix against full names
-        if normalized != lower {
+        let normalizedAscii = stripDiacritics(normalized)
+        if normalizedAscii != ascii {
             for name in sortedNames {
-                let nameLower = name.lowercased()
-                if containsWord(nameLower, in: normalized) {
-                    if name.contains(" ") || (lastNameIndex[nameLower]?.count ?? 0) <= 1 {
+                let nameAscii = stripDiacritics(name.lowercased())
+                if containsWord(nameAscii, in: normalizedAscii) {
+                    if name.contains(" ") || (lastNameIndex[nameAscii]?.count ?? 0) <= 1 {
                         return nil
                     }
                 }
             }
         }
 
-        // Check for ambiguous last names
-        for (lastName, players) in lastNameIndex {
-            if containsWord(lastName, in: lower) && players.count > 1 {
-                // Skip common English words unless they look like intentional name usage
-                if commonWordLastNames.contains(lastName) {
-                    continue
-                }
-                return players
+        // Check for ambiguous last names (accent-insensitive, hyphen-insensitive)
+        // Try: exact key, ASCII-stripped key, space→hyphen, spaces removed (for multi-word last names)
+        let searchKeys = Set([lower, ascii, ascii.replacingOccurrences(of: " ", with: "-"), ascii.replacingOccurrences(of: " ", with: "")])
+        for key in searchKeys {
+            if let players = lastNameIndex[key], players.count > 1 {
+                if commonWordLastNames.contains(key) { continue }
+                // Deduplicate: same player might appear under both accented and ASCII keys
+                return Array(Set(players))
             }
         }
+
+        // First name search — if multiple players share this first name, offer disambiguation
+        if let players = firstNameIndex[ascii], players.count > 1 {
+            return players
+        }
+
         return nil
     }
 
@@ -1348,6 +1418,10 @@ enum PlayerNameMatcher {
         let currentPlayers = sorted.filter { $0.lastSeason >= currentYear - 1 }
         if currentPlayers.count == 1 {
             // Only one current player among historical ones → auto-select
+            dominantIndex = 0
+        } else if currentPlayers.count >= 2 && currentPlayers[0].totalGames >= currentPlayers[1].totalGames * 3 {
+            // Among current players, top one has 3x+ more games → auto-select
+            // Handles common names (Ramirez, Diaz) where the star is clearly dominant
             dominantIndex = 0
         } else if sorted.count >= 2 && sorted[0].totalGames >= sorted[1].totalGames * 5 {
             // Top player has 5x+ more games than the runner-up → auto-select

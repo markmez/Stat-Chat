@@ -138,29 +138,65 @@ def build_player_id(player_info):
     return f"{last_part}{first_part}001"
 
 
+def _strip_accents(s):
+    """Normalize accented characters: 'Acuña' → 'Acuna'."""
+    import unicodedata
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', s)
+        if unicodedata.category(c) != 'Mn'
+    )
+
+
+def _is_temporally_plausible(cursor, player_id, season):
+    """Check if matching to an existing player is plausible based on career timeline.
+    Returns False if the player's last recorded activity was 15+ years ago."""
+    cursor.execute("""
+        SELECT MAX(season) FROM (
+            SELECT MAX(season) as season FROM season_batting_stats WHERE player_id = ?
+            UNION ALL
+            SELECT MAX(season) FROM season_pitching_stats WHERE player_id = ?
+        )
+    """, (player_id, player_id))
+    row = cursor.fetchone()
+    if row and row[0]:
+        return (season - row[0]) < 15
+    # No stats yet — could be a newly created entry, allow match
+    return True
+
+
 def find_or_create_player(cursor, player_info, team_abbrev, season):
-    """Find existing player by name or create a new entry. Returns player_id."""
+    """Find existing player by name or create a new entry. Returns player_id.
+    Uses accent-insensitive matching and temporal plausibility checks to avoid
+    mapping modern players to historical entries with the same name."""
     first = player_info.get("firstName", "")
     last = player_info.get("lastName", "")
     full_name = f"{first} {last}".strip()
+    ascii_name = _strip_accents(full_name)
 
-    # Try exact name match first
-    cursor.execute("SELECT player_id FROM players WHERE name = ?", (full_name,))
-    row = cursor.fetchone()
-    if row:
-        # Update team to most recent
-        cursor.execute("UPDATE players SET team = ? WHERE player_id = ?",
-                        (retro_team(team_abbrev), row[0]))
-        return row[0]
+    # Try exact name match first (including accent-insensitive)
+    cursor.execute("SELECT player_id, name FROM players WHERE name = ? OR name = ?",
+                   (full_name, ascii_name))
+    rows = cursor.fetchall()
+    for row in rows:
+        if _is_temporally_plausible(cursor, row[0], season):
+            # Update name to MSF version (may have accents/Jr.) and team
+            if row[1] != full_name:
+                cursor.execute("UPDATE players SET name = ?, team = ? WHERE player_id = ?",
+                               (full_name, retro_team(team_abbrev), row[0]))
+            else:
+                cursor.execute("UPDATE players SET team = ? WHERE player_id = ?",
+                               (retro_team(team_abbrev), row[0]))
+            return row[0]
 
-    # Try last name + first initial match
+    # Try last name + first initial match (with temporal check)
     cursor.execute("SELECT player_id, name FROM players WHERE name LIKE ?",
                     (f"{first[0]}% {last}" if first else f"% {last}",))
     rows = cursor.fetchall()
-    if len(rows) == 1:
+    plausible = [(r[0], r[1]) for r in rows if _is_temporally_plausible(cursor, r[0], season)]
+    if len(plausible) == 1:
         cursor.execute("UPDATE players SET team = ? WHERE player_id = ?",
-                        (retro_team(team_abbrev), rows[0][0]))
-        return rows[0][0]
+                        (retro_team(team_abbrev), plausible[0][0]))
+        return plausible[0][0]
 
     # Create new player entry
     pid = build_player_id(player_info)
