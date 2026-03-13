@@ -136,8 +136,8 @@ def _fetch_player_info(conn: sqlite3.Connection, name: str) -> Optional[PlayerIn
     cur = conn.cursor()
     cur.execute(
         "SELECT name, team, birthdate, bats, throws, positions FROM players "
-        "WHERE name LIKE ? LIMIT 1",
-        (f"%{_sanitize(name)}%",),
+        "WHERE name = ? LIMIT 1",
+        (_sanitize(name),),
     )
     row = cur.fetchone()
     if not row:
@@ -183,10 +183,10 @@ def _fetch_batting_seasons(conn: sqlite3.Connection, name: str) -> List[BattingS
                s.batting_avg, s.obp, s.slg, s.ops, s.ops_plus, s.iso, s.babip
         FROM season_batting_stats s
         JOIN players p ON s.player_id = p.player_id
-        WHERE p.name LIKE ?
+        WHERE p.name = ?
         ORDER BY s.season DESC
         """,
-        (f"%{_sanitize(name)}%",),
+        (_sanitize(name),),
     )
     rows = cur.fetchall()
     seasons = []
@@ -237,10 +237,10 @@ def _fetch_pitching_seasons(conn: sqlite3.Connection, name: str) -> List[Pitchin
                sp.h_per_9, sp.hr_per_9, sp.baa, sp.era_plus
         FROM season_pitching_stats sp
         JOIN players p ON sp.player_id = p.player_id
-        WHERE p.name LIKE ?
+        WHERE p.name = ?
         ORDER BY sp.season DESC
         """,
-        (f"%{_sanitize(name)}%",),
+        (_sanitize(name),),
     )
     rows = cur.fetchall()
     seasons = []
@@ -288,8 +288,8 @@ def _fetch_pitching_seasons(conn: sqlite3.Connection, name: str) -> List[Pitchin
 def _is_pitcher(conn: sqlite3.Connection, name: str) -> bool:
     cur = conn.cursor()
     cur.execute(
-        "SELECT positions FROM players WHERE name LIKE ? LIMIT 1",
-        (f"%{_sanitize(name)}%",),
+        "SELECT positions FROM players WHERE name = ? LIMIT 1",
+        (_sanitize(name),),
     )
     row = cur.fetchone()
     if not row or not row[0] or not row[0].startswith("P"):
@@ -297,8 +297,8 @@ def _is_pitcher(conn: sqlite3.Connection, name: str) -> bool:
     cur.execute(
         "SELECT 1 FROM season_pitching_stats sp "
         "JOIN players p ON sp.player_id = p.player_id "
-        "WHERE p.name LIKE ? LIMIT 1",
-        (f"%{_sanitize(name)}%",),
+        "WHERE p.name = ? LIMIT 1",
+        (_sanitize(name),),
     )
     return cur.fetchone() is not None
 
@@ -308,8 +308,8 @@ def _is_two_way(conn: sqlite3.Connection, name: str) -> bool:
     cur.execute(
         "SELECT 1 FROM season_batting_stats s "
         "JOIN players p ON s.player_id = p.player_id "
-        "WHERE p.name LIKE ? AND s.plate_appearances >= 130 LIMIT 1",
-        (f"%{_sanitize(name)}%",),
+        "WHERE p.name = ? AND s.plate_appearances >= 130 LIMIT 1",
+        (_sanitize(name),),
     )
     has_bat = cur.fetchone() is not None
     if not has_bat:
@@ -317,8 +317,8 @@ def _is_two_way(conn: sqlite3.Connection, name: str) -> bool:
     cur.execute(
         "SELECT 1 FROM season_pitching_stats sp "
         "JOIN players p ON sp.player_id = p.player_id "
-        "WHERE p.name LIKE ? AND sp.ip_outs >= 90 LIMIT 1",
-        (f"%{_sanitize(name)}%",),
+        "WHERE p.name = ? AND sp.ip_outs >= 90 LIMIT 1",
+        (_sanitize(name),),
     )
     return cur.fetchone() is not None
 
@@ -339,12 +339,12 @@ def _fetch_career_platoon_splits(conn: sqlite3.Connection, name: str) -> Optiona
                      NULLIF(SUM(ps.at_bats), 0), 3)
         FROM platoon_splits ps
         JOIN players p ON ps.player_id = p.player_id
-        WHERE p.name LIKE ?
+        WHERE p.name = ?
         GROUP BY ps.split
         HAVING COUNT(DISTINCT ps.season) > 1
         ORDER BY ps.split
         """,
-        (f"%{_sanitize(name)}%",),
+        (_sanitize(name),),
     )
     rows = cur.fetchall()
     if not rows:
@@ -385,12 +385,12 @@ def _fetch_career_home_away_splits(conn: sqlite3.Connection, name: str) -> Optio
                      NULLIF(SUM(has.at_bats), 0), 3)
         FROM home_away_splits has
         JOIN players p ON has.player_id = p.player_id
-        WHERE p.name LIKE ?
+        WHERE p.name = ?
         GROUP BY has.split
         HAVING COUNT(DISTINCT has.season) > 1
         ORDER BY has.split DESC
         """,
-        (f"%{_sanitize(name)}%",),
+        (_sanitize(name),),
     )
     rows = cur.fetchall()
     if not rows:
@@ -436,12 +436,12 @@ def _fetch_pitching_career_platoon_splits(conn: sqlite3.Connection, name: str) -
                      NULLIF(SUM(pps.at_bats), 0), 3)
         FROM pitching_platoon_splits pps
         JOIN players p ON pps.player_id = p.player_id
-        WHERE p.name LIKE ?
+        WHERE p.name = ?
         GROUP BY pps.split
         HAVING COUNT(DISTINCT pps.season) > 1
         ORDER BY pps.split
         """,
-        (f"%{_sanitize(name)}%",),
+        (_sanitize(name),),
     )
     rows = cur.fetchall()
     if not rows:
@@ -471,12 +471,12 @@ def _fetch_pitching_career_home_away_splits(conn: sqlite3.Connection, name: str)
                ROUND(CAST(SUM(phas.hits) AS REAL) / NULLIF(SUM(phas.games) * 3, 0), 3)
         FROM pitching_home_away_splits phas
         JOIN players p ON phas.player_id = p.player_id
-        WHERE p.name LIKE ?
+        WHERE p.name = ?
         GROUP BY phas.split
         HAVING COUNT(DISTINCT phas.season) > 1
         ORDER BY phas.split DESC
         """,
-        (f"%{_sanitize(name)}%",),
+        (_sanitize(name),),
     )
     rows = cur.fetchall()
     if not rows:

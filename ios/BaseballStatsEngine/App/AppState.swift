@@ -437,6 +437,38 @@ final class AppState {
 
         // Ambiguous last name — show "Did you mean?" with tappable player links
         if let candidates = PlayerNameMatcher.findAmbiguousPlayers(trimmed) {
+            let (sorted, dominant) = PlayerNameMatcher.sortByProminence(candidates)
+
+            // If one player is clearly dominant, resolve directly
+            if let idx = dominant {
+                let chosenName = sorted[idx]
+                // Check if query is just a name or has additional context
+                let queryWords = trimmed.lowercased().split(separator: " ").map(String.init)
+                let nameWords = chosenName.lowercased().split(separator: " ").map(String.init)
+                let queryIsJustName = queryWords.allSatisfy { word in
+                    nameWords.contains(word) || ["jr.", "jr", "sr.", "sr"].contains(word)
+                }
+                if queryIsJustName {
+                    disambiguatedPlayerName = chosenName
+                    return
+                }
+                // Has additional context — replace and send
+                let lower = trimmed.lowercased()
+                let ambiguousLast = PlayerNameMatcher.lastNameIndex.first(where: { key, players in
+                    players.count > 1 && PlayerNameMatcher.containsWord(key, in: lower)
+                })?.key ?? ""
+                if !ambiguousLast.isEmpty, let range = lower.range(of: ambiguousLast) {
+                    var result = trimmed
+                    let startIdx = trimmed.index(trimmed.startIndex, offsetBy: lower.distance(from: lower.startIndex, to: range.lowerBound))
+                    let endIdx = trimmed.index(startIdx, offsetBy: ambiguousLast.count)
+                    result.replaceSubrange(startIdx..<endIdx, with: chosenName)
+                    sendQuestion(result)
+                } else {
+                    sendQuestion(chosenName)
+                }
+                return
+            }
+
             // Find which last name was ambiguous
             let lower = trimmed.lowercased()
             let ambiguousLast = PlayerNameMatcher.lastNameIndex.first(where: { key, players in
@@ -444,8 +476,8 @@ final class AppState {
             })?.key ?? ""
 
             pendingDisambiguation = (query: trimmed, lastName: ambiguousLast)
-            let links = candidates.map { "[\($0)](statchat://player/\($0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? $0))" }
-            let response = "Multiple players match that name. Did you mean:\n\n" + links.joined(separator: "\n\n")
+            let links = sorted.map { "[\($0)](statchat://player/\($0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? $0))" }
+            let response = "Multiple players match:\n\n" + links.joined(separator: "\n\n")
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             return

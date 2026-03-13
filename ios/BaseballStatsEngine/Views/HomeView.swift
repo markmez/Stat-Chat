@@ -25,7 +25,7 @@ struct HomeView: View {
 
     /// Wrapper types for value-based navigationDestination
     private struct ResultsDestination: Hashable { let question: String }
-    private struct PlayerCardDestination: Hashable { let name: String }
+    private struct PlayerCardDestination: Hashable { let name: String; var alternatives: [String] = [] }
     private struct TeamCardDestination: Hashable { let code: String }
 
     var body: some View {
@@ -35,7 +35,7 @@ struct HomeView: View {
                     ResultsView(initialQuestion: dest.question)
                 }
                 .navigationDestination(for: PlayerCardDestination.self) { dest in
-                    PlayerCardView(playerName: dest.name)
+                    PlayerCardView(playerName: dest.name, alternatives: dest.alternatives)
                 }
                 .navigationDestination(for: TeamCardDestination.self) { dest in
                     TeamCardView(teamCode: dest.code)
@@ -44,6 +44,7 @@ struct HomeView: View {
         .onChange(of: path) { _, newPath in
             if newPath.isEmpty {
                 isInputFocused = false
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 withAnimation(.easeInOut(duration: 0.2)) {
                     historyExpanded = false
                 }
@@ -110,7 +111,7 @@ struct HomeView: View {
                         .padding(.top, 2)
 
                     TextField("", text: $questionText, prompt:
-                        Text("Search by name or ask any question...")
+                        Text("Search by name or ask any question")
                             .foregroundStyle(Color(uiColor: .placeholderText)),
                         axis: .vertical
                     )
@@ -321,7 +322,7 @@ struct HomeView: View {
     private var didYouMeanCard: some View {
         if let query = pendingQuery, !suggestedPlayers.isEmpty {
             VStack(spacing: 10) {
-                Text(isDisambiguation ? "Multiple players match:" : "Did you mean:")
+                Text("Multiple players match:")
                     .font(.system(.subheadline, design: .rounded))
                     .foregroundStyle(.secondary)
 
@@ -335,23 +336,6 @@ struct HomeView: View {
                         Text(name)
                             .font(.system(.subheadline, design: .rounded, weight: .semibold))
                             .foregroundStyle(deepBlue)
-                    }
-                }
-
-                if !isDisambiguation {
-                    Button {
-                        let q = query
-                        withAnimation { suggestedPlayers = []; pendingQuery = nil }
-                        appState.addToSearchHistory(q)
-                        path.append(ResultsDestination(question: q))
-                    } label: {
-                        (Text("Or search \"")
-                            .foregroundStyle(.secondary)
-                         + Text(query)
-                            .foregroundStyle(lightBlue)
-                         + Text("\"")
-                            .foregroundStyle(.secondary))
-                            .font(.system(.subheadline, design: .rounded))
                     }
                 }
             }
@@ -387,18 +371,32 @@ struct HomeView: View {
             appState.addToSearchHistory(trimmed)
             path.append(TeamCardDestination(code: teamCode))
         } else if let ambiguous = PlayerNameMatcher.findAmbiguousPlayers(trimmed) {
-            withAnimation(.easeOut(duration: 0.25)) {
-                suggestedPlayers = ambiguous
-                pendingQuery = trimmed
-                isDisambiguation = true
+            let (sorted, dominant) = PlayerNameMatcher.sortByProminence(ambiguous)
+            if let idx = dominant {
+                appState.addToSearchHistory(sorted[idx])
+                let others = sorted.enumerated().filter { $0.offset != idx }.map(\.element)
+                path.append(PlayerCardDestination(name: sorted[idx], alternatives: others))
+            } else {
+                withAnimation(.easeOut(duration: 0.25)) {
+                    suggestedPlayers = sorted
+                    pendingQuery = trimmed
+                    isDisambiguation = true
+                }
             }
         } else {
             let fuzzyMatches = PlayerNameMatcher.fuzzyMatch(trimmed)
             if !fuzzyMatches.isEmpty {
-                withAnimation(.easeOut(duration: 0.25)) {
-                    suggestedPlayers = fuzzyMatches
-                    pendingQuery = trimmed
-                    isDisambiguation = false
+                let (sorted, dominant) = PlayerNameMatcher.sortByProminence(fuzzyMatches)
+                if let idx = dominant {
+                    appState.addToSearchHistory(sorted[idx])
+                    let others = sorted.enumerated().filter { $0.offset != idx }.map(\.element)
+                    path.append(PlayerCardDestination(name: sorted[idx], alternatives: others))
+                } else {
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        suggestedPlayers = sorted
+                        pendingQuery = trimmed
+                        isDisambiguation = false
+                    }
                 }
             } else {
                 appState.addToSearchHistory(trimmed)

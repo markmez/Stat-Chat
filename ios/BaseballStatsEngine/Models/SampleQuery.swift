@@ -181,7 +181,7 @@ enum SampleQuery {
         let db = DatabaseService()
         for player in players {
             let sanitized = player.replacingOccurrences(of: "'", with: "''")
-            if let result = try? db.execute(sql: "SELECT team FROM players WHERE name LIKE '%\(sanitized)%' LIMIT 1"),
+            if let result = try? db.execute(sql: "SELECT team FROM players WHERE name = '\(sanitized)' LIMIT 1"),
                let row = result.rows.first, !row[0].isEmpty {
                 // Handle multi-team entries like "NYA/TOR" — use most recent
                 let team = String(row[0].split(separator: "/").last ?? Substring(row[0]))
@@ -405,7 +405,7 @@ enum SampleQuery {
         if let result = try? db.execute(sql: """
             SELECT MAX(season) FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitized)%'
+            WHERE p.name = '\(sanitized)'
             """),
            let row = result.rows.first, let year = Int(row[0]) {
             return year
@@ -414,7 +414,7 @@ enum SampleQuery {
         if let result = try? db.execute(sql: """
             SELECT MAX(season) FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitized)%'
+            WHERE p.name = '\(sanitized)'
             """),
            let row = result.rows.first, let year = Int(row[0]) {
             return year

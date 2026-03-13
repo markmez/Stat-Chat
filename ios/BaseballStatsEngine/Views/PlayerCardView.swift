@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PlayerCardView: View {
     let playerName: String
+    var alternatives: [String] = []
 
     @Environment(\.dismiss) private var dismiss
     @State private var playerCard: PlayerCard?
@@ -116,7 +117,7 @@ struct PlayerCardView: View {
                                 .foregroundStyle(.secondary)
                             } else {
                                 VStack(alignment: .leading, spacing: 4) {
-                                    FlowLayout(spacing: 4) {
+                                    FlowLayout(spacing: 0) {
                                         let teamCodes = allCareerTeamCodes(card: card)
                                         ForEach(Array(teamCodes.enumerated()), id: \.offset) { idx, code in
                                             Button {
@@ -150,6 +151,31 @@ struct PlayerCardView: View {
                             }
                         }
                         .padding(.horizontal, 20)
+
+                        // Alternatives strip (shown when auto-selected from disambiguation)
+                        if !alternatives.isEmpty {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 0) {
+                                    Text("See also: ")
+                                        .foregroundStyle(.secondary)
+                                    ForEach(Array(alternatives.enumerated()), id: \.offset) { idx, name in
+                                        if idx > 0 {
+                                            Text(", ")
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Button {
+                                            searchPlayerName = name
+                                        } label: {
+                                            Text(name)
+                                                .foregroundStyle(deepBlue)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .font(.system(.subheadline, design: .rounded))
+                            }
+                            .padding(.horizontal, 20)
+                        }
 
                         if card.isTwoWay {
                             Picker("", selection: $twoWayTab) {

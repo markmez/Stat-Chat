@@ -842,7 +842,7 @@ enum PlayerNameMatcher {
                         // Look up player's last season
                         let db = DatabaseService()
                         let sanitized = name.replacingOccurrences(of: "'", with: "''")
-                        if let result = try? db.execute(sql: "SELECT MAX(season) FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE p.name LIKE '%\(sanitized)%'"),
+                        if let result = try? db.execute(sql: "SELECT MAX(season) FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE p.name = '\(sanitized)'"),
                            let row = result.rows.first, let year = Int(row[0]) {
                             sinceYear = year
                         }
@@ -856,7 +856,7 @@ enum PlayerNameMatcher {
                             let name = players[0]
                             let db = DatabaseService()
                             let sanitized = name.replacingOccurrences(of: "'", with: "''")
-                            if let result = try? db.execute(sql: "SELECT MAX(season) FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE p.name LIKE '%\(sanitized)%'"),
+                            if let result = try? db.execute(sql: "SELECT MAX(season) FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE p.name = '\(sanitized)'"),
                                let row = result.rows.first, let year = Int(row[0]) {
                                 sinceYear = year
                             }
@@ -1280,6 +1280,63 @@ enum PlayerNameMatcher {
             }
         }
         return nil
+    }
+
+    /// Sort player names by prominence: current players first, then by career games descending.
+    /// Returns (sortedNames, dominantIndex?) — dominantIndex is set when one player is clearly
+    /// more relevant (e.g., only current player, or vastly more career games).
+    static func sortByProminence(_ names: [String]) -> (sorted: [String], dominantIndex: Int?) {
+        guard names.count > 1 else { return (names, names.count == 1 ? 0 : nil) }
+
+        let db = DatabaseService()
+        let currentYear = Calendar.current.component(.year, from: Date())
+
+        var infos: [(name: String, lastSeason: Int, totalGames: Int)] = []
+        for name in names {
+            let sanitized = name.replacingOccurrences(of: "'", with: "''")
+            var lastSeason = 0
+            var totalGames = 0
+            // Batting
+            if let result = try? db.execute(sql: """
+                SELECT COALESCE(MAX(s.season), 0), COALESCE(SUM(s.games), 0)
+                FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id
+                WHERE p.name = '\(sanitized)'
+                """), let row = result.rows.first {
+                lastSeason = max(lastSeason, Int(row[0]) ?? 0)
+                totalGames += Int(row[1]) ?? 0
+            }
+            // Pitching
+            if let result = try? db.execute(sql: """
+                SELECT COALESCE(MAX(sp.season), 0), COALESCE(SUM(sp.games), 0)
+                FROM season_pitching_stats sp JOIN players p ON sp.player_id = p.player_id
+                WHERE p.name = '\(sanitized)'
+                """), let row = result.rows.first {
+                lastSeason = max(lastSeason, Int(row[0]) ?? 0)
+                totalGames += Int(row[1]) ?? 0
+            }
+            infos.append((name, lastSeason, totalGames))
+        }
+
+        // Sort: current players first, then by total games descending
+        let sorted = infos.sorted { a, b in
+            let aCurrent = a.lastSeason >= currentYear - 1
+            let bCurrent = b.lastSeason >= currentYear - 1
+            if aCurrent != bCurrent { return aCurrent }
+            return a.totalGames > b.totalGames
+        }
+
+        // Determine if one player is clearly dominant
+        var dominantIndex: Int? = nil
+        let currentPlayers = sorted.filter { $0.lastSeason >= currentYear - 1 }
+        if currentPlayers.count == 1 {
+            // Only one current player among historical ones → auto-select
+            dominantIndex = 0
+        } else if sorted.count >= 2 && sorted[0].totalGames >= sorted[1].totalGames * 5 {
+            // Top player has 5x+ more games than the runner-up → auto-select
+            dominantIndex = 0
+        }
+
+        return (sorted.map(\.name), dominantIndex)
     }
 
     /// Check if `word` appears in `text` as a whole word (not a substring of another word).

@@ -155,7 +155,7 @@ enum PlayerCardService {
         let sql = """
             SELECT MIN(s.season) FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             """
         guard let result = try? db.execute(sql: sql),
               let row = result.rows.first,
@@ -170,7 +170,7 @@ enum PlayerCardService {
         let sql = """
             SELECT 1 FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             LIMIT 1
             """
         if let result = try? db.execute(sql: sql), !result.rows.isEmpty {
@@ -179,7 +179,7 @@ enum PlayerCardService {
         let pitchSql = """
             SELECT 1 FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             LIMIT 1
             """
         if let result = try? db.execute(sql: pitchSql), !result.rows.isEmpty {
@@ -192,7 +192,7 @@ enum PlayerCardService {
     static func isPitcher(name: String) -> Bool {
         let sql = """
             SELECT p.positions FROM players p
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             LIMIT 1
             """
         guard let result = try? db.execute(sql: sql),
@@ -205,7 +205,7 @@ enum PlayerCardService {
         let pitchSql = """
             SELECT 1 FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             LIMIT 1
             """
         if let pitchResult = try? db.execute(sql: pitchSql),
@@ -222,7 +222,7 @@ enum PlayerCardService {
         let batSql = """
             SELECT 1 FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND s.plate_appearances >= 130
+            WHERE p.name = '\(sanitize(name))' AND s.plate_appearances >= 130
             LIMIT 1
             """
         guard let batResult = try? db.execute(sql: batSql),
@@ -231,7 +231,7 @@ enum PlayerCardService {
         let pitchSql = """
             SELECT 1 FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND sp.ip_outs >= 90
+            WHERE p.name = '\(sanitize(name))' AND sp.ip_outs >= 90
             LIMIT 1
             """
         guard let pitchResult = try? db.execute(sql: pitchSql),
@@ -853,7 +853,7 @@ enum PlayerCardService {
                    s.batting_avg, s.obp, s.slg, s.ops, s.ops_plus, s.iso, s.babip
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             ORDER BY s.season DESC
             LIMIT 1
             """
@@ -888,7 +888,7 @@ enum PlayerCardService {
                           NULLIF(SUM(s.at_bats) - SUM(s.strikeouts) - SUM(s.home_runs) + SUM(s.sacrifice_flies), 0), 3)
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             HAVING COUNT(DISTINCT s.season) > 1
             """
         guard let result = try? db.execute(sql: sql),
@@ -915,7 +915,7 @@ enum PlayerCardService {
     private static func fetchPlayerInfo(name: String) -> (name: String, team: String, birthdate: String?, bats: String?, throws_: String?, positions: String?)? {
         let sql = """
             SELECT p.name, p.team, p.birthdate, p.bats, p.throws, p.positions FROM players p
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             LIMIT 1
             """
         guard let result = try? db.execute(sql: sql),
@@ -939,7 +939,7 @@ enum PlayerCardService {
                    s.batting_avg, s.obp, s.slg, s.ops, s.ops_plus, s.iso, s.babip
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             ORDER BY s.season DESC
             """
         guard let result = try? db.execute(sql: sql) else { return [] }
@@ -1018,7 +1018,7 @@ enum PlayerCardService {
                           NULLIF(SUM(s.at_bats) - SUM(s.strikeouts) - SUM(s.home_runs) + SUM(s.sacrifice_flies), 0), 3)
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             HAVING COUNT(DISTINCT s.season) > 1
             """
         guard let result = try? db.execute(sql: sql),
@@ -1058,7 +1058,7 @@ enum PlayerCardService {
                    ps.batting_avg, ps.obp, ps.slg, ps.ops, ps.iso, ps.babip
             FROM platoon_splits ps
             JOIN players p ON ps.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND ps.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND ps.season = \(season)
             ORDER BY ps.split
             """
         guard let result = try? db.execute(sql: sql),
@@ -1086,7 +1086,7 @@ enum PlayerCardService {
                    has.batting_avg, has.obp, has.slg, has.ops, has.iso, has.babip
             FROM home_away_splits has
             JOIN players p ON has.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND has.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND has.season = \(season)
             ORDER BY has.split DESC
             """
         guard let result = try? db.execute(sql: sql),
@@ -1114,7 +1114,7 @@ enum PlayerCardService {
                    rs.batting_avg, rs.obp, rs.slg, rs.ops, rs.iso, rs.babip
             FROM risp_batting_splits rs
             JOIN players p ON rs.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND rs.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND rs.season = \(season)
             ORDER BY rs.split DESC
             """
         guard let result = try? db.execute(sql: sql),
@@ -1148,7 +1148,7 @@ enum PlayerCardService {
                          NULLIF(SUM(ps.at_bats), 0), 3)
             FROM platoon_splits ps
             JOIN players p ON ps.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             GROUP BY ps.split
             HAVING COUNT(DISTINCT ps.season) > 1
             ORDER BY ps.split
@@ -1196,7 +1196,7 @@ enum PlayerCardService {
                          NULLIF(SUM(has.at_bats), 0), 3)
             FROM home_away_splits has
             JOIN players p ON has.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             GROUP BY has.split
             HAVING COUNT(DISTINCT has.season) > 1
             ORDER BY has.split DESC
@@ -1247,7 +1247,7 @@ enum PlayerCardService {
                          NULLIF(SUM(pps.at_bats), 0), 3)
             FROM pitching_platoon_splits pps
             JOIN players p ON pps.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             GROUP BY pps.split
             HAVING COUNT(DISTINCT pps.season) > 1
             ORDER BY pps.split
@@ -1283,7 +1283,7 @@ enum PlayerCardService {
                    ROUND(CAST(SUM(phas.hits) AS REAL) / NULLIF(SUM(phas.games) * 3, 0), 3)
             FROM pitching_home_away_splits phas
             JOIN players p ON phas.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             GROUP BY phas.split
             HAVING COUNT(DISTINCT phas.season) > 1
             ORDER BY phas.split DESC
@@ -1312,7 +1312,7 @@ enum PlayerCardService {
                    sfs.passed_balls, sfs.fielding_pct
             FROM season_fielding_stats sfs
             JOIN players p ON sfs.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND sfs.season = \(season) AND sfs.games > 0
+            WHERE p.name = '\(sanitize(name))' AND sfs.season = \(season) AND sfs.games > 0
             ORDER BY sfs.games DESC
             """
         guard let result = try? db.execute(sql: sql),
@@ -1362,7 +1362,7 @@ enum PlayerCardService {
                    pts.batting_avg, pts.obp, pts.slg, pts.ops
             FROM pitch_type_batting_splits pts
             JOIN players p ON pts.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND pts.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND pts.season = \(season)
             ORDER BY pts.at_bats DESC
             """
         guard let result = try? db.execute(sql: sql),
@@ -1392,7 +1392,7 @@ enum PlayerCardService {
                    cs.batting_avg, cs.obp, cs.slg, cs.ops
             FROM count_batting_splits cs
             JOIN players p ON cs.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND cs.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND cs.season = \(season)
             ORDER BY cs.count_state
             """
         guard let result = try? db.execute(sql: sql),
@@ -1422,7 +1422,7 @@ enum PlayerCardService {
                    pts.batting_avg_against, pts.obp_against, pts.slg_against, pts.ops_against
             FROM pitch_type_pitching_splits pts
             JOIN players p ON pts.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND pts.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND pts.season = \(season)
             ORDER BY pts.at_bats DESC
             """
         guard let result = try? db.execute(sql: sql),
@@ -1452,7 +1452,7 @@ enum PlayerCardService {
                    cs.batting_avg_against, cs.obp_against, cs.slg_against, cs.ops_against
             FROM count_pitching_splits cs
             JOIN players p ON cs.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND cs.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND cs.season = \(season)
             ORDER BY cs.count_state
             """
         guard let result = try? db.execute(sql: sql),
@@ -1482,7 +1482,7 @@ enum PlayerCardService {
                    st.batting_avg, st.obp, st.slg, st.ops, st.home_runs
             FROM streaks st
             JOIN players p ON st.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND st.season = \(season) AND st.performance = '\(performance)'
+            WHERE p.name = '\(sanitize(name))' AND st.season = \(season) AND st.performance = '\(performance)'
             ORDER BY st.ops \(orderDir)
             """
         var result = try? db.execute(sql: sql)
@@ -1495,7 +1495,7 @@ enum PlayerCardService {
                        ss.batting_avg, ss.obp, ss.slg, ss.ops, ss.home_runs
                 FROM streaks_sensitive ss
                 JOIN players p ON ss.player_id = ss.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%' AND ss.season = \(season) AND ss.performance = '\(performance)'
+                WHERE p.name = '\(sanitize(name))' AND ss.season = \(season) AND ss.performance = '\(performance)'
                 ORDER BY ss.ops \(orderDir)
                 """
             result = try? db.execute(sql: sql)
@@ -1509,7 +1509,7 @@ enum PlayerCardService {
                        sl.batting_avg, sl.obp, sl.slg, sl.ops, sl.home_runs
                 FROM streaks_sliding sl
                 JOIN players p ON sl.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%' AND sl.season = \(season) AND sl.performance = '\(performance)'
+                WHERE p.name = '\(sanitize(name))' AND sl.season = \(season) AND sl.performance = '\(performance)'
                 ORDER BY sl.ops \(orderDir)
                 """
             result = try? db.execute(sql: sql)
@@ -1579,7 +1579,7 @@ enum PlayerCardService {
                    s.batting_avg, s.obp, s.slg, s.ops, s.ops_plus, s.iso, s.babip
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND s.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND s.season = \(season)
             """
         guard let result = try? db.execute(sql: sql),
               let row = result.rows.first,
@@ -1608,7 +1608,7 @@ enum PlayerCardService {
                    ps.batting_avg, ps.obp, ps.slg, ps.ops
             FROM platoon_splits ps
             JOIN players p ON ps.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND ps.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND ps.season = \(season)
             ORDER BY ps.split_type
             """
         if let splitsResult = try? db.execute(sql: splitsSql), !splitsResult.rows.isEmpty {
@@ -1632,7 +1632,7 @@ enum PlayerCardService {
                    batting_avg, obp, slg, ops, home_runs, hits, at_bats, walks, strikeouts
             FROM streaks
             JOIN players p ON streaks.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND streaks.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND streaks.season = \(season)
               AND performance = 'hot'
             ORDER BY ops DESC
             LIMIT 3
@@ -1674,7 +1674,7 @@ enum PlayerCardService {
             let sql = """
                 SELECT MAX(st.season) FROM streaks st
                 JOIN players p ON st.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%'
+                WHERE p.name = '\(sanitize(name))'
                 """
             guard let result = try? db.execute(sql: sql),
                   let row = result.rows.first,
@@ -1736,7 +1736,7 @@ enum PlayerCardService {
             FROM current_form cf
             JOIN players p ON cf.player_id = p.player_id
             LEFT JOIN season_batting_stats s ON cf.player_id = s.player_id AND cf.season = s.season
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             ORDER BY cf.season DESC
             LIMIT 1
             """
@@ -1790,7 +1790,7 @@ enum PlayerCardService {
             let sql = """
                 SELECT MAX(s.season) FROM season_batting_stats s
                 JOIN players p ON s.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%'
+                WHERE p.name = '\(sanitize(name))'
                 """
             if let r = try? db.execute(sql: sql), let row = r.rows.first, let yr = Int(row[0]) {
                 return yr
@@ -1812,7 +1812,7 @@ enum PlayerCardService {
                 SELECT \(selectExpr), COUNT(DISTINCT s.season)
                 FROM season_batting_stats s
                 JOIN players p ON s.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%'
+                WHERE p.name = '\(sanitize(name))'
                 """
             guard let result = try? db.execute(sql: sql),
                   let row = result.rows.first,
@@ -1859,7 +1859,7 @@ enum PlayerCardService {
             let seasonCountSql = """
                 SELECT COUNT(DISTINCT s.season) FROM season_batting_stats s
                 JOIN players p ON s.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%'
+                WHERE p.name = '\(sanitize(name))'
                 """
             let seasonCount: String
             if let r = try? db.execute(sql: seasonCountSql), let row = r.rows.first {
@@ -1888,7 +1888,7 @@ enum PlayerCardService {
             SELECT p.name, s.team, s.\(stat.dbColumn)
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND s.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND s.season = \(season)
             LIMIT 1
             """
         guard let result = try? db.execute(sql: sql),
@@ -2467,7 +2467,7 @@ enum PlayerCardService {
                    ps.batting_avg, ps.obp, ps.slg, ps.ops, ps.iso, ps.babip
             FROM platoon_splits ps
             JOIN players p ON ps.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND ps.season = \(season)\(splitFilter)
+            WHERE p.name = '\(sanitize(name))' AND ps.season = \(season)\(splitFilter)
             ORDER BY ps.split
             """
         guard let result = try? db.execute(sql: sql),
@@ -2520,7 +2520,7 @@ enum PlayerCardService {
                    has.batting_avg, has.obp, has.slg, has.ops, has.iso, has.babip
             FROM home_away_splits has
             JOIN players p ON has.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND has.season = \(season)\(splitFilter)
+            WHERE p.name = '\(sanitize(name))' AND has.season = \(season)\(splitFilter)
             ORDER BY has.split DESC
             """
         guard let result = try? db.execute(sql: sql),
@@ -2569,7 +2569,7 @@ enum PlayerCardService {
                    phas.era, phas.whip, phas.k_per_9, phas.bb_per_9, phas.baa
             FROM pitching_home_away_splits phas
             JOIN players p ON phas.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND phas.season = \(season)\(splitFilter)
+            WHERE p.name = '\(sanitize(name))' AND phas.season = \(season)\(splitFilter)
             ORDER BY phas.split DESC
             """
         guard let result = try? db.execute(sql: sql),
@@ -2842,7 +2842,7 @@ enum PlayerCardService {
                    cf.season_walks, cf.season_strikeouts, cf.season_plate_appearances
             FROM current_form cf
             JOIN players p ON cf.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND cf.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND cf.season = \(season)
             LIMIT 1
             """
         guard let result = try? db.execute(sql: sql),
@@ -2918,7 +2918,7 @@ enum PlayerCardService {
                    g.runs, g.rbi, g.walks, g.strikeouts, g.plate_appearances
             FROM game_batting_logs g
             JOIN players p ON g.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND g.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND g.season = \(season)
             ORDER BY g.date ASC
             """
         guard let result = try? db.execute(sql: sql, maxRows: 0) else { return [] }
@@ -2950,7 +2950,7 @@ enum PlayerCardService {
                    ps.batting_avg, ps.obp, ps.slg, ps.ops, ps.iso, ps.babip
             FROM platoon_splits ps
             JOIN players p ON ps.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             ORDER BY ps.season DESC, ps.split
             """
         guard let result = try? db.execute(sql: sql),
@@ -2983,7 +2983,7 @@ enum PlayerCardService {
                    st.batting_avg, st.obp, st.slg, st.ops, st.home_runs
             FROM streaks st
             JOIN players p ON st.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND st.performance = 'hot'
+            WHERE p.name = '\(sanitize(name))' AND st.performance = 'hot'
             ORDER BY st.season DESC, st.ops DESC
             """
         var result = try? db.execute(sql: sql)
@@ -2996,7 +2996,7 @@ enum PlayerCardService {
                        ss.batting_avg, ss.obp, ss.slg, ss.ops, ss.home_runs
                 FROM streaks_sensitive ss
                 JOIN players p ON ss.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%' AND ss.performance = 'hot'
+                WHERE p.name = '\(sanitize(name))' AND ss.performance = 'hot'
                 ORDER BY ss.season DESC, ss.ops DESC
                 """
             result = try? db.execute(sql: sql)
@@ -3010,7 +3010,7 @@ enum PlayerCardService {
                        sl.batting_avg, sl.obp, sl.slg, sl.ops, sl.home_runs
                 FROM streaks_sliding sl
                 JOIN players p ON sl.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%' AND sl.performance = 'hot'
+                WHERE p.name = '\(sanitize(name))' AND sl.performance = 'hot'
                 ORDER BY sl.season DESC, sl.ops DESC
                 """
             result = try? db.execute(sql: sql)
@@ -3100,7 +3100,7 @@ enum PlayerCardService {
                    SUM(g.hit_by_pitch) as hbp, SUM(g.sacrifice_flies) as sf
             FROM game_batting_logs g
             JOIN players p ON g.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
               AND g.season = \(season)
               AND substr(g.date, 6, 2) = '\(monthPad)'
             """
@@ -3158,7 +3158,7 @@ enum PlayerCardService {
                    SUM(g.games_started) as gs
             FROM game_pitching_logs g
             JOIN players p ON g.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
               AND g.season = \(season)
               AND substr(g.date, 6, 2) = '\(monthPad)'
             """
@@ -3593,7 +3593,7 @@ enum PlayerCardService {
         let sql = """
             SELECT sp.season FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             ORDER BY sp.season DESC LIMIT 1
             """
         guard let result = try? db.execute(sql: sql),
@@ -3604,7 +3604,7 @@ enum PlayerCardService {
         let checkSql = """
             SELECT 1 FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND sp.season = \(requested)
+            WHERE p.name = '\(sanitize(name))' AND sp.season = \(requested)
             LIMIT 1
             """
         if let checkResult = try? db.execute(sql: checkSql), checkResult.rows.isEmpty {
@@ -3659,7 +3659,7 @@ enum PlayerCardService {
                    sp.h_per_9, sp.hr_per_9, sp.baa, sp.era_plus
             FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             ORDER BY sp.season DESC
             """
         guard let result = try? db.execute(sql: sql) else { return [] }
@@ -3692,7 +3692,7 @@ enum PlayerCardService {
                     let ipOutsSql = """
                         SELECT sp.ip_outs FROM season_pitching_stats sp
                         JOIN players p ON sp.player_id = p.player_id
-                        WHERE p.name LIKE '%\(sanitize(name))%' AND sp.season = \(year)
+                        WHERE p.name = '\(sanitize(name))' AND sp.season = \(year)
                         LIMIT 1
                         """
                     if let ipResult = try? db.execute(sql: ipOutsSql),
@@ -3750,7 +3750,7 @@ enum PlayerCardService {
                    ROUND(CAST(SUM(sp.hits) AS REAL) / NULLIF(SUM(sp.batters_faced) - SUM(sp.walks) - SUM(sp.hit_by_pitch) - SUM(sp.sacrifice_hits) - SUM(sp.sacrifice_flies), 0), 3)
             FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             HAVING COUNT(DISTINCT sp.season) > 1
             """
         guard let result = try? db.execute(sql: sql),
@@ -3781,7 +3781,7 @@ enum PlayerCardService {
                    pps.batting_avg_against, pps.obp_against, pps.slg_against, pps.ops_against
             FROM pitching_platoon_splits pps
             JOIN players p ON pps.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND pps.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND pps.season = \(season)
             ORDER BY pps.split
             """
         guard let result = try? db.execute(sql: sql),
@@ -3808,7 +3808,7 @@ enum PlayerCardService {
                    phas.era, phas.whip, phas.k_per_9, phas.bb_per_9, phas.baa
             FROM pitching_home_away_splits phas
             JOIN players p ON phas.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND phas.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND phas.season = \(season)
             ORDER BY phas.split DESC
             """
         guard let result = try? db.execute(sql: sql),
@@ -3836,7 +3836,7 @@ enum PlayerCardService {
                    rps.batting_avg_against, rps.obp_against, rps.slg_against, rps.ops_against
             FROM risp_pitching_splits rps
             JOIN players p ON rps.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND rps.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND rps.season = \(season)
             ORDER BY rps.split DESC
             """
         guard let result = try? db.execute(sql: sql),
@@ -3864,7 +3864,7 @@ enum PlayerCardService {
                    ps.home_runs, ps.era, ps.whip, ps.k_per_9
             FROM pitching_streaks ps
             JOIN players p ON ps.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND ps.season = \(season) AND ps.performance = '\(performance)'
+            WHERE p.name = '\(sanitize(name))' AND ps.season = \(season) AND ps.performance = '\(performance)'
             ORDER BY ps.era \(orderDir)
             """
         var result = try? db.execute(sql: sql)
@@ -3877,7 +3877,7 @@ enum PlayerCardService {
                        pss.home_runs, pss.era, pss.whip, pss.k_per_9
                 FROM pitching_streaks_sensitive pss
                 JOIN players p ON pss.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%' AND pss.season = \(season) AND pss.performance = '\(performance)'
+                WHERE p.name = '\(sanitize(name))' AND pss.season = \(season) AND pss.performance = '\(performance)'
                 ORDER BY pss.era \(orderDir)
                 """
             result = try? db.execute(sql: sql)
@@ -3891,7 +3891,7 @@ enum PlayerCardService {
                        psl.home_runs, psl.era, psl.whip, psl.k_per_9
                 FROM pitching_streaks_sliding psl
                 JOIN players p ON psl.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%' AND psl.season = \(season) AND psl.performance = '\(performance)'
+                WHERE p.name = '\(sanitize(name))' AND psl.season = \(season) AND psl.performance = '\(performance)'
                 ORDER BY psl.era \(orderDir)
                 """
             result = try? db.execute(sql: sql)
@@ -3956,7 +3956,7 @@ enum PlayerCardService {
                    pcf.season_batters_faced, pcf.season_era, pcf.ip_outs
             FROM pitching_current_form pcf
             JOIN players p ON pcf.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND pcf.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND pcf.season = \(season)
             LIMIT 1
             """
         guard let result = try? db.execute(sql: sql),
@@ -4021,7 +4021,7 @@ enum PlayerCardService {
                    g.home_runs, g.is_start
             FROM game_pitching_logs g
             JOIN players p ON g.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND g.season = \(season)
+            WHERE p.name = '\(sanitize(name))' AND g.season = \(season)
             ORDER BY g.date ASC
             """
         guard let result = try? db.execute(sql: sql, maxRows: 0) else { return [] }
@@ -4049,7 +4049,7 @@ enum PlayerCardService {
             SELECT p.name, sp.team, sp.\(stat.dbColumn)
             FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND sp.season = \(targetSeason)
+            WHERE p.name = '\(sanitize(name))' AND sp.season = \(targetSeason)
             LIMIT 1
             """
         guard let result = try? db.execute(sql: sql),
@@ -4112,7 +4112,7 @@ enum PlayerCardService {
                    sp.h_per_9, sp.hr_per_9, sp.baa, sp.era_plus
             FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND sp.season = \(targetSeason)
+            WHERE p.name = '\(sanitize(name))' AND sp.season = \(targetSeason)
             """
         guard let result = try? db.execute(sql: sql),
               let row = result.rows.first,
@@ -4150,7 +4150,7 @@ enum PlayerCardService {
             let sql = """
                 SELECT MAX(ps.season) FROM pitching_streaks ps
                 JOIN players p ON ps.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%'
+                WHERE p.name = '\(sanitize(name))'
                 """
             guard let result = try? db.execute(sql: sql),
                   let row = result.rows.first,
@@ -4211,7 +4211,7 @@ enum PlayerCardService {
             FROM pitching_current_form pcf
             JOIN players p ON pcf.player_id = p.player_id
             LEFT JOIN season_pitching_stats sp ON pcf.player_id = sp.player_id AND pcf.season = sp.season
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             ORDER BY pcf.season DESC
             LIMIT 1
             """
@@ -4263,7 +4263,7 @@ enum PlayerCardService {
             let sql = """
                 SELECT MAX(sp.season) FROM season_pitching_stats sp
                 JOIN players p ON sp.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%'
+                WHERE p.name = '\(sanitize(name))'
                 """
             if let r = try? db.execute(sql: sql), let row = r.rows.first, let yr = Int(row[0]) {
                 return yr
@@ -4284,7 +4284,7 @@ enum PlayerCardService {
                 SELECT \(selectExpr), COUNT(DISTINCT sp.season)
                 FROM season_pitching_stats sp
                 JOIN players p ON sp.player_id = p.player_id
-                WHERE p.name LIKE '%\(sanitize(name))%'
+                WHERE p.name = '\(sanitize(name))'
                 """
             guard let result = try? db.execute(sql: sql),
                   let row = result.rows.first,
@@ -4620,7 +4620,7 @@ enum PlayerCardService {
                    sp.h_per_9, sp.hr_per_9, sp.baa, sp.era_plus
             FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             ORDER BY sp.season DESC
             LIMIT 1
             """
@@ -4654,7 +4654,7 @@ enum PlayerCardService {
                    ROUND(CAST(SUM(sp.hits) AS REAL) / NULLIF(SUM(sp.batters_faced) - SUM(sp.walks) - SUM(sp.hit_by_pitch) - SUM(sp.sacrifice_hits) - SUM(sp.sacrifice_flies), 0), 3)
             FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%'
+            WHERE p.name = '\(sanitize(name))'
             HAVING COUNT(DISTINCT sp.season) > 1
             """
         guard let result = try? db.execute(sql: sql),
@@ -4687,7 +4687,7 @@ enum PlayerCardService {
                    pps.batting_avg_against, pps.obp_against, pps.slg_against, pps.ops_against
             FROM pitching_platoon_splits pps
             JOIN players p ON pps.player_id = p.player_id
-            WHERE p.name LIKE '%\(sanitize(name))%' AND pps.season = \(targetSeason)\(splitFilter)
+            WHERE p.name = '\(sanitize(name))' AND pps.season = \(targetSeason)\(splitFilter)
             ORDER BY pps.split
             """
         guard let result = try? db.execute(sql: sql),

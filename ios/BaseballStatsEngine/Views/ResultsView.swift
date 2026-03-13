@@ -183,6 +183,8 @@ struct ResultsView: View {
             }
         }
         .onDisappear {
+            isInputFocused = false
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             appState.clearConversation()
         }
     }
