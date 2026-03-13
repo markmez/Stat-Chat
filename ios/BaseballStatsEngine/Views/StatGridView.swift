@@ -708,8 +708,10 @@ struct StatGridView: View {
         }
         .overlay {
             if let stat = selectedStat, let definition = StatDefinitions.lookup(stat) {
-                // Dismiss layer covers the stat grid area
+                // Full-screen dismiss layer so tapping anywhere outside dismisses
                 Color.black.opacity(0.01)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture { selectedStat = nil }
 
