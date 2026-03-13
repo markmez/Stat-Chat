@@ -16,8 +16,6 @@ struct TeamCardView: View {
     // Floating search bar state
     @State private var searchText = ""
     @FocusState private var isSearchFocused: Bool
-    @State private var searchSuggestions: [String] = []
-    @State private var searchPendingQuery: String?
     @State private var searchTeamCode: String? = nil
     @State private var searchQuestion: String? = nil
 
@@ -208,44 +206,6 @@ struct TeamCardView: View {
             .frame(height: 16)
 
             VStack(spacing: 6) {
-                // "Did you mean?" suggestions
-                if let query = searchPendingQuery, !searchSuggestions.isEmpty {
-                    VStack(spacing: 4) {
-                        Text("Did you mean:")
-                            .font(.system(.caption, design: .rounded))
-                            .foregroundStyle(.secondary)
-
-                        ForEach(searchSuggestions, id: \.self) { name in
-                            Button {
-                                let n = name
-                                withAnimation { searchSuggestions = []; searchPendingQuery = nil }
-                                searchText = ""
-                                selectedPlayerName = n
-                            } label: {
-                                Text(name)
-                                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                                    .foregroundStyle(deepBlue)
-                            }
-                        }
-
-                        Button {
-                            let q = query
-                            withAnimation { searchSuggestions = []; searchPendingQuery = nil }
-                            searchText = ""
-                            searchQuestion = q
-                        } label: {
-                            (Text("Or search \"")
-                                .foregroundStyle(.secondary)
-                             + Text(query)
-                                .foregroundStyle(lightBlue)
-                             + Text("\"")
-                                .foregroundStyle(.secondary))
-                                .font(.system(.caption, design: .rounded))
-                        }
-                    }
-                    .padding(.bottom, 6)
-                }
-
                 // Search input
                 HStack(spacing: 12) {
                     Image(systemName: "magnifyingglass")
@@ -286,35 +246,32 @@ struct TeamCardView: View {
     private func submitSearch() {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        searchSuggestions = []
-        searchPendingQuery = nil
+        searchText = ""
 
         // Exact player name match
         if let name = PlayerNameMatcher.matchPlayer(trimmed) {
-            searchText = ""
             selectedPlayerName = name
             return
         }
 
         // Exact team name match (case-insensitive)
         if let code = PlayerCardService.teamCodeFromFullNameCaseInsensitive(trimmed) {
-            searchText = ""
             searchTeamCode = code
             return
         }
 
-        // Fuzzy player name match → "Did you mean?"
-        let fuzzy = PlayerNameMatcher.fuzzyMatch(trimmed)
-        if !fuzzy.isEmpty {
-            withAnimation(.easeOut(duration: 0.25)) {
-                searchSuggestions = fuzzy
-                searchPendingQuery = trimmed
+        // Ambiguous player name → auto-select dominant or route to ResultsView for disambig
+        if let ambiguous = PlayerNameMatcher.findAmbiguousPlayers(trimmed) {
+            let (sorted, dominant) = PlayerNameMatcher.sortByProminence(ambiguous)
+            if let idx = dominant {
+                selectedPlayerName = sorted[idx]
+            } else {
+                searchQuestion = trimmed
             }
             return
         }
 
-        // Fall through to Claude
-        searchText = ""
+        // Everything else (fuzzy, general questions) → ResultsView handles it
         searchQuestion = trimmed
     }
 
