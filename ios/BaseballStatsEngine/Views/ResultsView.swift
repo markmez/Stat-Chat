@@ -236,21 +236,14 @@ struct ResultsView: View {
         guard !trimmed.isEmpty, !appState.isLoading else { return }
         inputText = ""
 
-        // Direct-to-profile shortcut: skip Claude if input is just a player name
-        if let playerName = PlayerNameMatcher.matchPlayer(trimmed) {
-            appState.addToSearchHistory(trimmed)
-            selectedPlayerName = playerName
-            return
+        switch PlayerNameMatcher.resolveSearch(trimmed, history: appState) {
+        case .player(let name, _):
+            selectedPlayerName = name
+        case .team(let code):
+            selectedTeamCode = code
+        case .question(let query):
+            appState.sendQuestion(query, followUpContext: initialQuestion)
         }
-
-        // Direct-to-team shortcut: skip Claude if input is just a team name
-        if let teamCode = PlayerNameMatcher.matchTeamExact(trimmed) {
-            appState.addToSearchHistory(trimmed)
-            selectedTeamCode = teamCode
-            return
-        }
-
-        appState.sendQuestion(trimmed, followUpContext: initialQuestion)
     }
 }
 

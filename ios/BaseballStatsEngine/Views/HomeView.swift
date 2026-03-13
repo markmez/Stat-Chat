@@ -314,33 +314,14 @@ struct HomeView: View {
         guard !trimmed.isEmpty else { return }
         questionText = ""
 
-        // Direct-to-profile shortcut: skip Claude if input is just a player name
-        if let playerName = PlayerNameMatcher.matchPlayer(trimmed) {
-            appState.addToSearchHistory(trimmed)
-            // Track last-name-only searches to dismiss the tip after 2
-            if !trimmed.contains(" ") {
-                lastNameSearchCount += 1
-                UserDefaults.standard.set(lastNameSearchCount, forKey: "lastNameSearchCount")
-            }
-            path.append(PlayerCardDestination(name: playerName))
-        } else if let teamCode = PlayerNameMatcher.matchTeamExact(trimmed) {
-            appState.addToSearchHistory(trimmed)
-            path.append(TeamCardDestination(code: teamCode))
-        } else if let ambiguous = PlayerNameMatcher.findAmbiguousPlayers(trimmed) {
-            let (sorted, dominant) = PlayerNameMatcher.sortByProminence(ambiguous)
-            if let idx = dominant {
-                appState.addToSearchHistory(sorted[idx])
-                let others = sorted.enumerated().filter { $0.offset != idx }.map(\.element)
-                path.append(PlayerCardDestination(name: sorted[idx], alternatives: others))
-            } else {
-                // Navigate to ResultsView — AppState.ask() handles disambig display
-                path.append(ResultsDestination(question: trimmed))
-            }
-        } else {
-            // Fuzzy match, general question, or no match — all go to ResultsView
-            // AppState.ask() handles fuzzy "Did you mean?" display locally
-            appState.addToSearchHistory(trimmed)
-            path.append(ResultsDestination(question: trimmed))
+        switch PlayerNameMatcher.resolveSearch(trimmed, history: appState) {
+        case .player(let name, let alternatives):
+            lastNameSearchCount = UserDefaults.standard.integer(forKey: "lastNameSearchCount")
+            path.append(PlayerCardDestination(name: name, alternatives: alternatives))
+        case .team(let code):
+            path.append(TeamCardDestination(code: code))
+        case .question(let query):
+            path.append(ResultsDestination(question: query))
         }
     }
 }

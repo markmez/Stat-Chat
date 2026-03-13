@@ -1,5 +1,18 @@
 import Foundation
 
+/// Result of resolving a search query — used by all search bars for consistent behavior.
+enum SearchResult {
+    case player(name: String, alternatives: [String])
+    case team(code: String)
+    case question(String)
+}
+
+/// Protocol for search history tracking — AppState conforms to this.
+@MainActor
+protocol SearchHistoryTracking: AnyObject {
+    func addToSearchHistory(_ query: String)
+}
+
 enum PlayerNameMatcher {
     nonisolated(unsafe) private(set) static var sortedNames: [String] = []
     nonisolated(unsafe) private(set) static var lastNameIndex: [String: [String]] = [:]
@@ -757,6 +770,55 @@ enum PlayerNameMatcher {
         var lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if lower.hasPrefix("the ") { lower = String(lower.dropFirst(4)) }
         return teamAliasMap[lower]
+    }
+
+    // MARK: - Unified search resolution
+
+    /// Single entry point for all search bars. Returns a consistent SearchResult
+    /// so every view routes the same way. Handles search history and last-name tracking.
+    @MainActor
+    static func resolveSearch(_ input: String, history: SearchHistoryTracking? = nil) -> SearchResult {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .question(trimmed) }
+
+        // Exact player name match
+        if let name = matchPlayer(trimmed) {
+            trackSearch(trimmed, history: history)
+            return .player(name: name, alternatives: [])
+        }
+
+        // Exact team name match
+        if let code = matchTeamExact(trimmed) {
+            trackSearch(trimmed, history: history)
+            return .team(code: code)
+        }
+
+        // Ambiguous player name → auto-select dominant or route to ResultsView for disambig
+        if let ambiguous = findAmbiguousPlayers(trimmed) {
+            let (sorted, dominant) = sortByProminence(ambiguous)
+            if let idx = dominant {
+                trackSearch(sorted[idx], history: history)
+                let others = sorted.enumerated().filter { $0.offset != idx }.map(\.element)
+                return .player(name: sorted[idx], alternatives: others)
+            } else {
+                return .question(trimmed)
+            }
+        }
+
+        // Everything else → ResultsView handles it (fuzzy match, general question)
+        trackSearch(trimmed, history: history)
+        return .question(trimmed)
+    }
+
+    /// Tracks search in history and increments last-name-only counter.
+    @MainActor
+    private static func trackSearch(_ text: String, history: SearchHistoryTracking?) {
+        history?.addToSearchHistory(text)
+        if !text.contains(" ") {
+            var count = UserDefaults.standard.integer(forKey: "lastNameSearchCount")
+            count += 1
+            UserDefaults.standard.set(count, forKey: "lastNameSearchCount")
+        }
     }
 
     // MARK: - Career lookup parser

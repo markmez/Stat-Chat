@@ -24,7 +24,7 @@ enum AppearanceMode: Int, CaseIterable {
 
 @Observable
 @MainActor
-final class AppState {
+final class AppState: SearchHistoryTracking {
     var messages: [Message] = []
     var isLoading = false
     var currentStreamingText = ""

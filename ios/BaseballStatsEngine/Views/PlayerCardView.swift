@@ -5,6 +5,7 @@ struct PlayerCardView: View {
     var alternatives: [String] = []
     @Binding var navigationPath: NavigationPath
 
+    @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @State private var playerCard: PlayerCard?
     @State private var isLoading = true
@@ -359,31 +360,14 @@ struct PlayerCardView: View {
         guard !trimmed.isEmpty else { return }
         searchText = ""
 
-        // Exact player name match
-        if let name = PlayerNameMatcher.matchPlayer(trimmed) {
+        switch PlayerNameMatcher.resolveSearch(trimmed, history: appState) {
+        case .player(let name, _):
             searchPlayerName = name
-            return
-        }
-
-        // Exact team name match (case-insensitive)
-        if let code = PlayerCardService.teamCodeFromFullNameCaseInsensitive(trimmed) {
+        case .team(let code):
             selectedTeamCode = code
-            return
+        case .question(let query):
+            searchQuestion = query
         }
-
-        // Ambiguous player name → auto-select dominant or route to ResultsView for disambig
-        if let ambiguous = PlayerNameMatcher.findAmbiguousPlayers(trimmed) {
-            let (sorted, dominant) = PlayerNameMatcher.sortByProminence(ambiguous)
-            if let idx = dominant {
-                searchPlayerName = sorted[idx]
-            } else {
-                searchQuestion = trimmed
-            }
-            return
-        }
-
-        // Everything else (fuzzy, general questions) → ResultsView handles it
-        searchQuestion = trimmed
     }
 
     /// Whether a player's most recent season is recent enough to auto-expand (current or previous calendar year).
