@@ -1467,6 +1467,8 @@ enum PlayerNameMatcher {
 
     static func addLinks(to text: String) -> String {
         guard !sortedNames.isEmpty else { return text }
+        // If text already contains statchat:// links, skip to avoid corrupting existing markdown
+        if text.contains("statchat://") { return text }
         var result = text
         for name in sortedNames {
             // Skip if name not present (fast path)
