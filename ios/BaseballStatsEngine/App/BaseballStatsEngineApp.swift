@@ -23,6 +23,9 @@ struct StatChatApp: App {
             .environment(appState)
             .preferredColorScheme(appState.appearanceMode.colorScheme)
             .tint(Color(red: 0.1, green: 0.25, blue: 0.7))
+            .task {
+                await SuggestionEngine.shared.checkForRemoteUpdate()
+            }
         }
     }
 }

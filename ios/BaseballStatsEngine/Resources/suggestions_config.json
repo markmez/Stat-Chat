@@ -1,0 +1,182 @@
+{
+    "version": 2,
+    "algorithm": {
+        "impressionThreshold": 6,
+        "poolSize": 12,
+        "dynamicSlots": 4,
+        "personalizedSlots": 5,
+        "defaultSlots": 3,
+        "displayDuration": 3.5,
+        "fadeDuration": 0.5
+    },
+    "defaults": [
+        { "id": "d1", "text": "Who led the league in home runs last season?", "weight": 1.0 },
+        { "id": "d2", "text": "Top 10 in OPS last season", "weight": 1.0 },
+        { "id": "d3", "text": "What is OPS+?", "weight": 1.0 },
+        { "id": "d4", "text": "Who had the most stolen bases last season?", "weight": 1.0 },
+        { "id": "d5", "text": "How did Juan Soto do last year?", "weight": 1.0 },
+        { "id": "d6", "text": "How many home runs did Ohtani hit last season?", "weight": 0.9 },
+        { "id": "d7", "text": "Judge home vs away last season", "weight": 0.9 },
+        { "id": "d8", "text": "Who has come closest to hitting .400 since Ted Williams?", "weight": 0.8 },
+        { "id": "d9", "text": "Top 5 in batting average last season", "weight": 1.0 },
+        { "id": "d10", "text": "Lowest ERA among starters last season", "weight": 0.9 },
+        { "id": "d11", "text": "Compare Lindor and Bobby Witt Jr last season", "weight": 0.8 },
+        { "id": "d12", "text": "Kyle Tucker's splits vs lefties last season", "weight": 0.8 },
+        { "id": "d13", "text": "Trea Turner's stats last season", "weight": 0.8 },
+        { "id": "d14", "text": "Elly De La Cruz last season", "weight": 0.9 },
+        { "id": "d15", "text": "What is WAR?", "weight": 0.8 },
+        { "id": "d16", "text": "What does BABIP measure?", "weight": 0.7 },
+        { "id": "d17", "text": "How many times has someone hit 50 home runs?", "weight": 0.8 },
+        { "id": "d18", "text": "How many players have stolen 60 bases in a season?", "weight": 0.7 },
+        { "id": "d19", "text": "Who had the highest OPS+ last season?", "weight": 0.9 },
+        { "id": "d20", "text": "Who hit the most doubles last season?", "weight": 0.8 },
+
+        { "id": "d21", "text": "Who led the league in RBIs last season?", "weight": 1.0 },
+        { "id": "d22", "text": "Most strikeouts by a pitcher last season", "weight": 0.9 },
+        { "id": "d23", "text": "Top 10 in hits last season", "weight": 1.0 },
+        { "id": "d24", "text": "Who had the best WHIP last season?", "weight": 0.9 },
+        { "id": "d25", "text": "Most saves last season", "weight": 0.8 },
+        { "id": "d26", "text": "Who hit the most triples last season?", "weight": 0.8 },
+        { "id": "d27", "text": "Top 5 in walks last season", "weight": 0.8 },
+        { "id": "d28", "text": "Who led the league in wins last season?", "weight": 0.9 },
+
+        { "id": "d29", "text": "How did Mookie Betts do last season?", "weight": 0.9 },
+        { "id": "d30", "text": "Freddie Freeman last season", "weight": 0.8 },
+        { "id": "d31", "text": "Gunnar Henderson's stats last season", "weight": 0.9 },
+        { "id": "d32", "text": "Bobby Witt Jr last season", "weight": 0.9 },
+        { "id": "d33", "text": "Yordan Alvarez's slash line last season", "weight": 0.8 },
+        { "id": "d34", "text": "Bryce Harper last year", "weight": 0.8 },
+        { "id": "d35", "text": "Corey Seager's numbers last season", "weight": 0.8 },
+        { "id": "d36", "text": "Rafael Devers last season", "weight": 0.8 },
+
+        { "id": "d37", "text": "What is ERA+?", "weight": 0.8 },
+        { "id": "d38", "text": "What does ISO measure?", "weight": 0.7 },
+        { "id": "d39", "text": "What is wOBA?", "weight": 0.7 },
+        { "id": "d40", "text": "What is FIP?", "weight": 0.7 },
+
+        { "id": "d41", "text": "Compare Soto and Judge last season", "weight": 0.9 },
+        { "id": "d42", "text": "Compare Devers and Jose Ramirez last season", "weight": 0.8 },
+        { "id": "d43", "text": "Vlad Guerrero Jr vs Pete Alonso last season", "weight": 0.8 },
+
+        { "id": "d44", "text": "Most 30/30 seasons in baseball history?", "weight": 0.8 },
+        { "id": "d45", "text": "Who has the longest hitting streak ever?", "weight": 0.8 },
+        { "id": "d46", "text": "How many players have hit 40/40?", "weight": 0.7 },
+        { "id": "d47", "text": "How many triple crowns have there been?", "weight": 0.7 },
+        { "id": "d48", "text": "Has anyone won back-to-back MVPs?", "weight": 0.7 },
+
+        { "id": "d49", "text": "Trea Turner's splits vs lefties last season", "weight": 0.8 },
+        { "id": "d50", "text": "Jose Ramirez home vs away last season", "weight": 0.8 }
+    ],
+    "templates": {
+        "current": {
+            "streak": [
+                "Did {player} have any hot streaks last season?",
+                "When was {player}'s coldest stretch last season?",
+                "Did {player} go on any hot runs last season?"
+            ],
+            "comparison": [
+                "{player1} vs {player2} last season",
+                "Compare {player1} and {player2} last season"
+            ],
+            "splits": [
+                "How did {player} hit against lefties last season?",
+                "{player} platoon splits last season",
+                "{player}'s splits vs lefties last season"
+            ],
+            "homeAway": [
+                "{player} home vs away last season",
+                "How did {player} hit at home last season?"
+            ],
+            "playerLookup": [
+                "How did {player} do last season?",
+                "What was {player}'s slash line last season?",
+                "{player} last season"
+            ]
+        },
+        "historical": {
+            "streak": [
+                "Did {player} have any hot streaks in {year}?",
+                "When was {player}'s coldest stretch in {year}?"
+            ],
+            "comparison": [
+                "{player1} vs {player2} career stats",
+                "Compare {player1} and {player2}"
+            ],
+            "splits": [
+                "How did {player} hit against lefties in his career?",
+                "{player} career platoon splits"
+            ],
+            "homeAway": [
+                "{player} career home vs away splits",
+                "How did {player} hit at home in his career?"
+            ],
+            "playerLookup": [
+                "How did {player} do in {year}?",
+                "{player} career stats",
+                "How did {player} hit in September {year}?"
+            ]
+        }
+    },
+    "dynamicQueries": {
+        "batting": [
+            {
+                "label": "HR leaders",
+                "sql": "SELECT p.name FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE s.season = {season} AND s.at_bats >= 50 ORDER BY s.home_runs DESC LIMIT 5",
+                "templates": [
+                    "How many home runs did {player} hit {seasonLabel}?",
+                    "{player}'s home run numbers {seasonLabel}"
+                ]
+            },
+            {
+                "label": "OPS leaders",
+                "sql": "SELECT p.name FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE s.season = {season} AND s.at_bats >= 100 ORDER BY s.ops DESC LIMIT 5",
+                "templates": [
+                    "What was {player}'s OPS {seasonLabel}?",
+                    "How did {player} do {seasonLabel}?"
+                ]
+            },
+            {
+                "label": "AVG leaders",
+                "sql": "SELECT p.name FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE s.season = {season} AND s.at_bats >= 100 ORDER BY s.batting_avg DESC LIMIT 5",
+                "templates": [
+                    "{player}'s slash line {seasonLabel}",
+                    "{player}'s batting average {seasonLabel}"
+                ]
+            },
+            {
+                "label": "SB leaders",
+                "sql": "SELECT p.name FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE s.season = {season} AND s.at_bats >= 50 ORDER BY s.stolen_bases DESC LIMIT 5",
+                "templates": [
+                    "{player}'s stolen base numbers {seasonLabel}",
+                    "How many bases did {player} steal {seasonLabel}?"
+                ]
+            }
+        ],
+        "pitching": [
+            {
+                "label": "W leaders",
+                "sql": "SELECT p.name FROM season_pitching_stats sp JOIN players p ON sp.player_id = p.player_id WHERE sp.season = {season} AND sp.games_started >= 5 ORDER BY sp.wins DESC LIMIT 5",
+                "templates": [
+                    "How did {player} pitch {seasonLabel}?",
+                    "{player}'s pitching stats {seasonLabel}"
+                ]
+            },
+            {
+                "label": "SO leaders",
+                "sql": "SELECT p.name FROM season_pitching_stats sp JOIN players p ON sp.player_id = p.player_id WHERE sp.season = {season} AND sp.games_started >= 5 ORDER BY sp.strikeouts DESC LIMIT 5",
+                "templates": [
+                    "{player}'s strikeout numbers {seasonLabel}",
+                    "How many strikeouts did {player} have {seasonLabel}?"
+                ]
+            },
+            {
+                "label": "ERA leaders",
+                "sql": "SELECT p.name FROM season_pitching_stats sp JOIN players p ON sp.player_id = p.player_id WHERE sp.season = {season} AND sp.games_started >= 10 ORDER BY sp.era ASC LIMIT 5",
+                "templates": [
+                    "What was {player}'s ERA {seasonLabel}?",
+                    "{player}'s ERA {seasonLabel}"
+                ]
+            }
+        ]
+    }
+}

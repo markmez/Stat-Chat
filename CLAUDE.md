@@ -52,6 +52,7 @@
 - **Player card bio**: Dynamic age computed from birthdate (updates on player's birthday). Header shows handedness (Bats R / Throws R). About section shows birth date.
 - **Query routing**: `simple_lookup`, `streak_finder`, `current_form`, `stat_explanation` — local `classifyLocally()` handles obvious patterns first, then Claude Haiku classifies the rest. `AppState` intercepts ~25% of queries locally before `QueryEngine`.
 - **ResultsView layout**: Follow-up input hidden during loading, appears inline below short results or pinned to bottom for long results
+- **Suggestion CMS**: `SuggestionEngine.swift` + `SuggestionConfig.swift` + `suggestions_config.json`. Bundled JSON config with S3 override (`https://stat-chat.s3.us-east-2.amazonaws.com/suggestions_config.json`). Three tiers: 50 curated defaults (weighted), personalized (from search history/team affinity/templates), dynamic in-season leaders (DB queries, `{seasonLabel}` → "this season"/"last season"). Impression/tap rotation (threshold 6, monthly reset, tapped reset on version bump). OTA updates: upload JSON to S3 with higher `version` number. `SampleQuery.swift` is deleted.
 
 ### API Cost Optimization (implemented)
 At scale (500K queries/mo), Claude API costs dominate (~$7,500-9,000/mo unoptimized). Five optimizations reduce per-query costs ~55-60%:

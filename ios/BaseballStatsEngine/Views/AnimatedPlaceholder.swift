@@ -6,16 +6,23 @@ struct AnimatedPlaceholder: View {
 
     @State private var currentIndex = 0
     @State private var opacity: Double = 0
-    @State private var queries: [String] = []
-    private let displayDuration: TimeInterval = 3.5
-    private let fadeDuration: TimeInterval = 0.5
+    @State private var suggestions: [Suggestion] = []
+
+    private var displayDuration: TimeInterval {
+        SuggestionEngine.shared.config.algorithm.displayDuration
+    }
+    private var fadeDuration: TimeInterval {
+        SuggestionEngine.shared.config.algorithm.fadeDuration
+    }
 
     var body: some View {
-        if !queries.isEmpty {
+        if !suggestions.isEmpty {
+            let current = suggestions[currentIndex % suggestions.count]
             Button {
-                onTap(queries[currentIndex % queries.count])
+                SuggestionEngine.shared.recordTap(current.id)
+                onTap(current.text)
             } label: {
-                Text(queries[currentIndex % queries.count])
+                Text(current.text)
                     .font(.system(.subheadline, design: .rounded))
                     .foregroundStyle(.tertiary)
                     .opacity(opacity)
@@ -28,21 +35,23 @@ struct AnimatedPlaceholder: View {
         } else {
             Color.clear.frame(height: 20)
                 .task {
-                    queries = SampleQuery.personalized(from: searchHistory)
-                    if queries.isEmpty { queries = SampleQuery.all.shuffled() }
+                    suggestions = SuggestionEngine.shared.buildPool(searchHistory: searchHistory)
                 }
         }
     }
 
     @MainActor
     private func startCycling() async {
-        // Small delay to ensure view is laid out before animating
         try? await Task.sleep(for: .milliseconds(100))
         withAnimation(.easeIn(duration: fadeDuration)) {
             opacity = 1.0
         }
 
         while !Task.isCancelled {
+            // Record impression for the currently visible suggestion
+            let current = suggestions[currentIndex % suggestions.count]
+            SuggestionEngine.shared.recordImpression(current.id)
+
             try? await Task.sleep(for: .seconds(displayDuration))
             guard !Task.isCancelled else { break }
 
@@ -52,7 +61,7 @@ struct AnimatedPlaceholder: View {
             try? await Task.sleep(for: .seconds(fadeDuration))
             guard !Task.isCancelled else { break }
 
-            currentIndex = (currentIndex + 1) % queries.count
+            currentIndex = (currentIndex + 1) % suggestions.count
             withAnimation(.easeIn(duration: fadeDuration)) {
                 opacity = 1.0
             }
