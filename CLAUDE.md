@@ -239,6 +239,7 @@ Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The ma
 
 ### Upcoming features
 - **"Close & Late" splits** — situational stats for at-bats in 7th inning or later when the batting team is tied, ahead by 1, or the tying run is at least on deck. Requires tracking running score through play-by-play data. MSF play-by-play has inning/half data and runner state; score can be derived by accumulating runs. New tables: `close_late_batting_splits`, `close_late_pitching_splits`. Pipeline addition to `pull_live_stats.py`. iOS player card tab.
+- **External suggested searches (lightweight CMS)** — Move the HomeView sample queries (`SampleQuery.swift` templates + fallback list) to a JSON file on the Railway volume so they can be updated without an app release. `GET /config/suggested-searches` serves the JSON (app caches locally, falls back to bundled defaults if offline). `POST /admin/suggested-searches` (protected by `ADMIN_KEY`) to update. The personalization engine (`SampleQuery.personalized()`) stays client-side — only the source data (templates, fallback queries, player names) moves server-side.
 
 ### What's explicitly NOT happening
 - **Statcast data** — no viable commercial license path. Dropped from roadmap.
