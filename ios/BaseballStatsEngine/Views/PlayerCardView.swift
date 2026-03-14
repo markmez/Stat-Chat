@@ -777,6 +777,7 @@ struct PlayerCardView: View {
                             step: 1
                         )
                         .tint(deepBlue)
+                        .disabled(form.totalSeasonGames < 2)
 
                         if pitchingFormSliderGameNumber != nil {
                             GeometryReader { geo in
@@ -1933,6 +1934,7 @@ struct PlayerCardView: View {
         guard !seasons.isEmpty else { return nil }
         var w = 0, l = 0, sv = 0, g = 0, gs = 0, cg = 0, qs = 0
         var h = 0, r = 0, er = 0, hr = 0, bb = 0, so = 0, hbp = 0, wp = 0, bk = 0
+        var bf = 0, sh = 0, sf = 0
         var totalIPOuts = 0.0
 
         for s in seasons {
@@ -1951,6 +1953,9 @@ struct PlayerCardView: View {
             bk += Int(s.countingValues["BK"] ?? 0)
             cg += Int(s.countingValues["CG"] ?? 0)
             qs += Int(s.countingValues["QS"] ?? 0)
+            bf += Int(s.countingValues["BF"] ?? 0)
+            sh += Int(s.countingValues["SH"] ?? 0)
+            sf += Int(s.countingValues["SF"] ?? 0)
             if let ipVal = s.countingValues["IP"] {
                 let whole = Int(ipVal)
                 let frac = ipVal - Double(whole)
@@ -1966,19 +1971,20 @@ struct PlayerCardView: View {
         let bb9 = ip > 0 ? 9.0 * Double(bb) / ip : 0
         let h9 = ip > 0 ? 9.0 * Double(h) / ip : 0
         let hr9 = ip > 0 ? 9.0 * Double(hr) / ip : 0
+        let baaDenom = bf - bb - hbp - sh - sf
+        let baa = baaDenom > 0 ? Double(h) / Double(baaDenom) : 0
 
-        // Use the display headers (filtered set matching what PlayerCardService uses)
         let headers = ["W", "L", "SV", "G", "GS", "CG", "QS", "IP", "H", "R", "ER",
-                        "HR", "BB", "SO", "HBP", "WP", "BK", "SB", "CS",
+                        "HR", "BB", "SO", "HBP", "WP", "BK",
                         "ERA", "WHIP", "K/9", "BB/9", "H/9", "HR/9", "BAA", "ERA+"]
         let values = [
             "\(w)", "\(l)", "\(sv)", "\(g)", "\(gs)",
             "\(cg)", "\(qs)", ipDisplay, "\(h)", "\(r)", "\(er)",
             "\(hr)", "\(bb)", "\(so)", "\(hbp)", "\(wp)",
-            "\(bk)", "0", "0",
+            "\(bk)",
             String(format: "%.2f", era), String(format: "%.2f", whip),
             String(format: "%.1f", k9), String(format: "%.1f", bb9),
-            String(format: "%.1f", h9), String(format: "%.1f", hr9), ".000", "--",
+            String(format: "%.1f", h9), String(format: "%.1f", hr9), formatRate(baa), "--",
         ]
         return StatGridParser.StatGrid(
             headers: headers,
@@ -2034,7 +2040,7 @@ struct PlayerCardView: View {
     /// Determines if pitcher is primarily a starter or reliever, and returns (projectedGrid, paceLabel).
     private func buildPitchingCareerProjectedGrid(career: StatGridParser.StatGrid) -> (grid: StatGridParser.StatGrid, label: String) {
         let countingStats: Set<String> = ["W", "L", "SV", "G", "GS", "CG", "QS", "H", "R", "ER",
-                                           "HR", "BB", "SO", "HBP", "WP", "BK", "SB", "CS"]
+                                           "HR", "BB", "SO", "HBP", "WP", "BK"]
         let headers = career.headers
         let originalValues = career.rows.first?.values ?? []
 

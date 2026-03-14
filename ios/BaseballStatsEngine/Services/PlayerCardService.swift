@@ -314,7 +314,7 @@ enum PlayerCardService {
         if playerIsPitcher || playerIsTwoWay {
             pitchingSeasons = fetchPitchingAllSeasons(name: name)
             pitchingCareer = fetchPitchingCareerTotals(name: name)
-            pitchingCareerPlatoon = fetchPitchingCareerPlatoonSplits(name: name)
+            pitchingCareerPlatoon = nil  // No ERA data per split — can't show meaningful pitching stats
             pitchingCareerHomeAway = fetchPitchingCareerHomeAwaySplits(name: name)
         } else {
             pitchingSeasons = nil

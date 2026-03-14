@@ -192,23 +192,8 @@ final class AppState: SearchHistoryTracking {
             }
         }
 
-        // Intercept season lookup queries — build response from DB, skip Claude
-        if let (playerName, season) = PlayerNameMatcher.parseSeasonLookup(trimmed) {
-            let response: String?
-            if PlayerCardService.isPitcher(name: playerName) {
-                response = PlayerCardService.buildPitchingSeasonSummary(name: playerName, season: season)
-            } else {
-                response = PlayerCardService.buildSeasonSummary(name: playerName, season: season)
-            }
-            if let response {
-                messages.append(Message(role: .user, content: trimmed))
-                messages.append(Message(role: .assistant, content: response))
-                addToConversationHistory(question: trimmed, answer: response)
-                return
-            }
-        }
-
         // Intercept platoon splits queries — "Judge vs lefties", "Soto splits"
+        // Must run BEFORE season lookup to avoid "Judge vs lefties last season" matching as a season query
         if let splits = PlayerNameMatcher.parsePlatoonSplits(trimmed) {
             let response: String?
             if PlayerCardService.isPitcher(name: splits.name) {
@@ -225,12 +210,29 @@ final class AppState: SearchHistoryTracking {
         }
 
         // Intercept home/away splits queries — "Judge home vs away", "Soto at home"
+        // Must run BEFORE season lookup to avoid "Judge at home last season" matching as a season query
         if let splits = PlayerNameMatcher.parseHomeAwaySplits(trimmed) {
             let response: String?
             if PlayerCardService.isPitcher(name: splits.name) {
                 response = PlayerCardService.buildPitchingHomeAwaySplits(name: splits.name, location: splits.location, season: splits.season)
             } else {
                 response = PlayerCardService.buildHomeAwaySplits(name: splits.name, location: splits.location, season: splits.season)
+            }
+            if let response {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                addToConversationHistory(question: trimmed, answer: response)
+                return
+            }
+        }
+
+        // Intercept season lookup queries — build response from DB, skip Claude
+        if let (playerName, season) = PlayerNameMatcher.parseSeasonLookup(trimmed) {
+            let response: String?
+            if PlayerCardService.isPitcher(name: playerName) {
+                response = PlayerCardService.buildPitchingSeasonSummary(name: playerName, season: season)
+            } else {
+                response = PlayerCardService.buildSeasonSummary(name: playerName, season: season)
             }
             if let response {
                 messages.append(Message(role: .user, content: trimmed))
