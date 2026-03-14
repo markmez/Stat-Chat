@@ -47,13 +47,13 @@ struct PlayerCardView: View {
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
     enum ProjectionMode: String, CaseIterable {
-        case fullSeason = "162 games"
+        case fullSeason = "162-Game Pace"
         case gamesMissed = "Account for games missed"
     }
 
     enum FormProjectionMode: String, CaseIterable {
         case pace = "162-Game Pace"
-        case forecast = "Season Forecast"
+        case forecast = "Actual + Streak Pace"
     }
 
     enum SplitTab: String, CaseIterable {
@@ -389,6 +389,11 @@ struct PlayerCardView: View {
         return season.year == currentYear && season.teamGames < 162
     }
 
+    private func isCurrentPitchingSeason(_ season: PitchingSeasonData) -> Bool {
+        let currentYear = Calendar.current.component(.year, from: Date())
+        return season.year == currentYear && season.teamGames < 162
+    }
+
     // MARK: - Batter Card Content
 
     @ViewBuilder
@@ -409,16 +414,33 @@ struct PlayerCardView: View {
                             .padding(.horizontal, 20)
                     }
 
-                    StatGridView(grid: current.stats)
+                    if isCurrentSeason(current) {
+                        // Current season: stats + projection in shared container
+                        VStack(alignment: .leading, spacing: 8) {
+                            StatGridView(grid: current.stats, suppressBackground: true)
+
+                            Rectangle()
+                                .fill(Color(uiColor: .separator).opacity(0.3))
+                                .frame(height: 1)
+                                .padding(.horizontal, 14)
+
+                            seasonProjectionInline(season: current)
+                        }
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color(uiColor: .secondarySystemBackground))
+                        )
                         .padding(.horizontal, 6)
+                    } else {
+                        StatGridView(grid: current.stats)
+                            .padding(.horizontal, 6)
+                    }
                 }
 
-                // Current form section (includes projection when present)
+                // Current form section (includes hot streak projection)
                 if current.currentForm != nil {
                     currentFormSection(season: current)
-                } else if isCurrentSeason(current) {
-                    // Projections only for in-progress current season
-                    projectedStatsSection(season: current)
                 }
 
                 // Unified splits section
@@ -541,8 +563,27 @@ struct PlayerCardView: View {
                             .padding(.horizontal, 20)
                     }
 
-                    StatGridView(grid: current.stats)
+                    if isCurrentPitchingSeason(current) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            StatGridView(grid: current.stats, suppressBackground: true)
+
+                            Rectangle()
+                                .fill(Color(uiColor: .separator).opacity(0.3))
+                                .frame(height: 1)
+                                .padding(.horizontal, 14)
+
+                            pitchingSeasonProjectionInline(season: current)
+                        }
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color(uiColor: .secondarySystemBackground))
+                        )
                         .padding(.horizontal, 6)
+                    } else {
+                        StatGridView(grid: current.stats)
+                            .padding(.horizontal, 6)
+                    }
                 }
 
                 // Pitching current form section
@@ -1553,6 +1594,134 @@ struct PlayerCardView: View {
                 projected.append(String(Int(proj.rounded())))
             } else {
                 // Rate stats stay as-is
+                projected.append(original)
+            }
+        }
+
+        return StatGridParser.StatGrid(
+            headers: headers,
+            rows: [StatGridParser.StatGrid.Row(label: "", values: projected)]
+        )
+    }
+
+    // MARK: - Season projection (inline in season stats container)
+
+    @State private var showSeasonProjection = false
+
+    @ViewBuilder
+    private func seasonProjectionInline(season: SeasonData) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showSeasonProjection.toggle()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text("Full Season Projection")
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Image(systemName: showSeasonProjection ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+        }
+        .buttonStyle(.plain)
+
+        if showSeasonProjection {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 0) {
+                    ForEach(ProjectionMode.allCases, id: \.self) { mode in
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                projectionMode = mode
+                            }
+                        } label: {
+                            Text(mode.rawValue)
+                                .font(.system(.caption, design: .rounded, weight: .medium))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(projectionMode == mode
+                                              ? deepBlue.opacity(0.12)
+                                              : Color.clear)
+                                )
+                                .foregroundStyle(projectionMode == mode ? deepBlue : .secondary)
+                        }
+                    }
+                }
+                .padding(.horizontal, 14)
+
+                let projected = buildProjectedGrid(season: season)
+                StatGridView(grid: projected, suppressBackground: true)
+            }
+        }
+    }
+
+    @State private var showPitchingSeasonProjection = false
+
+    @ViewBuilder
+    private func pitchingSeasonProjectionInline(season: PitchingSeasonData) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showPitchingSeasonProjection.toggle()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text("Full Season Projection")
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Image(systemName: showPitchingSeasonProjection ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+        }
+        .buttonStyle(.plain)
+
+        if showPitchingSeasonProjection {
+            let projected = buildPitchingSeasonProjectedGrid(season: season)
+            StatGridView(grid: projected, suppressBackground: true)
+        }
+    }
+
+    private func buildPitchingSeasonProjectedGrid(season: PitchingSeasonData) -> StatGridParser.StatGrid {
+        let countingStats: Set<String> = ["W", "L", "SV", "G", "GS", "CG", "QS", "H", "R", "ER",
+                                           "HR", "BB", "SO", "HBP", "WP", "BK"]
+        let headers = season.stats.headers
+        let originalValues = season.stats.rows.first?.values ?? []
+
+        // Determine projection basis: starts for starters, games for relievers
+        let isStarter = season.gamesStarted > season.games / 2
+        let targetApps: Double
+        let divisor: Double
+
+        if isStarter {
+            targetApps = 33.0
+            divisor = Double(max(season.gamesStarted, 1))
+        } else {
+            let reliefApps = season.games - season.gamesStarted
+            targetApps = 65.0
+            divisor = Double(max(reliefApps, 1))
+        }
+
+        let factor = targetApps / divisor
+
+        var projected: [String] = []
+        for (idx, header) in headers.enumerated() {
+            guard idx < originalValues.count else { break }
+            let original = originalValues[idx]
+
+            if header == "IP" {
+                let parts = original.split(separator: ".")
+                let whole = Int(parts[0]) ?? 0
+                let thirds = parts.count > 1 ? (Int(parts[1]) ?? 0) : 0
+                let totalOuts = Double(whole * 3 + thirds) * factor
+                let projOuts = Int(totalOuts.rounded())
+                projected.append("\(projOuts / 3).\(projOuts % 3)")
+            } else if countingStats.contains(header), let val = Double(original) {
+                projected.append(String(Int((val * factor).rounded())))
+            } else {
                 projected.append(original)
             }
         }

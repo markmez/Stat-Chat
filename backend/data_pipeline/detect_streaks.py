@@ -553,8 +553,10 @@ def detect_sliding_streaks(conn, season_filter=None):
 
 # --- Current Form detection ---
 
-CURRENT_FORM_MIN_GAMES = 14   # Minimum games for a player-season to be eligible
-CURRENT_FORM_MIN_SLICE = 10   # Minimum games in the form slice
+CURRENT_FORM_MIN_GAMES = 3    # Minimum games for a player-season to be eligible
+CURRENT_FORM_MIN_SLICE = 3    # Minimum games in the form slice (early season)
+CURRENT_FORM_FULL_SLICE = 10  # Minimum slice once past early season threshold
+CURRENT_FORM_EARLY_THRESHOLD = 14  # Below this, use MIN_SLICE; at or above, use FULL_SLICE
 CURRENT_FORM_MAX_SLICE = 60   # Maximum games to scan back
 
 
@@ -636,18 +638,19 @@ def detect_current_form(conn, season_filter=None):
 
         # Early season: if player has fewer than CURRENT_FORM_MIN_GAMES,
         # use all their games as current form (enables "at this pace" projections
-        # from day 1). Normal algorithm kicks in once they cross the threshold.
+        # from day 1).
         if len(games) < CURRENT_FORM_MIN_GAMES:
             form_start_idx = 0
-            # Skip the slice-scanning loop below
             best_start_idx = 0
         else:
-            # Find the tail slice with the highest OPS
+            # Find the tail slice with the highest OPS.
+            # Use shorter minimum slice early season (3 games), full minimum (10) after 14 games.
+            min_slice = CURRENT_FORM_MIN_SLICE if len(games) < CURRENT_FORM_EARLY_THRESHOLD else CURRENT_FORM_FULL_SLICE
             best_start_idx = None
             best_ops = -1.0
             max_slice = min(CURRENT_FORM_MAX_SLICE, len(games))
 
-            for slice_len in range(CURRENT_FORM_MIN_SLICE, max_slice + 1):
+            for slice_len in range(min_slice, max_slice + 1):
                 start_idx = len(games) - slice_len
                 # Compute OPS for this tail slice
                 total_ab = 0
@@ -680,7 +683,7 @@ def detect_current_form(conn, season_filter=None):
                     best_ops = ops
                     best_start_idx = start_idx
 
-            form_start_idx = best_start_idx if best_start_idx is not None else max(0, len(games) - CURRENT_FORM_MIN_SLICE)
+            form_start_idx = best_start_idx if best_start_idx is not None else max(0, len(games) - min_slice)
 
         # Compute form stats
         form_stats = compute_segment_stats_extended(games, form_start_idx, len(games))
