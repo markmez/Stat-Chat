@@ -315,7 +315,7 @@ enum PlayerCardService {
             pitchingSeasons = fetchPitchingAllSeasons(name: name)
             pitchingCareer = fetchPitchingCareerTotals(name: name)
             pitchingCareerPlatoon = nil  // No ERA data per split — can't show meaningful pitching stats
-            pitchingCareerHomeAway = fetchPitchingCareerHomeAwaySplits(name: name)
+            pitchingCareerHomeAway = nil
         } else {
             pitchingSeasons = nil
             pitchingCareer = nil

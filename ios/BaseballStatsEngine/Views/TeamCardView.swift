@@ -130,7 +130,10 @@ struct TeamCardView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Button { navigationPath = NavigationPath() } label: {
+                Button {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    navigationPath = NavigationPath()
+                } label: {
                     HStack(spacing: 6) {
                         Text("StatChat")
                             .font(.system(.subheadline, weight: .semibold))

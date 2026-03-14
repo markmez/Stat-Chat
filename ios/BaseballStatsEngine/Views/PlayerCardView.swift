@@ -241,7 +241,10 @@ struct PlayerCardView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                Button { navigationPath = NavigationPath() } label: {
+                Button {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    navigationPath = NavigationPath()
+                } label: {
                     HStack(spacing: 6) {
                         Text("StatChat")
                             .font(.system(.subheadline, weight: .semibold))
@@ -766,14 +769,15 @@ struct PlayerCardView: View {
                     .padding(.horizontal, 14)
 
                     ZStack {
+                        let sliderMax = Double(max(form.totalSeasonGames, 2))
                         Slider(
                             value: Binding<Double>(
-                                get: { Double(numGamesShown) },
+                                get: { form.totalSeasonGames < 2 ? sliderMax : Double(numGamesShown) },
                                 set: { newValue in
                                     pitchingFormSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
                                 }
                             ),
-                            in: 1...Double(max(form.totalSeasonGames, 2)),
+                            in: 1...sliderMax,
                             step: 1
                         )
                         .tint(deepBlue)
@@ -1204,14 +1208,15 @@ struct PlayerCardView: View {
                     .padding(.horizontal, 14)
 
                     ZStack {
+                        let sliderMax = Double(max(form.totalSeasonGames, 2))
                         Slider(
                             value: Binding<Double>(
-                                get: { Double(numGamesShown) },
+                                get: { form.totalSeasonGames < 2 ? sliderMax : Double(numGamesShown) },
                                 set: { newValue in
                                     formSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
                                 }
                             ),
-                            in: 1...Double(max(form.totalSeasonGames, 2)),
+                            in: 1...sliderMax,
                             step: 1
                         )
                         .tint(deepBlue)
