@@ -204,6 +204,8 @@ struct ResultsView: View {
                 .font(.system(.body, design: .rounded))
                 .foregroundStyle(.primary)
                 .focused($isInputFocused)
+                .autocorrectionDisabled(true)
+                .textInputAutocapitalization(.never)
                 .onSubmit { sendQuestion() }
 
                 if !inputText.isEmpty {

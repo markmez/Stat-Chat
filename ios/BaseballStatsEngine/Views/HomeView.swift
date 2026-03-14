@@ -116,6 +116,8 @@ struct HomeView: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1...10)
                     .focused($isInputFocused)
+                    .autocorrectionDisabled(true)
+                    .textInputAutocapitalization(.never)
                     .onSubmit { submitQuestion() }
 
                     if !questionText.isEmpty {

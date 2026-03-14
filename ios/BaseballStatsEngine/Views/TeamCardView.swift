@@ -220,6 +220,8 @@ struct TeamCardView: View {
                     .font(.system(.body, design: .rounded))
                     .foregroundStyle(.primary)
                     .focused($isSearchFocused)
+                    .autocorrectionDisabled(true)
+                    .textInputAutocapitalization(.never)
                     .onSubmit { submitSearch() }
 
                     if !searchText.isEmpty {
