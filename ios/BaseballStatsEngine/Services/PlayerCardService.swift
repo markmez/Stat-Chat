@@ -2045,12 +2045,14 @@ enum PlayerCardService {
             orderDir = comparison == ">=" ? "DESC" : "ASC"
         }
 
+        let badEraFilter = isPitching ? eraDataFilter(prefix: prefix, stat: stat) : ""
+
         let sql = """
             SELECT p.name, \(prefix).\(stat.dbColumn), \(prefix).season
             FROM \(table) \(prefix)
             JOIN players p ON \(prefix).player_id = p.player_id
-            WHERE \(prefix).\(stat.dbColumn) \(comparison) \(threshold)
-            ORDER BY \(prefix).\(stat.dbColumn) \(orderDir == "ASC" ? "DESC" : "DESC")
+            WHERE \(prefix).\(stat.dbColumn) \(comparison) \(threshold)\(badEraFilter)
+            ORDER BY \(prefix).\(stat.dbColumn) DESC
             LIMIT 50
             """
         guard let result = try? db.execute(sql: sql),
@@ -2125,12 +2127,13 @@ enum PlayerCardService {
         }
 
         let birthdateFilter = (superlative == .youngest || superlative == .oldest) ? " AND p.birthdate IS NOT NULL" : ""
+        let badEraFilter = isPitching ? eraDataFilter(prefix: prefix, stat: stat) : ""
 
         let sql = """
             SELECT p.name, \(prefix).\(stat.dbColumn), \(prefix).season\(ageSelect)
             FROM \(table) \(prefix)
             JOIN players p ON \(prefix).player_id = p.player_id
-            WHERE \(prefix).\(stat.dbColumn) >= \(threshold)\(birthdateFilter)
+            WHERE \(prefix).\(stat.dbColumn) >= \(threshold)\(birthdateFilter)\(badEraFilter)
             ORDER BY \(orderBy)
             LIMIT 10
             """
@@ -2218,12 +2221,39 @@ enum PlayerCardService {
             qualFilter = " AND \(prefix).ip_outs >= 486"
         }
 
+        // Handle innings_pitched specially — TEXT column, use ip_outs (outs) for numeric comparison
+        let filterColumn: String
+        let filterThreshold: Double
+        let displayColumn: String  // What to SELECT for display
+        if filterStat.dbColumn == "innings_pitched" {
+            filterColumn = "\(prefix).ip_outs"
+            filterThreshold = threshold * 3  // 200 IP = 600 outs
+            displayColumn = "\(prefix).innings_pitched"
+        } else {
+            filterColumn = "\(prefix).\(filterStat.dbColumn)"
+            filterThreshold = threshold
+            displayColumn = "\(prefix).\(filterStat.dbColumn)"
+        }
+
+        // Same for ranking by IP
+        let rankColumn: String
+        let rankDisplayColumn: String
+        if rankStat.dbColumn == "innings_pitched" {
+            rankColumn = "\(prefix).ip_outs"
+            rankDisplayColumn = "\(prefix).innings_pitched"
+        } else {
+            rankColumn = "\(prefix).\(rankStat.dbColumn)"
+            rankDisplayColumn = "\(prefix).\(rankStat.dbColumn)"
+        }
+
+        let badEraFilter = isPitching ? eraDataFilter(prefix: prefix, stat: rankStat, additionalStats: [filterStat]) : ""
+
         let sql = """
-            SELECT p.name, \(prefix).\(rankStat.dbColumn), \(prefix).\(filterStat.dbColumn), \(prefix).season
+            SELECT p.name, \(rankDisplayColumn), \(displayColumn), \(prefix).season
             FROM \(table) \(prefix)
             JOIN players p ON \(prefix).player_id = p.player_id
-            WHERE \(prefix).\(filterStat.dbColumn) \(comparison) \(threshold)\(seasonFilter)\(qualFilter)
-            ORDER BY \(prefix).\(rankStat.dbColumn) \(orderDir)
+            WHERE \(filterColumn) \(comparison) \(filterThreshold)\(seasonFilter)\(qualFilter)\(badEraFilter)
+            ORDER BY \(rankColumn) \(orderDir)
             LIMIT \(limit)
             """
         guard let result = try? db.execute(sql: sql),
@@ -3462,6 +3492,18 @@ enum PlayerCardService {
 
     private static func sanitize(_ name: String) -> String {
         name.replacingOccurrences(of: "'", with: "''")
+    }
+
+    /// Filter to exclude seasons with missing earned runs data (1903-1908 in Retrosheet).
+    /// These show ERA=0.00 with 200+ IP which is bad data, not real.
+    /// Only applied when the query involves ERA-related stats.
+    private static func eraDataFilter(prefix: String, stat: PlayerNameMatcher.StatInfo, additionalStats: [PlayerNameMatcher.StatInfo] = []) -> String {
+        let allStats = [stat] + additionalStats
+        let eraRelated = ["era", "earned_runs", "whip", "era_plus"]
+        if allStats.contains(where: { eraRelated.contains($0.dbColumn) }) {
+            return " AND NOT (\(prefix).earned_runs = 0 AND \(prefix).ip_outs > 0)"
+        }
+        return ""
     }
 
     private static func formatRate(_ value: String) -> String {
