@@ -35,6 +35,7 @@ final class AppState: SearchHistoryTracking {
     /// Set by resolveDisambiguation when the corrected query is just a player name — ResultsView observes this to navigate to player card
     var disambiguatedPlayerName: String?
     private(set) var weeklyQueryCount: Int = 0
+    var showPaywall = false
     var appearanceMode: AppearanceMode = .system {
         didSet { UserDefaults.standard.set(appearanceMode.rawValue, forKey: appearanceModeKey) }
     }
@@ -81,6 +82,14 @@ final class AppState: SearchHistoryTracking {
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
+        // Paywall gate — check before consuming the query
+        resetWeeklyCountIfNeeded()
+        if weeklyQueryCount >= 5 && !StoreKitService.shared.isSubscribed {
+            AnalyticsService.trackPaywallHit(queryCount: weeklyQueryCount)
+            showPaywall = true
+            return
+        }
+
         incrementQueryCount()
 
         // For follow-ups, store with context prefix if the question looks contextual
@@ -92,15 +101,15 @@ final class AppState: SearchHistoryTracking {
 
         // Intercept comparison queries — build response from structured data
         let compResult = PlayerNameMatcher.parseComparison(trimmed)
-        if let (p1, p2) = compResult {
+        if let (p1, p2, compSeason) = compResult {
             let bothLocal = PlayerCardService.hasLocalData(name: p1) && PlayerCardService.hasLocalData(name: p2)
             if bothLocal {
                 // Both in local DB — synchronous
                 let response: String
                 if PlayerCardService.isPitcher(name: p1) && PlayerCardService.isPitcher(name: p2) {
-                    response = PlayerCardService.buildPitchingComparison(player1: p1, player2: p2)
+                    response = PlayerCardService.buildPitchingComparison(player1: p1, player2: p2, season: compSeason)
                 } else {
-                    response = PlayerCardService.buildComparison(player1: p1, player2: p2)
+                    response = PlayerCardService.buildComparison(player1: p1, player2: p2, season: compSeason)
                 }
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
@@ -115,7 +124,7 @@ final class AppState: SearchHistoryTracking {
                 isLoading = true
                 AnalyticsService.trackQuery(text: trimmed, type: .backendComparison)
                 currentQueryTask = Task {
-                    let response = await PlayerCardService.buildComparisonAsync(player1: p1, player2: p2)
+                    let response = await PlayerCardService.buildComparisonAsync(player1: p1, player2: p2, season: compSeason)
                     guard !Task.isCancelled else { return }
                     messages[loadingIndex] = Message(role: .assistant, content: response)
                     isLoading = false

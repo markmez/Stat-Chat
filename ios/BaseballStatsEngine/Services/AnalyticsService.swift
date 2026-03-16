@@ -97,4 +97,8 @@ enum AnalyticsService {
             "plan": plan
         ])
     }
+
+    static func trackPaywallDismiss() {
+        Mixpanel.mainInstance().track(event: "paywall_dismiss")
+    }
 }

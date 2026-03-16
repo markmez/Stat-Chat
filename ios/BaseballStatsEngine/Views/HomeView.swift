@@ -38,6 +38,13 @@ struct HomeView: View {
                     TeamCardView(teamCode: dest.code, navigationPath: $path)
                 }
         }
+        .sheet(isPresented: Binding(
+            get: { appState.showPaywall },
+            set: { appState.showPaywall = $0 }
+        )) {
+            PaywallView()
+                .environment(appState)
+        }
         .onChange(of: path) { _, newPath in
             if newPath.isEmpty {
                 isInputFocused = false

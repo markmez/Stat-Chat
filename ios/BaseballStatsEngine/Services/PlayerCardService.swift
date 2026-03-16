@@ -622,12 +622,12 @@ enum PlayerCardService {
 
     /// Build a structured comparison response for two players (current season + career).
     /// Returns a string with [STATGRID] blocks that StatGridParser can parse.
-    static func buildComparison(player1: String, player2: String) -> String {
+    static func buildComparison(player1: String, player2: String, season: Int? = nil) -> String {
         let header = "HEADER: " + allHeaders.joined(separator: ", ")
 
-        // Fetch current season (latest year) for each player
-        let season1 = fetchLatestSeasonRow(name: player1)
-        let season2 = fetchLatestSeasonRow(name: player2)
+        // Fetch requested season or latest for each player
+        let season1 = season.flatMap({ fetchSeasonRow(name: player1, year: $0) }) ?? fetchLatestSeasonRow(name: player1)
+        let season2 = season.flatMap({ fetchSeasonRow(name: player2, year: $0) }) ?? fetchLatestSeasonRow(name: player2)
 
         // Fetch career totals for each player
         let career1 = fetchCareerRow(name: player1)
@@ -680,12 +680,12 @@ enum PlayerCardService {
     }
 
     /// Async comparison that fetches from backend for players not in local DB.
-    static func buildComparisonAsync(player1: String, player2: String) async -> String {
+    static func buildComparisonAsync(player1: String, player2: String, season: Int? = nil) async -> String {
         let header = "HEADER: " + allHeaders.joined(separator: ", ")
 
         // Fetch data — local first, backend fallback
-        let (name1, latest1, career1) = await comparisonData(for: player1)
-        let (name2, latest2, career2) = await comparisonData(for: player2)
+        let (name1, latest1, career1) = await comparisonData(for: player1, season: season)
+        let (name2, latest2, career2) = await comparisonData(for: player2, season: season)
 
         var parts: [String] = []
 
@@ -728,12 +728,12 @@ enum PlayerCardService {
     }
 
     /// Get comparison data for a single player — tries local DB, falls back to backend.
-    private static func comparisonData(for name: String) async -> (label: String, latest: (year: Int, values: [String])?, career: [String]?) {
+    private static func comparisonData(for name: String, season: Int? = nil) async -> (label: String, latest: (year: Int, values: [String])?, career: [String]?) {
         // Try local first
         if hasLocalData(name: name) {
             let info = fetchPlayerInfo(name: name)
             let displayName = info?.name ?? name
-            let latest = fetchLatestSeasonRow(name: name)
+            let latest = season.flatMap({ fetchSeasonRow(name: name, year: $0) }) ?? fetchLatestSeasonRow(name: name)
 
             // If player's career extends beyond local range, get career from backend
             if playerNeedsBackendForCareer(name: name) {
@@ -843,6 +843,28 @@ enum PlayerCardService {
             formatRate(String(format: "%.3f", slg)), formatRate(String(format: "%.3f", ops)),
             "--", formatRate(String(format: "%.3f", iso)), formatRate(String(format: "%.3f", babip)),
         ]
+    }
+
+    /// Fetch a specific season's 21 formatted stat values for a player.
+    private static func fetchSeasonRow(name: String, year: Int) -> (year: Int, values: [String])? {
+        let sql = """
+            SELECT s.season,
+                   s.games, s.at_bats, s.runs, s.hits,
+                   s.doubles, s.triples, s.home_runs, s.rbi, s.stolen_bases, s.caught_stealing,
+                   s.walks, s.intentional_walks, s.strikeouts, s.hit_by_pitch,
+                   s.batting_avg, s.obp, s.slg, s.ops, s.ops_plus, s.iso, s.babip
+            FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name = '\(sanitize(name))' AND s.season = \(year)
+            LIMIT 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              let yr = Int(row[0]) else { return nil }
+
+        let values = Array(row[1...21])
+        let formatted = formatValues(headers: allHeaders, values: values)
+        return (yr, formatted)
     }
 
     /// Fetch the latest season's 21 formatted stat values for a player.
@@ -5010,11 +5032,11 @@ enum PlayerCardService {
 
     // MARK: - Pitching comparison (chat response builder)
 
-    static func buildPitchingComparison(player1: String, player2: String) -> String {
+    static func buildPitchingComparison(player1: String, player2: String, season: Int? = nil) -> String {
         let header = "HEADER: " + pitchingHeaders.joined(separator: ", ")
 
-        let season1 = fetchPitchingLatestSeasonRow(name: player1)
-        let season2 = fetchPitchingLatestSeasonRow(name: player2)
+        let season1 = season.flatMap({ fetchPitchingSeasonRow(name: player1, year: $0) }) ?? fetchPitchingLatestSeasonRow(name: player1)
+        let season2 = season.flatMap({ fetchPitchingSeasonRow(name: player2, year: $0) }) ?? fetchPitchingLatestSeasonRow(name: player2)
 
         let career1 = fetchPitchingCareerRow(name: player1)
         let career2 = fetchPitchingCareerRow(name: player2)
@@ -5055,6 +5077,31 @@ enum PlayerCardService {
         parts.append("[SUGGEST]\(name2) vs lefties[/SUGGEST]")
 
         return parts.joined(separator: "\n")
+    }
+
+    private static func fetchPitchingSeasonRow(name: String, year: Int) -> (year: Int, values: [String])? {
+        let sql = """
+            SELECT sp.season,
+                   sp.wins, sp.losses, sp.saves, sp.games, sp.games_started, sp.games_finished,
+                   sp.complete_games, sp.quality_starts, sp.innings_pitched,
+                   sp.hits, sp.runs, sp.earned_runs, sp.home_runs, sp.walks, sp.intentional_walks,
+                   sp.strikeouts, sp.hit_by_pitch, sp.wild_pitches, sp.balks,
+                   sp.batters_faced, sp.sacrifice_hits, sp.sacrifice_flies,
+                   sp.stolen_bases, sp.caught_stealing,
+                   sp.era, sp.whip, sp.k_per_9, sp.bb_per_9, sp.k_per_bb,
+                   sp.h_per_9, sp.hr_per_9, sp.baa, sp.era_plus
+            FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name = '\(sanitize(name))' AND sp.season = \(year)
+            LIMIT 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              let yr = Int(row[0]) else { return nil }
+
+        let values = Array(row[1...33])
+        let formatted = formatPitchingValues(headers: pitchingAllHeaders, values: values)
+        return (yr, filterPitchingForDisplay(formatted))
     }
 
     private static func fetchPitchingLatestSeasonRow(name: String) -> (year: Int, values: [String])? {

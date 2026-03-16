@@ -216,6 +216,24 @@ enum PlayerNameMatcher {
         return nil
     }
 
+    /// Look up a player's debut year (first season in either batting or pitching stats).
+    private static func lookupDebutYear(name: String) -> Int? {
+        let db = DatabaseService()
+        let sanitized = name.replacingOccurrences(of: "'", with: "''")
+        let sql = """
+            SELECT MIN(season) FROM (
+                SELECT season FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE p.name = '\(sanitized)'
+                UNION ALL
+                SELECT season FROM season_pitching_stats sp JOIN players p ON sp.player_id = p.player_id WHERE p.name = '\(sanitized)'
+            )
+            """
+        if let result = try? db.execute(sql: sql),
+           let row = result.rows.first, let year = Int(row[0]) {
+            return year
+        }
+        return nil
+    }
+
     /// Extract a season year from input. If `defaultToMostRecent` is true and no explicit year
     /// is found, returns the current calendar year (which may be beyond the local DB range).
     static func detectSeason(_ input: String, defaultToMostRecent: Bool = false) -> Int? {
@@ -518,8 +536,22 @@ enum PlayerNameMatcher {
 
     /// Detect comparison queries like "compare Judge and Ohtani" or "Judge vs Ohtani".
     /// Returns two canonical player names if both resolve unambiguously.
-    static func parseComparison(_ input: String) -> (String, String)? {
+    static func parseComparison(_ input: String) -> (String, String, Int?)? {
+        let season = detectSeason(input)
         var cleaned = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Strip year tokens so they don't interfere with player name matching
+        if season != nil {
+            cleaned = cleaned.replacingOccurrences(of: "\\b(189[89]|19\\d{2}|20[0-2]\\d)\\b", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+            // Also strip relative season phrases
+            for phrase in ["this year", "this season", "current season", "last year", "last season",
+                          "previous season", "prior season", "two years ago", "2 years ago",
+                          "three years ago", "3 years ago"] {
+                cleaned = cleaned.replacingOccurrences(of: phrase, with: "")
+            }
+            cleaned = cleaned.trimmingCharacters(in: .whitespaces)
+        }
 
         // Strip common prefixes
         for prefix in ["how do ", "how does ", "compare "] {
@@ -569,7 +601,7 @@ enum PlayerNameMatcher {
                   let name1 = m1,
                   let name2 = m2,
                   name1 != name2 else { continue }
-            return (name1, name2)
+            return (name1, name2, season)
         }
 
         // Fallback: find two distinct player names anywhere in the string.
@@ -582,7 +614,7 @@ enum PlayerNameMatcher {
                 // Remove the first player's name from the text and search again
                 let remaining = cleaned.replacingOccurrences(of: first.lowercased(), with: "")
                 if let second = findPlayerInText(remaining), second != first {
-                    return (first, second)
+                    return (first, second, season)
                 }
             }
         }
@@ -1025,39 +1057,56 @@ enum PlayerNameMatcher {
         }
         guard let stat else { return nil }
 
-        // Check for "since [player name]" — resolve to year
+        // Check for "since [player name]" or "since [year]" — resolve to allTimeSince scope
         var sinceYear: Int?
         if lower.contains("since ") {
-            // Look for a player name after "since"
             if let sinceRange = lower.range(of: "since ") {
                 let afterSince = String(lower[sinceRange.upperBound...])
-                // Check for player name match
-                for name in sortedNames {
-                    if afterSince.hasPrefix(name.lowercased()) || containsWord(name.lowercased(), in: afterSince) {
-                        // Look up player's last season
-                        let db = DatabaseService()
-                        let sanitized = name.replacingOccurrences(of: "'", with: "''")
-                        if let result = try? db.execute(sql: "SELECT MAX(season) FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE p.name = '\(sanitized)'"),
-                           let row = result.rows.first, let year = Int(row[0]) {
-                            sinceYear = year
+
+                // Check for explicit year after "since" (e.g. "since 2015")
+                if let yearRange = afterSince.range(of: "\\b(189[89]|19\\d{2}|20[0-2]\\d)\\b", options: .regularExpression),
+                   let year = Int(afterSince[yearRange]) {
+                    sinceYear = year
+                }
+
+                // Check for player name after "since" (e.g. "since Max Fried entered the league")
+                if sinceYear == nil {
+                    for name in sortedNames {
+                        if afterSince.hasPrefix(name.lowercased()) || containsWord(name.lowercased(), in: afterSince) {
+                            sinceYear = lookupDebutYear(name: name)
+                            break
                         }
-                        break
                     }
                 }
                 // Also check last names
                 if sinceYear == nil {
                     for (lastName, players) in lastNameIndex where players.count == 1 {
                         if containsWord(lastName, in: afterSince) {
-                            let name = players[0]
-                            let db = DatabaseService()
-                            let sanitized = name.replacingOccurrences(of: "'", with: "''")
-                            if let result = try? db.execute(sql: "SELECT MAX(season) FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE p.name = '\(sanitized)'"),
-                               let row = result.rows.first, let year = Int(row[0]) {
-                                sinceYear = year
-                            }
+                            sinceYear = lookupDebutYear(name: players[0])
                             break
                         }
                     }
+                }
+            }
+        }
+
+        // Check for "over the last N years", "last decade", "this century", "past N years"
+        if sinceYear == nil {
+            let currentYear = currentCalendarYear
+            // "last decade" / "past decade"
+            if lower.contains("last decade") || lower.contains("past decade") {
+                sinceYear = currentYear - 10
+            }
+            // "this century" / "21st century"
+            else if lower.contains("this century") || lower.contains("21st century") {
+                sinceYear = 2000
+            }
+            // "last/past N years" or "over the last N years"
+            else if let range = lower.range(of: "(?:last|past)\\s+(\\d+)\\s+years?", options: .regularExpression) {
+                let matched = String(lower[range])
+                if let numRange = matched.range(of: "\\d+", options: .regularExpression),
+                   let n = Int(matched[numRange]), n > 1, n <= 100 {
+                    sinceYear = currentYear - n
                 }
             }
         }

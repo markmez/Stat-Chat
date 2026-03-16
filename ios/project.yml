@@ -27,6 +27,8 @@ targets:
         buildPhase: resources
       - path: BaseballStatsEngine/Resources/suggestions_config.json
         buildPhase: resources
+      - path: BaseballStatsEngine/Resources/StatChat.storekit
+        buildPhase: resources
     dependencies:
       - package: Mixpanel
         product: Mixpanel
@@ -47,3 +49,11 @@ targets:
         PRODUCT_NAME: StatChat
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         DEVELOPMENT_TEAM: ""
+schemes:
+  StatChat:
+    build:
+      targets:
+        StatChat: all
+    run:
+      config: Debug
+      storeKitConfiguration: BaseballStatsEngine/Resources/StatChat.storekit

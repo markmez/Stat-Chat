@@ -7,6 +7,8 @@ struct StatChatApp: App {
 
     init() {
         AnalyticsService.initialize(distinctId: AppState.deviceId)
+        // Start transaction listener early so renewals/revocations are caught
+        _ = StoreKitService.shared
     }
 
     var body: some Scene {

@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
 
+    private let store = StoreKitService.shared
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
     private let freeLimit = 5
@@ -119,70 +120,114 @@ struct SettingsView: View {
 
             Divider()
 
-            // Upgrade CTA
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Upgrade for unlimited questions")
-                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                    .foregroundStyle(.primary)
-
-                // Pricing buttons
-                VStack(spacing: 10) {
-                    Button {
-                        // TODO: StoreKit purchase — monthly
-                    } label: {
-                        HStack {
-                            Text("Monthly")
-                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                            Spacer()
-                            Text("$2.99/mo")
-                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 12)
-                        .background(
-                            LinearGradient(
-                                colors: [lightBlue, deepBlue],
-                                startPoint: .leading, endPoint: .trailing
-                            ),
-                            in: RoundedRectangle(cornerRadius: 10)
-                        )
+            if store.isSubscribed {
+                // Subscribed state
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundStyle(deepBlue)
+                        Text("Subscribed")
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(.primary)
                     }
 
-                    Button {
-                        // TODO: StoreKit purchase — yearly
-                    } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Yearly")
-                                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                                Text("Save 44%")
-                                    .font(.system(.caption2, design: .rounded))
-                                    .foregroundStyle(lightBlue)
-                            }
-                            Spacer()
-                            Text("$19.99/yr")
-                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                        }
-                        .foregroundStyle(.primary)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 12)
-                        .background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color(uiColor: .separator).opacity(0.4), lineWidth: 1)
-                        )
-                    }
-                }
-
-                Button {
-                    // TODO: StoreKit restore purchases
-                } label: {
-                    Text("Restore Purchases")
+                    Text("You have unlimited questions")
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
+
+                    Button {
+                        if let url = URL(string: "https://apps.apple.com/account/subscriptions") {
+                            UIApplication.shared.open(url)
+                        }
+                    } label: {
+                        Text("Manage Subscription")
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(deepBlue)
+                    }
                 }
-                .frame(maxWidth: .infinity)
+            } else {
+                // Upgrade CTA
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Upgrade for unlimited questions")
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.primary)
+
+                    // Pricing buttons
+                    VStack(spacing: 10) {
+                        Button {
+                            Task {
+                                if let product = store.monthlyProduct {
+                                    _ = await store.purchase(product)
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Text("Monthly")
+                                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                Spacer()
+                                Text(store.monthlyProduct?.displayPrice ?? "$2.99")
+                                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                Text("/ mo")
+                                    .font(.system(.caption, design: .rounded))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 12)
+                            .background(
+                                LinearGradient(
+                                    colors: [lightBlue, deepBlue],
+                                    startPoint: .leading, endPoint: .trailing
+                                ),
+                                in: RoundedRectangle(cornerRadius: 10)
+                            )
+                        }
+
+                        Button {
+                            Task {
+                                if let product = store.yearlyProduct {
+                                    _ = await store.purchase(product)
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Yearly")
+                                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                    Text("Save 44%")
+                                        .font(.system(.caption2, design: .rounded))
+                                        .foregroundStyle(lightBlue)
+                                }
+                                Spacer()
+                                Text(store.yearlyProduct?.displayPrice ?? "$19.99")
+                                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                Text("/ yr")
+                                    .font(.system(.caption, design: .rounded))
+                            }
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 12)
+                            .background(Color(uiColor: .tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color(uiColor: .separator).opacity(0.4), lineWidth: 1)
+                            )
+                        }
+                    }
+
+                    Button {
+                        Task { await store.restorePurchases() }
+                    } label: {
+                        Text("Restore Purchases")
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    if store.purchaseInProgress {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

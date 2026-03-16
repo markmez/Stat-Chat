@@ -181,6 +181,13 @@ struct ResultsView: View {
         )) {
             TeamCardView(teamCode: selectedTeamCode ?? "", navigationPath: $navigationPath)
         }
+        .sheet(isPresented: Binding(
+            get: { appState.showPaywall },
+            set: { appState.showPaywall = $0 }
+        )) {
+            PaywallView()
+                .environment(appState)
+        }
         .onAppear {
             if appState.messages.isEmpty && !initialQuestion.isEmpty {
                 appState.sendQuestion(initialQuestion)
