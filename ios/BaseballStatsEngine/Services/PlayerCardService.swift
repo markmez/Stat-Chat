@@ -2032,6 +2032,249 @@ enum PlayerCardService {
         return parts.joined(separator: "\n")
     }
 
+    // MARK: - All-time threshold query
+
+    /// Build an all-time threshold response: "who hit 50 home runs?" (no season specified)
+    static func buildAllTimeThreshold(stat: PlayerNameMatcher.StatInfo, threshold: Double, comparison: String, isPitching: Bool) -> String {
+        let table = isPitching ? "season_pitching_stats" : "season_batting_stats"
+        let prefix = isPitching ? "sp" : "s"
+        let orderDir: String
+        if isPitching && (stat.displayAbbrev == "ERA" || stat.displayAbbrev == "WHIP" || stat.displayAbbrev == "BAA") {
+            orderDir = comparison == ">=" ? "DESC" : "ASC"
+        } else {
+            orderDir = comparison == ">=" ? "DESC" : "ASC"
+        }
+
+        let sql = """
+            SELECT p.name, \(prefix).\(stat.dbColumn), \(prefix).season
+            FROM \(table) \(prefix)
+            JOIN players p ON \(prefix).player_id = p.player_id
+            WHERE \(prefix).\(stat.dbColumn) \(comparison) \(threshold)
+            ORDER BY \(prefix).\(stat.dbColumn) \(orderDir == "ASC" ? "DESC" : "DESC")
+            LIMIT 50
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else {
+            let thresholdStr = stat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
+            let op = comparison == ">=" ? "at least" : "no more than"
+            let who = isPitching ? "pitchers" : "players"
+            return "No \(who) have had \(op) \(thresholdStr) \(stat.displayAbbrev) in a season."
+        }
+
+        let thresholdDisplay = stat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
+        let who = isPitching ? "Pitchers" : "Players"
+        let title: String
+        if comparison == ">=" {
+            if stat.isRate {
+                title = "\(who) with \(thresholdDisplay)+ \(stat.displayAbbrev) (All-Time)"
+            } else {
+                title = "\(who) with \(thresholdDisplay)+ \(stat.displayName) (All-Time)"
+            }
+        } else {
+            title = "\(who) with \(thresholdDisplay) or Fewer \(stat.displayName) (All-Time)"
+        }
+
+        var parts: [String] = []
+        parts.append("**\(title)**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: Year | \(stat.displayAbbrev)")
+        for (i, row) in result.rows.enumerated() {
+            let playerName = row[0]
+            let rawValue = row[1]
+            let season = row[2]
+            let formattedValue = stat.isRate ? formatRate(rawValue) : rawValue
+            parts.append("ROW \(i + 1). \(playerName): \(season) | \(formattedValue)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        let count = result.rows.count
+        parts.append("\n\(count) season\(count == 1 ? "" : "s") matched.")
+
+        let currentYear = Calendar.current.component(.year, from: Date())
+        let statName = stat.pillName
+        parts.append("\n[SUGGEST]\(thresholdDisplay)+ \(statName) this season[/SUGGEST]")
+        parts.append("[SUGGEST]\(thresholdDisplay)+ \(statName) last season[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - Superlative threshold query
+
+    /// Build a superlative+threshold response: "youngest to hit 50 HR", "last player to bat .400"
+    static func buildSuperlativeThreshold(stat: PlayerNameMatcher.StatInfo, threshold: Double, superlative: PlayerNameMatcher.Superlative, isPitching: Bool) -> String {
+        let table = isPitching ? "season_pitching_stats" : "season_batting_stats"
+        let prefix = isPitching ? "sp" : "s"
+
+        let orderBy: String
+        let ageSelect: String
+        switch superlative {
+        case .youngest:
+            ageSelect = ", \(prefix).season - CAST(SUBSTR(p.birthdate, 1, 4) AS INT) AS age_at_season"
+            orderBy = "age_at_season ASC"
+        case .oldest:
+            ageSelect = ", \(prefix).season - CAST(SUBSTR(p.birthdate, 1, 4) AS INT) AS age_at_season"
+            orderBy = "age_at_season DESC"
+        case .first:
+            ageSelect = ""
+            orderBy = "\(prefix).season ASC"
+        case .last:
+            ageSelect = ""
+            orderBy = "\(prefix).season DESC"
+        }
+
+        let birthdateFilter = (superlative == .youngest || superlative == .oldest) ? " AND p.birthdate IS NOT NULL" : ""
+
+        let sql = """
+            SELECT p.name, \(prefix).\(stat.dbColumn), \(prefix).season\(ageSelect)
+            FROM \(table) \(prefix)
+            JOIN players p ON \(prefix).player_id = p.player_id
+            WHERE \(prefix).\(stat.dbColumn) >= \(threshold)\(birthdateFilter)
+            ORDER BY \(orderBy)
+            LIMIT 10
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else {
+            let thresholdStr = stat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
+            let who = isPitching ? "pitcher" : "player"
+            return "No \(who) has reached \(thresholdStr) \(stat.displayAbbrev) in a season."
+        }
+
+        let thresholdDisplay = stat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
+        let superlativeLabel: String
+        switch superlative {
+        case .youngest: superlativeLabel = "Youngest"
+        case .oldest: superlativeLabel = "Oldest"
+        case .first: superlativeLabel = "First"
+        case .last: superlativeLabel = "Most Recent"
+        }
+        let who = isPitching ? "Pitchers" : "Players"
+        let title = "\(superlativeLabel) \(who) with \(thresholdDisplay)+ \(stat.displayName)"
+
+        var parts: [String] = []
+        parts.append("**\(title)**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        let hasAge = superlative == .youngest || superlative == .oldest
+        parts.append("HEADER: Year | \(stat.displayAbbrev)\(hasAge ? " | Age" : "")")
+        for (i, row) in result.rows.enumerated() {
+            let playerName = row[0]
+            let rawValue = row[1]
+            let season = row[2]
+            let formattedValue = stat.isRate ? formatRate(rawValue) : rawValue
+            if hasAge, row.count > 3 {
+                let age = row[3]
+                parts.append("ROW \(i + 1). \(playerName): \(season) | \(formattedValue) | age \(age)")
+            } else {
+                parts.append("ROW \(i + 1). \(playerName): \(season) | \(formattedValue)")
+            }
+        }
+        parts.append("[/LEADERBOARD]")
+
+        // Suggestion pills for alternate superlatives
+        let statName = stat.pillName
+        switch superlative {
+        case .youngest:
+            parts.append("\n[SUGGEST]Oldest player to hit \(thresholdDisplay)+ \(statName)[/SUGGEST]")
+            parts.append("[SUGGEST]All players with \(thresholdDisplay)+ \(statName)[/SUGGEST]")
+        case .oldest:
+            parts.append("\n[SUGGEST]Youngest player to hit \(thresholdDisplay)+ \(statName)[/SUGGEST]")
+            parts.append("[SUGGEST]All players with \(thresholdDisplay)+ \(statName)[/SUGGEST]")
+        case .first:
+            parts.append("\n[SUGGEST]Most recent player with \(thresholdDisplay)+ \(statName)[/SUGGEST]")
+            parts.append("[SUGGEST]All players with \(thresholdDisplay)+ \(statName)[/SUGGEST]")
+        case .last:
+            parts.append("\n[SUGGEST]First player with \(thresholdDisplay)+ \(statName)[/SUGGEST]")
+            parts.append("[SUGGEST]All players with \(thresholdDisplay)+ \(statName)[/SUGGEST]")
+        }
+
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - Filtered leaderboard query
+
+    /// Build a filtered leaderboard: "most HR with .300+ batting average"
+    static func buildFilteredLeaderboard(rankStat: PlayerNameMatcher.StatInfo, filterStat: PlayerNameMatcher.StatInfo, threshold: Double, comparison: String, season: Int?, limit: Int, isPitching: Bool) -> String {
+        let table = isPitching ? "season_pitching_stats" : "season_batting_stats"
+        let prefix = isPitching ? "sp" : "s"
+        let seasonFilter = season.map { " AND \(prefix).season = \($0)" } ?? ""
+        let scopeLabel = season.map { String($0) } ?? "All-Time"
+
+        // For rate ranking stats, order appropriately
+        let orderDir: String
+        if isPitching && (rankStat.displayAbbrev == "ERA" || rankStat.displayAbbrev == "WHIP" || rankStat.displayAbbrev == "BAA") {
+            orderDir = "ASC"
+        } else {
+            orderDir = "DESC"
+        }
+
+        // PA/IP minimum for rate filter stats
+        var qualFilter = ""
+        if !isPitching && (rankStat.isRate || filterStat.isRate) {
+            qualFilter = " AND \(prefix).plate_appearances >= 400"
+        } else if isPitching && (rankStat.isRate || filterStat.isRate) {
+            qualFilter = " AND \(prefix).ip_outs >= 486"
+        }
+
+        let sql = """
+            SELECT p.name, \(prefix).\(rankStat.dbColumn), \(prefix).\(filterStat.dbColumn), \(prefix).season
+            FROM \(table) \(prefix)
+            JOIN players p ON \(prefix).player_id = p.player_id
+            WHERE \(prefix).\(filterStat.dbColumn) \(comparison) \(threshold)\(seasonFilter)\(qualFilter)
+            ORDER BY \(prefix).\(rankStat.dbColumn) \(orderDir)
+            LIMIT \(limit)
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else {
+            let thresholdStr = filterStat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
+            let op = comparison == ">=" ? "at least" : "no more than"
+            let who = isPitching ? "pitchers" : "players"
+            return "No \(who) found with \(op) \(thresholdStr) \(filterStat.displayAbbrev) (\(scopeLabel))."
+        }
+
+        let thresholdDisplay = filterStat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
+        let filterLabel = comparison == ">=" ? "\(thresholdDisplay)+" : "≤\(thresholdDisplay)"
+        let title = "Most \(rankStat.displayName) with \(filterLabel) \(filterStat.displayAbbrev) (\(scopeLabel))"
+
+        var parts: [String] = []
+        parts.append("**\(title)**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        let showYear = season == nil
+        parts.append("HEADER: \(showYear ? "Year | " : "")\(rankStat.displayAbbrev) | \(filterStat.displayAbbrev)")
+        for (i, row) in result.rows.enumerated() {
+            let playerName = row[0]
+            let rankRaw = row[1]
+            let filterRaw = row[2]
+            let yearStr = row[3]
+            let rankFormatted = rankStat.isRate ? formatRate(rankRaw) : rankRaw
+            let filterFormatted = filterStat.isRate ? formatRate(filterRaw) : filterRaw
+            if showYear {
+                parts.append("ROW \(i + 1). \(playerName): \(yearStr) | \(rankFormatted) | \(filterFormatted)")
+            } else {
+                parts.append("ROW \(i + 1). \(playerName): \(rankFormatted) | \(filterFormatted)")
+            }
+        }
+        parts.append("[/LEADERBOARD]")
+
+        let count = result.rows.count
+        parts.append("\n\(count) result\(count == 1 ? "" : "s").")
+
+        // Suggestion pills
+        let rankName = rankStat.pillName
+        if season != nil {
+            parts.append("\n[SUGGEST]Most \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) all-time[/SUGGEST]")
+        } else {
+            let currentYear = Calendar.current.component(.year, from: Date())
+            parts.append("\n[SUGGEST]Most \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) in \(currentYear)[/SUGGEST]")
+        }
+
+        return parts.joined(separator: "\n")
+    }
+
     // MARK: - Milestone query (chat response builder)
 
     /// Build a cross-season milestone response: "how many times has someone hit 50 HR?"

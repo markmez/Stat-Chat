@@ -1,5 +1,5 @@
 {
-    "version": 2,
+    "version": 3,
     "algorithm": {
         "impressionThreshold": 6,
         "poolSize": 12,
@@ -65,7 +65,14 @@
         { "id": "d48", "text": "Who had the most complete games last season?", "weight": 0.7 },
 
         { "id": "d49", "text": "Did Ohtani have any hot streaks last season?", "weight": 0.8 },
-        { "id": "d50", "text": "Jose Ramirez home vs away last season", "weight": 0.8 }
+        { "id": "d50", "text": "Jose Ramirez home vs away last season", "weight": 0.8 },
+
+        { "id": "d51", "text": "Most home runs while batting .300+?", "weight": 0.8 },
+        { "id": "d52", "text": "Most stolen bases with under 10 CS?", "weight": 0.8 },
+        { "id": "d53", "text": "Highest batting average with 30+ home runs?", "weight": 0.8 },
+        { "id": "d54", "text": "Lowest ERA with 200+ innings pitched?", "weight": 0.8 },
+        { "id": "d55", "text": "Most wins with an ERA over 5.00?", "weight": 0.8 },
+        { "id": "d56", "text": "Highest OPS with fewer than 50 strikeouts?", "weight": 0.8 }
     ],
     "templates": {
         "current": {

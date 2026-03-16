@@ -289,43 +289,85 @@ final class AppState: SearchHistoryTracking {
             return
         }
 
+        // Intercept superlative queries — "youngest to hit 50 HR", "last player to bat .400"
+        if let sup = PlayerNameMatcher.parseSuperlative(trimmed) {
+            let isPitching = PlayerNameMatcher.isPitchingStat(sup.stat)
+            let response = PlayerCardService.buildSuperlativeThreshold(
+                stat: sup.stat, threshold: sup.threshold,
+                superlative: sup.superlative, isPitching: isPitching)
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            addToConversationHistory(question: trimmed, answer: response)
+            return
+        }
+
+        // Intercept filtered leaderboard queries — "most HR with .300+ batting average"
+        if let filtered = PlayerNameMatcher.parseFilteredLeaderboard(trimmed) {
+            let isPitching = PlayerNameMatcher.isPitchingStat(filtered.rankStat) || PlayerNameMatcher.isPitchingStat(filtered.filterStat)
+            let response = PlayerCardService.buildFilteredLeaderboard(
+                rankStat: filtered.rankStat, filterStat: filtered.filterStat,
+                threshold: filtered.threshold, comparison: filtered.comparison,
+                season: filtered.season, limit: filtered.limit, isPitching: isPitching)
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            addToConversationHistory(question: trimmed, answer: response)
+            return
+        }
+
         // Intercept threshold queries — "who hit 40 home runs?", "players batting over .300"
         if let threshold = PlayerNameMatcher.parseThreshold(trimmed) {
             let isPitching = PlayerNameMatcher.isPitchingStat(threshold.stat)
-            if PlayerCardService.isLocalSeason(threshold.season) {
-                // Local DB has this season
+            if let season = threshold.season {
+                if PlayerCardService.isLocalSeason(season) {
+                    let response: String
+                    if isPitching {
+                        response = PlayerCardService.buildPitchingThresholdLeaderboard(
+                            stat: threshold.stat, threshold: threshold.threshold,
+                            comparison: threshold.comparison, season: season)
+                    } else {
+                        response = PlayerCardService.buildThresholdLeaderboard(
+                            stat: threshold.stat, threshold: threshold.threshold,
+                            comparison: threshold.comparison, season: season)
+                    }
+                    messages.append(Message(role: .user, content: trimmed))
+                    messages.append(Message(role: .assistant, content: response))
+                    addToConversationHistory(question: trimmed, answer: response)
+                    return
+                }
+                // Backend fallback for pre-2016
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: ""))
+                let loadingIndex = messages.count - 1
+                isLoading = true
+                currentQueryTask = Task {
+                    let service = BackendService()
+                    let resp = try? await service.fetchThreshold(
+                        stat: threshold.stat.dbColumn, value: threshold.threshold,
+                        comparison: threshold.comparison, season: season,
+                        isPitching: isPitching, limit: 50)
+                    guard !Task.isCancelled else { return }
+                    let response = resp.map { PlayerCardService.formatBackendThreshold($0, stat: threshold.stat) }
+                        ?? "No data available for that query."
+                    messages[loadingIndex] = Message(role: .assistant, content: response)
+                    isLoading = false
+                    addToConversationHistory(question: trimmed, answer: response)
+                }
+            } else {
+                // No season specified → all-time threshold query
                 let response: String
                 if isPitching {
-                    response = PlayerCardService.buildPitchingThresholdLeaderboard(
+                    response = PlayerCardService.buildAllTimeThreshold(
                         stat: threshold.stat, threshold: threshold.threshold,
-                        comparison: threshold.comparison, season: threshold.season)
+                        comparison: threshold.comparison, isPitching: true)
                 } else {
-                    response = PlayerCardService.buildThresholdLeaderboard(
+                    response = PlayerCardService.buildAllTimeThreshold(
                         stat: threshold.stat, threshold: threshold.threshold,
-                        comparison: threshold.comparison, season: threshold.season)
+                        comparison: threshold.comparison, isPitching: false)
                 }
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
                 return
-            }
-            // Backend fallback for pre-2016
-            messages.append(Message(role: .user, content: trimmed))
-            messages.append(Message(role: .assistant, content: ""))
-            let loadingIndex = messages.count - 1
-            isLoading = true
-            currentQueryTask = Task {
-                let service = BackendService()
-                let resp = try? await service.fetchThreshold(
-                    stat: threshold.stat.dbColumn, value: threshold.threshold,
-                    comparison: threshold.comparison, season: threshold.season,
-                    isPitching: isPitching, limit: 50)
-                guard !Task.isCancelled else { return }
-                let response = resp.map { PlayerCardService.formatBackendThreshold($0, stat: threshold.stat) }
-                    ?? "No data available for that query."
-                messages[loadingIndex] = Message(role: .assistant, content: response)
-                isLoading = false
-                addToConversationHistory(question: trimmed, answer: response)
             }
             return
         }

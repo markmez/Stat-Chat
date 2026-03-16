@@ -1104,7 +1104,7 @@ enum PlayerNameMatcher {
 
     /// Detect queries like "who hit 40 home runs?", "players batting over .300", "who had 100 RBI?".
     /// Requires stat keyword + numeric threshold (league-wide, no player name).
-    static func parseThreshold(_ input: String) -> (stat: StatInfo, threshold: Double, comparison: String, season: Int)? {
+    static func parseThreshold(_ input: String) -> (stat: StatInfo, threshold: Double, comparison: String, season: Int?)? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         // Reject if a player name is present — this is league-wide only
@@ -1149,8 +1149,130 @@ enum PlayerNameMatcher {
             comparison = ">="
         }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
+        // If explicit season ("last season", "2024"), use it. Otherwise nil = all-time.
+        let season = detectSeason(lower)
         return (stat, threshold, comparison, season)
+    }
+
+    // MARK: - Superlative parser
+
+    enum Superlative: String {
+        case youngest, oldest, first, last
+    }
+
+    /// Detect queries like "youngest player to hit 50 HR", "oldest to win 20 games",
+    /// "first player to steal 100 bases", "last player to bat .400".
+    static func parseSuperlative(_ input: String) -> (stat: StatInfo, threshold: Double, superlative: Superlative)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Detect superlative type
+        let superlative: Superlative
+        if lower.contains("youngest") || lower.contains("how young") {
+            superlative = .youngest
+        } else if lower.contains("oldest") || lower.contains("how old") {
+            superlative = .oldest
+        } else if lower.contains("first player") || lower.contains("first to") || lower.contains("who was the first") || lower.contains("first person") {
+            superlative = .first
+        } else if lower.contains("last player") || lower.contains("last to") || lower.contains("most recent") ||
+                    lower.contains("last time someone") || lower.contains("when was the last") || lower.contains("last person") {
+            superlative = .last
+        } else {
+            return nil
+        }
+
+        // Reject if a specific player name is present
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) { return nil }
+        }
+        for (lastName, players) in lastNameIndex {
+            if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+        }
+
+        // Must have a stat keyword
+        guard let stat = matchStat(lower) else { return nil }
+
+        // Extract numeric threshold (skip years)
+        let numberPattern = try! NSRegularExpression(pattern: "(\\d+\\.?\\d*|\\.\\d+)\\+?")
+        let matches = numberPattern.matches(in: lower, range: NSRange(lower.startIndex..., in: lower))
+
+        var threshold: Double?
+        for match in matches {
+            guard let range = Range(match.range(at: 1), in: lower) else { continue }
+            let numStr = String(lower[range])
+            guard let num = Double(numStr) else { continue }
+            let intNum = Int(num)
+            if intNum >= 1900 && intNum <= 2099 && !numStr.contains(".") { continue }
+            threshold = num
+            break
+        }
+
+        guard let threshold else { return nil }
+        return (stat, threshold, superlative)
+    }
+
+    // MARK: - Filtered leaderboard parser
+
+    /// Detect queries like "most home runs with a .300+ batting average",
+    /// "highest OPS with fewer than 50 strikeouts", "lowest ERA with 200+ innings pitched".
+    /// Returns: rankStat (what to sort by), filterStat (what to filter on), threshold, comparison, season.
+    static func parseFilteredLeaderboard(_ input: String) -> (rankStat: StatInfo, filterStat: StatInfo, threshold: Double, comparison: String, season: Int?, limit: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Must have a leaderboard trigger for the ranking stat
+        let leaderboardTriggers = ["most ", "highest ", "lowest ", "best ", "fewest "]
+        guard leaderboardTriggers.contains(where: { lower.contains($0) }) else { return nil }
+
+        // Must have "with" or "while" or "among" separating rank stat from filter stat
+        let separators = ["with ", "while ", "among players with ", "among those with "]
+        guard let separator = separators.first(where: { lower.contains($0) }) else { return nil }
+
+        guard let sepRange = lower.range(of: separator) else { return nil }
+        let rankPart = String(lower[lower.startIndex..<sepRange.lowerBound])
+        let filterPart = String(lower[sepRange.upperBound...])
+
+        // Reject if a specific player name is present
+        for name in sortedNames {
+            if containsWord(name.lowercased(), in: lower) { return nil }
+        }
+
+        // Extract ranking stat from the first part
+        guard let rankStat = matchStat(rankPart) else { return nil }
+
+        // Extract filter stat from the second part
+        guard let filterStat = matchStat(filterPart) else { return nil }
+
+        // Must be two different stats
+        guard rankStat.dbColumn != filterStat.dbColumn else { return nil }
+
+        // Extract numeric threshold from filter part (skip years)
+        let numberPattern = try! NSRegularExpression(pattern: "(\\d+\\.?\\d*|\\.\\d+)\\+?")
+        let matches = numberPattern.matches(in: filterPart, range: NSRange(filterPart.startIndex..., in: filterPart))
+
+        var threshold: Double?
+        for match in matches {
+            guard let range = Range(match.range(at: 1), in: filterPart) else { continue }
+            let numStr = String(filterPart[range])
+            guard let num = Double(numStr) else { continue }
+            let intNum = Int(num)
+            if intNum >= 1900 && intNum <= 2099 && !numStr.contains(".") { continue }
+            threshold = num
+            break
+        }
+
+        guard let threshold else { return nil }
+
+        // Determine comparison for filter
+        let underPatterns = ["under ", "fewer than ", "less than ", "below ", "no more than "]
+        let comparison: String
+        if underPatterns.contains(where: { filterPart.contains($0) }) {
+            comparison = "<="
+        } else {
+            comparison = ">="
+        }
+
+        let season = detectSeason(lower)
+        let limit = 10
+        return (rankStat, filterStat, threshold, comparison, season, limit)
     }
 
     // MARK: - Milestone parser
