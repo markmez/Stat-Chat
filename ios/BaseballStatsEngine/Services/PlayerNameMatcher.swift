@@ -96,7 +96,7 @@ enum PlayerNameMatcher {
         let entries: [(aliases: [String], dbColumn: String, abbrev: String, name: String, isRate: Bool)] = [
             (["home runs", "homers", "dingers", "hr", "home run", "hrs", "homer", "dinger", "taters"],
              "home_runs", "HR", "Home Runs", false),
-            (["batting average", "average", "avg", "ba", "batting avg"],
+            (["batting average", "average", "avg", "ba", "batting avg", "batting"],
              "batting_avg", "AVG", "Batting Average", true),
             (["runs batted in", "rbis", "rbi", "ribbies"],
              "rbi", "RBI", "RBI", false),
