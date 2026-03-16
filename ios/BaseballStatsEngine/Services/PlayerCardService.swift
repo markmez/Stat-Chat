@@ -3964,7 +3964,18 @@ enum PlayerCardService {
 
             // Columns 2-34 map to pitchingAllHeaders (33 stats)
             let values = Array(row[2...34])
-            let formatted = formatPitchingValues(headers: pitchingAllHeaders, values: values)
+            var formatted = formatPitchingValues(headers: pitchingAllHeaders, values: values)
+
+            // Replace ERA/WHIP/ERA+ with "--" for seasons with missing earned runs data
+            // (Retrosheet gap: some pre-1912 seasons have earned_runs=0 because ERA wasn't tracked)
+            let earnedRuns = Int(row[13]) ?? 0  // row[13] = earned_runs (index 2 + 11)
+            if earnedRuns == 0 && year < 1912 && games > 0 {
+                let eraRelatedHeaders: Set<String> = ["ERA", "WHIP", "ERA+"]
+                for (i, header) in pitchingAllHeaders.enumerated() where eraRelatedHeaders.contains(header) {
+                    if i < formatted.count { formatted[i] = "--" }
+                }
+            }
+
             let displayValues = filterPitchingForDisplay(formatted)
             let grid = StatGridParser.StatGrid(
                 headers: pitchingHeaders,
