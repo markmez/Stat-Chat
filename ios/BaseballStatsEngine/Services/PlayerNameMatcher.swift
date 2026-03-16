@@ -1116,8 +1116,9 @@ enum PlayerNameMatcher {
         }
 
         // Reject leaderboard triggers — those go to parseLeaderboard
-        let leaderboardWords = ["leaders", "leader", "leaderboard"]
-        if leaderboardWords.contains(where: { containsWord($0, in: lower) }) { return nil }
+        let leaderboardWords = ["leaders", "leader", "leaderboard", "top ", "most ", "best ",
+                                "highest", "lowest", "who led", "who leads", "leading"]
+        if leaderboardWords.contains(where: { lower.contains($0) }) { return nil }
 
         // Must have a stat keyword
         guard let stat = matchStat(lower) else { return nil }
