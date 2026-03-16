@@ -250,6 +250,47 @@ enum PlayerNameMatcher {
         return nil
     }
 
+    /// Detect AL/NL league filter in query text. Returns "AL" or "NL" if found, nil otherwise.
+    /// Also returns the input with the league term removed so downstream parsers aren't confused.
+    /// Detect AL/NL league filter in query text. Returns league ("AL"/"NL") and cleaned string,
+    /// or nil if no league reference found. "(MLB)" is stripped but returns nil league (= all MLB).
+    static func detectLeague(_ input: String) -> (league: String?, cleaned: String)? {
+        let lower = input.lowercased()
+
+        // "(MLB)" means no league filter — strip it so downstream parsers aren't confused
+        if lower.contains("(mlb)") {
+            let cleaned = lower.replacingOccurrences(of: "(mlb)", with: "").replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespaces)
+            return (nil, cleaned)
+        }
+
+        // Long phrases first (unambiguous)
+        for (phrase, league) in [("american league", "AL"), ("national league", "NL")] {
+            if lower.contains(phrase) {
+                let cleaned = lower.replacingOccurrences(of: phrase, with: "").replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespaces)
+                return (league, cleaned)
+            }
+        }
+
+        // Parenthesized form from suggestion pills: "(AL)" or "(NL)"
+        for (token, league) in [("(al)", "AL"), ("(nl)", "NL")] {
+            if lower.contains(token) {
+                let cleaned = lower.replacingOccurrences(of: token, with: "").replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespaces)
+                return (league, cleaned)
+            }
+        }
+
+        // Short codes with word-boundary check to avoid "also", "final", "only", etc.
+        let pattern = try! NSRegularExpression(pattern: "\\b(al|nl)\\b")
+        if let match = pattern.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)),
+           let range = Range(match.range(at: 1), in: lower) {
+            let code = String(lower[range]).uppercased()
+            let cleaned = lower.replacingCharacters(in: range, with: "").replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespaces)
+            return (code, cleaned)
+        }
+
+        return nil
+    }
+
     /// Strip diacritics: "Acuña" → "Acuna", "Ramírez" → "Ramirez"
     static func stripDiacritics(_ s: String) -> String {
         s.folding(options: .diacriticInsensitive, locale: .current)
@@ -952,8 +993,10 @@ enum PlayerNameMatcher {
 
     /// Detect queries like "HR leaders", "top 5 OPS", "who hit the most home runs?".
     /// Requires stat keyword + leaderboard trigger, NO player name.
-    static func parseLeaderboard(_ input: String) -> (stat: StatInfo, scope: LeaderboardScope, limit: Int)? {
-        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    static func parseLeaderboard(_ input: String) -> (stat: StatInfo, scope: LeaderboardScope, limit: Int, league: String?)? {
+        var lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let leagueResult = detectLeague(lower)
+        if let leagueResult { lower = leagueResult.cleaned }
 
         let leaderboardTriggers = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest",
                                    "lowest", "who led", "who leads", "who hit the most", "who had the most",
@@ -1051,7 +1094,7 @@ enum PlayerNameMatcher {
             let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
             scope = .season(season)
         }
-        return (stat, scope, limit)
+        return (stat, scope, limit, leagueResult?.league ?? nil)
     }
 
     // MARK: - Stat definition parser
@@ -1104,8 +1147,10 @@ enum PlayerNameMatcher {
 
     /// Detect queries like "who hit 40 home runs?", "players batting over .300", "who had 100 RBI?".
     /// Requires stat keyword + numeric threshold (league-wide, no player name).
-    static func parseThreshold(_ input: String) -> (stat: StatInfo, threshold: Double, comparison: String, season: Int?)? {
-        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    static func parseThreshold(_ input: String) -> (stat: StatInfo, threshold: Double, comparison: String, season: Int?, league: String?)? {
+        var lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let leagueResult = detectLeague(lower)
+        if let leagueResult { lower = leagueResult.cleaned }
 
         // Reject if a player name is present — this is league-wide only
         for name in sortedNames {
@@ -1152,7 +1197,7 @@ enum PlayerNameMatcher {
 
         // If explicit season ("last season", "2024"), use it. Otherwise nil = all-time.
         let season = detectSeason(lower)
-        return (stat, threshold, comparison, season)
+        return (stat, threshold, comparison, season, leagueResult?.league ?? nil)
     }
 
     // MARK: - Superlative parser
@@ -1163,8 +1208,10 @@ enum PlayerNameMatcher {
 
     /// Detect queries like "youngest player to hit 50 HR", "oldest to win 20 games",
     /// "first player to steal 100 bases", "last player to bat .400".
-    static func parseSuperlative(_ input: String) -> (stat: StatInfo, threshold: Double, superlative: Superlative)? {
-        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    static func parseSuperlative(_ input: String) -> (stat: StatInfo, threshold: Double, superlative: Superlative, league: String?)? {
+        var lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let leagueResult = detectLeague(lower)
+        if let leagueResult { lower = leagueResult.cleaned }
 
         // Detect superlative type
         let superlative: Superlative
@@ -1208,7 +1255,7 @@ enum PlayerNameMatcher {
         }
 
         guard let threshold else { return nil }
-        return (stat, threshold, superlative)
+        return (stat, threshold, superlative, leagueResult?.league ?? nil)
     }
 
     // MARK: - Filtered leaderboard parser
@@ -1216,8 +1263,10 @@ enum PlayerNameMatcher {
     /// Detect queries like "most home runs with a .300+ batting average",
     /// "highest OPS with fewer than 50 strikeouts", "lowest ERA with 200+ innings pitched".
     /// Returns: rankStat (what to sort by), filterStat (what to filter on), threshold, comparison, season.
-    static func parseFilteredLeaderboard(_ input: String) -> (rankStat: StatInfo, filterStat: StatInfo, threshold: Double, comparison: String, season: Int?, limit: Int)? {
-        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    static func parseFilteredLeaderboard(_ input: String) -> (rankStat: StatInfo, filterStat: StatInfo, threshold: Double, comparison: String, season: Int?, limit: Int, league: String?)? {
+        var lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let leagueResult = detectLeague(lower)
+        if let leagueResult { lower = leagueResult.cleaned }
 
         // Must have a leaderboard trigger for the ranking stat
         let leaderboardTriggers = ["most ", "highest ", "lowest ", "best ", "fewest "]
@@ -1273,15 +1322,17 @@ enum PlayerNameMatcher {
 
         let season = detectSeason(lower)
         let limit = 10
-        return (rankStat, filterStat, threshold, comparison, season, limit)
+        return (rankStat, filterStat, threshold, comparison, season, limit, leagueResult?.league ?? nil)
     }
 
     // MARK: - Milestone parser
 
     /// Detect cross-season counting queries like "how many times has someone hit 50 HR?"
     /// or "has anyone ever hit 60 home runs?". Returns stat, threshold, and optional year range.
-    static func parseMilestone(_ input: String) -> (stat: StatInfo, threshold: Double, since: Int?)? {
-        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    static func parseMilestone(_ input: String) -> (stat: StatInfo, threshold: Double, since: Int?, league: String?)? {
+        var lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let leagueResult = detectLeague(lower)
+        if let leagueResult { lower = leagueResult.cleaned }
 
         let milestoneTriggers = ["how many times", "how many players", "how many seasons",
                                  "how often", "has anyone ever", "has anybody ever",
@@ -1320,7 +1371,7 @@ enum PlayerNameMatcher {
         // Check for "since YYYY" constraint
         let since = detectSeason(lower, defaultToMostRecent: false)
 
-        return (stat, threshold, since)
+        return (stat, threshold, since, leagueResult?.league ?? nil)
     }
 
     // MARK: - Team stats parser

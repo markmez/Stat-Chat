@@ -270,7 +270,7 @@ final class AppState: SearchHistoryTracking {
             // Try local first
             let localResponse = PlayerCardService.buildMilestone(
                 stat: milestone.stat, threshold: milestone.threshold,
-                since: milestone.since, isPitching: isPitching)
+                since: milestone.since, isPitching: isPitching, league: milestone.league)
             // If local returned results or query is within local range, use it
             let needsBackend = milestone.since == nil || !PlayerCardService.isLocalSeason(milestone.since!)
             if !needsBackend || !localResponse.contains("No player has reached") {
@@ -306,7 +306,7 @@ final class AppState: SearchHistoryTracking {
             let isPitching = PlayerNameMatcher.isPitchingStat(sup.stat)
             let response = PlayerCardService.buildSuperlativeThreshold(
                 stat: sup.stat, threshold: sup.threshold,
-                superlative: sup.superlative, isPitching: isPitching)
+                superlative: sup.superlative, isPitching: isPitching, league: sup.league)
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             addToConversationHistory(question: trimmed, answer: response)
@@ -320,7 +320,7 @@ final class AppState: SearchHistoryTracking {
             let response = PlayerCardService.buildFilteredLeaderboard(
                 rankStat: filtered.rankStat, filterStat: filtered.filterStat,
                 threshold: filtered.threshold, comparison: filtered.comparison,
-                season: filtered.season, limit: filtered.limit, isPitching: isPitching)
+                season: filtered.season, limit: filtered.limit, isPitching: isPitching, league: filtered.league)
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             addToConversationHistory(question: trimmed, answer: response)
@@ -337,11 +337,11 @@ final class AppState: SearchHistoryTracking {
                     if isPitching {
                         response = PlayerCardService.buildPitchingThresholdLeaderboard(
                             stat: threshold.stat, threshold: threshold.threshold,
-                            comparison: threshold.comparison, season: season)
+                            comparison: threshold.comparison, season: season, league: threshold.league)
                     } else {
                         response = PlayerCardService.buildThresholdLeaderboard(
                             stat: threshold.stat, threshold: threshold.threshold,
-                            comparison: threshold.comparison, season: season)
+                            comparison: threshold.comparison, season: season, league: threshold.league)
                     }
                     messages.append(Message(role: .user, content: trimmed))
                     messages.append(Message(role: .assistant, content: response))
@@ -374,11 +374,11 @@ final class AppState: SearchHistoryTracking {
                 if isPitching {
                     response = PlayerCardService.buildAllTimeThreshold(
                         stat: threshold.stat, threshold: threshold.threshold,
-                        comparison: threshold.comparison, isPitching: true)
+                        comparison: threshold.comparison, isPitching: true, league: threshold.league)
                 } else {
                     response = PlayerCardService.buildAllTimeThreshold(
                         stat: threshold.stat, threshold: threshold.threshold,
-                        comparison: threshold.comparison, isPitching: false)
+                        comparison: threshold.comparison, isPitching: false, league: threshold.league)
                 }
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
@@ -446,10 +446,10 @@ final class AppState: SearchHistoryTracking {
                 scopeStr = "season"
                 seasonForBackend = year
             case .career:
-                isLocal = false  // career spans all history
+                isLocal = true  // full DB has all history
                 scopeStr = "career"
             case .allTimeSingleSeason:
-                isLocal = false  // all-time spans all history
+                isLocal = true  // full DB has all history
                 scopeStr = "all_time"
             case .allTimeSince:
                 isLocal = true  // full DB has all history
@@ -459,9 +459,9 @@ final class AppState: SearchHistoryTracking {
             if isLocal {
                 let response: String
                 if isPitching {
-                    response = PlayerCardService.buildPitchingLeaderboard(stat: board.stat, scope: board.scope, limit: board.limit)
+                    response = PlayerCardService.buildPitchingLeaderboard(stat: board.stat, scope: board.scope, limit: board.limit, league: board.league)
                 } else {
-                    response = PlayerCardService.buildLeaderboard(stat: board.stat, scope: board.scope, limit: board.limit)
+                    response = PlayerCardService.buildLeaderboard(stat: board.stat, scope: board.scope, limit: board.limit, league: board.league)
                 }
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))

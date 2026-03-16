@@ -1952,7 +1952,10 @@ enum PlayerCardService {
     // MARK: - Threshold leaderboard (chat response builder)
 
     /// Build a filtered leaderboard for "who hit 40 home runs?" or "players batting over .300".
-    static func buildThresholdLeaderboard(stat: PlayerNameMatcher.StatInfo, threshold: Double, comparison: String, season: Int) -> String {
+    static func buildThresholdLeaderboard(stat: PlayerNameMatcher.StatInfo, threshold: Double, comparison: String, season: Int, league: String? = nil) -> String {
+        let leagueFilter = league.map { " AND s.league = '\($0)'" } ?? ""
+        let leagueLabel = league.map { " (\($0))" } ?? ""
+
         // Rate stats need a PA minimum
         let paMin: Int?
         if stat.isRate {
@@ -1974,7 +1977,7 @@ enum PlayerCardService {
             SELECT p.name, s.\(stat.dbColumn)
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE s.season = \(season) AND s.\(stat.dbColumn) \(comparison) \(threshold)\(paFilter)
+            WHERE s.season = \(season) AND s.\(stat.dbColumn) \(comparison) \(threshold)\(paFilter)\(leagueFilter)
             ORDER BY s.\(stat.dbColumn) DESC
             LIMIT 50
             """
@@ -1982,7 +1985,7 @@ enum PlayerCardService {
               !result.rows.isEmpty else {
             let thresholdStr = stat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
             let op = comparison == ">=" ? "at least" : "no more than"
-            return "No players had \(op) \(thresholdStr) \(stat.displayAbbrev) in \(season)."
+            return "No players had \(op) \(thresholdStr) \(stat.displayAbbrev) in \(season)\(leagueLabel)."
         }
 
         // Build title
@@ -1996,12 +1999,12 @@ enum PlayerCardService {
         let title: String
         if comparison == ">=" {
             if stat.isRate {
-                title = "Players Batting Over \(thresholdDisplay) \(stat.displayAbbrev) in \(season)"
+                title = "Players Batting Over \(thresholdDisplay) \(stat.displayAbbrev) in \(season)\(leagueLabel)"
             } else {
-                title = "Players with \(thresholdDisplay)+ \(stat.displayName) in \(season)"
+                title = "Players with \(thresholdDisplay)+ \(stat.displayName) in \(season)\(leagueLabel)"
             }
         } else {
-            title = "Players with \(thresholdDisplay) or Fewer \(stat.displayName) in \(season)"
+            title = "Players with \(thresholdDisplay) or Fewer \(stat.displayName) in \(season)\(leagueLabel)"
         }
 
         var parts: [String] = []
@@ -2029,13 +2032,22 @@ enum PlayerCardService {
         parts.append("\n[SUGGEST]\(season) \(statName) leaders[/SUGGEST]")
         parts.append("[SUGGEST]career \(statName) leaders[/SUGGEST]")
 
+        if let league = league {
+            let other = league == "AL" ? "NL" : "AL"
+            parts.append("[SUGGEST]\(thresholdDisplay)+ \(statName) in \(season) (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]\(thresholdDisplay)+ \(statName) in \(season) (MLB)[/SUGGEST]")
+        } else {
+            parts.append("[SUGGEST]\(thresholdDisplay)+ \(statName) in \(season) (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]\(thresholdDisplay)+ \(statName) in \(season) (NL)[/SUGGEST]")
+        }
+
         return parts.joined(separator: "\n")
     }
 
     // MARK: - All-time threshold query
 
     /// Build an all-time threshold response: "who hit 50 home runs?" (no season specified)
-    static func buildAllTimeThreshold(stat: PlayerNameMatcher.StatInfo, threshold: Double, comparison: String, isPitching: Bool) -> String {
+    static func buildAllTimeThreshold(stat: PlayerNameMatcher.StatInfo, threshold: Double, comparison: String, isPitching: Bool, league: String? = nil) -> String {
         let table = isPitching ? "season_pitching_stats" : "season_batting_stats"
         let prefix = isPitching ? "sp" : "s"
         let orderDir: String
@@ -2046,12 +2058,14 @@ enum PlayerCardService {
         }
 
         let badEraFilter = isPitching ? eraDataFilter(prefix: prefix, stat: stat) : ""
+        let leagueFilter = league.map { " AND \(prefix).league = '\($0)'" } ?? ""
+        let leagueLabel = league.map { " (\($0))" } ?? ""
 
         let sql = """
             SELECT p.name, \(prefix).\(stat.dbColumn), \(prefix).season
             FROM \(table) \(prefix)
             JOIN players p ON \(prefix).player_id = p.player_id
-            WHERE \(prefix).\(stat.dbColumn) \(comparison) \(threshold)\(badEraFilter)
+            WHERE \(prefix).\(stat.dbColumn) \(comparison) \(threshold)\(badEraFilter)\(leagueFilter)
             ORDER BY \(prefix).\(stat.dbColumn) DESC
             LIMIT 50
             """
@@ -2068,12 +2082,12 @@ enum PlayerCardService {
         let title: String
         if comparison == ">=" {
             if stat.isRate {
-                title = "\(who) with \(thresholdDisplay)+ \(stat.displayAbbrev) (All-Time)"
+                title = "\(who) with \(thresholdDisplay)+ \(stat.displayAbbrev) (All-Time)\(leagueLabel)"
             } else {
-                title = "\(who) with \(thresholdDisplay)+ \(stat.displayName) (All-Time)"
+                title = "\(who) with \(thresholdDisplay)+ \(stat.displayName) (All-Time)\(leagueLabel)"
             }
         } else {
-            title = "\(who) with \(thresholdDisplay) or Fewer \(stat.displayName) (All-Time)"
+            title = "\(who) with \(thresholdDisplay) or Fewer \(stat.displayName) (All-Time)\(leagueLabel)"
         }
 
         var parts: [String] = []
@@ -2099,13 +2113,22 @@ enum PlayerCardService {
         parts.append("\n[SUGGEST]\(thresholdDisplay)+ \(statName) this season[/SUGGEST]")
         parts.append("[SUGGEST]\(thresholdDisplay)+ \(statName) last season[/SUGGEST]")
 
+        if let league = league {
+            let other = league == "AL" ? "NL" : "AL"
+            parts.append("[SUGGEST]\(thresholdDisplay)+ \(statName) all-time (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]\(thresholdDisplay)+ \(statName) all-time (MLB)[/SUGGEST]")
+        } else {
+            parts.append("[SUGGEST]\(thresholdDisplay)+ \(statName) all-time (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]\(thresholdDisplay)+ \(statName) all-time (NL)[/SUGGEST]")
+        }
+
         return parts.joined(separator: "\n")
     }
 
     // MARK: - Superlative threshold query
 
     /// Build a superlative+threshold response: "youngest to hit 50 HR", "last player to bat .400"
-    static func buildSuperlativeThreshold(stat: PlayerNameMatcher.StatInfo, threshold: Double, superlative: PlayerNameMatcher.Superlative, isPitching: Bool) -> String {
+    static func buildSuperlativeThreshold(stat: PlayerNameMatcher.StatInfo, threshold: Double, superlative: PlayerNameMatcher.Superlative, isPitching: Bool, league: String? = nil) -> String {
         let table = isPitching ? "season_pitching_stats" : "season_batting_stats"
         let prefix = isPitching ? "sp" : "s"
 
@@ -2128,12 +2151,14 @@ enum PlayerCardService {
 
         let birthdateFilter = (superlative == .youngest || superlative == .oldest) ? " AND p.birthdate IS NOT NULL" : ""
         let badEraFilter = isPitching ? eraDataFilter(prefix: prefix, stat: stat) : ""
+        let leagueFilter = league.map { " AND \(prefix).league = '\($0)'" } ?? ""
+        let leagueLabel = league.map { " (\($0))" } ?? ""
 
         let sql = """
             SELECT p.name, \(prefix).\(stat.dbColumn), \(prefix).season\(ageSelect)
             FROM \(table) \(prefix)
             JOIN players p ON \(prefix).player_id = p.player_id
-            WHERE \(prefix).\(stat.dbColumn) >= \(threshold)\(birthdateFilter)\(badEraFilter)
+            WHERE \(prefix).\(stat.dbColumn) >= \(threshold)\(birthdateFilter)\(badEraFilter)\(leagueFilter)
             ORDER BY \(orderBy)
             LIMIT 10
             """
@@ -2153,7 +2178,7 @@ enum PlayerCardService {
         case .last: superlativeLabel = "Most Recent"
         }
         let who = isPitching ? "Pitchers" : "Players"
-        let title = "\(superlativeLabel) \(who) with \(thresholdDisplay)+ \(stat.displayName)"
+        let title = "\(superlativeLabel) \(who) with \(thresholdDisplay)+ \(stat.displayName)\(leagueLabel)"
 
         var parts: [String] = []
         parts.append("**\(title)**\n")
@@ -2193,16 +2218,27 @@ enum PlayerCardService {
             parts.append("[SUGGEST]All players with \(thresholdDisplay)+ \(statName)[/SUGGEST]")
         }
 
+        if let league = league {
+            let other = league == "AL" ? "NL" : "AL"
+            parts.append("[SUGGEST]\(superlativeLabel.lowercased()) with \(thresholdDisplay)+ \(statName) (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]\(superlativeLabel.lowercased()) with \(thresholdDisplay)+ \(statName) (MLB)[/SUGGEST]")
+        } else {
+            parts.append("[SUGGEST]\(superlativeLabel.lowercased()) with \(thresholdDisplay)+ \(statName) (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]\(superlativeLabel.lowercased()) with \(thresholdDisplay)+ \(statName) (NL)[/SUGGEST]")
+        }
+
         return parts.joined(separator: "\n")
     }
 
     // MARK: - Filtered leaderboard query
 
     /// Build a filtered leaderboard: "most HR with .300+ batting average"
-    static func buildFilteredLeaderboard(rankStat: PlayerNameMatcher.StatInfo, filterStat: PlayerNameMatcher.StatInfo, threshold: Double, comparison: String, season: Int?, limit: Int, isPitching: Bool) -> String {
+    static func buildFilteredLeaderboard(rankStat: PlayerNameMatcher.StatInfo, filterStat: PlayerNameMatcher.StatInfo, threshold: Double, comparison: String, season: Int?, limit: Int, isPitching: Bool, league: String? = nil) -> String {
         let table = isPitching ? "season_pitching_stats" : "season_batting_stats"
         let prefix = isPitching ? "sp" : "s"
         let seasonFilter = season.map { " AND \(prefix).season = \($0)" } ?? ""
+        let leagueFilter = league.map { " AND \(prefix).league = '\($0)'" } ?? ""
+        let leagueLabel = league.map { " (\($0))" } ?? ""
         let scopeLabel = season.map { String($0) } ?? "All-Time"
 
         // For rate ranking stats, order appropriately
@@ -2252,7 +2288,7 @@ enum PlayerCardService {
             SELECT p.name, \(rankDisplayColumn), \(displayColumn), \(prefix).season
             FROM \(table) \(prefix)
             JOIN players p ON \(prefix).player_id = p.player_id
-            WHERE \(filterColumn) \(comparison) \(filterThreshold)\(seasonFilter)\(qualFilter)\(badEraFilter)
+            WHERE \(filterColumn) \(comparison) \(filterThreshold)\(seasonFilter)\(qualFilter)\(badEraFilter)\(leagueFilter)
             ORDER BY \(rankColumn) \(orderDir)
             LIMIT \(limit)
             """
@@ -2266,7 +2302,7 @@ enum PlayerCardService {
 
         let thresholdDisplay = filterStat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
         let filterLabel = comparison == ">=" ? "\(thresholdDisplay)+" : "≤\(thresholdDisplay)"
-        let title = "Most \(rankStat.displayName) with \(filterLabel) \(filterStat.displayAbbrev) (\(scopeLabel))"
+        let title = "Most \(rankStat.displayName) with \(filterLabel) \(filterStat.displayAbbrev) (\(scopeLabel))\(leagueLabel)"
 
         var parts: [String] = []
         parts.append("**\(title)**\n")
@@ -2302,15 +2338,26 @@ enum PlayerCardService {
             parts.append("\n[SUGGEST]Most \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) in \(currentYear)[/SUGGEST]")
         }
 
+        if let league = league {
+            let other = league == "AL" ? "NL" : "AL"
+            parts.append("[SUGGEST]most \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]most \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) (MLB)[/SUGGEST]")
+        } else {
+            parts.append("[SUGGEST]most \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]most \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) (NL)[/SUGGEST]")
+        }
+
         return parts.joined(separator: "\n")
     }
 
     // MARK: - Milestone query (chat response builder)
 
     /// Build a cross-season milestone response: "how many times has someone hit 50 HR?"
-    static func buildMilestone(stat: PlayerNameMatcher.StatInfo, threshold: Double, since: Int?, isPitching: Bool) -> String {
+    static func buildMilestone(stat: PlayerNameMatcher.StatInfo, threshold: Double, since: Int?, isPitching: Bool, league: String? = nil) -> String {
         let table = isPitching ? "season_pitching_stats" : "season_batting_stats"
         let sinceFilter = since.map { " AND s.season >= \($0)" } ?? ""
+        let leagueFilter = league.map { " AND s.league = '\($0)'" } ?? ""
+        let leagueLabel = league.map { " (\($0))" } ?? ""
 
         // For pitching rate stats like ERA, lower is better
         let lowerIsBetter = ["era", "whip", "bb_per_9", "hits_per_9", "hr_per_9"].contains(stat.dbColumn)
@@ -2320,22 +2367,22 @@ enum PlayerCardService {
             SELECT p.name, s.season, s.\(stat.dbColumn)
             FROM \(table) s
             JOIN players p ON s.player_id = p.player_id
-            WHERE s.\(stat.dbColumn) \(comparison) \(threshold)\(sinceFilter)
+            WHERE s.\(stat.dbColumn) \(comparison) \(threshold)\(sinceFilter)\(leagueFilter)
             ORDER BY s.season DESC, s.\(stat.dbColumn) \(lowerIsBetter ? "ASC" : "DESC")
             """
         guard let result = try? db.execute(sql: sql) else {
-            return buildMilestoneEmpty(stat: stat, threshold: threshold, since: since)
+            return buildMilestoneEmpty(stat: stat, threshold: threshold, since: since, league: league)
         }
 
         let rows = result.rows
         if rows.isEmpty {
-            return buildMilestoneEmpty(stat: stat, threshold: threshold, since: since)
+            return buildMilestoneEmpty(stat: stat, threshold: threshold, since: since, league: league)
         }
 
         let thresholdDisplay = stat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
         let sinceLabel = since.map { " since \($0)" } ?? ""
         let verb = lowerIsBetter ? "or lower" : "or more"
-        let title = "\(thresholdDisplay)+ \(stat.displayName) Seasons\(sinceLabel)"
+        let title = "\(thresholdDisplay)+ \(stat.displayName) Seasons\(sinceLabel)\(leagueLabel)"
 
         var parts: [String] = []
         parts.append("**\(title)**\n")
@@ -2364,13 +2411,23 @@ enum PlayerCardService {
         parts.append("\n[SUGGEST]\(statName) leaders[/SUGGEST]")
         parts.append("[SUGGEST]career \(statName) leaders[/SUGGEST]")
 
+        if let league = league {
+            let other = league == "AL" ? "NL" : "AL"
+            parts.append("[SUGGEST]\(thresholdDisplay)+ \(statName) seasons (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]\(thresholdDisplay)+ \(statName) seasons (MLB)[/SUGGEST]")
+        } else {
+            parts.append("[SUGGEST]\(thresholdDisplay)+ \(statName) seasons (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]\(thresholdDisplay)+ \(statName) seasons (NL)[/SUGGEST]")
+        }
+
         return parts.joined(separator: "\n")
     }
 
-    private static func buildMilestoneEmpty(stat: PlayerNameMatcher.StatInfo, threshold: Double, since: Int?) -> String {
+    private static func buildMilestoneEmpty(stat: PlayerNameMatcher.StatInfo, threshold: Double, since: Int?, league: String? = nil) -> String {
         let thresholdDisplay = stat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
         let sinceLabel = since.map { " since \($0)" } ?? ""
-        return "No player has reached \(thresholdDisplay) \(stat.displayAbbrev)\(sinceLabel)."
+        let leagueLabel = league.map { " (\($0))" } ?? ""
+        return "No player has reached \(thresholdDisplay) \(stat.displayAbbrev)\(sinceLabel)\(leagueLabel)."
     }
 
     // MARK: - Backend-backed formatters (for pre-2016 queries)
@@ -2881,23 +2938,26 @@ enum PlayerCardService {
 
     /// Build a leaderboard for the given stat and scope (season, all-time single season, or career).
     /// Returns [LEADERBOARD] block with up to `limit` rows.
-    static func buildLeaderboard(stat: PlayerNameMatcher.StatInfo, scope: PlayerNameMatcher.LeaderboardScope, limit: Int) -> String {
+    static func buildLeaderboard(stat: PlayerNameMatcher.StatInfo, scope: PlayerNameMatcher.LeaderboardScope, limit: Int, league: String? = nil) -> String {
         switch scope {
         case .season(let season):
-            return buildSeasonLeaderboard(stat: stat, season: season, limit: limit)
+            return buildSeasonLeaderboard(stat: stat, season: season, limit: limit, league: league)
         case .allTimeSingleSeason:
-            return buildAllTimeSingleSeasonLeaderboard(stat: stat, limit: limit)
+            return buildAllTimeSingleSeasonLeaderboard(stat: stat, limit: limit, league: league)
         case .allTimeSince(let year):
-            return buildAllTimeSinceLeaderboard(stat: stat, sinceYear: year, limit: limit)
+            return buildAllTimeSinceLeaderboard(stat: stat, sinceYear: year, limit: limit, league: league)
         case .career:
             if stat.displayAbbrev == "OPS+" {
                 return "Career OPS+ leaders require weighted season averaging, which isn't supported yet. Try **career OPS leaders** instead.\n\n[SUGGEST]career ops leaders[/SUGGEST]"
             }
-            return buildCareerLeaderboard(stat: stat, limit: limit)
+            return buildCareerLeaderboard(stat: stat, limit: limit, league: league)
         }
     }
 
-    private static func buildSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, season: Int, limit: Int) -> String {
+    private static func buildSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, season: Int, limit: Int, league: String? = nil) -> String {
+        let leagueFilter = league.map { " AND s.league = '\($0)'" } ?? ""
+        let leagueLabel = league.map { " (\($0))" } ?? ""
+
         // Rate stats need a PA minimum
         let paMin: Int?
         if stat.isRate {
@@ -2919,17 +2979,17 @@ enum PlayerCardService {
             SELECT p.name, s.\(stat.dbColumn)
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE s.season = \(season)\(paFilter)
+            WHERE s.season = \(season)\(paFilter)\(leagueFilter)
             ORDER BY s.\(stat.dbColumn) DESC
             LIMIT \(limit)
             """
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else {
-            return "No \(stat.displayName) leaders found for \(season)."
+            return "No \(stat.displayName) leaders found for \(season)\(leagueLabel)."
         }
 
         var parts: [String] = []
-        parts.append("**\(season) \(stat.displayName) Leaders**\n")
+        parts.append("**\(season) \(stat.displayName) Leaders\(leagueLabel)**\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
         parts.append("[LEADERBOARD]")
@@ -2950,11 +3010,22 @@ enum PlayerCardService {
         parts.append("\n[SUGGEST]all-time single season \(statName) leaders[/SUGGEST]")
         parts.append("[SUGGEST]career \(statName) leaders[/SUGGEST]")
 
+        if let league = league {
+            let other = league == "AL" ? "NL" : "AL"
+            parts.append("[SUGGEST]\(season) \(statName) leaders (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]\(season) \(statName) leaders (MLB)[/SUGGEST]")
+        } else {
+            parts.append("[SUGGEST]\(season) \(statName) leaders (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]\(season) \(statName) leaders (NL)[/SUGGEST]")
+        }
+
         return parts.joined(separator: "\n")
     }
 
-    private static func buildAllTimeSingleSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int) -> String {
-        let paFilter = stat.isRate ? " WHERE s.plate_appearances >= 400" : ""
+    private static func buildAllTimeSingleSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int, league: String? = nil) -> String {
+        let leagueFilter = league.map { " AND s.league = '\($0)'" } ?? ""
+        let leagueLabel = league.map { " (\($0))" } ?? ""
+        let paFilter = stat.isRate ? " WHERE s.plate_appearances >= 400\(leagueFilter)" : (leagueFilter.isEmpty ? "" : " WHERE \(leagueFilter.dropFirst(5))")
 
         let sql = """
             SELECT p.name, s.\(stat.dbColumn), s.season
@@ -2966,11 +3037,11 @@ enum PlayerCardService {
             """
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else {
-            return "No all-time \(stat.displayName) leaders found."
+            return "No all-time \(stat.displayName) leaders found\(leagueLabel)."
         }
 
         var parts: [String] = []
-        parts.append("**All-Time Single Season \(stat.displayName) Leaders**\n")
+        parts.append("**All-Time Single Season \(stat.displayName) Leaders\(leagueLabel)**\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
         parts.append("[LEADERBOARD]")
@@ -2991,27 +3062,38 @@ enum PlayerCardService {
         let statName = stat.pillName
         parts.append("\n[SUGGEST]career \(statName) leaders[/SUGGEST]")
 
+        if let league = league {
+            let other = league == "AL" ? "NL" : "AL"
+            parts.append("[SUGGEST]all-time single season \(statName) leaders (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]all-time single season \(statName) leaders (MLB)[/SUGGEST]")
+        } else {
+            parts.append("[SUGGEST]all-time single season \(statName) leaders (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]all-time single season \(statName) leaders (NL)[/SUGGEST]")
+        }
+
         return parts.joined(separator: "\n")
     }
 
-    private static func buildAllTimeSinceLeaderboard(stat: PlayerNameMatcher.StatInfo, sinceYear: Int, limit: Int) -> String {
+    private static func buildAllTimeSinceLeaderboard(stat: PlayerNameMatcher.StatInfo, sinceYear: Int, limit: Int, league: String? = nil) -> String {
+        let leagueFilter = league.map { " AND s.league = '\($0)'" } ?? ""
+        let leagueLabel = league.map { " (\($0))" } ?? ""
         let paFilter = stat.isRate ? " AND s.plate_appearances >= 400" : ""
 
         let sql = """
             SELECT p.name, s.\(stat.dbColumn), s.season
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE s.season >= \(sinceYear)\(paFilter)
+            WHERE s.season >= \(sinceYear)\(paFilter)\(leagueFilter)
             ORDER BY s.\(stat.dbColumn) DESC
             LIMIT \(limit)
             """
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else {
-            return "No \(stat.displayName) leaders found since \(sinceYear)."
+            return "No \(stat.displayName) leaders found since \(sinceYear)\(leagueLabel)."
         }
 
         var parts: [String] = []
-        parts.append("**\(stat.displayName) Leaders Since \(sinceYear)**\n")
+        parts.append("**\(stat.displayName) Leaders Since \(sinceYear)\(leagueLabel)**\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
         parts.append("[LEADERBOARD]")
@@ -3032,10 +3114,21 @@ enum PlayerCardService {
         let statName = stat.pillName
         parts.append("\n[SUGGEST]all-time single season \(statName) leaders[/SUGGEST]")
 
+        if let league = league {
+            let other = league == "AL" ? "NL" : "AL"
+            parts.append("[SUGGEST]\(statName) leaders since \(sinceYear) (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]\(statName) leaders since \(sinceYear) (MLB)[/SUGGEST]")
+        } else {
+            parts.append("[SUGGEST]\(statName) leaders since \(sinceYear) (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]\(statName) leaders since \(sinceYear) (NL)[/SUGGEST]")
+        }
+
         return parts.joined(separator: "\n")
     }
 
-    private static func buildCareerLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int) -> String {
+    private static func buildCareerLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int, league: String? = nil) -> String {
+        let leagueFilter = league.map { " WHERE s.league = '\($0)'" } ?? ""
+        let leagueLabel = league.map { " (\($0))" } ?? ""
         let selectExpr: String
         if stat.isRate {
             guard let formula = careerRateFormula(for: stat) else {
@@ -3052,17 +3145,18 @@ enum PlayerCardService {
             SELECT p.name, \(selectExpr)
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
+            \(leagueFilter)
             GROUP BY p.player_id\(paFilter)
             ORDER BY career_val DESC
             LIMIT \(limit)
             """
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else {
-            return "No career \(stat.displayName) leaders found."
+            return "No career \(stat.displayName) leaders found\(leagueLabel)."
         }
 
         var parts: [String] = []
-        parts.append("**Career \(stat.displayName) Leaders**\n")
+        parts.append("**Career \(stat.displayName) Leaders\(leagueLabel)**\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
         parts.append("[LEADERBOARD]")
@@ -3081,6 +3175,15 @@ enum PlayerCardService {
 
         let statName = stat.pillName
         parts.append("\n[SUGGEST]all-time single season \(statName) leaders[/SUGGEST]")
+
+        if let league = league {
+            let other = league == "AL" ? "NL" : "AL"
+            parts.append("[SUGGEST]career \(statName) leaders (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]career \(statName) leaders (MLB)[/SUGGEST]")
+        } else {
+            parts.append("[SUGGEST]career \(statName) leaders (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]career \(statName) leaders (NL)[/SUGGEST]")
+        }
 
         return parts.joined(separator: "\n")
     }
@@ -4637,20 +4740,23 @@ enum PlayerCardService {
 
     // MARK: - Pitching leaderboard (chat response builder)
 
-    static func buildPitchingLeaderboard(stat: PlayerNameMatcher.StatInfo, scope: PlayerNameMatcher.LeaderboardScope, limit: Int) -> String {
+    static func buildPitchingLeaderboard(stat: PlayerNameMatcher.StatInfo, scope: PlayerNameMatcher.LeaderboardScope, limit: Int, league: String? = nil) -> String {
         switch scope {
         case .season(let season):
-            return buildPitchingSeasonLeaderboard(stat: stat, season: season, limit: limit)
+            return buildPitchingSeasonLeaderboard(stat: stat, season: season, limit: limit, league: league)
         case .allTimeSingleSeason:
-            return buildPitchingAllTimeSingleSeasonLeaderboard(stat: stat, limit: limit)
+            return buildPitchingAllTimeSingleSeasonLeaderboard(stat: stat, limit: limit, league: league)
         case .allTimeSince(let year):
-            return buildPitchingAllTimeSinceLeaderboard(stat: stat, sinceYear: year, limit: limit)
+            return buildPitchingAllTimeSinceLeaderboard(stat: stat, sinceYear: year, limit: limit, league: league)
         case .career:
-            return buildPitchingCareerLeaderboard(stat: stat, limit: limit)
+            return buildPitchingCareerLeaderboard(stat: stat, limit: limit, league: league)
         }
     }
 
-    private static func buildPitchingSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, season: Int, limit: Int) -> String {
+    private static func buildPitchingSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, season: Int, limit: Int, league: String? = nil) -> String {
+        let leagueFilter = league.map { " AND sp.league = '\($0)'" } ?? ""
+        let leagueLabel = league.map { " (\($0))" } ?? ""
+
         // Rate stats need an IP minimum
         let ipMin: String?
         if stat.isRate {
@@ -4674,17 +4780,17 @@ enum PlayerCardService {
             SELECT p.name, sp.\(stat.dbColumn)
             FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE sp.season = \(season)\(ipFilter)
+            WHERE sp.season = \(season)\(ipFilter)\(leagueFilter)
             ORDER BY sp.\(stat.dbColumn) \(orderDir)
             LIMIT \(limit)
             """
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else {
-            return "No \(stat.displayName) leaders found for \(season)."
+            return "No \(stat.displayName) leaders found for \(season)\(leagueLabel)."
         }
 
         var parts: [String] = []
-        parts.append("**\(season) \(stat.displayName) Leaders (Pitching)**\n")
+        parts.append("**\(season) \(stat.displayName) Leaders\(leagueLabel) (Pitching)**\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
         parts.append("[LEADERBOARD]")
@@ -4704,11 +4810,22 @@ enum PlayerCardService {
         let statName = stat.pillName
         parts.append("\n[SUGGEST]career \(statName) leaders[/SUGGEST]")
 
+        if let league = league {
+            let other = league == "AL" ? "NL" : "AL"
+            parts.append("[SUGGEST]\(season) \(statName) leaders (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]\(season) \(statName) leaders (MLB)[/SUGGEST]")
+        } else {
+            parts.append("[SUGGEST]\(season) \(statName) leaders (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]\(season) \(statName) leaders (NL)[/SUGGEST]")
+        }
+
         return parts.joined(separator: "\n")
     }
 
-    private static func buildPitchingAllTimeSingleSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int) -> String {
-        let ipFilter = stat.isRate ? " WHERE sp.ip_outs >= 486" : ""
+    private static func buildPitchingAllTimeSingleSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int, league: String? = nil) -> String {
+        let leagueFilter = league.map { " AND sp.league = '\($0)'" } ?? ""
+        let leagueLabel = league.map { " (\($0))" } ?? ""
+        let ipFilter = stat.isRate ? " WHERE sp.ip_outs >= 486\(leagueFilter)" : (leagueFilter.isEmpty ? "" : " WHERE \(leagueFilter.dropFirst(5))")
         let orderDir = (stat.displayAbbrev == "ERA" || stat.displayAbbrev == "WHIP" || stat.displayAbbrev == "BB/9" || stat.displayAbbrev == "BAA") ? "ASC" : "DESC"
 
         let sql = """
@@ -4721,11 +4838,11 @@ enum PlayerCardService {
             """
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else {
-            return "No all-time \(stat.displayName) leaders found."
+            return "No all-time \(stat.displayName) leaders found\(leagueLabel)."
         }
 
         var parts: [String] = []
-        parts.append("**All-Time Single Season \(stat.displayName) Leaders (Pitching)**\n")
+        parts.append("**All-Time Single Season \(stat.displayName) Leaders\(leagueLabel) (Pitching)**\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
         parts.append("[LEADERBOARD]")
@@ -4743,10 +4860,22 @@ enum PlayerCardService {
             parts.append("\n_Min. 162 IP._")
         }
 
+        let statName = stat.pillName
+        if let league = league {
+            let other = league == "AL" ? "NL" : "AL"
+            parts.append("\n[SUGGEST]all-time single season \(statName) leaders (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]all-time single season \(statName) leaders (MLB)[/SUGGEST]")
+        } else {
+            parts.append("\n[SUGGEST]all-time single season \(statName) leaders (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]all-time single season \(statName) leaders (NL)[/SUGGEST]")
+        }
+
         return parts.joined(separator: "\n")
     }
 
-    private static func buildPitchingAllTimeSinceLeaderboard(stat: PlayerNameMatcher.StatInfo, sinceYear: Int, limit: Int) -> String {
+    private static func buildPitchingAllTimeSinceLeaderboard(stat: PlayerNameMatcher.StatInfo, sinceYear: Int, limit: Int, league: String? = nil) -> String {
+        let leagueFilter = league.map { " AND sp.league = '\($0)'" } ?? ""
+        let leagueLabel = league.map { " (\($0))" } ?? ""
         let ipFilter = stat.isRate ? " AND sp.ip_outs >= 486" : ""
         let orderDir = (stat.displayAbbrev == "ERA" || stat.displayAbbrev == "WHIP" || stat.displayAbbrev == "BB/9" || stat.displayAbbrev == "BAA") ? "ASC" : "DESC"
 
@@ -4754,17 +4883,17 @@ enum PlayerCardService {
             SELECT p.name, sp.\(stat.dbColumn), sp.season
             FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE sp.season >= \(sinceYear)\(ipFilter)
+            WHERE sp.season >= \(sinceYear)\(ipFilter)\(leagueFilter)
             ORDER BY sp.\(stat.dbColumn) \(orderDir)
             LIMIT \(limit)
             """
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else {
-            return "No \(stat.displayName) leaders found since \(sinceYear)."
+            return "No \(stat.displayName) leaders found since \(sinceYear)\(leagueLabel)."
         }
 
         var parts: [String] = []
-        parts.append("**\(stat.displayName) Leaders Since \(sinceYear) (Pitching)**\n")
+        parts.append("**\(stat.displayName) Leaders Since \(sinceYear)\(leagueLabel) (Pitching)**\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
         parts.append("[LEADERBOARD]")
@@ -4782,10 +4911,23 @@ enum PlayerCardService {
             parts.append("\n_Min. 162 IP._")
         }
 
+        let statName = stat.pillName
+        if let league = league {
+            let other = league == "AL" ? "NL" : "AL"
+            parts.append("\n[SUGGEST]\(statName) leaders since \(sinceYear) (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]\(statName) leaders since \(sinceYear) (MLB)[/SUGGEST]")
+        } else {
+            parts.append("\n[SUGGEST]\(statName) leaders since \(sinceYear) (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]\(statName) leaders since \(sinceYear) (NL)[/SUGGEST]")
+        }
+
         return parts.joined(separator: "\n")
     }
 
-    private static func buildPitchingCareerLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int) -> String {
+    private static func buildPitchingCareerLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int, league: String? = nil) -> String {
+        let leagueFilter = league.map { " AND sp.league = '\($0)'" } ?? ""
+        let leagueLabel = league.map { " (\($0))" } ?? ""
+
         let selectExpr: String
         if stat.isRate {
             guard let formula = careerPitchingRateFormula(for: stat) else {
@@ -4802,18 +4944,18 @@ enum PlayerCardService {
         let sql = """
             SELECT p.name, \(selectExpr)
             FROM season_pitching_stats sp
-            JOIN players p ON sp.player_id = p.player_id
+            JOIN players p ON sp.player_id = p.player_id\(leagueFilter.isEmpty ? "" : "\n            WHERE \(leagueFilter.dropFirst(5))")
             GROUP BY p.player_id\(ipFilter)
             ORDER BY career_val \(orderDir)
             LIMIT \(limit)
             """
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else {
-            return "No career \(stat.displayName) leaders found."
+            return "No career \(stat.displayName) leaders found\(leagueLabel)."
         }
 
         var parts: [String] = []
-        parts.append("**Career \(stat.displayName) Leaders (Pitching)**\n")
+        parts.append("**Career \(stat.displayName) Leaders\(leagueLabel) (Pitching)**\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
         parts.append("[LEADERBOARD]")
@@ -4828,6 +4970,16 @@ enum PlayerCardService {
 
         if stat.isRate {
             parts.append("\n_Min. 162 IP._")
+        }
+
+        let statName = stat.pillName
+        if let league = league {
+            let other = league == "AL" ? "NL" : "AL"
+            parts.append("\n[SUGGEST]career \(statName) leaders (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]career \(statName) leaders (MLB)[/SUGGEST]")
+        } else {
+            parts.append("\n[SUGGEST]career \(statName) leaders (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]career \(statName) leaders (NL)[/SUGGEST]")
         }
 
         return parts.joined(separator: "\n")
@@ -5020,7 +5172,10 @@ enum PlayerCardService {
 
     // MARK: - Pitching threshold leaderboard (chat response builder)
 
-    static func buildPitchingThresholdLeaderboard(stat: PlayerNameMatcher.StatInfo, threshold: Double, comparison: String, season: Int) -> String {
+    static func buildPitchingThresholdLeaderboard(stat: PlayerNameMatcher.StatInfo, threshold: Double, comparison: String, season: Int, league: String? = nil) -> String {
+        let leagueFilter = league.map { " AND sp.league = '\($0)'" } ?? ""
+        let leagueLabel = league.map { " (\($0))" } ?? ""
+
         let ipMin: String?
         if stat.isRate {
             let maxGamesSql = "SELECT MAX(games) FROM season_pitching_stats WHERE season = \(season)"
@@ -5042,7 +5197,7 @@ enum PlayerCardService {
             SELECT p.name, sp.\(stat.dbColumn)
             FROM season_pitching_stats sp
             JOIN players p ON sp.player_id = p.player_id
-            WHERE sp.season = \(season) AND sp.\(stat.dbColumn) \(comparison) \(threshold)\(ipFilter)
+            WHERE sp.season = \(season) AND sp.\(stat.dbColumn) \(comparison) \(threshold)\(ipFilter)\(leagueFilter)
             ORDER BY sp.\(stat.dbColumn) \(orderDir)
             LIMIT 50
             """
@@ -5050,7 +5205,7 @@ enum PlayerCardService {
               !result.rows.isEmpty else {
             let thresholdStr = stat.isRate ? formatPitchingRate(String(threshold), decimals: 2) : String(Int(threshold))
             let op = comparison == ">=" ? "at least" : "no more than"
-            return "No pitchers had \(op) \(thresholdStr) \(stat.displayAbbrev) in \(season)."
+            return "No pitchers had \(op) \(thresholdStr) \(stat.displayAbbrev) in \(season)\(leagueLabel)."
         }
 
         let thresholdDisplay: String
@@ -5063,15 +5218,15 @@ enum PlayerCardService {
         let title: String
         if comparison == "<=" {
             if stat.isRate {
-                title = "Pitchers with \(thresholdDisplay) or Better \(stat.displayAbbrev) in \(season)"
+                title = "Pitchers with \(thresholdDisplay) or Better \(stat.displayAbbrev) in \(season)\(leagueLabel)"
             } else {
-                title = "Pitchers with \(thresholdDisplay) or Fewer \(stat.displayName) in \(season)"
+                title = "Pitchers with \(thresholdDisplay) or Fewer \(stat.displayName) in \(season)\(leagueLabel)"
             }
         } else {
             if stat.isRate {
-                title = "Pitchers with \(stat.displayAbbrev) Over \(thresholdDisplay) in \(season)"
+                title = "Pitchers with \(stat.displayAbbrev) Over \(thresholdDisplay) in \(season)\(leagueLabel)"
             } else {
-                title = "Pitchers with \(thresholdDisplay)+ \(stat.displayName) in \(season)"
+                title = "Pitchers with \(thresholdDisplay)+ \(stat.displayName) in \(season)\(leagueLabel)"
             }
         }
 
@@ -5098,6 +5253,15 @@ enum PlayerCardService {
 
         let statName = stat.pillName
         parts.append("\n[SUGGEST]\(season) \(statName) leaders[/SUGGEST]")
+
+        if let league = league {
+            let other = league == "AL" ? "NL" : "AL"
+            parts.append("[SUGGEST]\(season) \(statName) leaders (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]\(season) \(statName) leaders (MLB)[/SUGGEST]")
+        } else {
+            parts.append("[SUGGEST]\(season) \(statName) leaders (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]\(season) \(statName) leaders (NL)[/SUGGEST]")
+        }
 
         return parts.joined(separator: "\n")
     }
