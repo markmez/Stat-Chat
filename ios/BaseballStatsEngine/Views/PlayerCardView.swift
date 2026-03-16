@@ -304,6 +304,7 @@ struct PlayerCardView: View {
             ResultsView(initialQuestion: searchQuestion ?? "", navigationPath: $navigationPath)
         }
         .task {
+            AnalyticsService.trackPlayerCardView(name: playerName)
             playerCard = await PlayerCardService.fetch(name: playerName)
             isLoading = false
         }

@@ -193,6 +193,7 @@ struct TeamCardView: View {
             ResultsView(initialQuestion: searchQuestion ?? "", navigationPath: $navigationPath)
         }
         .task {
+            AnalyticsService.trackTeamCardView(code: teamCode)
             teamCard = PlayerCardService.fetchTeamCard(teamCode: teamCode)
             isLoading = false
         }

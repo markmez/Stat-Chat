@@ -6,6 +6,11 @@ options:
   xcodeVersion: "16.0"
   generateEmptyDirectories: true
 
+packages:
+  Mixpanel:
+    url: https://github.com/mixpanel/mixpanel-swift
+    from: "4.0.0"
+
 targets:
   StatChat:
     type: application
@@ -22,6 +27,9 @@ targets:
         buildPhase: resources
       - path: BaseballStatsEngine/Resources/suggestions_config.json
         buildPhase: resources
+    dependencies:
+      - package: Mixpanel
+        product: Mixpanel
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.statchat.app

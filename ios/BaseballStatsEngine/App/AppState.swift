@@ -105,6 +105,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: "Compared \(p1) and \(p2). \(response)")
+                AnalyticsService.trackQuery(text: trimmed, type: .localComparison)
                 return
             } else {
                 // One or both need backend data — async fetch
@@ -112,6 +113,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .assistant, content: ""))
                 let loadingIndex = messages.count - 1
                 isLoading = true
+                AnalyticsService.trackQuery(text: trimmed, type: .backendComparison)
                 currentQueryTask = Task {
                     let response = await PlayerCardService.buildComparisonAsync(player1: p1, player2: p2)
                     guard !Task.isCancelled else { return }
@@ -138,6 +140,7 @@ final class AppState: SearchHistoryTracking {
                     messages.append(Message(role: .user, content: trimmed))
                     messages.append(Message(role: .assistant, content: response))
                     addToConversationHistory(question: trimmed, answer: response)
+                    AnalyticsService.trackQuery(text: trimmed, type: .localStreak)
                     return
                 }
             }
@@ -156,6 +159,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localCurrentForm)
                 return
             }
         }
@@ -172,6 +176,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localStatLookup)
                 return
             }
         }
@@ -188,6 +193,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localCareer)
                 return
             }
         }
@@ -205,6 +211,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localPlatoon)
                 return
             }
         }
@@ -222,6 +229,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localHomeAway)
                 return
             }
         }
@@ -238,6 +246,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localSeasonLookup)
                 return
             }
         }
@@ -249,6 +258,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localMonthStats)
                 return
             }
         }
@@ -267,6 +277,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: localResponse))
                 addToConversationHistory(question: trimmed, answer: localResponse)
+                AnalyticsService.trackQuery(text: trimmed, type: .localMilestone)
                 return
             }
             // Backend fallback
@@ -274,6 +285,7 @@ final class AppState: SearchHistoryTracking {
             messages.append(Message(role: .assistant, content: ""))
             let loadingIndex = messages.count - 1
             isLoading = true
+            AnalyticsService.trackQuery(text: trimmed, type: .backendMilestone)
             currentQueryTask = Task {
                 let service = BackendService()
                 let resp = try? await service.fetchMilestone(
@@ -298,6 +310,7 @@ final class AppState: SearchHistoryTracking {
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             addToConversationHistory(question: trimmed, answer: response)
+            AnalyticsService.trackQuery(text: trimmed, type: .localSuperlative)
             return
         }
 
@@ -311,6 +324,7 @@ final class AppState: SearchHistoryTracking {
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             addToConversationHistory(question: trimmed, answer: response)
+            AnalyticsService.trackQuery(text: trimmed, type: .localFilteredLeaderboard)
             return
         }
 
@@ -332,6 +346,7 @@ final class AppState: SearchHistoryTracking {
                     messages.append(Message(role: .user, content: trimmed))
                     messages.append(Message(role: .assistant, content: response))
                     addToConversationHistory(question: trimmed, answer: response)
+                    AnalyticsService.trackQuery(text: trimmed, type: .localThreshold)
                     return
                 }
                 // Backend fallback for pre-2016
@@ -339,6 +354,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .assistant, content: ""))
                 let loadingIndex = messages.count - 1
                 isLoading = true
+                AnalyticsService.trackQuery(text: trimmed, type: .backendThreshold)
                 currentQueryTask = Task {
                     let service = BackendService()
                     let resp = try? await service.fetchThreshold(
@@ -367,6 +383,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localAllTimeThreshold)
                 return
             }
             return
@@ -380,6 +397,7 @@ final class AppState: SearchHistoryTracking {
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             addToConversationHistory(question: trimmed, answer: response)
+            AnalyticsService.trackQuery(text: trimmed, type: .localTeamRanking)
             return
         }
 
@@ -391,6 +409,7 @@ final class AppState: SearchHistoryTracking {
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             addToConversationHistory(question: trimmed, answer: response)
+            AnalyticsService.trackQuery(text: trimmed, type: .localTeamTotal)
             return
         }
 
@@ -408,6 +427,7 @@ final class AppState: SearchHistoryTracking {
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             addToConversationHistory(question: trimmed, answer: response)
+            AnalyticsService.trackQuery(text: trimmed, type: .localTeamStats)
             return
         }
 
@@ -446,6 +466,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localLeaderboard)
                 return
             }
 
@@ -454,6 +475,7 @@ final class AppState: SearchHistoryTracking {
             messages.append(Message(role: .assistant, content: ""))
             let loadingIndex = messages.count - 1
             isLoading = true
+            AnalyticsService.trackQuery(text: trimmed, type: .backendLeaderboard)
             currentQueryTask = Task {
                 let service = BackendService()
                 let resp = try? await service.fetchLeaderboard(
@@ -476,6 +498,7 @@ final class AppState: SearchHistoryTracking {
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             addToConversationHistory(question: trimmed, answer: response)
+            AnalyticsService.trackQuery(text: trimmed, type: .localStatDefinition)
             return
         }
 
@@ -524,6 +547,7 @@ final class AppState: SearchHistoryTracking {
             let response = "Multiple players match:\n\n" + links.joined(separator: "\n\n")
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
+            AnalyticsService.trackQuery(text: trimmed, type: .localDisambiguation)
             return
         }
 
@@ -554,6 +578,7 @@ final class AppState: SearchHistoryTracking {
         messages.append(Message(role: .assistant, content: ""))
         let streamingIndex = messages.count - 1
 
+        AnalyticsService.trackQuery(text: trimmed, type: .backendClaude)
         currentQueryTask = Task {
             do {
                 let answer = try await backendService.ask(

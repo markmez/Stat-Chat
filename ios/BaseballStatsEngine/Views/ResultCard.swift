@@ -66,6 +66,7 @@ struct ResultCard: View {
                             FlowLayout(spacing: 8) {
                                 ForEach(queries, id: \.self) { query in
                                     Button {
+                                        AnalyticsService.trackSuggestionTap(text: query, source: .resultPill)
                                         tap(query)
                                     } label: {
                                         HStack(spacing: 6) {

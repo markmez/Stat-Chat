@@ -5,6 +5,10 @@ struct StatChatApp: App {
     @State private var appState = AppState()
     @State private var showLaunch = true
 
+    init() {
+        AnalyticsService.initialize(distinctId: AppState.deviceId)
+    }
+
     var body: some Scene {
         WindowGroup {
             ZStack {
@@ -25,6 +29,9 @@ struct StatChatApp: App {
             .tint(Color(red: 0.1, green: 0.25, blue: 0.7))
             .task {
                 await SuggestionEngine.shared.checkForRemoteUpdate()
+            }
+            .onAppear {
+                AnalyticsService.trackAppOpen()
             }
         }
     }

@@ -20,6 +20,7 @@ struct AnimatedPlaceholder: View {
             let current = suggestions[currentIndex % suggestions.count]
             Button {
                 SuggestionEngine.shared.recordTap(current.id)
+                AnalyticsService.trackSuggestionTap(text: current.text, source: .animatedPlaceholder)
                 onTap(current.text)
             } label: {
                 Text(current.text)
