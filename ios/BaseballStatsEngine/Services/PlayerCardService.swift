@@ -323,13 +323,15 @@ enum PlayerCardService {
             pitchingCareerHomeAway = nil
         }
 
-        // Use most recent season's team for header (players.team can be stale)
+        // Use most recent season's team for header — compare batting and pitching years, pick whichever is newer
         let headerTeam: String
-        if let latestSeason = seasons.first {
-            let parts = latestSeason.team.split(separator: "/")
-            headerTeam = String(parts.last ?? Substring(team))
-        } else if let latestPitching = pitchingSeasons?.first {
+        let latestBattingYear = seasons.first?.year ?? 0
+        let latestPitchingYear = pitchingSeasons?.first?.year ?? 0
+        if latestPitchingYear > latestBattingYear, let latestPitching = pitchingSeasons?.first {
             let parts = latestPitching.team.split(separator: "/")
+            headerTeam = String(parts.last ?? Substring(team))
+        } else if let latestSeason = seasons.first {
+            let parts = latestSeason.team.split(separator: "/")
             headerTeam = String(parts.last ?? Substring(team))
         } else {
             headerTeam = team

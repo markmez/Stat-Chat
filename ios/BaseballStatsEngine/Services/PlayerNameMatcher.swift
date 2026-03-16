@@ -318,6 +318,30 @@ enum PlayerNameMatcher {
                 fnIndex[firstName, default: []].append(name)
             }
         }
+        // Cross-link trailing-e variants: "green" ↔ "greene", "brown" ↔ "browne", etc.
+        // This ensures searching "Green" also finds players named "Greene" and vice versa.
+        let allKeys = Array(index.keys)
+        for key in allKeys {
+            let variant: String
+            if key.hasSuffix("e") {
+                variant = String(key.dropLast())
+            } else {
+                variant = key + "e"
+            }
+            if let variantPlayers = index[variant] {
+                // Merge: add variant's players to this key if not already present
+                for player in variantPlayers where !(index[key]?.contains(player) ?? false) {
+                    index[key, default: []].append(player)
+                }
+                // And add this key's players to the variant
+                if let keyPlayers = index[key] {
+                    for player in keyPlayers where !(index[variant]?.contains(player) ?? false) {
+                        index[variant, default: []].append(player)
+                    }
+                }
+            }
+        }
+
         lastNameIndex = index
         firstNameIndex = fnIndex
 
