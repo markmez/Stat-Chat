@@ -68,21 +68,21 @@ struct ResultCard: View {
                                     Button {
                                         tap(query)
                                     } label: {
-                                        HStack(spacing: 5) {
+                                        HStack(spacing: 6) {
                                             Image(systemName: "magnifyingglass")
-                                                .font(.system(size: 11, weight: .medium))
+                                                .font(.system(size: 12, weight: .medium))
                                             Text(query)
-                                                .font(.system(.caption, design: .rounded, weight: .medium))
+                                                .font(.system(.footnote, design: .rounded, weight: .medium))
                                         }
                                         .foregroundStyle(deepBlue)
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 7)
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 8)
                                         .background(
                                             Capsule()
-                                                .fill(deepBlue.opacity(0.08))
+                                                .fill(Color(uiColor: .secondarySystemBackground))
                                                 .overlay(
                                                     Capsule()
-                                                        .stroke(deepBlue.opacity(0.2), lineWidth: 0.5)
+                                                        .stroke(deepBlue.opacity(0.25), lineWidth: 0.5)
                                                 )
                                         )
                                     }
