@@ -13,13 +13,16 @@ COPY schema_description.py .
 # Copy data pipeline scripts (for live data refresh + streak detection)
 COPY data_pipeline/ data_pipeline/
 
-# Bake the database into the image as a fallback seed.
-# On startup, ensure_db() copies it to the volume (fast local copy).
-# The volume copy is the live DB that gets updated by the cron pipeline.
-COPY baseball_stats_full.db /app/seed_db/baseball_stats_full.db
-
 # Copy backend application code
 COPY . .
+
+# Move DB to seed dir if present (local deploy via railway up).
+# When deploying via GitHub (no DB in repo), seed dir stays empty —
+# the service uses the existing volume DB instead.
+RUN mkdir -p /app/seed_db && \
+    if [ -f /app/baseball_stats_full.db ]; then \
+        mv /app/baseball_stats_full.db /app/seed_db/; \
+    fi
 
 # Database paths — override via env vars in Railway
 ENV DB_PATH=/data/baseball_stats_full.db
