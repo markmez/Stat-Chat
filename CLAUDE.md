@@ -52,6 +52,22 @@
 - **Player card bio**: Dynamic age computed from birthdate (updates on player's birthday). Header shows handedness (Bats R / Throws R). About section shows birth date.
 - **Query routing**: `simple_lookup`, `streak_finder`, `current_form`, `stat_explanation` — local `classifyLocally()` handles obvious patterns first, then Claude Haiku classifies the rest. `AppState` intercepts ~25% of queries locally before `QueryEngine`.
 - **ResultsView layout**: Follow-up input hidden during loading, appears inline below short results or pinned to bottom for long results
+
+### Player name matching & common-word collisions
+Two separate code paths for player name resolution, each with different intent:
+- **`matchPlayer()`** — direct search (user typed a name in the search bar). Bare last name "Bench" → Johnny Bench. No common-word filtering. Called via `resolveSearch()` from HomeView.
+- **`findPlayerInText()`** — embedded name detection (parser scanning a natural language sentence for a player name). Skips last names in `commonWordLastNames` to avoid false matches like "show" → Eric Show.
+
+**`commonWordLastNames`** (~88 words): Comprehensive set of unambiguous player last names (only 1 player in DB) that are also common English words. Built by cross-referencing all single-player last names against common English vocabulary. Multi-player last names (judge, hill, young, king, etc.) don't need to be in this set — they're already rejected by the `players.count == 1` check.
+
+**Deciding what goes in `commonWordLastNames`:**
+1. Word has a baseball/query meaning (show, score, walk, speed, spring, force, pop, free) → **INCLUDE** — the word almost certainly isn't a player reference
+2. Well-known player whose last name has NO baseball meaning (Bench, Belt, Story, Penny, Dye, Deer, Duke, Beer, Steer, Cave) → **EXCLUDE** — matching the player is the only useful answer
+3. Obscure player + ambiguous word → **INCLUDE** — harmless, prevents edge cases
+
+Players excluded from `commonWordLastNames` are still reachable via full name. For ambiguous matches, `matchPlayerWithProminence()` picks the most prominent player and `[SEEALSO]` tags show alternatives.
+
+**`matchPlayerWithProminence()`** — fallback for ambiguous last names. Sorts candidates by prominence (current players first, then by total games). Used in `parseComparison` and `parseConsecutiveStreak` so "Soto" resolves to Juan Soto with "See also: Gregory Soto, ..." alternatives.
 - **Suggestion CMS**: `SuggestionEngine.swift` + `SuggestionConfig.swift` + `suggestions_config.json`. Bundled JSON config with S3 override (`https://stat-chat.s3.us-east-2.amazonaws.com/suggestions_config.json`). Three tiers: 50 curated defaults (weighted), personalized (from search history/team affinity/templates), dynamic in-season leaders (DB queries, `{seasonLabel}` → "this season"/"last season"). Impression/tap rotation (threshold 6, monthly reset, tapped reset on version bump). OTA updates: upload JSON to S3 with higher `version` number. `SampleQuery.swift` is deleted.
 
 ### API Cost Optimization (implemented)

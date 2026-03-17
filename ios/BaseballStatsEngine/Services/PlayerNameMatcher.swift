@@ -1745,9 +1745,40 @@ enum PlayerNameMatcher {
     /// refer to a player when used in natural language baseball queries like "best hitter",
     /// "most home runs", "good season". Notable player last names (Rice, Young, Hill, Bell,
     /// Park, etc.) are intentionally NOT here.
+    /// Last names that are common English words — these should not be treated as player names
+    /// unless the full name (first + last) is present. Covers unambiguous DB last names that
+    /// collide with verbs, adjectives, nouns, and superlatives used in natural language queries.
+    /// When someone types one of these, they almost certainly mean the word, not the player.
+    /// The player is still reachable via full name or "see also" disambiguation.
+    ///
+    /// NOTE: Only needs unambiguous last names (1 player in DB). Multi-player last names like
+    /// "young" (59 players), "hill" (43), "king" (28) are already rejected by the
+    /// `players.count == 1` check in findPlayerInText and the parser rejection guards.
+    ///
+    /// EXCLUDED from this list (well-known players whose last names have no baseball meaning):
+    /// bench (Johnny Bench), belt (Brandon Belt), story (Trevor Story), penny (Brad Penny),
+    /// dye (Jermaine Dye), deer (Rob Deer), duke (Zach Duke), beer (Seth Beer),
+    /// steer (Spencer Steer), cave (Jake Cave)
     private static let commonWordLastNames: Set<String> = [
-        "best", "most", "good", "long", "strong", "more",
+        // Adjectives / adverbs / superlatives
+        "best", "good", "long", "strong", "more", "most",
         "longest", "shortest", "highest", "lowest", "fastest", "slowest",
+        "clear", "dark", "fast", "free", "grey", "just", "low", "rich",
+        // Verbs commonly used in baseball queries
+        "bolt", "brush", "cage", "crane", "drill",
+        "fold", "force", "freeze", "hack", "halt", "hatch", "jump",
+        "lock", "mock", "pack", "peel", "pose", "rain", "read", "reel",
+        "sand", "score", "sell", "shave", "show", "span", "spring",
+        "stump", "walk",
+        // Nouns commonly used in baseball / query context
+        "bare", "beam", "board", "bone",
+        "bunch", "cotton", "dam", "dial", "dock", "dove",
+        "eagle", "earl", "edge", "face", "fear", "fleet",
+        "font", "frost", "hammer", "hare", "hawk", "heard", "holder",
+        "host", "hurt", "knack", "lamp", "level", "light", "loan",
+        "mace", "marvel", "mole", "peace", "pie", "pole",
+        "pool", "pop", "root", "shell", "speed", "stem", "stern",
+        "strain", "strand", "way", "will", "winter", "worth",
     ]
 
     static func findAmbiguousPlayers(_ input: String) -> [String]? {
