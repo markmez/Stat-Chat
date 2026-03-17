@@ -93,7 +93,7 @@ struct PlayerCardView: View {
 
                             // Team(s) + position + age + handedness
                             if isRecentPlayer {
-                                HStack(spacing: 0) {
+                                FlowLayout(spacing: 0) {
                                     Button {
                                         if let code = PlayerCardService.teamCodeFromFullName(card.fullTeamName) {
                                             selectedTeamCode = code
@@ -109,8 +109,21 @@ struct PlayerCardView: View {
                                     if let age = card.age {
                                         Text("  \u{00B7}  Age \(age)")
                                     }
-                                    if let bats = card.bats, let throws_ = card.throws_ {
-                                        Text("  \u{00B7}  B/T: \(bats)/\(throws_)")
+                                    if card.isTwoWay {
+                                        if let bats = card.bats {
+                                            Text("  \u{00B7}  Bats: \(handednessWord(bats))")
+                                        }
+                                        if let throws_ = card.throws_ {
+                                            Text("  \u{00B7}  Throws: \(handednessWord(throws_))")
+                                        }
+                                    } else if card.isPitcher {
+                                        if let throws_ = card.throws_ {
+                                            Text("  \u{00B7}  Throws: \(handednessWord(throws_))")
+                                        }
+                                    } else {
+                                        if let bats = card.bats {
+                                            Text("  \u{00B7}  Bats: \(handednessWord(bats))")
+                                        }
                                     }
                                 }
                                 .font(.system(.subheadline, design: .rounded))
@@ -124,12 +137,12 @@ struct PlayerCardView: View {
                                                 selectedTeamCode = code
                                             } label: {
                                                 HStack(spacing: 0) {
-                                                    if idx > 0 {
-                                                        Text(", ")
-                                                            .foregroundStyle(.secondary)
-                                                    }
                                                     Text(PlayerCardService.teamFullName(code))
                                                         .foregroundStyle(deepBlue)
+                                                    if idx < teamCodes.count - 1 {
+                                                        Text(",\u{00A0}")
+                                                            .foregroundStyle(.secondary)
+                                                    }
                                                 }
                                             }
                                             .buttonStyle(.plain)
@@ -141,8 +154,21 @@ struct PlayerCardView: View {
                                         if let positions = card.positions {
                                             Text(positions)
                                         }
-                                        if let bats = card.bats, let throws_ = card.throws_ {
-                                            Text("  \u{00B7}  B/T: \(bats)/\(throws_)")
+                                        if card.isTwoWay {
+                                            if let bats = card.bats {
+                                                Text("  \u{00B7}  Bats: \(handednessWord(bats))")
+                                            }
+                                            if let throws_ = card.throws_ {
+                                                Text("  \u{00B7}  Throws: \(handednessWord(throws_))")
+                                            }
+                                        } else if card.isPitcher {
+                                            if let throws_ = card.throws_ {
+                                                Text("  \u{00B7}  Throws: \(handednessWord(throws_))")
+                                            }
+                                        } else {
+                                            if let bats = card.bats {
+                                                Text("  \u{00B7}  Bats: \(handednessWord(bats))")
+                                            }
                                         }
                                     }
                                     .font(.system(.subheadline, design: .rounded))
@@ -222,7 +248,9 @@ struct PlayerCardView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(
                                     RoundedRectangle(cornerRadius: 12)
-                                        .fill(Color(uiColor: .secondarySystemBackground))
+                                        .fill(.white)
+                    .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
+                    .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
                                 )
                                 .padding(.horizontal, 6)
                             }
@@ -349,11 +377,9 @@ struct PlayerCardView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 0.5)
-                )
+                .background(.white, in: RoundedRectangle(cornerRadius: 14))
+                .shadow(color: deepBlue.opacity(0.12), radius: 12, y: 4)
+                .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
                 .padding(.horizontal, 16)
             }
             .padding(.bottom, 6)
@@ -430,7 +456,9 @@ struct PlayerCardView: View {
                         .padding(.vertical, 12)
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(uiColor: .secondarySystemBackground))
+                                .fill(.white)
+                    .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
+                    .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
                         )
                         .padding(.horizontal, 6)
                     } else {
@@ -578,7 +606,9 @@ struct PlayerCardView: View {
                         .padding(.vertical, 12)
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(uiColor: .secondarySystemBackground))
+                                .fill(.white)
+                    .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
+                    .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
                         )
                         .padding(.horizontal, 6)
                     } else {
@@ -709,15 +739,18 @@ struct PlayerCardView: View {
                                 Text(t.rawValue)
                                     .font(.system(.subheadline, design: .rounded, weight: .semibold))
                                     .multilineTextAlignment(.center)
-                                    .padding(.horizontal, 10)
+                                    .padding(.horizontal, 12)
                                     .padding(.vertical, 6)
                                     .background(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(tab.wrappedValue == t
-                                                  ? deepBlue.opacity(0.12)
-                                                  : Color.clear)
+                                        tab.wrappedValue == t
+                                        ? AnyShapeStyle(LinearGradient(
+                                            colors: [lightBlue, deepBlue],
+                                            startPoint: .leading, endPoint: .trailing
+                                          ))
+                                        : AnyShapeStyle(Color.clear)
                                     )
-                                    .foregroundStyle(tab.wrappedValue == t ? deepBlue : .secondary)
+                                    .clipShape(Capsule())
+                                    .foregroundStyle(tab.wrappedValue == t ? .white : .secondary)
                             }
                         }
                     }
@@ -850,7 +883,7 @@ struct PlayerCardView: View {
                     }
                 }
 
-                StatGridView(grid: formGrid)
+                StatGridView(grid: formGrid, suppressBackground: true)
 
                 // Collapsible projection
                 Rectangle()
@@ -879,13 +912,15 @@ struct PlayerCardView: View {
                     let projectedGrid = buildPitchingFormProjection(
                         season: season, formGrid: formGrid, formNumGames: formNumGames
                     )
-                    StatGridView(grid: projectedGrid)
+                    StatGridView(grid: projectedGrid, suppressBackground: true)
                 }
             }
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(uiColor: .secondarySystemBackground))
+                    .fill(.white)
+                    .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
+                    .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
             )
             .padding(.horizontal, 6)
         })
@@ -1017,15 +1052,18 @@ struct PlayerCardView: View {
                                 Text(t.rawValue)
                                     .font(.system(.subheadline, design: .rounded, weight: .semibold))
                                     .multilineTextAlignment(.center)
-                                    .padding(.horizontal, 10)
+                                    .padding(.horizontal, 12)
                                     .padding(.vertical, 6)
                                     .background(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(tab.wrappedValue == t
-                                                  ? deepBlue.opacity(0.12)
-                                                  : Color.clear)
+                                        tab.wrappedValue == t
+                                        ? AnyShapeStyle(LinearGradient(
+                                            colors: [lightBlue, deepBlue],
+                                            startPoint: .leading, endPoint: .trailing
+                                          ))
+                                        : AnyShapeStyle(Color.clear)
                                     )
-                                    .foregroundStyle(tab.wrappedValue == t ? deepBlue : .secondary)
+                                    .clipShape(Capsule())
+                                    .foregroundStyle(tab.wrappedValue == t ? .white : .secondary)
                             }
                         }
                     }
@@ -1127,19 +1165,11 @@ struct PlayerCardView: View {
                     .padding(.top, 4)
 
                 if let grid = card.careerPlatoonSplits {
-                    Text("Platoon")
-                        .font(.system(.subheadline, design: .rounded, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 20)
                     StatGridView(grid: grid)
                         .padding(.horizontal, 6)
                 }
 
                 if let grid = card.careerHomeAwaySplits {
-                    Text("Home / Away")
-                        .font(.system(.subheadline, design: .rounded, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 20)
                     StatGridView(grid: grid)
                         .padding(.horizontal, 6)
                 }
@@ -1160,19 +1190,11 @@ struct PlayerCardView: View {
                     .padding(.top, 4)
 
                 if let grid = card.pitchingCareerPlatoonSplits {
-                    Text("Platoon")
-                        .font(.system(.subheadline, design: .rounded, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 20)
                     StatGridView(grid: grid)
                         .padding(.horizontal, 6)
                 }
 
                 if let grid = card.pitchingCareerHomeAwaySplits {
-                    Text("Home / Away")
-                        .font(.system(.subheadline, design: .rounded, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 20)
                     StatGridView(grid: grid)
                         .padding(.horizontal, 6)
                 }
@@ -1290,7 +1312,7 @@ struct PlayerCardView: View {
                     }
                 }
 
-                StatGridView(grid: formGrid)
+                StatGridView(grid: formGrid, suppressBackground: true)
 
                 // Collapsible projection
                 Rectangle()
@@ -1344,14 +1366,16 @@ struct PlayerCardView: View {
                             season: season, formGrid: formGrid, formNumGames: formNumGames,
                             effectiveGameNumber: effectiveGameNumber
                         )
-                        StatGridView(grid: projectedGrid)
+                        StatGridView(grid: projectedGrid, suppressBackground: true)
                     }
                 }
             }
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(uiColor: .secondarySystemBackground))
+                    .fill(.white)
+                    .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
+                    .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
             )
             .padding(.horizontal, 6)
         })
@@ -1802,7 +1826,9 @@ struct PlayerCardView: View {
                     .padding(.vertical, 12)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(uiColor: .secondarySystemBackground))
+                            .fill(.white)
+                    .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
+                    .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
                     )
                     .padding(.horizontal, 6)
                 }
@@ -1879,7 +1905,9 @@ struct PlayerCardView: View {
                     .padding(.vertical, 12)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(uiColor: .secondarySystemBackground))
+                            .fill(.white)
+                    .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
+                    .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
                     )
                     .padding(.horizontal, 6)
                 }
@@ -2284,6 +2312,15 @@ struct PlayerCardView: View {
 
     /// Returns a team label for a season, or nil if the team matches the header (no context needed).
     /// All unique team codes across a player's career, in chronological order of first appearance.
+    private func handednessWord(_ code: String) -> String {
+        switch code.uppercased() {
+        case "L": return "Left"
+        case "R": return "Right"
+        case "B", "S": return "Switch"
+        default: return code
+        }
+    }
+
     private func allCareerTeamCodes(card: PlayerCard) -> [String] {
         var seen = Set<String>()
         var codes: [String] = []

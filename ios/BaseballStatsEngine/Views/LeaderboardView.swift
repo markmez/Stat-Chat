@@ -23,7 +23,7 @@ struct LeaderboardView: View {
     private let rankWidth: CGFloat = 30
     private let rankNameGap: CGFloat = 6
     private let nameStatGap: CGFloat = 8
-    private let statColumnWidth: CGFloat = 48
+    private let statColumnWidth: CGFloat = 56
     private let valueGap: CGFloat = 6
 
     /// Divider spans rank through the last value column
@@ -44,7 +44,7 @@ struct LeaderboardView: View {
                     Text(header)
                         .font(.system(.caption2, design: .monospaced, weight: .semibold))
                         .foregroundStyle(.secondary)
-                        .frame(width: statColumnWidth, alignment: .leading)
+                        .frame(minWidth: statColumnWidth, alignment: .leading)
                         .padding(.leading, idx > 0 ? valueGap : 0)
                 }
             }
@@ -111,7 +111,9 @@ struct LeaderboardView: View {
                         Text(val)
                             .font(.system(.callout, design: .monospaced, weight: .medium))
                             .foregroundStyle(idx == 0 ? .primary : .secondary)
-                            .frame(width: statColumnWidth, alignment: .leading)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .frame(minWidth: statColumnWidth, alignment: .leading)
                             .padding(.leading, idx == 0 ? nameStatGap : valueGap)
                     }
 
@@ -147,11 +149,9 @@ struct LeaderboardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(uiColor: .secondarySystemBackground))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 0.5)
-                )
+                .fill(.white)
+                .shadow(color: Color(red: 0.1, green: 0.25, blue: 0.7).opacity(0.10), radius: 10, y: 3)
+                .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
         )
     }
 

@@ -3039,6 +3039,52 @@ enum PlayerCardService {
         return parts.joined(separator: "\n")
     }
 
+    /// Builds a leaderboard for a specific stat, filtered to only the given player names.
+    static func buildPlayerSubsetLeaderboard(playerNames: [String], stat: PlayerNameMatcher.StatInfo, season: Int?, isPitching: Bool) -> String? {
+        let sanitized = playerNames.map { $0.replacingOccurrences(of: "'", with: "''") }
+        let inClause = sanitized.map { "'\($0)'" }.joined(separator: ", ")
+
+        let table = isPitching ? "season_pitching_stats" : "season_batting_stats"
+        let seasonFilter: String
+        let seasonLabel: String
+        if let season = season {
+            seasonFilter = " AND s.season = \(season)"
+            seasonLabel = "\(season) "
+        } else {
+            // Use most recent season for each player
+            seasonFilter = " AND s.season = (SELECT MAX(s2.season) FROM \(table) s2 WHERE s2.player_id = s.player_id)"
+            seasonLabel = ""
+        }
+
+        let lowerIsBetter = ["era", "whip", "bb_per_9", "hits_per_9", "hr_per_9"].contains(stat.dbColumn)
+        let sql = """
+            SELECT p.name, s.\(stat.dbColumn), s.season
+            FROM \(table) s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name IN (\(inClause))\(seasonFilter)
+            ORDER BY s.\(stat.dbColumn) \(lowerIsBetter ? "ASC" : "DESC")
+            """
+
+        guard let result = try? db.execute(sql: sql), !result.rows.isEmpty else {
+            return nil
+        }
+
+        var parts: [String] = []
+        parts.append("**\(seasonLabel)\(stat.displayName) for these players:**\n")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: \(stat.displayAbbrev)")
+        for (i, row) in result.rows.enumerated() {
+            let name = row[0]
+            let rawValue = row[1]
+            let formattedValue = stat.isRate ? formatRate(rawValue) : rawValue
+            parts.append("ROW \(i + 1). \(name): \(formattedValue)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        return parts.joined(separator: "\n")
+    }
+
     private static func buildAllTimeSingleSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int, league: String? = nil) -> String {
         let leagueFilter = league.map { " AND s.league = '\($0)'" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
@@ -3911,6 +3957,13 @@ enum PlayerCardService {
             "ANA": "Los Angeles Angels", "WAS": "Washington Nationals",
             "FLO": "Florida Marlins", "MON": "Montreal Expos",
             "ATH": "Oakland Athletics",
+            // Historical franchises
+            "CAL": "California Angels", "KC1": "Kansas City Athletics",
+            "ML1": "Milwaukee Braves", "BSN": "Boston Braves",
+            "BRO": "Brooklyn Dodgers", "NYG": "New York Giants",
+            "PHA": "Philadelphia Athletics", "SLA": "St. Louis Browns",
+            "WS1": "Washington Senators", "WS2": "Washington Senators (1961)",
+            "SE1": "Seattle Pilots", "ML4": "Milwaukee Brewers (AL)",
         ]
         return teams[abbreviation] ?? abbreviation
     }

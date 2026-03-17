@@ -23,6 +23,7 @@
 		407B6D9C1E8862FAC51F5974 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4226E2C31DC9E6684B0CD953 /* AppState.swift */; };
 		455928344195A5334455240E /* ResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD18464AB4C998AEF89D1ADC /* ResultsView.swift */; };
 		497301EF41FE610D0BE621E8 /* StatChat.storekit in Resources */ = {isa = PBXBuildFile; fileRef = 8A33F22FD3998B78C251B18E /* StatChat.storekit */; };
+		4A5E4A5EA0E0E552CF4ACA1F /* SuggestionPillsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB57F6E3B57D2CBE150BEEE9 /* SuggestionPillsView.swift */; };
 		5015BF091371068EA3F0C963 /* PlayerCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B51AB0AF7813417184FAF96B /* PlayerCardView.swift */; };
 		544EBC4B31BC8B80788EE870 /* LoadingIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CBC668CB3B717109518A293 /* LoadingIndicator.swift */; };
 		5CCE38BE8D7080E8700D1E0B /* LeaderboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 797994603DE35696E898BBDA /* LeaderboardView.swift */; };
@@ -71,6 +72,7 @@
 		A0FB15832BA10076377EBB0F /* PaywallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaywallView.swift; sourceTree = "<group>"; };
 		A161890890E908E9407731BF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A8FF902D3F734697580E64F8 /* PlayerNameMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerNameMatcher.swift; sourceTree = "<group>"; };
+		AB57F6E3B57D2CBE150BEEE9 /* SuggestionPillsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionPillsView.swift; sourceTree = "<group>"; };
 		B51AB0AF7813417184FAF96B /* PlayerCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerCardView.swift; sourceTree = "<group>"; };
 		C78343C60140872060772B21 /* StatGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatGridView.swift; sourceTree = "<group>"; };
 		CD18464AB4C998AEF89D1ADC /* ResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsView.swift; sourceTree = "<group>"; };
@@ -186,6 +188,7 @@
 				CD18464AB4C998AEF89D1ADC /* ResultsView.swift */,
 				68E27B973CF2B1F2C0AA67E7 /* SettingsView.swift */,
 				C78343C60140872060772B21 /* StatGridView.swift */,
+				AB57F6E3B57D2CBE150BEEE9 /* SuggestionPillsView.swift */,
 				46EE2001B470FD5EC03920D6 /* SwipeBackGesture.swift */,
 				E5808AF2D60EBEB36D9CE0A5 /* TeamCardView.swift */,
 			);
@@ -298,6 +301,7 @@
 				ED2340E24B3B18EEB77319F1 /* StoreKitService.swift in Sources */,
 				28C826BBA916CF60FBAC8A08 /* SuggestionConfig.swift in Sources */,
 				1D6020CD9CF042647C57939A /* SuggestionEngine.swift in Sources */,
+				4A5E4A5EA0E0E552CF4ACA1F /* SuggestionPillsView.swift in Sources */,
 				F1227A844E80C4AEF7A632A1 /* SwipeBackGesture.swift in Sources */,
 				10E6361803A8FEA7A449A733 /* TeamCardView.swift in Sources */,
 			);

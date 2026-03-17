@@ -10,6 +10,7 @@ struct ResultCard: View {
     var onQueryTap: ((String) -> Void)? = nil
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
     var body: some View {
         switch message.role {
@@ -75,16 +76,15 @@ struct ResultCard: View {
                                             Text(query)
                                                 .font(.system(.footnote, design: .rounded, weight: .medium))
                                         }
-                                        .foregroundStyle(deepBlue)
+                                        .foregroundStyle(.white)
                                         .padding(.horizontal, 14)
                                         .padding(.vertical, 8)
                                         .background(
-                                            Capsule()
-                                                .fill(Color(uiColor: .secondarySystemBackground))
-                                                .overlay(
-                                                    Capsule()
-                                                        .stroke(deepBlue.opacity(0.25), lineWidth: 0.5)
-                                                )
+                                            LinearGradient(
+                                                colors: [lightBlue, deepBlue],
+                                                startPoint: .leading, endPoint: .trailing
+                                            ),
+                                            in: Capsule()
                                         )
                                     }
                                     .buttonStyle(.plain)
@@ -179,6 +179,25 @@ struct ResultCard: View {
             }
             .padding(.horizontal, 20)
             .padding(.top, 10)
+
+        case .didYouMean(let query):
+            if let tap = onQueryTap {
+                HStack(spacing: 6) {
+                    Text("Interpreting as:")
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(.secondary)
+                    Button {
+                        tap(query)
+                    } label: {
+                        Text(query)
+                            .font(.system(.caption, design: .rounded, weight: .medium))
+                            .foregroundStyle(deepBlue)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 2)
+            }
 
         case .querySuggestion, .partialGrid:
             EmptyView()

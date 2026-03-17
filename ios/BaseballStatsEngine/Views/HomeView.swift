@@ -141,11 +141,9 @@ struct HomeView: View {
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
                 .frame(minHeight: 120, alignment: .top)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 1)
-                )
+                .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                .shadow(color: deepBlue.opacity(0.12), radius: 12, y: 4)
+                .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
                 .padding(.horizontal, 24)
 
                 // Sample queries + tip
@@ -161,7 +159,10 @@ struct HomeView: View {
                         }
                     }
 
-                    AnimatedPlaceholder(searchHistory: appState.searchHistory) { query in
+                    SuggestionPillsView(
+                        searchHistory: appState.searchHistory,
+                        compact: !StoreKitService.shared.isSubscribed
+                    ) { query in
                         questionText = query
                     }
 

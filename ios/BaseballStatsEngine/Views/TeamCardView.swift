@@ -238,11 +238,9 @@ struct TeamCardView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 0.5)
-                )
+                .background(.white, in: RoundedRectangle(cornerRadius: 14))
+                .shadow(color: deepBlue.opacity(0.12), radius: 12, y: 4)
+                .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
                 .padding(.horizontal, 16)
             }
             .padding(.bottom, 6)
@@ -332,11 +330,9 @@ struct TeamCardView: View {
             .padding(12)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(uiColor: .secondarySystemBackground))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 0.5)
-                    )
+                    .fill(.white)
+                    .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
+                    .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
             )
             .padding(.horizontal, 6)
         }
@@ -453,11 +449,9 @@ struct TeamCardView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(uiColor: .secondarySystemBackground))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color(uiColor: .separator).opacity(0.3), lineWidth: 0.5)
-                    )
+                    .fill(.white)
+                    .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
+                    .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
             )
             .padding(.horizontal, 6)
         }
