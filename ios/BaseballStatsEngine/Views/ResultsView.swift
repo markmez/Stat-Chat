@@ -18,10 +18,38 @@ struct ResultsView: View {
         appState.messages.filter { !$0.content.isEmpty || $0.role == .user }
     }
 
+    private var userQueries: [String] {
+        visibleMessages.filter { $0.role == .user }.map(\.content)
+    }
+
     /// Whether the input area fits inline below results without scrolling
     private func fitsInline(in availableHeight: CGFloat) -> Bool {
         let inputEstimate: CGFloat = 110
         return resultsContentHeight + inputEstimate + 30 < availableHeight
+    }
+
+    @ViewBuilder
+    private func resultCard(for message: Message) -> some View {
+        ResultCard(
+            message: message,
+            isFirstUser: message.id == visibleMessages.first(where: { $0.role == .user })?.id,
+            onBack: { dismiss() },
+            isStreaming: appState.isLoading && message.id == visibleMessages.last?.id,
+            previousQueries: userQueries,
+            onPlayerTap: { name in
+                if appState.pendingDisambiguation != nil {
+                    appState.resolveDisambiguation(with: name)
+                } else {
+                    selectedPlayerName = name
+                }
+            },
+            onTeamTap: { code in
+                selectedTeamCode = code
+            },
+            onQueryTap: { query in
+                appState.sendQuestion(query)
+            }
+        )
     }
 
     var body: some View {
@@ -38,26 +66,8 @@ struct ResultsView: View {
                         ScrollView {
                             VStack(spacing: 20) {
                                 ForEach(visibleMessages) { message in
-                                    ResultCard(
-                                        message: message,
-                                        isFirstUser: message.id == visibleMessages.first(where: { $0.role == .user })?.id,
-                                        onBack: { dismiss() },
-                                        isStreaming: appState.isLoading && message.id == visibleMessages.last?.id,
-                                        onPlayerTap: { name in
-                                            if appState.pendingDisambiguation != nil {
-                                                appState.resolveDisambiguation(with: name)
-                                            } else {
-                                                selectedPlayerName = name
-                                            }
-                                        },
-                                        onTeamTap: { code in
-                                            selectedTeamCode = code
-                                        },
-                                        onQueryTap: { query in
-                                            appState.sendQuestion(query)
-                                        }
-                                    )
-                                    .id(message.id)
+                                    resultCard(for: message)
+                                        .id(message.id)
                                 }
 
                                 if appState.isLoading && appState.currentStreamingText.isEmpty {

@@ -5,6 +5,8 @@ struct ResultCard: View {
     var isFirstUser: Bool = false
     var onBack: (() -> Void)? = nil
     var isStreaming: Bool = false
+    /// User queries from the conversation — suggestions matching these are suppressed.
+    var previousQueries: [String] = []
     var onPlayerTap: ((String) -> Void)? = nil
     var onTeamTap: ((String) -> Void)? = nil
     var onQueryTap: ((String) -> Void)? = nil
@@ -211,12 +213,17 @@ struct ResultCard: View {
     }
 
     private func groupedSegments(_ segments: [StatGridParser.Segment]) -> [SegmentGroup] {
+        let excludedLower = Set(previousQueries.map { $0.lowercased() })
+
         var result: [SegmentGroup] = []
         var pendingSuggestions: [String] = []
 
         for segment in segments {
             if case .querySuggestion(let query) = segment {
-                pendingSuggestions.append(query)
+                // Skip suggestions that match a previous user query
+                if !excludedLower.contains(query.lowercased()) {
+                    pendingSuggestions.append(query)
+                }
             } else {
                 if !pendingSuggestions.isEmpty {
                     result.append(.suggestions(pendingSuggestions))

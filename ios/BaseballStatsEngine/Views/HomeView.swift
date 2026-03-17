@@ -48,9 +48,13 @@ struct HomeView: View {
         .onChange(of: path) { _, newPath in
             if newPath.isEmpty {
                 isInputFocused = false
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 withAnimation(.easeInOut(duration: 0.2)) {
                     historyExpanded = false
+                }
+                // Delay keyboard dismissal to ensure it fires after the view hierarchy settles
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    isInputFocused = false
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 }
             }
         }
@@ -161,7 +165,7 @@ struct HomeView: View {
 
                     SuggestionPillsView(
                         searchHistory: appState.searchHistory,
-                        compact: !StoreKitService.shared.isSubscribed
+                        compact: !StoreKitService.shared.isSubscribed && !appState.searchHistory.isEmpty
                     ) { query in
                         questionText = query
                     }
@@ -187,6 +191,7 @@ struct HomeView: View {
                     .transition(.move(edge: .bottom))
             }
         }
+        .ignoresSafeArea(.keyboard)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.automatic, for: .navigationBar)
         .toolbar {
