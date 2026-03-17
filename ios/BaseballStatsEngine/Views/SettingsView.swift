@@ -68,6 +68,57 @@ struct SettingsView: View {
                     }
                 }
 
+                // Support & Contact
+                infoSection(title: "Support") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Link(destination: URL(string: "https://secondsignalapps.com/support.html")!) {
+                            HStack {
+                                Image(systemName: "questionmark.circle")
+                                    .font(.system(size: 14))
+                                Text("Help & Support")
+                                    .font(.system(.subheadline, design: .rounded))
+                                Spacer()
+                                Image(systemName: "arrow.up.right")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .foregroundStyle(.primary)
+                        }
+
+                        Divider()
+
+                        Link(destination: URL(string: "mailto:info@secondsignalapps.com")!) {
+                            HStack {
+                                Image(systemName: "envelope")
+                                    .font(.system(size: 14))
+                                Text("Contact Us")
+                                    .font(.system(.subheadline, design: .rounded))
+                                Spacer()
+                                Image(systemName: "arrow.up.right")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .foregroundStyle(.primary)
+                        }
+
+                        Divider()
+
+                        Link(destination: URL(string: "https://secondsignalapps.com/privacy.html")!) {
+                            HStack {
+                                Image(systemName: "hand.raised")
+                                    .font(.system(size: 14))
+                                Text("Privacy Policy")
+                                    .font(.system(.subheadline, design: .rounded))
+                                Spacer()
+                                Image(systemName: "arrow.up.right")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .foregroundStyle(.primary)
+                        }
+                    }
+                }
+
                 Spacer(minLength: 40)
             }
             .padding(.horizontal, 20)
@@ -81,44 +132,48 @@ struct SettingsView: View {
 
     private var subscriptionSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // Usage meter
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("\(min(appState.weeklyQueryCount, freeLimit))")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundStyle(
-                            appState.weeklyQueryCount >= freeLimit ? Color.red : deepBlue
-                        )
-                    Text("of \(freeLimit) free questions used this week")
-                        .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(.secondary)
-                }
-
-                // Progress bar
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Color(uiColor: .tertiarySystemFill))
-                            .frame(height: 6)
-                        Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: appState.weeklyQueryCount >= freeLimit
-                                        ? [.red, .red]
-                                        : [lightBlue, deepBlue],
-                                    startPoint: .leading, endPoint: .trailing
-                                )
+            if store.isSubscribed {
+                // No usage meter needed — unlimited
+            } else {
+                // Usage meter
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("\(min(appState.weeklyQueryCount, freeLimit))")
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .foregroundStyle(
+                                appState.weeklyQueryCount >= freeLimit ? Color.red : deepBlue
                             )
-                            .frame(
-                                width: geo.size.width * min(CGFloat(appState.weeklyQueryCount) / CGFloat(freeLimit), 1.0),
-                                height: 6
-                            )
+                        Text("of \(freeLimit) free questions used this week")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
                     }
-                }
-                .frame(height: 6)
-            }
 
-            Divider()
+                    // Progress bar
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color(uiColor: .tertiarySystemFill))
+                                .frame(height: 6)
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: appState.weeklyQueryCount >= freeLimit
+                                            ? [.red, .red]
+                                            : [lightBlue, deepBlue],
+                                        startPoint: .leading, endPoint: .trailing
+                                    )
+                                )
+                                .frame(
+                                    width: geo.size.width * min(CGFloat(appState.weeklyQueryCount) / CGFloat(freeLimit), 1.0),
+                                    height: 6
+                                )
+                        }
+                    }
+                    .frame(height: 6)
+                }
+
+                Divider()
+            }
 
             if store.isSubscribed {
                 // Subscribed state

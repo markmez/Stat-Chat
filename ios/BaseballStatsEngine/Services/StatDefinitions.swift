@@ -34,6 +34,8 @@ enum StatDefinitions {
         // Advanced stats
         "wRC+": "Weighted runs created plus — park- and league-adjusted offensive value. 100 is average, 150+ is elite.",
         "WAR": "Wins above replacement — total value in wins compared to a replacement-level player. 2+ is solid, 5+ is All-Star, 8+ is MVP.",
+        "wOBA": "Weighted on-base average — a rate stat that weights each way of reaching base by its run value. Unlike OPS, it properly weights walks, singles, doubles, triples, and home runs by how much they contribute to run scoring. Scale is similar to OBP (~.300 is average, ~.400 is excellent). Approximate formula weights: BB=0.69, HBP=0.72, 1B=0.89, 2B=1.27, 3B=1.62, HR=2.10 (weights vary by year).",
+        "FIP": "Fielding independent pitching — estimates a pitcher's run prevention independent of the defense behind them. Uses only strikeouts, walks, HBP, and home runs — outcomes the pitcher controls. Formula: (13\u{00D7}HR + 3\u{00D7}(BB+HBP) - 2\u{00D7}K) / IP + constant (~3.10). Scale matches ERA (~3.50 is average, under 3.00 is excellent).",
 
         // Fielding stats
         "PO": "Putouts — outs recorded directly by this fielder (catching a fly ball, stepping on a base, tagging a runner)",

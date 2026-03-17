@@ -3615,6 +3615,199 @@ enum PlayerCardService {
 
     // MARK: - Helpers
 
+    // MARK: - Composite threshold (30/30, 40/40, etc.)
+
+    static func buildCompositeThresholdResponse(threshold: Int) -> String {
+        let sql = """
+            SELECT p.name, s.season, s.home_runs, s.stolen_bases, s.batting_avg
+            FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE s.home_runs >= \(threshold) AND s.stolen_bases >= \(threshold)
+            ORDER BY s.season DESC, s.home_runs + s.stolen_bases DESC
+            """
+        guard let result = try? db.execute(sql: sql), !result.rows.isEmpty else {
+            return "No player has ever achieved a \(threshold)/\(threshold) season (HR and SB)."
+        }
+
+        let count = result.rows.count
+        var parts: [String] = []
+        parts.append("**\(threshold)/\(threshold) Seasons (HR & SB)**\n")
+        parts.append("\(count) time\(count == 1 ? "" : "s") a player has hit \(threshold)+ HR and stolen \(threshold)+ bases in the same season.\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: Year, HR, SB, AVG")
+        for (i, row) in result.rows.prefix(50).enumerated() {
+            let playerName = row[0]
+            let season = row[1]
+            let hr = row[2]
+            let sb = row[3]
+            let avg = formatRate(row[4])
+            parts.append("ROW \(i + 1). \(playerName): \(season), \(hr), \(sb), \(avg)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        if result.rows.count > 50 {
+            parts.append("\n_Showing top 50 of \(result.rows.count) results._")
+        }
+
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - Triple Crown
+
+    static func buildTripleCrownResponse() -> String {
+        // For each season, find the leader in AVG (min 400 AB), HR, and RBI
+        // Check if the same player led in all three
+        let sql = """
+            WITH avg_leaders AS (
+                SELECT s.season, p.name, s.batting_avg,
+                       ROW_NUMBER() OVER (PARTITION BY s.season ORDER BY s.batting_avg DESC) as rn
+                FROM season_batting_stats s
+                JOIN players p ON s.player_id = p.player_id
+                WHERE s.at_bats >= 400
+            ),
+            hr_leaders AS (
+                SELECT s.season, p.name, s.home_runs,
+                       ROW_NUMBER() OVER (PARTITION BY s.season ORDER BY s.home_runs DESC) as rn
+                FROM season_batting_stats s
+                JOIN players p ON s.player_id = p.player_id
+            ),
+            rbi_leaders AS (
+                SELECT s.season, p.name, s.rbi,
+                       ROW_NUMBER() OVER (PARTITION BY s.season ORDER BY s.rbi DESC) as rn
+                FROM season_batting_stats s
+                JOIN players p ON s.player_id = p.player_id
+            )
+            SELECT a.season, a.name, a.batting_avg, h.home_runs, r.rbi
+            FROM avg_leaders a
+            JOIN hr_leaders h ON a.season = h.season AND a.name = h.name AND h.rn = 1
+            JOIN rbi_leaders r ON a.season = r.season AND a.name = r.name AND r.rn = 1
+            WHERE a.rn = 1
+            ORDER BY a.season DESC
+            """
+        guard let result = try? db.execute(sql: sql), !result.rows.isEmpty else {
+            return "No Triple Crown winners found in the database."
+        }
+
+        let count = result.rows.count
+        var parts: [String] = []
+        parts.append("**Triple Crown Winners**\n")
+        parts.append("The Triple Crown is awarded when a player leads their league (or all of MLB) in batting average, home runs, and RBI in the same season. It has happened \(count) time\(count == 1 ? "" : "s") in our records.\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: Year, AVG, HR, RBI")
+        for (i, row) in result.rows.enumerated() {
+            let season = row[0]
+            let name = row[1]
+            let avg = formatRate(row[2])
+            let hr = row[3]
+            let rbi = row[4]
+            parts.append("ROW \(i + 1). \(name): \(season), \(avg), \(hr), \(rbi)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        parts.append("\n_Note: Based on overall MLB leaders with min. 400 AB. Historical league-specific Triple Crowns may differ._")
+
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - Consecutive streak (hitting streak, on-base streak)
+
+    static func buildConsecutiveStreakResponse(type: PlayerNameMatcher.ConsecutiveStreakQuery.StreakType, playerName: String?, season: Int?) -> String {
+        let hitCondition: String
+        let streakLabel: String
+        switch type {
+        case .hit:
+            hitCondition = "hits > 0"
+            streakLabel = "Hitting"
+        case .onbase:
+            hitCondition = "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0"
+            streakLabel = "On-Base"
+        }
+
+        let playerFilter: String
+        let playerJoin: String
+        if let name = playerName {
+            playerJoin = "JOIN players p ON g.player_id = p.player_id"
+            playerFilter = "AND p.name = '\(sanitize(name))'"
+        } else {
+            playerJoin = "JOIN players p ON g.player_id = p.player_id"
+            playerFilter = ""
+        }
+
+        let seasonFilter = season.map { "AND g.season = \($0)" } ?? ""
+
+        let sql = """
+            WITH numbered AS (
+                SELECT g.player_id, p.name, g.date, g.hits, g.walks, COALESCE(g.hit_by_pitch, 0) as hbp, g.season,
+                       ROW_NUMBER() OVER (PARTITION BY g.player_id ORDER BY g.date) as game_num
+                FROM game_batting_logs g
+                \(playerJoin)
+                WHERE 1=1 \(playerFilter) \(seasonFilter)
+            ),
+            qualifying AS (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY date) as qual_num
+                FROM numbered
+                WHERE \(hitCondition)
+            ),
+            streaks AS (
+                SELECT player_id, name,
+                       COUNT(*) as streak_len,
+                       MIN(date) as start_date,
+                       MAX(date) as end_date,
+                       MIN(season) as season
+                FROM qualifying
+                GROUP BY player_id, game_num - qual_num
+            )
+            SELECT name, streak_len, season, start_date, end_date
+            FROM streaks
+            ORDER BY streak_len DESC
+            LIMIT 15
+            """
+
+        guard let result = try? db.execute(sql: sql), !result.rows.isEmpty else {
+            let scope = playerName ?? "any player"
+            return "No \(streakLabel.lowercased()) streak data found for \(scope)."
+        }
+
+        var parts: [String] = []
+        let scopeLabel: String
+        if let name = playerName {
+            let info = fetchPlayerInfo(name: name)
+            let displayName = info?.name ?? name
+            if let season {
+                scopeLabel = "\(displayName) \u{2014} \(season)"
+            } else {
+                scopeLabel = displayName
+            }
+        } else {
+            if let season {
+                scopeLabel = "\(season)"
+            } else {
+                scopeLabel = "All-Time"
+            }
+        }
+
+        parts.append("**Longest \(streakLabel) Streaks \u{2014} \(scopeLabel)**\n")
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: Games, Season, Dates")
+        for (i, row) in result.rows.enumerated() {
+            let name = row[0]
+            let streakLen = row[1]
+            let season = row[2]
+            let startDate = formatDate(row[3])
+            let endDate = formatDate(row[4])
+            parts.append("ROW \(i + 1). \(name): \(streakLen), \(season), \(startDate)\u{2013}\(endDate)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        return parts.joined(separator: "\n")
+    }
+
     private static func sanitize(_ name: String) -> String {
         name.replacingOccurrences(of: "'", with: "''")
     }

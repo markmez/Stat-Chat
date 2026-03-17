@@ -164,6 +164,11 @@ struct HomeView: View {
                     AnimatedPlaceholder(searchHistory: appState.searchHistory) { query in
                         questionText = query
                     }
+
+                    // Free usage indicator
+                    if !StoreKitService.shared.isSubscribed {
+                        freeUsageIndicator
+                    }
                 }
                 .padding(.top, 16)
 
@@ -316,6 +321,40 @@ struct HomeView: View {
                 .ignoresSafeArea(edges: .bottom)
         )
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: historyExpanded)
+    }
+
+    private var freeUsageIndicator: some View {
+        let remaining = appState.freeQueriesRemaining
+        let resetDate = appState.weeklyResetDate
+        let formatter: DateFormatter = {
+            let f = DateFormatter()
+            f.dateFormat = "EEEE" // e.g. "Monday"
+            return f
+        }()
+
+        return VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                Text("\(remaining) free search\(remaining == 1 ? "" : "es") remaining")
+                    .font(.system(.caption2, design: .rounded))
+                    .foregroundStyle(remaining == 0 ? .red : .secondary)
+                Text("·")
+                    .foregroundStyle(.quaternary)
+                Text("Resets \(formatter.string(from: resetDate))")
+                    .font(.system(.caption2, design: .rounded))
+                    .foregroundStyle(.quaternary)
+            }
+
+            if remaining == 0 {
+                Button {
+                    appState.showPaywall = true
+                } label: {
+                    Text("Upgrade for unlimited")
+                        .font(.system(.caption2, design: .rounded, weight: .medium))
+                        .foregroundStyle(deepBlue)
+                }
+            }
+        }
+        .padding(.top, 6)
     }
 
     private func submitQuestion() {

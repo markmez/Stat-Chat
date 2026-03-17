@@ -156,6 +156,30 @@ struct ResultCard: View {
             }
             .padding(.horizontal, 20)
 
+        case .seeAlso(let names):
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 0) {
+                    Text("See also: ")
+                        .foregroundStyle(.secondary)
+                    ForEach(Array(names.enumerated()), id: \.offset) { idx, name in
+                        if idx > 0 {
+                            Text(", ")
+                                .foregroundStyle(.secondary)
+                        }
+                        Button {
+                            onPlayerTap?(name)
+                        } label: {
+                            Text(name)
+                                .foregroundStyle(deepBlue)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .font(.system(.subheadline, design: .rounded))
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 10)
+
         case .querySuggestion, .partialGrid:
             EmptyView()
         }

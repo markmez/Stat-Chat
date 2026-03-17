@@ -45,6 +45,10 @@ enum PlayerNameMatcher {
         "ken griffey senior": "Ken Griffey",
         "ken griffey sr.": "Ken Griffey",
         "ken griffey sr": "Ken Griffey",
+        // Vladimir Guerrero Jr. — common short forms
+        "vlad guerrero jr.": "Vladimir Guerrero Jr.",
+        "vlad guerrero jr": "Vladimir Guerrero Jr.",
+        "vlad guerrero": "Vladimir Guerrero Jr.",
         // Common "junior" suffix variant
         "bobby witt junior": "Bobby Witt Jr.",
         "fernando tatis junior": "Fernando Tatis Jr.",
@@ -211,6 +215,18 @@ enum PlayerNameMatcher {
         for alias in sortedStatAliases {
             if containsWord(alias, in: lower) {
                 return statAliasMap[alias]
+            }
+        }
+        // Handle split phrases like "stolen 60 bases" → "stolen bases"
+        // Remove numbers and extra spaces, then retry
+        let withoutNumbers = lower.replacingOccurrences(of: "\\d+\\.?\\d*", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+        if withoutNumbers != lower {
+            for alias in sortedStatAliases {
+                if containsWord(alias, in: withoutNumbers) {
+                    return statAliasMap[alias]
+                }
             }
         }
         return nil
@@ -534,9 +550,28 @@ enum PlayerNameMatcher {
         return nil
     }
 
+    /// Match a player name, falling back to prominence-based disambiguation for ambiguous last names.
+    /// Used in comparison parsing where we want "Soto" to resolve to Juan Soto (the dominant player).
+    /// Match a player name, falling back to prominence-based disambiguation for ambiguous last names.
+    /// Returns (matched name, alternative names) — alternatives are other players sharing the last name.
+    private static func matchPlayerWithProminence(_ input: String) -> (name: String, alternatives: [String])? {
+        // Try exact match first
+        if let name = matchPlayer(input) { return (name, []) }
+        // If ambiguous last name, pick the most prominent player (current + most games)
+        let lower = stripDiacritics(input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        if let candidates = lastNameIndex[lower], candidates.count > 1 {
+            let (sorted, _) = sortByProminence(candidates)
+            if let first = sorted.first {
+                return (first, Array(sorted.dropFirst()))
+            }
+        }
+        return nil
+    }
+
     /// Detect comparison queries like "compare Judge and Ohtani" or "Judge vs Ohtani".
     /// Returns two canonical player names if both resolve unambiguously.
-    static func parseComparison(_ input: String) -> (String, String, Int?)? {
+    /// Returns (player1, player2, season, alternatives for disambiguation).
+    static func parseComparison(_ input: String) -> (String, String, Int?, [String])? {
         let season = detectSeason(input)
         var cleaned = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
@@ -594,14 +629,15 @@ enum PlayerNameMatcher {
             let part2 = String(cleaned[range.upperBound...])
                 .trimmingCharacters(in: .whitespaces)
 
-            let m1 = matchPlayer(part1)
-            let m2 = matchPlayer(part2)
+            let m1 = matchPlayerWithProminence(part1)
+            let m2 = matchPlayerWithProminence(part2)
 
             guard !part1.isEmpty, !part2.isEmpty,
-                  let name1 = m1,
-                  let name2 = m2,
-                  name1 != name2 else { continue }
-            return (name1, name2, season)
+                  let r1 = m1,
+                  let r2 = m2,
+                  r1.name != r2.name else { continue }
+            let allAlts = r1.alternatives + r2.alternatives
+            return (r1.name, r2.name, season, allAlts)
         }
 
         // Fallback: find two distinct player names anywhere in the string.
@@ -614,7 +650,7 @@ enum PlayerNameMatcher {
                 // Remove the first player's name from the text and search again
                 let remaining = cleaned.replacingOccurrences(of: first.lowercased(), with: "")
                 if let second = findPlayerInText(remaining), second != first {
-                    return (first, second, season)
+                    return (first, second, season, [])
                 }
             }
         }
@@ -1168,7 +1204,8 @@ enum PlayerNameMatcher {
             if containsWord(name.lowercased(), in: lower) { return nil }
         }
         for (lastName, players) in lastNameIndex {
-            if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+            if containsWord(lastName, in: lower) && players.count == 1
+                && !commonWordLastNames.contains(lastName) { return nil }
         }
 
         // Try matching via statAliasMap (handles natural language like "batting average")
@@ -1178,12 +1215,13 @@ enum PlayerNameMatcher {
         }
 
         // Try direct abbreviation lookup for stats not in statAliasMap (wRC+, WAR, K, etc.)
-        let directAbbrevs = ["war", "wrc+", "k", "pa", "sf", "1b"]
+        let directAbbrevs = ["war", "wrc+", "woba", "fip", "k", "pa", "sf", "1b"]
         for abbrev in directAbbrevs {
             if containsWord(abbrev, in: lower) {
                 let key = abbrev.uppercased()
-                if let definition = StatDefinitions.lookup(key == "WRC+" ? "wRC+" : key) {
-                    let display = abbrev == "war" ? "WAR" : (abbrev == "wrc+" ? "wRC+" : key)
+                let lookupKey = key == "WRC+" ? "wRC+" : (key == "WOBA" ? "wOBA" : (key == "FIP" ? "FIP" : key))
+                if let definition = StatDefinitions.lookup(lookupKey) {
+                    let display = abbrev == "war" ? "WAR" : (abbrev == "wrc+" ? "wRC+" : (abbrev == "woba" ? "wOBA" : (abbrev == "fip" ? "FIP" : key)))
                     return (display, display, definition)
                 }
             }
@@ -1206,7 +1244,8 @@ enum PlayerNameMatcher {
             if containsWord(name.lowercased(), in: lower) { return nil }
         }
         for (lastName, players) in lastNameIndex {
-            if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+            if containsWord(lastName, in: lower) && players.count == 1
+                && !commonWordLastNames.contains(lastName) { return nil }
         }
 
         // Reject leaderboard triggers — those go to parseLeaderboard
@@ -1282,7 +1321,8 @@ enum PlayerNameMatcher {
             if containsWord(name.lowercased(), in: lower) { return nil }
         }
         for (lastName, players) in lastNameIndex {
-            if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+            if containsWord(lastName, in: lower) && players.count == 1
+                && !commonWordLastNames.contains(lastName) { return nil }
         }
 
         // Must have a stat keyword
@@ -1394,7 +1434,8 @@ enum PlayerNameMatcher {
             if containsWord(name.lowercased(), in: lower) { return nil }
         }
         for (lastName, players) in lastNameIndex {
-            if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+            if containsWord(lastName, in: lower) && players.count == 1
+                && !commonWordLastNames.contains(lastName) { return nil }
         }
 
         // Must have a stat keyword
@@ -1423,6 +1464,88 @@ enum PlayerNameMatcher {
         return (stat, threshold, since, leagueResult?.league ?? nil)
     }
 
+    // MARK: - Composite threshold parser (30/30, 40/40, etc.)
+
+    /// Detect queries like "how many 30/30 seasons", "who has gone 40/40", "30-30 club".
+    /// Returns the threshold number (e.g. 30 for "30/30").
+    static func parseCompositeThreshold(_ input: String) -> Int? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Detect X/X, X-X, or "X X" patterns for common values
+        let compositePattern = try! NSRegularExpression(pattern: "\\b(20|25|30|40|50)[/\\- ](20|25|30|40|50)\\b")
+        let matches = compositePattern.matches(in: lower, range: NSRange(lower.startIndex..., in: lower))
+
+        guard let match = matches.first,
+              let r1 = Range(match.range(at: 1), in: lower),
+              let r2 = Range(match.range(at: 2), in: lower),
+              let n1 = Int(lower[r1]),
+              let n2 = Int(lower[r2]),
+              n1 == n2 else { return nil }
+
+        // Must have a trigger phrase that indicates a question about who/how many
+        let triggers = ["how many", "who has", "who have", "most", "players",
+                        "seasons", "club", "members", "times", "ever", "history",
+                        "list", "all time", "all-time", "has anyone", "has there",
+                        "how often", "tell me about"]
+        let hasTrigger = triggers.contains(where: { lower.contains($0) })
+
+        // Also allow bare "30/30" or "30/30 seasons" as standalone queries
+        let words = lower.split(separator: " ")
+        let isShortQuery = words.count <= 4
+
+        guard hasTrigger || isShortQuery else { return nil }
+
+        return n1
+    }
+
+    // MARK: - Triple Crown parser
+
+    /// Detect queries about the Triple Crown — "who won the triple crown?", "triple crown winners",
+    /// "how many triple crowns have there been?", "has anyone won the triple crown recently?"
+    static func parseTripleCrown(_ input: String) -> Bool {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return lower.contains("triple crown")
+    }
+
+    // MARK: - Consecutive streak parser (hitting streak, on-base streak)
+
+    struct ConsecutiveStreakQuery {
+        enum StreakType { case hit, onbase }
+        let type: StreakType
+        let playerName: String?
+        let season: Int?
+    }
+
+    /// Detect queries like "longest hitting streak", "Judge's hit streak", "on-base streak record".
+    static func parseConsecutiveStreak(_ input: String) -> ConsecutiveStreakQuery? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Determine streak type
+        let streakType: ConsecutiveStreakQuery.StreakType
+        let onBasePatterns = ["on-base streak", "on base streak", "reaching base streak",
+                              "onbase streak", "consecutive games reaching base",
+                              "consecutive games on base"]
+        let hitPatterns = ["hitting streak", "hit streak", "game hitting streak",
+                           "game hit streak", "consecutive hit", "consecutive game hit",
+                           "consecutive games with a hit"]
+
+        if onBasePatterns.contains(where: { lower.contains($0) }) {
+            streakType = .onbase
+        } else if hitPatterns.contains(where: { lower.contains($0) }) {
+            streakType = .hit
+        } else {
+            return nil
+        }
+
+        // Try to find a player name
+        let playerName = findPlayerInText(lower)
+
+        // Detect season
+        let season = detectSeason(lower, defaultToMostRecent: false)
+
+        return ConsecutiveStreakQuery(type: streakType, playerName: playerName, season: season)
+    }
+
     // MARK: - Team stats parser
 
     /// Detect queries like "Yankees hitters", "Dodgers OPS leaders", "Mets home runs 2024".
@@ -1438,7 +1561,8 @@ enum PlayerNameMatcher {
             if containsWord(name.lowercased(), in: lower) { return nil }
         }
         for (lastName, players) in lastNameIndex {
-            if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+            if containsWord(lastName, in: lower) && players.count == 1
+                && !commonWordLastNames.contains(lastName) { return nil }
         }
 
         let stat = matchStat(lower)
@@ -1472,7 +1596,8 @@ enum PlayerNameMatcher {
             if containsWord(name.lowercased(), in: lower) { return nil }
         }
         for (lastName, players) in lastNameIndex {
-            if containsWord(lastName, in: lower) && players.count == 1 { return nil }
+            if containsWord(lastName, in: lower) && players.count == 1
+                && !commonWordLastNames.contains(lastName) { return nil }
         }
 
         let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear

@@ -188,6 +188,12 @@ struct ResultsView: View {
             PaywallView()
                 .environment(appState)
         }
+        .onChange(of: appState.showPaywall) { _, showing in
+            // When paywall dismisses, retry the blocked query if user subscribed
+            if !showing && StoreKitService.shared.isSubscribed {
+                appState.retryPendingPaywallQuery()
+            }
+        }
         .onAppear {
             if appState.messages.isEmpty && !initialQuestion.isEmpty {
                 appState.sendQuestion(initialQuestion)

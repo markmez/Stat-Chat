@@ -36,6 +36,8 @@ final class AppState: SearchHistoryTracking {
     var disambiguatedPlayerName: String?
     private(set) var weeklyQueryCount: Int = 0
     var showPaywall = false
+    /// Query that was blocked by the paywall — auto-retried after successful purchase
+    var pendingPaywallQuery: String?
     var appearanceMode: AppearanceMode = .system {
         didSet { UserDefaults.standard.set(appearanceMode.rawValue, forKey: appearanceModeKey) }
     }
@@ -86,6 +88,7 @@ final class AppState: SearchHistoryTracking {
         resetWeeklyCountIfNeeded()
         if weeklyQueryCount >= 5 && !StoreKitService.shared.isSubscribed {
             AnalyticsService.trackPaywallHit(queryCount: weeklyQueryCount)
+            pendingPaywallQuery = trimmed
             showPaywall = true
             return
         }
@@ -101,16 +104,18 @@ final class AppState: SearchHistoryTracking {
 
         // Intercept comparison queries — build response from structured data
         let compResult = PlayerNameMatcher.parseComparison(trimmed)
-        if let (p1, p2, compSeason) = compResult {
+        if let (p1, p2, compSeason, compAlternatives) = compResult {
+            let seeAlsoTag = compAlternatives.isEmpty ? "" : "\n[SEEALSO]\(compAlternatives.joined(separator: ","))[/SEEALSO]"
             let bothLocal = PlayerCardService.hasLocalData(name: p1) && PlayerCardService.hasLocalData(name: p2)
             if bothLocal {
                 // Both in local DB — synchronous
-                let response: String
+                var response: String
                 if PlayerCardService.isPitcher(name: p1) && PlayerCardService.isPitcher(name: p2) {
                     response = PlayerCardService.buildPitchingComparison(player1: p1, player2: p2, season: compSeason)
                 } else {
                     response = PlayerCardService.buildComparison(player1: p1, player2: p2, season: compSeason)
                 }
+                response += seeAlsoTag
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: "Compared \(p1) and \(p2). \(response)")
@@ -124,7 +129,8 @@ final class AppState: SearchHistoryTracking {
                 isLoading = true
                 AnalyticsService.trackQuery(text: trimmed, type: .backendComparison)
                 currentQueryTask = Task {
-                    let response = await PlayerCardService.buildComparisonAsync(player1: p1, player2: p2, season: compSeason)
+                    var response = await PlayerCardService.buildComparisonAsync(player1: p1, player2: p2, season: compSeason)
+                    response += seeAlsoTag
                     guard !Task.isCancelled else { return }
                     messages[loadingIndex] = Message(role: .assistant, content: response)
                     isLoading = false
@@ -243,6 +249,19 @@ final class AppState: SearchHistoryTracking {
             }
         }
 
+        // Intercept month stats queries — "Judge in September", "Ohtani's stats in July"
+        // Must run BEFORE season lookup to avoid "Devers in September last season" matching as a season query
+        if let monthQuery = PlayerNameMatcher.parseMonthQuery(trimmed),
+           PlayerCardService.isLocalSeason(monthQuery.season) {
+            if let response = PlayerCardService.buildMonthStats(name: monthQuery.playerName, month: monthQuery.month, season: monthQuery.season) {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localMonthStats)
+                return
+            }
+        }
+
         // Intercept season lookup queries — build response from DB, skip Claude
         if let (playerName, season) = PlayerNameMatcher.parseSeasonLookup(trimmed) {
             let response: String?
@@ -256,18 +275,6 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
                 AnalyticsService.trackQuery(text: trimmed, type: .localSeasonLookup)
-                return
-            }
-        }
-
-        // Intercept month stats queries — "Judge in September", "Ohtani's stats in July"
-        if let monthQuery = PlayerNameMatcher.parseMonthQuery(trimmed),
-           PlayerCardService.isLocalSeason(monthQuery.season) {
-            if let response = PlayerCardService.buildMonthStats(name: monthQuery.playerName, month: monthQuery.month, season: monthQuery.season) {
-                messages.append(Message(role: .user, content: trimmed))
-                messages.append(Message(role: .assistant, content: response))
-                addToConversationHistory(question: trimmed, answer: response)
-                AnalyticsService.trackQuery(text: trimmed, type: .localMonthStats)
                 return
             }
         }
@@ -395,6 +402,37 @@ final class AppState: SearchHistoryTracking {
                 AnalyticsService.trackQuery(text: trimmed, type: .localAllTimeThreshold)
                 return
             }
+            return
+        }
+
+        // Intercept composite threshold queries — "30/30 seasons", "who has gone 40/40?"
+        if let compositeThreshold = PlayerNameMatcher.parseCompositeThreshold(trimmed) {
+            let response = PlayerCardService.buildCompositeThresholdResponse(threshold: compositeThreshold)
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            addToConversationHistory(question: trimmed, answer: response)
+            AnalyticsService.trackQuery(text: trimmed, type: .localThreshold)
+            return
+        }
+
+        // Intercept Triple Crown queries — "who won the triple crown?"
+        if PlayerNameMatcher.parseTripleCrown(trimmed) {
+            let response = PlayerCardService.buildTripleCrownResponse()
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            addToConversationHistory(question: trimmed, answer: response)
+            AnalyticsService.trackQuery(text: trimmed, type: .localThreshold)
+            return
+        }
+
+        // Intercept consecutive streak queries — "longest hitting streak", "Judge's hit streak"
+        if let streakQuery = PlayerNameMatcher.parseConsecutiveStreak(trimmed) {
+            let response = PlayerCardService.buildConsecutiveStreakResponse(
+                type: streakQuery.type, playerName: streakQuery.playerName, season: streakQuery.season)
+            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .assistant, content: response))
+            addToConversationHistory(question: trimmed, answer: response)
+            AnalyticsService.trackQuery(text: trimmed, type: .localStreak)
             return
         }
 
@@ -723,6 +761,25 @@ final class AppState: SearchHistoryTracking {
     func clearSearchHistory() {
         searchHistory.removeAll()
         UserDefaults.standard.removeObject(forKey: historyKey)
+    }
+
+    /// Retry the query that was blocked by the paywall (called after successful purchase).
+    func retryPendingPaywallQuery() {
+        guard let query = pendingPaywallQuery else { return }
+        pendingPaywallQuery = nil
+        sendQuestion(query)
+    }
+
+    /// The next Monday when free queries reset.
+    var weeklyResetDate: Date {
+        let calendar = Calendar.current
+        let now = Date()
+        return calendar.nextDate(after: now, matching: DateComponents(weekday: 2), matchingPolicy: .nextTime) ?? now
+    }
+
+    /// How many free queries remain this week.
+    var freeQueriesRemaining: Int {
+        max(0, 5 - weeklyQueryCount)
     }
 
     func incrementQueryCount() {
