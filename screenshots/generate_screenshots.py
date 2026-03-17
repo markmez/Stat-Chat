@@ -17,8 +17,9 @@ SIDE_PAD = (CANVAS_W - SCREEN_W) // 2  # 60px each side
 SCREEN_X = SIDE_PAD
 SCREEN_Y = CANVAS_H - SCREEN_H - 120  # blue strip at bottom
 
-# Colors
-DEEP_BLUE = (26, 64, 179)
+# Colors — matches splash screen / app icon gradient
+ICON_DARK = (15, 31, 115)    # rgb(0.06, 0.12, 0.45) — top
+ICON_LIGHT = (31, 71, 191)   # rgb(0.12, 0.28, 0.75) — bottom
 WHITE = (255, 255, 255)
 
 FONT_PATH = "/System/Library/Fonts/SFNS.ttf"
@@ -88,9 +89,22 @@ def draw_text(canvas, line1, line2):
     draw.text((CANVAS_W // 2, y2), line2, fill=WHITE, font=font, anchor="mt")
 
 
+def make_gradient(w, h, top_color, bottom_color):
+    """Create a vertical gradient image from top_color to bottom_color."""
+    # Build one column of pixels, then stretch horizontally
+    col = Image.new("RGBA", (1, h))
+    for y in range(h):
+        t = y / (h - 1)
+        r = int(top_color[0] + (bottom_color[0] - top_color[0]) * t)
+        g = int(top_color[1] + (bottom_color[1] - top_color[1]) * t)
+        b = int(top_color[2] + (bottom_color[2] - top_color[2]) * t)
+        col.putpixel((0, y), (r, g, b, 255))
+    return col.resize((w, h), Image.NEAREST)
+
+
 def generate(config, raw_dir, output_dir):
-    # Solid background
-    canvas = Image.new("RGBA", (CANVAS_W, CANVAS_H), DEEP_BLUE + (255,))
+    # Gradient background matching splash screen / app icon
+    canvas = make_gradient(CANVAS_W, CANVAS_H, ICON_LIGHT, ICON_DARK)
     draw_screen(canvas, os.path.join(raw_dir, config["file"]))
     draw_text(canvas, config["line1"], config["line2"])
     out = os.path.join(output_dir, config["file"].replace(".png", "_framed.png"))
