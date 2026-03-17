@@ -151,7 +151,16 @@ Rules:
 - For "league leaders" or "top" queries, use ORDER BY ... DESC LIMIT 10 unless a specific number is requested.
 - For leaderboard/ranking queries on rate stats (AVG, OBP, SLG, OPS, ISO, BABIP), add a minimum plate appearances filter: WHERE plate_appearances >= 400 for a full season, or >= 200 for partial/current seasons. This avoids small sample size noise. Counting stats (HR, RBI, SB, etc.) don't need this filter.
 - When the user asks for a player's "stats" without specifying a year, use UNION ALL to return (1) their most recent season row AND (2) a career totals row. IMPORTANT: Wrap the first SELECT in a subquery since SQLite does not allow ORDER BY/LIMIT before UNION ALL. Example pattern: SELECT * FROM (SELECT ... ORDER BY s.season DESC LIMIT 1) UNION ALL SELECT ... For career totals, SUM the counting stats and recalculate rate stats from sums (e.g., CAST(SUM(hits) AS REAL)/SUM(at_bats) for AVG). Use 'Career' as the season value. Only include the career row if the player has more than one season of data.
-- For questions about stats we don't have data for, return SELECT 'NO_DATA' as answer.
+- Several stats are not stored as columns but CAN be computed from existing data. Always compute them when asked:
+  - FIP: (13*home_runs + 3*(walks+hit_by_pitch) - 2*strikeouts) / (ip_outs/3.0) + 3.10
+  - K% (strikeout rate): ROUND(100.0 * strikeouts / plate_appearances, 1) for batters, ROUND(100.0 * strikeouts / batters_faced, 1) for pitchers
+  - BB% (walk rate): ROUND(100.0 * walks / plate_appearances, 1) for batters, ROUND(100.0 * walks / batters_faced, 1) for pitchers
+  - SB% (stolen base pct): ROUND(100.0 * stolen_bases / (stolen_bases + caught_stealing), 1)
+  - Total Bases (TB): hits + doubles + 2*triples + 3*home_runs
+  - Extra Base Hits (XBH): doubles + triples + home_runs
+  - Singles (1B): hits - doubles - triples - home_runs
+  - AB/HR: at_bats / home_runs (guard against division by zero)
+- For questions about stats not in the database and not derivable (e.g., WAR, wRC+, wOBA, xFIP, exit velocity, launch angle, barrel rate), return: SELECT 'NO_DATA: <stat name>' as answer.
 """
 
 ANSWER_GENERATION_PROMPT = """You are a knowledgeable baseball analyst. Given a user's question, the SQL that was run, and the results, provide a clear, concise answer.

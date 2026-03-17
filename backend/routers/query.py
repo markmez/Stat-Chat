@@ -90,7 +90,13 @@ async def _stream(question: str, device_id: str, history: list[dict]):
         return
 
     if "NO_DATA" in sql:
-        yield event({"type": "text", "text": "I don't have data for that yet. Try asking about batting stats, pitching stats, or streaks from 2016–2025."})
+        # Let Claude explain what the stat is and suggest alternatives
+        no_data_result = "NO_DATA — this stat is not stored in our database and cannot be derived from available columns."
+        try:
+            async for chunk in llm.stream_answer(question, sql, no_data_result, history):
+                yield event({"type": "text", "text": chunk})
+        except Exception as e:
+            yield event({"type": "text", "text": "I don't have data for that stat in my database. Try asking about batting stats, pitching stats, or streaks from 2016–2025."})
         yield event({"type": "done"})
         increment_count(device_id)
         return

@@ -570,7 +570,11 @@ final class AppState: SearchHistoryTracking {
         // Intercept stat definition queries — "what is OPS?", "explain BABIP"
         if let defn = PlayerNameMatcher.parseStatDefinition(trimmed) {
             let statName = defn.displayName == defn.abbrev ? defn.displayName : defn.displayName.lowercased()
-            let response = "**\(defn.abbrev)** — \(defn.definition)\n\n[SUGGEST]\(statName) leaders[/SUGGEST]\n[SUGGEST]career \(statName) leaders[/SUGGEST]"
+            var response = "**\(defn.abbrev)** — \(defn.definition)"
+            // Only suggest leaderboards if the stat is actually queryable in the DB
+            if PlayerNameMatcher.matchStat(defn.abbrev) != nil {
+                response += "\n\n[SUGGEST]\(statName) leaders[/SUGGEST]\n[SUGGEST]career \(statName) leaders[/SUGGEST]"
+            }
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: response))
             addToConversationHistory(question: trimmed, answer: response)
