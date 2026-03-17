@@ -245,7 +245,7 @@ enum PromptStore {
     - Some historical stats (IBB, SF, HBP) may be NULL or 0 for very old seasons (pre-1955)
     - For batting split queries (vs lefties/righties), JOIN with platoon_splits using split = 'vs_LHP' or split = 'vs_RHP'
     - For pitching split queries (vs lefties/righties), JOIN with pitching_platoon_splits using split = 'vs_LHB' or split = 'vs_RHB'
-    - If the user says "last year" or "last season", assume 2024. If they say "this year" or "this season", assume 2025.
+    - The current year is \(Calendar.current.component(.year, from: Date())). If the user says "this year" or "this season", use \(Calendar.current.component(.year, from: Date())). If they say "last year" or "last season", use \(Calendar.current.component(.year, from: Date()) - 1).
     """
 
     static let routerPrompt = """

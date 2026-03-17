@@ -1,6 +1,7 @@
 # Xcode
 ios/**/xcuserdata/
 ios/**/*.xcworkspace/
+!ios/**/xcshareddata/swiftpm/Package.resolved
 ios/DerivedData/
 ios/BaseballStatsEngine.xcodeproj/
 *.pbxuser
