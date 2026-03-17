@@ -463,7 +463,8 @@ enum PlayerNameMatcher {
 
         // Try unambiguous last name
         for (lastName, players) in lastNameIndex {
-            if containsWord(lastName, in: lower) && players.count == 1 {
+            if containsWord(lastName, in: lower) && players.count == 1
+                && !commonWordLastNames.contains(lastName) {
                 return resolveEmbeddedName(players[0])
             }
         }
@@ -1537,8 +1538,15 @@ enum PlayerNameMatcher {
             return nil
         }
 
-        // Try to find a player name
-        let playerName = findPlayerInText(lower)
+        // Try to find a player name (use prominence-based matching for ambiguous last names)
+        let playerName: String?
+        if let name = findPlayerInText(lower) {
+            playerName = name
+        } else if let result = matchPlayerWithProminence(lower) {
+            playerName = result.name
+        } else {
+            playerName = nil
+        }
 
         // Detect season
         let season = detectSeason(lower, defaultToMostRecent: false)
@@ -1739,6 +1747,7 @@ enum PlayerNameMatcher {
     /// Park, etc.) are intentionally NOT here.
     private static let commonWordLastNames: Set<String> = [
         "best", "most", "good", "long", "strong", "more",
+        "longest", "shortest", "highest", "lowest", "fastest", "slowest",
     ]
 
     static func findAmbiguousPlayers(_ input: String) -> [String]? {

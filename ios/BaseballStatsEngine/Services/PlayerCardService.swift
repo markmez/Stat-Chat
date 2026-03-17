@@ -2089,7 +2089,6 @@ enum PlayerCardService {
             JOIN players p ON \(prefix).player_id = p.player_id
             WHERE \(prefix).\(stat.dbColumn) \(comparison) \(threshold)\(badEraFilter)\(leagueFilter)
             ORDER BY \(prefix).\(stat.dbColumn) DESC
-            LIMIT 50
             """
         guard let result = try? db.execute(sql: sql),
               !result.rows.isEmpty else {
@@ -2117,13 +2116,13 @@ enum PlayerCardService {
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
         parts.append("[LEADERBOARD]")
-        parts.append("HEADER: Year | \(stat.displayAbbrev)")
+        parts.append("HEADER: Year, \(stat.displayAbbrev)")
         for (i, row) in result.rows.enumerated() {
             let playerName = row[0]
             let rawValue = row[1]
             let season = row[2]
             let formattedValue = stat.isRate ? formatRate(rawValue) : rawValue
-            parts.append("ROW \(i + 1). \(playerName): \(season) | \(formattedValue)")
+            parts.append("ROW \(i + 1). \(playerName): \(season), \(formattedValue)")
         }
         parts.append("[/LEADERBOARD]")
 
@@ -2208,7 +2207,7 @@ enum PlayerCardService {
 
         parts.append("[LEADERBOARD]")
         let hasAge = superlative == .youngest || superlative == .oldest
-        parts.append("HEADER: Year | \(stat.displayAbbrev)\(hasAge ? " | Age" : "")")
+        parts.append("HEADER: Year, \(stat.displayAbbrev)\(hasAge ? ", Age" : "")")
         for (i, row) in result.rows.enumerated() {
             let playerName = row[0]
             let rawValue = row[1]
@@ -2216,9 +2215,9 @@ enum PlayerCardService {
             let formattedValue = stat.isRate ? formatRate(rawValue) : rawValue
             if hasAge, row.count > 3 {
                 let age = row[3]
-                parts.append("ROW \(i + 1). \(playerName): \(season) | \(formattedValue) | age \(age)")
+                parts.append("ROW \(i + 1). \(playerName): \(season), \(formattedValue), age \(age)")
             } else {
-                parts.append("ROW \(i + 1). \(playerName): \(season) | \(formattedValue)")
+                parts.append("ROW \(i + 1). \(playerName): \(season), \(formattedValue)")
             }
         }
         parts.append("[/LEADERBOARD]")
@@ -2332,7 +2331,7 @@ enum PlayerCardService {
 
         parts.append("[LEADERBOARD]")
         let showYear = season == nil
-        parts.append("HEADER: \(showYear ? "Year | " : "")\(rankStat.displayAbbrev) | \(filterStat.displayAbbrev)")
+        parts.append("HEADER: \(showYear ? "Year, " : "")\(rankStat.displayAbbrev), \(filterStat.displayAbbrev)")
         for (i, row) in result.rows.enumerated() {
             let playerName = row[0]
             let rankRaw = row[1]
@@ -2341,9 +2340,9 @@ enum PlayerCardService {
             let rankFormatted = rankStat.isRate ? formatRate(rankRaw) : rankRaw
             let filterFormatted = filterStat.isRate ? formatRate(filterRaw) : filterRaw
             if showYear {
-                parts.append("ROW \(i + 1). \(playerName): \(yearStr) | \(rankFormatted) | \(filterFormatted)")
+                parts.append("ROW \(i + 1). \(playerName): \(yearStr), \(rankFormatted), \(filterFormatted)")
             } else {
-                parts.append("ROW \(i + 1). \(playerName): \(rankFormatted) | \(filterFormatted)")
+                parts.append("ROW \(i + 1). \(playerName): \(rankFormatted), \(filterFormatted)")
             }
         }
         parts.append("[/LEADERBOARD]")
@@ -2416,7 +2415,7 @@ enum PlayerCardService {
 
         parts.append("[LEADERBOARD]")
         parts.append("HEADER: Year, \(stat.displayAbbrev)")
-        for (i, row) in rows.prefix(50).enumerated() {
+        for (i, row) in rows.enumerated() {
             let playerName = row[0]
             let season = row[1]
             let rawValue = row[2]
@@ -2424,10 +2423,6 @@ enum PlayerCardService {
             parts.append("ROW \(i + 1). \(playerName): \(season), \(formattedValue)")
         }
         parts.append("[/LEADERBOARD]")
-
-        if rows.count > 50 {
-            parts.append("\n_Showing top 50 of \(rows.count) results._")
-        }
 
         let statName = stat.pillName
         parts.append("\n[SUGGEST]\(statName) leaders[/SUGGEST]")
@@ -3618,38 +3613,59 @@ enum PlayerCardService {
     // MARK: - Composite threshold (30/30, 40/40, etc.)
 
     static func buildCompositeThresholdResponse(threshold: Int) -> String {
-        let sql = """
-            SELECT p.name, s.season, s.home_runs, s.stolen_bases, s.batting_avg
+        // Player ranking — who did it the most times
+        let rankSql = """
+            SELECT p.name, COUNT(*) as times,
+                   GROUP_CONCAT(s.season || ' (' || s.home_runs || '/' || s.stolen_bases || ')', ', ') as seasons
+            FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE s.home_runs >= \(threshold) AND s.stolen_bases >= \(threshold)
+            GROUP BY p.player_id
+            ORDER BY times DESC, MAX(s.home_runs + s.stolen_bases) DESC
+            """
+        // All individual seasons
+        let allSql = """
+            SELECT p.name, s.season, s.home_runs, s.stolen_bases
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
             WHERE s.home_runs >= \(threshold) AND s.stolen_bases >= \(threshold)
             ORDER BY s.season DESC, s.home_runs + s.stolen_bases DESC
             """
-        guard let result = try? db.execute(sql: sql), !result.rows.isEmpty else {
+        guard let rankResult = try? db.execute(sql: rankSql), !rankResult.rows.isEmpty,
+              let allResult = try? db.execute(sql: allSql) else {
             return "No player has ever achieved a \(threshold)/\(threshold) season (HR and SB)."
         }
 
-        let count = result.rows.count
+        let totalSeasons = allResult.rows.count
+        let totalPlayers = rankResult.rows.count
         var parts: [String] = []
         parts.append("**\(threshold)/\(threshold) Seasons (HR & SB)**\n")
-        parts.append("\(count) time\(count == 1 ? "" : "s") a player has hit \(threshold)+ HR and stolen \(threshold)+ bases in the same season.\n")
+        parts.append("\(totalSeasons) time\(totalSeasons == 1 ? "" : "s") by \(totalPlayers) player\(totalPlayers == 1 ? "" : "s").\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
+        // Player ranking
         parts.append("[LEADERBOARD]")
-        parts.append("HEADER: Year, HR, SB, AVG")
-        for (i, row) in result.rows.prefix(50).enumerated() {
+        parts.append("HEADER: Times, Seasons")
+        for (i, row) in rankResult.rows.enumerated() {
+            let playerName = row[0]
+            let times = row[1]
+            let seasons = row[2]
+            parts.append("ROW \(i + 1). \(playerName): \(times), \(seasons)")
+        }
+        parts.append("[/LEADERBOARD]")
+
+        // Full list of all individual seasons
+        parts.append("\n**All \(threshold)/\(threshold) Seasons**\n")
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: Year, HR, SB")
+        for (i, row) in allResult.rows.enumerated() {
             let playerName = row[0]
             let season = row[1]
             let hr = row[2]
             let sb = row[3]
-            let avg = formatRate(row[4])
-            parts.append("ROW \(i + 1). \(playerName): \(season), \(hr), \(sb), \(avg)")
+            parts.append("ROW \(i + 1). \(playerName): \(season), \(hr), \(sb)")
         }
         parts.append("[/LEADERBOARD]")
-
-        if result.rows.count > 50 {
-            parts.append("\n_Showing top 50 of \(result.rows.count) results._")
-        }
 
         return parts.joined(separator: "\n")
     }
@@ -3786,7 +3802,7 @@ enum PlayerCardService {
             if let season {
                 scopeLabel = "\(season)"
             } else {
-                scopeLabel = "All-Time"
+                scopeLabel = "Since 2016"
             }
         }
 
