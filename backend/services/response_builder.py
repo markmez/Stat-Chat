@@ -575,7 +575,8 @@ def build_comparison(name1: str, name2: str, season: Optional[int] = None) -> Op
                 parts.append(f"ROW: {dn2} ({s2[0]}), " + ", ".join(s2[1]))
                 parts.append("[/STATGRID]")
 
-        if c1 and c2:
+        # Career grid — only when no specific season was requested
+        if not season and c1 and c2:
             parts.append("\nCareer:\n")
             parts.append("[STATGRID]")
             parts.append(header)
@@ -721,7 +722,8 @@ def build_pitching_comparison(name1: str, name2: str, season: Optional[int] = No
             parts.append(f"ROW: {label2}, " + ", ".join(s2[1]))
             parts.append("[/STATGRID]")
 
-        if c1 and c2:
+        # Career grid — only when no specific season was requested
+        if not season and c1 and c2:
             parts.append("\nCareer:\n")
             parts.append("[STATGRID]")
             parts.append(header)
@@ -2772,7 +2774,8 @@ def build_filtered_leaderboard(rank_stat: StatInfo, filter_stat: StatInfo,
 
         threshold_display = _format_rate(str(threshold)) if filter_stat.is_rate else str(int(threshold))
         filter_label = f"{threshold_display}+" if comparison == ">=" else f"\u2264{threshold_display}"
-        title = f"Most {rank_stat.display_name} with {filter_label} {filter_stat.display_abbrev} ({scope_label}){league_label}"
+        title_prefix = "Highest" if rank_stat.is_rate else "Most"
+        title = f"{title_prefix} {rank_stat.display_name} with {filter_label} {filter_stat.display_abbrev} ({scope_label}){league_label}"
 
         show_year = season is None
         parts = [f"**{title}**\n"]
@@ -2793,19 +2796,21 @@ def build_filtered_leaderboard(rank_stat: StatInfo, filter_stat: StatInfo,
         parts.append(f"\n{count} result{'s' if count != 1 else ''}.")
 
         rank_name = rank_stat.pill_name
+        pill_cap = "Highest" if rank_stat.is_rate else "Most"
+        pill_low = "highest" if rank_stat.is_rate else "most"
         if season is not None:
-            parts.append(f"\n[SUGGEST]Most {rank_name} with {filter_label} {filter_stat.display_abbrev} all-time[/SUGGEST]")
+            parts.append(f"\n[SUGGEST]{pill_cap} {rank_name} with {filter_label} {filter_stat.display_abbrev} all-time[/SUGGEST]")
         else:
             current_year = datetime.now().year
-            parts.append(f"\n[SUGGEST]Most {rank_name} with {filter_label} {filter_stat.display_abbrev} in {current_year}[/SUGGEST]")
+            parts.append(f"\n[SUGGEST]{pill_cap} {rank_name} with {filter_label} {filter_stat.display_abbrev} in {current_year}[/SUGGEST]")
 
         if league:
             other = "NL" if league == "AL" else "AL"
-            parts.append(f"[SUGGEST]most {rank_name} with {filter_label} {filter_stat.display_abbrev} ({other})[/SUGGEST]")
-            parts.append(f"[SUGGEST]most {rank_name} with {filter_label} {filter_stat.display_abbrev} (MLB)[/SUGGEST]")
+            parts.append(f"[SUGGEST]{pill_low} {rank_name} with {filter_label} {filter_stat.display_abbrev} ({other})[/SUGGEST]")
+            parts.append(f"[SUGGEST]{pill_low} {rank_name} with {filter_label} {filter_stat.display_abbrev} (MLB)[/SUGGEST]")
         else:
-            parts.append(f"[SUGGEST]most {rank_name} with {filter_label} {filter_stat.display_abbrev} (AL)[/SUGGEST]")
-            parts.append(f"[SUGGEST]most {rank_name} with {filter_label} {filter_stat.display_abbrev} (NL)[/SUGGEST]")
+            parts.append(f"[SUGGEST]{pill_low} {rank_name} with {filter_label} {filter_stat.display_abbrev} (AL)[/SUGGEST]")
+            parts.append(f"[SUGGEST]{pill_low} {rank_name} with {filter_label} {filter_stat.display_abbrev} (NL)[/SUGGEST]")
 
         return "\n".join(parts)
     finally:

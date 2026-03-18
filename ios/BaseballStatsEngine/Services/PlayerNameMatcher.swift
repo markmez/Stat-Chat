@@ -1879,7 +1879,7 @@ enum PlayerNameMatcher {
     /// bench (Johnny Bench), belt (Brandon Belt), story (Trevor Story), penny (Brad Penny),
     /// dye (Jermaine Dye), deer (Rob Deer), duke (Zach Duke), beer (Seth Beer),
     /// steer (Spencer Steer), cave (Jake Cave)
-    private static let commonWordLastNames: Set<String> = Set(configFile.common_word_last_names)
+    static let commonWordLastNames: Set<String> = Set(configFile.common_word_last_names)
 
     static func findAmbiguousPlayers(_ input: String) -> [String]? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

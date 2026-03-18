@@ -62,6 +62,7 @@ final class AppState: SearchHistoryTracking {
         let playerNames: [String]
         let stat: PlayerNameMatcher.StatInfo?
         let season: Int?
+        var league: String? = nil
         let originalQuery: String
     }
 
@@ -759,7 +760,7 @@ final class AppState: SearchHistoryTracking {
                 lastResultContext = ResultContext(
                     type: .leaderboard,
                     playerNames: extractPlayerNamesFromResponse(response),
-                    stat: board.stat, season: leaderboardSeason, originalQuery: trimmed
+                    stat: board.stat, season: leaderboardSeason, league: board.league, originalQuery: trimmed
                 )
                 AnalyticsService.trackQuery(text: trimmed, type: .localLeaderboard)
                 return
@@ -922,12 +923,19 @@ final class AppState: SearchHistoryTracking {
         messages.append(Message(role: .assistant, content: ""))
         let streamingIndex = messages.count - 1
 
+        // For contextual follow-ups that couldn't be resolved locally,
+        // build a self-contained prompt so Claude has full context.
+        let isContextual = looksContextual(trimmed) && !conversationHistory.isEmpty
+        let questionForBackend = isContextual ? buildContextualPrompt(for: trimmed) : trimmed
+        // When context is baked into the question, don't also send history (avoids duplication)
+        let historyForBackend = isContextual ? [(String, String)]() : conversationHistory
+
         currentQueryTask = Task {
             do {
                 let result = try await backendService.ask(
-                    question: trimmed,
+                    question: questionForBackend,
                     deviceId: Self.deviceId,
-                    history: conversationHistory
+                    history: historyForBackend
                 ) { [self] chunk in
                     guard !Task.isCancelled, streamingIndex < messages.count else { return }
                     currentStreamingText += chunk
@@ -1151,8 +1159,9 @@ final class AppState: SearchHistoryTracking {
                     break
                 }
             }
-            // Then single word (last name)
-            if let match = PlayerNameMatcher.matchPlayer(words[i]) {
+            // Then single word (last name) — skip common English words
+            if !PlayerNameMatcher.commonWordLastNames.contains(words[i]),
+               let match = PlayerNameMatcher.matchPlayer(words[i]) {
                 detectedPlayer = match
                 break
             }
@@ -1184,6 +1193,46 @@ final class AppState: SearchHistoryTracking {
 
     // MARK: - Contextual Follow-Up Resolution
 
+    /// Build a self-contained prompt for Claude when a contextual follow-up can't be resolved locally.
+    /// Includes the original question, the visible results, and the follow-up question.
+    private func buildContextualPrompt(for followUp: String) -> String {
+        // Find the most recent Q&A pair from visible messages
+        var lastQuestion: String?
+        var lastAnswer: String?
+        for message in messages.reversed() {
+            if lastAnswer == nil && message.role == .assistant && !message.content.isEmpty {
+                // Strip markup tags from the answer to get what the user actually saw
+                lastAnswer = message.content
+                    .replacingOccurrences(of: "\\[STATGRID\\]|\\[/STATGRID\\]|\\[LEADERBOARD\\]|\\[/LEADERBOARD\\]|\\[TIP\\].*?\\[/TIP\\]|\\[SUGGEST\\].*?\\[/SUGGEST\\]|\\[SEEALSO\\].*?\\[/SEEALSO\\]|\\[DIDYOUMEAN\\].*?\\[/DIDYOUMEAN\\]", with: "", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if lastAnswer != nil && lastQuestion == nil && message.role == .user {
+                lastQuestion = message.content
+                break
+            }
+        }
+
+        guard let question = lastQuestion, let answer = lastAnswer else {
+            return followUp
+        }
+
+        // Truncate the answer if it's very long — keep the structure but don't blow up the prompt
+        let truncatedAnswer = answer.count > 2000 ? String(answer.prefix(2000)) + "\n..." : answer
+
+        return """
+            The user asked: "\(question)"
+
+            The results shown were:
+            \(truncatedAnswer)
+
+            The user now asks: "\(followUp)"
+
+            Answer the follow-up question based on the context above. If it's a question about methodology \
+            (like "how was this calculated?"), explain using your knowledge of baseball statistics. \
+            If it's asking to modify the previous query (like "across all of MLB" or "just the NL"), \
+            re-run the query with the requested change.
+            """
+    }
+
     /// Phrases that unambiguously reference a previous result set.
     private static let referentialPhrases = [
         "of these", "of those", "of them",
@@ -1201,10 +1250,15 @@ final class AppState: SearchHistoryTracking {
         let lower = question.lowercased()
 
         // Pattern 1: Referential phrases — "who of these had the highest BABIP?"
+        // These explicitly reference a previous result, so always check them.
         let isReferential = Self.referentialPhrases.contains(where: { lower.contains($0) })
         if isReferential {
             if let result = resolveReferentialFollowUp(question) { return result }
         }
+
+        // Remaining patterns only apply to contextual fragments, not standalone queries.
+        // "career doubles leaders" or "Top 5 in walks last season" are self-contained.
+        guard looksContextual(question) else { return nil }
 
         // Remaining patterns require stored context from a previous result
         guard let ctx = lastResultContext else { return nil }
@@ -1295,7 +1349,39 @@ final class AppState: SearchHistoryTracking {
             }
         }
 
-        // Pattern 4: "what about BABIP?" / bare stat name — same players, different stat
+        // Pattern 4: League switching — "across all of MLB", "in the NL", "for the AL"
+        if ctx.type == .leaderboard, let stat = ctx.stat {
+            let leaguePhrases: [(phrase: String, league: String?)] = [
+                ("across all of mlb", nil), ("all of mlb", nil), ("across mlb", nil),
+                ("for mlb", nil), ("in mlb", nil), ("mlb-wide", nil), ("both leagues", nil),
+                ("in the al", "AL"), ("for the al", "AL"), ("al only", "AL"),
+                ("in the nl", "NL"), ("for the nl", "NL"), ("nl only", "NL"),
+                ("american league", "AL"), ("national league", "NL"),
+            ]
+            if let match = leaguePhrases.first(where: { lower.contains($0.phrase) }) {
+                let newLeague = match.league
+                let isPitching = PlayerNameMatcher.isPitchingStat(stat)
+                let scope: PlayerNameMatcher.LeaderboardScope
+                if let s = ctx.season { scope = .season(s) } else { scope = .career }
+                let response: String
+                if isPitching {
+                    response = PlayerCardService.buildPitchingLeaderboard(stat: stat, scope: scope, limit: 10, league: newLeague)
+                } else {
+                    response = PlayerCardService.buildLeaderboard(stat: stat, scope: scope, limit: 10, league: newLeague)
+                }
+                let leagueLabel = newLeague ?? "MLB"
+                let seasonLabel = ctx.season.map { "\($0) " } ?? "Career "
+                let interpretation = "\(seasonLabel)\(stat.displayName) leaders (\(leagueLabel))"
+                lastResultContext = ResultContext(
+                    type: .leaderboard,
+                    playerNames: extractPlayerNamesFromResponse(response),
+                    stat: stat, season: ctx.season, league: newLeague, originalQuery: question
+                )
+                return "[DIDYOUMEAN]\(interpretation)[/DIDYOUMEAN]\n" + response
+            }
+        }
+
+        // Pattern 5: "what about BABIP?" / bare stat name — same players, different stat
         // Only when there's no player name and the query is short enough to be contextual
         if lower.count < 30, ctx.playerNames.count >= 2 {
             // Strip "what about" / "how about" / "and" prefix
@@ -1482,18 +1568,29 @@ final class AppState: SearchHistoryTracking {
 
         // Contains a recognized player name → standalone
         for i in 0..<words.count {
-            if PlayerNameMatcher.matchPlayer(String(words[i])) != nil { return false }
+            if !PlayerNameMatcher.commonWordLastNames.contains(String(words[i])),
+               PlayerNameMatcher.matchPlayer(String(words[i])) != nil { return false }
             if i + 1 < words.count {
                 let pair = "\(words[i]) \(words[i + 1])"
                 if PlayerNameMatcher.matchPlayer(pair) != nil { return false }
             }
         }
 
-        // Starts with standalone question patterns
-        let standaloneStarters = ["who ", "how many ", "top ", "list ", "compare ", "rank "]
+        // Starts with standalone question patterns — these form complete queries
+        let standaloneStarters = ["who ", "how many ", "top ", "list ", "compare ", "rank ",
+                                  "highest ", "lowest ", "most ", "fewest ", "best ", "worst ",
+                                  "what is ", "what are ", "what was ", "what were ",
+                                  "show ", "give me "]
         for starter in standaloneStarters {
             if lower.hasPrefix(starter) { return false }
         }
+
+        // Contains "leaders" → likely a standalone leaderboard query ("career doubles leaders")
+        if lower.contains("leaders") || lower.contains("leaderboard") { return false }
+
+        // Contains explicit comparison signal → standalone
+        let compSignals = [" vs ", " vs. ", " versus ", " compared to "]
+        if compSignals.contains(where: { lower.contains($0) }) { return false }
 
         return true
     }

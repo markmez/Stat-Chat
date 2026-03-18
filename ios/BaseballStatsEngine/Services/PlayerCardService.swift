@@ -253,6 +253,12 @@ enum PlayerCardService {
         return false
     }
 
+    /// Check if platoon split data exists for a player (1969+ Chadwick or 2025+ MSF).
+    static func hasPlayerPlatoonData(name: String) -> Bool {
+        guard let recent = mostRecentSeason(name: name) else { return false }
+        return recent >= 1969
+    }
+
     /// Find a player's most recent season year (batting or pitching).
     static func mostRecentSeason(name: String) -> Int? {
         let sql = """
@@ -830,8 +836,8 @@ enum PlayerCardService {
             }
         }
 
-        // Career grid (only if multi-season data exists for at least one)
-        if let c1 = career1, let c2 = career2 {
+        // Career grid — only when no specific season was requested
+        if season == nil, let c1 = career1, let c2 = career2 {
             parts.append("\nCareer:\n")
             parts.append("[STATGRID]")
             parts.append(header)
@@ -844,8 +850,12 @@ enum PlayerCardService {
             return "I don't have enough data to compare these two players."
         }
 
-        parts.append("\n[SUGGEST]\(name1) vs lefties[/SUGGEST]")
-        parts.append("[SUGGEST]\(name2) vs lefties[/SUGGEST]")
+        if hasPlayerPlatoonData(name: player1) {
+            parts.append("\n[SUGGEST]\(name1) vs lefties[/SUGGEST]")
+        }
+        if hasPlayerPlatoonData(name: player2) {
+            parts.append("[SUGGEST]\(name2) vs lefties[/SUGGEST]")
+        }
 
         return parts.joined(separator: "\n")
     }
@@ -879,7 +889,8 @@ enum PlayerCardService {
             }
         }
 
-        if let c1 = career1, let c2 = career2 {
+        // Career grid — only when no specific season was requested
+        if season == nil, let c1 = career1, let c2 = career2 {
             parts.append("\nCareer:\n")
             parts.append("[STATGRID]")
             parts.append(header)
@@ -892,8 +903,12 @@ enum PlayerCardService {
             return "I don't have enough data to compare these two players."
         }
 
-        parts.append("\n[SUGGEST]\(name1) vs lefties[/SUGGEST]")
-        parts.append("[SUGGEST]\(name2) vs lefties[/SUGGEST]")
+        if hasPlayerPlatoonData(name: player1) {
+            parts.append("\n[SUGGEST]\(name1) vs lefties[/SUGGEST]")
+        }
+        if hasPlayerPlatoonData(name: player2) {
+            parts.append("[SUGGEST]\(name2) vs lefties[/SUGGEST]")
+        }
 
         return parts.joined(separator: "\n")
     }
@@ -2531,7 +2546,7 @@ enum PlayerCardService {
 
         let thresholdDisplay = filterStat.isRate ? formatRate(String(threshold)) : String(Int(threshold))
         let filterLabel = comparison == ">=" ? "\(thresholdDisplay)+" : "≤\(thresholdDisplay)"
-        let title = "Most \(rankStat.displayName) with \(filterLabel) \(filterStat.displayAbbrev) (\(scopeLabel))\(leagueLabel)"
+        let title = "\(rankStat.isRate ? "Highest" : "Most") \(rankStat.displayName) with \(filterLabel) \(filterStat.displayAbbrev) (\(scopeLabel))\(leagueLabel)"
 
         var parts: [String] = []
         parts.append("**\(title)**\n")
@@ -2561,19 +2576,20 @@ enum PlayerCardService {
         // Suggestion pills
         let rankName = rankStat.pillName
         if season != nil {
-            parts.append("\n[SUGGEST]Most \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) all-time[/SUGGEST]")
+            parts.append("\n[SUGGEST]\(rankStat.isRate ? "Highest" : "Most") \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) all-time[/SUGGEST]")
         } else {
             let currentYear = Calendar.current.component(.year, from: Date())
-            parts.append("\n[SUGGEST]Most \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) in \(currentYear)[/SUGGEST]")
+            parts.append("\n[SUGGEST]\(rankStat.isRate ? "Highest" : "Most") \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) in \(currentYear)[/SUGGEST]")
         }
 
+        let pillPrefix = rankStat.isRate ? "highest" : "most"
         if let league = league {
             let other = league == "AL" ? "NL" : "AL"
-            parts.append("[SUGGEST]most \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) (\(other))[/SUGGEST]")
-            parts.append("[SUGGEST]most \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) (MLB)[/SUGGEST]")
+            parts.append("[SUGGEST]\(pillPrefix) \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) (\(other))[/SUGGEST]")
+            parts.append("[SUGGEST]\(pillPrefix) \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) (MLB)[/SUGGEST]")
         } else {
-            parts.append("[SUGGEST]most \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) (AL)[/SUGGEST]")
-            parts.append("[SUGGEST]most \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) (NL)[/SUGGEST]")
+            parts.append("[SUGGEST]\(pillPrefix) \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) (AL)[/SUGGEST]")
+            parts.append("[SUGGEST]\(pillPrefix) \(rankName) with \(filterLabel) \(filterStat.displayAbbrev) (NL)[/SUGGEST]")
         }
 
         return parts.joined(separator: "\n")
@@ -5807,7 +5823,8 @@ enum PlayerCardService {
             parts.append("[/STATGRID]")
         }
 
-        if let c1 = career1, let c2 = career2 {
+        // Career grid — only when no specific season was requested
+        if season == nil, let c1 = career1, let c2 = career2 {
             parts.append("\nCareer:\n")
             parts.append("[STATGRID]")
             parts.append(header)
