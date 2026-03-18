@@ -20,14 +20,20 @@ final class BackendService: Sendable {
         }
     }
 
+    /// Result from a backend query — includes the answer text and whether it was intercepted locally.
+    struct QueryResult: Sendable {
+        let text: String
+        let intercepted: Bool
+    }
+
     /// Stream an answer from the backend. Calls `onChunk` for each text token.
-    /// Returns the full assembled answer.
+    /// Returns the full assembled answer and whether the backend intercepted it locally.
     func ask(
         question: String,
         deviceId: String,
         history: [(String, String)],
         onChunk: @escaping @MainActor @Sendable (String) -> Void
-    ) async throws -> String {
+    ) async throws -> QueryResult {
         let url = baseURL.appendingPathComponent("query")
 
         var request = URLRequest(url: url)
@@ -57,6 +63,7 @@ final class BackendService: Sendable {
         }
 
         var fullText = ""
+        var wasIntercepted = false
 
         for try await line in bytes.lines {
             guard line.hasPrefix("data: ") else { continue }
@@ -73,7 +80,7 @@ final class BackendService: Sendable {
                     fullText += text
                 }
             case "done":
-                break
+                wasIntercepted = event["intercepted"] as? Bool ?? false
             case "error":
                 let message = event["message"] as? String ?? "Unknown server error"
                 throw ServiceError.serverError(message)
@@ -86,7 +93,7 @@ final class BackendService: Sendable {
             }
         }
 
-        return fullText
+        return QueryResult(text: fullText, intercepted: wasIntercepted)
     }
 
     // MARK: - Player Card

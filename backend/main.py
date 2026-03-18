@@ -9,11 +9,17 @@ Or from project root:
     uvicorn backend.main:app --reload
 """
 
+import logging
 import os
 import shutil
 import sys
 import urllib.request
 from contextlib import asynccontextmanager
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

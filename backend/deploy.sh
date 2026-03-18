@@ -1,25 +1,20 @@
 #!/bin/bash
-# Deploy script: copies the latest DB into backend/ for Docker build,
-# then triggers a Railway deploy.
+# Deploy script: triggers a Railway deploy.
+#
+# The DB lives on the Railway volume and is refreshed by cron every 4 hours.
+# No need to upload 223MB every deploy — ensure_db() uses the volume DB.
 #
 # Usage: cd backend && ./deploy.sh
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-DB_SOURCE="$PROJECT_ROOT/baseball_stats_full.db"
-DB_DEST="$SCRIPT_DIR/baseball_stats_full.db"
 
-if [ ! -f "$DB_SOURCE" ]; then
-    echo "ERROR: $DB_SOURCE not found. Build the DB first."
-    exit 1
+# Clean up any leftover DB copy from old deploys
+if [ -f "$SCRIPT_DIR/baseball_stats_full.db" ]; then
+    echo "Removing leftover DB copy from backend/..."
+    rm "$SCRIPT_DIR/baseball_stats_full.db"
 fi
 
-echo "Copying database to backend/ for Docker build..."
-cp "$DB_SOURCE" "$DB_DEST"
-echo "Done ($(du -h "$DB_DEST" | cut -f1) copied)"
-
-echo ""
-echo "Database is ready for Railway deploy."
-echo "Push to your Railway-connected branch, or run: railway up"
+echo "Deploying to Railway..."
+railway up

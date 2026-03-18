@@ -747,10 +747,9 @@ final class AppState: SearchHistoryTracking {
         messages.append(Message(role: .assistant, content: ""))
         let streamingIndex = messages.count - 1
 
-        AnalyticsService.trackQuery(text: trimmed, type: .backendClaude)
         currentQueryTask = Task {
             do {
-                let answer = try await backendService.ask(
+                let result = try await backendService.ask(
                     question: trimmed,
                     deviceId: Self.deviceId,
                     history: conversationHistory
@@ -764,12 +763,14 @@ final class AppState: SearchHistoryTracking {
                         messages[streamingIndex] = Message(role: .assistant, content: currentStreamingText)
                     }
                 }
+                // Track after response so we know if it was intercepted
+                AnalyticsService.trackQuery(text: trimmed, type: result.intercepted ? .backendIntercept : .backendClaude)
                 // Final flush to ensure all text is shown
                 if streamingIndex < messages.count {
                     messages[streamingIndex] = Message(role: .assistant, content: currentStreamingText)
                 }
                 guard !Task.isCancelled else { return }
-                addToConversationHistory(question: trimmed, answer: answer)
+                addToConversationHistory(question: trimmed, answer: result.text)
                 // Append contextual SUGGEST pills based on query content
                 if streamingIndex < messages.count {
                     let pills = buildFallbackPills(for: trimmed)

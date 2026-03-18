@@ -46,6 +46,7 @@ enum AnalyticsService {
         case localCatchAll = "local_catch_all"
         // Backend
         case backendClaude = "backend_claude"
+        case backendIntercept = "backend_intercept"
         case backendComparison = "backend_comparison"
         case backendThreshold = "backend_threshold"
         case backendMilestone = "backend_milestone"

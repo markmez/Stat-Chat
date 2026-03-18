@@ -13,6 +13,7 @@ SSE event format:
 
 import json
 import asyncio
+import logging
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -21,6 +22,9 @@ from pydantic import BaseModel
 from services.llm import LLMService
 from services.sql_runner import SqlRunner
 from services.metering import check_quota, increment_count
+from services.interceptor import try_intercept
+
+logger = logging.getLogger("statchat.query")
 
 router = APIRouter()
 llm = LLMService()
@@ -58,7 +62,21 @@ async def _stream(question: str, device_id: str, history: list[dict]):
         })
         return
 
-    # 2. Route the question
+    # 2. Try local intercept first — zero Claude API cost
+    try:
+        intercepted = try_intercept(question)
+    except Exception as e:
+        logger.warning("intercept_error question=%r error=%s", question, e)
+        intercepted = None
+    if intercepted is not None:
+        logger.info("query_intercepted question=%r", question)
+        yield event({"type": "text", "text": intercepted})
+        yield event({"type": "done", "intercepted": True})
+        increment_count(device_id)
+        return
+
+    # 3. Route the question (falls through to Claude)
+    logger.info("query_to_claude question=%r", question)
     try:
         route = await llm.route_query(question, history)
     except Exception as e:
