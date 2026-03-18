@@ -202,6 +202,17 @@ final class AppState: SearchHistoryTracking {
             }
         }
 
+        // Intercept slash line queries — "Judge's slash line", "Soto slash line last season"
+        if let slashLine = PlayerNameMatcher.parseSlashLineLookup(trimmed) {
+            if let response = PlayerCardService.buildSlashLineLookup(name: slashLine.name, season: slashLine.season) {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localStatLookup)
+                return
+            }
+        }
+
         // Intercept single-stat lookup queries — "Judge home runs", "Ohtani OPS"
         if let lookup = PlayerNameMatcher.parseSingleStatLookup(trimmed) {
             let response: String?
@@ -303,23 +314,21 @@ final class AppState: SearchHistoryTracking {
         }
 
         // Intercept milestone queries — "how many times has someone hit 50 HR?"
-        // Always uses backend since milestones span all history.
         if let milestone = PlayerNameMatcher.parseMilestone(trimmed) {
             let isPitching = PlayerNameMatcher.isPitchingStat(milestone.stat)
-            // Try local first
-            let localResponse = PlayerCardService.buildMilestone(
-                stat: milestone.stat, threshold: milestone.threshold,
-                since: milestone.since, isPitching: isPitching, league: milestone.league)
-            // If local returned results or query is within local range, use it
-            let needsBackend = milestone.since == nil || !PlayerCardService.isLocalSeason(milestone.since!)
-            if !needsBackend || !localResponse.contains("No player has reached") {
+            // Use local only when a "since" year is within local range
+            let useLocal = milestone.since != nil && PlayerCardService.isLocalSeason(milestone.since!)
+            if useLocal {
+                let localResponse = PlayerCardService.buildMilestone(
+                    stat: milestone.stat, threshold: milestone.threshold,
+                    since: milestone.since, isPitching: isPitching, league: milestone.league)
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: localResponse))
                 addToConversationHistory(question: trimmed, answer: localResponse)
                 AnalyticsService.trackQuery(text: trimmed, type: .localMilestone)
                 return
             }
-            // Backend fallback
+            // Backend for all-history milestones (no limit — we need accurate counts)
             messages.append(Message(role: .user, content: trimmed))
             messages.append(Message(role: .assistant, content: ""))
             let loadingIndex = messages.count - 1
@@ -329,7 +338,7 @@ final class AppState: SearchHistoryTracking {
                 let service = BackendService()
                 let resp = try? await service.fetchMilestone(
                     stat: milestone.stat.dbColumn, value: milestone.threshold,
-                    since: milestone.since, isPitching: isPitching, limit: 50)
+                    since: milestone.since, isPitching: isPitching, limit: 500)
                 guard !Task.isCancelled else { return }
                 let response = resp.map { PlayerCardService.formatBackendMilestone($0, stat: milestone.stat) }
                     ?? "No data available for that query."

@@ -145,12 +145,57 @@ final class SuggestionEngine {
         if pool.count < target {
             let usedIds = Set(pool.map(\.id))
             let fallback = config.defaults
-                .filter { !usedIds.contains($0.id) }
-                .map { Suggestion(id: $0.id, text: $0.text) }
+                .filter { !usedIds.contains($0.id) && passesSeasonFilter($0) }
+                .map { Suggestion(id: $0.id, text: displayText(for: $0)) }
             pool.append(contentsOf: fallback.prefix(target - pool.count))
         }
 
         return Array(pool.prefix(target)).shuffled()
+    }
+
+    // MARK: - Season awareness
+
+    private var seasonState: SeasonState {
+        let now = Date()
+        let cal = Calendar.current
+        let month = cal.component(.month, from: now)
+        let day = cal.component(.day, from: now)
+
+        // Before March 30 → offseason
+        if month < 3 || (month == 3 && day < 30) { return .offseason }
+        // March 30 – April 12 → early season (no streaks yet)
+        if month == 3 || (month == 4 && day <= 12) { return .earlySeason }
+        // April 13+ → in season
+        return .inSeason
+    }
+
+    private enum SeasonState {
+        case offseason, earlySeason, inSeason
+    }
+
+    /// Returns the display text for a default, applying in-season grammar when appropriate.
+    private func displayText(for d: SuggestionConfig.DefaultSuggestion) -> String {
+        switch seasonState {
+        case .offseason:
+            return d.text
+        case .earlySeason, .inSeason:
+            return d.inSeasonText ?? d.text
+        }
+    }
+
+    /// Returns false if a query's seasonFilter excludes it from the current date.
+    private func passesSeasonFilter(_ d: SuggestionConfig.DefaultSuggestion) -> Bool {
+        guard let filter = d.seasonFilter else { return true }
+        switch filter {
+        case "offseasonOnly":
+            return seasonState == .offseason
+        case "afterApril12":
+            return seasonState == .inSeason // not offseason, not earlySeason
+        case "earlySeason":
+            return seasonState == .earlySeason  // backfill queries, only during early season
+        default:
+            return true
+        }
     }
 
     // MARK: - Defaults tier
@@ -158,10 +203,11 @@ final class SuggestionEngine {
     private func buildDefaults() -> [Suggestion] {
         // Weighted selection: higher weight = more copies in the pool
         var weighted: [Suggestion] = []
-        for d in config.defaults where shouldShow(d.id) {
+        for d in config.defaults where shouldShow(d.id) && passesSeasonFilter(d) {
+            let text = displayText(for: d)
             let copies = max(1, Int(d.weight * 10))
             for _ in 0..<copies {
-                weighted.append(Suggestion(id: d.id, text: d.text))
+                weighted.append(Suggestion(id: d.id, text: text))
             }
         }
         // Deduplicate after shuffle (pick unique IDs)
@@ -235,7 +281,9 @@ final class SuggestionEngine {
 
         let leagueStars = topLeagueStars(excluding: searchedNames)
         let allPlayers = searchedPlayers + teammates + leagueStars
-        let unusedCategories = Set(Category.allCases).subtracting(usedCategories)
+        var availableCategories = Set(Category.allCases)
+        if seasonState == .earlySeason { availableCategories.remove(.streak) }
+        let unusedCategories = availableCategories.subtracting(usedCategories)
 
         var selected: [Suggestion] = []
         var usedTexts: Set<String> = []
@@ -250,7 +298,7 @@ final class SuggestionEngine {
         // Searched players in untried categories
         for player in searchedPlayers.prefix(4) {
             let playerCats = detectPlayerCategories(player: player, in: searchHistory)
-            let untried = Set(Category.allCases).subtracting(playerCats)
+            let untried = availableCategories.subtracting(playerCats)
             if let cat = untried.shuffled().first,
                let s = generateForPlayer(player, category: cat, allPlayers: allPlayers, usedTexts: &usedTexts) {
                 selected.append(s)
@@ -260,7 +308,10 @@ final class SuggestionEngine {
         // League stars and teammates
         let discoveryPlayers = (leagueStars.shuffled().prefix(2) + teammates.shuffled().prefix(1))
         for player in discoveryPlayers {
-            let cat: Category = [.playerLookup, .splits, .streak, .homeAway].randomElement()!
+            let discoveryCats: [Category] = seasonState == .earlySeason
+                ? [.playerLookup, .splits, .homeAway]
+                : [.playerLookup, .splits, .streak, .homeAway]
+            let cat = discoveryCats.randomElement()!
             if let s = generateForPlayer(player, category: cat, allPlayers: allPlayers, usedTexts: &usedTexts) {
                 selected.append(s)
             }
@@ -431,9 +482,11 @@ final class SuggestionEngine {
             guard let other = others.randomElement() else { return nil }
             let pool = historical ? t.historical.comparison : t.current.comparison
             guard let template = pool.randomElement() else { return nil }
+            let compSeasonLabel = seasonState == .offseason ? "last season" : "this season"
             let text = template
                 .replacingOccurrences(of: "{player1}", with: player)
                 .replacingOccurrences(of: "{player2}", with: other)
+                .replacingOccurrences(of: "{seasonLabel}", with: compSeasonLabel)
             if usedTexts.contains(text) { return nil }
             usedTexts.insert(text)
             return Suggestion(id: "p_\(abs(text.hashValue))", text: text)
@@ -442,9 +495,11 @@ final class SuggestionEngine {
         }
 
         guard let template = templates.randomElement() else { return nil }
+        let seasonLabel = seasonState == .offseason ? "last season" : "this season"
         let text = template
             .replacingOccurrences(of: "{player}", with: player)
             .replacingOccurrences(of: "{year}", with: yearStr)
+            .replacingOccurrences(of: "{seasonLabel}", with: seasonLabel)
         if usedTexts.contains(text) { return nil }
         usedTexts.insert(text)
         return Suggestion(id: "p_\(abs(text.hashValue))", text: text)

@@ -141,7 +141,7 @@ enum PlayerCardService {
 
     /// The range of seasons available in the local bundled DB.
     static let localMinYear = 2016
-    static let localMaxYear = 2026
+    static let localMaxYear = 2025
 
     /// Whether a given season is within local DB range.
     static func isLocalSeason(_ year: Int) -> Bool {
@@ -1969,6 +1969,37 @@ enum PlayerCardService {
         let teamDisplay = teamFullName(team)
         let statName = stat.pillName
         return "\(sentence) (\(teamDisplay))\n\n[TIP]Tap a player name for their full profile.[/TIP]\n\n[SUGGEST]\(season) \(statName) leaders[/SUGGEST]\n[SUGGEST]\(displayName) career \(statName)[/SUGGEST]"
+    }
+
+    // MARK: - Slash line lookup
+
+    /// Build a slash line response: AVG/OBP/SLG for a player-season.
+    static func buildSlashLineLookup(name: String, season: Int) -> String? {
+        let sql = """
+            SELECT p.name, s.team, s.batting_avg, s.on_base_pct, s.slugging_pct, s.ops
+            FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name = '\(sanitize(name))' AND s.season = \(season)
+            LIMIT 1
+            """
+        guard let result = try? db.execute(sql: sql),
+              let row = result.rows.first,
+              row.count >= 6 else { return nil }
+
+        let displayName = row[0]
+        let team = row[1]
+        let avg = formatRate(row[2])
+        let obp = formatRate(row[3])
+        let slg = formatRate(row[4])
+        let ops = formatRate(row[5])
+        let teamDisplay = teamFullName(team)
+
+        return "**\(displayName)**'s slash line in \(season) (\(teamDisplay)):\n\n" +
+            "[STATGRID]\nHEADER: AVG, OBP, SLG, OPS\n" +
+            "ROW: \(avg), \(obp), \(slg), \(ops)\n[/STATGRID]\n\n" +
+            "[TIP]Tap a player name for their full profile.[/TIP]\n\n" +
+            "[SUGGEST]\(displayName) last season[/SUGGEST]\n" +
+            "[SUGGEST]\(displayName) vs lefties[/SUGGEST]"
     }
 
     // MARK: - Threshold leaderboard (chat response builder)

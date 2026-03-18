@@ -233,11 +233,13 @@ enum PlayerNameMatcher {
     }
 
     /// Look up a player's debut year (first season in either batting or pitching stats).
-    private static func lookupDebutYear(name: String) -> Int? {
+    /// Returns the year after the player's last season.
+    /// "Since Ted Williams" (general) → after their career ended.
+    private static func lookupPostCareerYear(name: String) -> Int? {
         let db = DatabaseService()
         let sanitized = name.replacingOccurrences(of: "'", with: "''")
         let sql = """
-            SELECT MIN(season) FROM (
+            SELECT MAX(season) FROM (
                 SELECT season FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id WHERE p.name = '\(sanitized)'
                 UNION ALL
                 SELECT season FROM season_pitching_stats sp JOIN players p ON sp.player_id = p.player_id WHERE p.name = '\(sanitized)'
@@ -245,9 +247,33 @@ enum PlayerNameMatcher {
             """
         if let result = try? db.execute(sql: sql),
            let row = result.rows.first, let year = Int(row[0]) {
-            return year
+            return year + 1
         }
         return nil
+    }
+
+    /// Returns the year after the player last achieved a stat threshold.
+    /// "Closest to .400 since Ted Williams" → Ted hit .406 in 1941 → return 1942.
+    /// Falls back to post-career year if the player never achieved the threshold.
+    private static func lookupLastThresholdYear(name: String, stat: StatInfo, threshold: Double) -> Int? {
+        let db = DatabaseService()
+        let sanitized = name.replacingOccurrences(of: "'", with: "''")
+
+        let lowerIsBetter = ["era", "whip", "bb_per_9", "hits_per_9", "hr_per_9"].contains(stat.dbColumn)
+        let comparison = lowerIsBetter ? "<=" : ">="
+        let table = isPitchingStat(stat) ? "season_pitching_stats" : "season_batting_stats"
+
+        let sql = """
+            SELECT MAX(s.season) FROM \(table) s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name = '\(sanitized)' AND s.\(stat.dbColumn) \(comparison) \(threshold)
+            """
+        if let result = try? db.execute(sql: sql),
+           let row = result.rows.first, let year = Int(row[0]) {
+            return year + 1
+        }
+        // Player never achieved that threshold — fall back to post-career
+        return lookupPostCareerYear(name: name)
     }
 
     /// Extract a season year from input. If `defaultToMostRecent` is true and no explicit year
@@ -819,6 +845,17 @@ enum PlayerNameMatcher {
         return (name, stat, season)
     }
 
+    // MARK: - Slash line parser
+
+    /// Detect "slash line" queries: "Judge's slash line", "What is Soto's slash line last season"
+    static func parseSlashLineLookup(_ input: String) -> (name: String, season: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard lower.contains("slash line") || lower.contains("slashline") || lower.contains("slash-line") else { return nil }
+        guard let name = findPlayerInText(lower) else { return nil }
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
+        return (name, season)
+    }
+
     // MARK: - Team alias infrastructure
 
     /// Maps lowercased team names/nicknames/abbreviations to Retrosheet team codes.
@@ -1079,7 +1116,9 @@ enum PlayerNameMatcher {
         // "closest to .400" → batting average
         // "closest to 60 home runs" → home runs
         var stat: StatInfo?
-        if lower.contains("closest to") || lower.contains("come closest") {
+        var closestToThreshold: Double?
+        let isClosestTo = lower.contains("closest to") || lower.contains("come closest")
+        if isClosestTo {
             // Try to find a stat from the query
             stat = matchStat(lower)
             // If no explicit stat found but ".400" / ".300" mentioned, it's batting average
@@ -1088,6 +1127,13 @@ enum PlayerNameMatcher {
                 if let ratePattern, ratePattern.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)) != nil {
                     stat = statAliasMap["avg"] ?? statAliasMap["batting average"]
                 }
+            }
+            // Extract the target number for threshold lookup
+            let numberPattern = try! NSRegularExpression(pattern: "(?:closest to|come closest to)\\s+(\\d+\\.?\\d*|\\.\\d+)")
+            if let match = numberPattern.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)),
+               let range = Range(match.range(at: 1), in: lower),
+               let num = Double(lower[range]) {
+                closestToThreshold = num
             }
         } else {
             stat = matchStat(lower)
@@ -1106,11 +1152,17 @@ enum PlayerNameMatcher {
                     sinceYear = year
                 }
 
-                // Check for player name after "since" (e.g. "since Max Fried entered the league")
+                // Check for player name after "since" (e.g. "since Ted Williams")
+                // For "closest to X since [player]", find when the player last achieved X.
+                // For general "since [player]", use post-career year.
                 if sinceYear == nil {
                     for name in sortedNames {
                         if afterSince.hasPrefix(name.lowercased()) || containsWord(name.lowercased(), in: afterSince) {
-                            sinceYear = lookupDebutYear(name: name)
+                            if isClosestTo, let threshold = closestToThreshold {
+                                sinceYear = lookupLastThresholdYear(name: name, stat: stat, threshold: threshold)
+                            } else {
+                                sinceYear = lookupPostCareerYear(name: name)
+                            }
                             break
                         }
                     }
@@ -1119,7 +1171,11 @@ enum PlayerNameMatcher {
                 if sinceYear == nil {
                     for (lastName, players) in lastNameIndex where players.count == 1 {
                         if containsWord(lastName, in: afterSince) {
-                            sinceYear = lookupDebutYear(name: players[0])
+                            if isClosestTo, let threshold = closestToThreshold {
+                                sinceYear = lookupLastThresholdYear(name: players[0], stat: stat, threshold: threshold)
+                            } else {
+                                sinceYear = lookupPostCareerYear(name: players[0])
+                            }
                             break
                         }
                     }
@@ -1276,7 +1332,8 @@ enum PlayerNameMatcher {
         guard let threshold else { return nil }
 
         // Determine comparison operator
-        let underPatterns = ["under ", "fewer than ", "less than ", "below ", "no more than "]
+        let underPatterns = ["under ", "fewer than ", "less than ", "below ", "no more than ",
+                             "or fewer", "or less"]
         let comparison: String
         if underPatterns.contains(where: { lower.contains($0) }) {
             comparison = "<="
@@ -1402,7 +1459,8 @@ enum PlayerNameMatcher {
         guard let threshold else { return nil }
 
         // Determine comparison for filter
-        let underPatterns = ["under ", "fewer than ", "less than ", "below ", "no more than "]
+        let underPatterns = ["under ", "fewer than ", "less than ", "below ", "no more than ",
+                             "or fewer", "or less"]
         let comparison: String
         if underPatterns.contains(where: { filterPart.contains($0) }) {
             comparison = "<="

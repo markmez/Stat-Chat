@@ -1,5 +1,5 @@
 {
-    "version": 3,
+    "version": 4,
     "algorithm": {
         "impressionThreshold": 6,
         "poolSize": 12,
@@ -10,94 +10,99 @@
         "fadeDuration": 0.5
     },
     "defaults": [
-        { "id": "d1", "text": "Who led the league in home runs last season?", "weight": 1.0 },
-        { "id": "d2", "text": "Top 10 in OPS last season", "weight": 1.0 },
+        { "id": "d1", "text": "Who led the league in home runs last season?", "weight": 1.0, "inSeasonText": "Who leads the league in home runs this season?" },
+        { "id": "d2", "text": "Top 10 in OPS last season", "weight": 1.0, "inSeasonText": "Top 10 in OPS this season" },
         { "id": "d3", "text": "What is OPS+?", "weight": 1.0 },
-        { "id": "d4", "text": "Who had the most stolen bases last season?", "weight": 1.0 },
-        { "id": "d5", "text": "How did Juan Soto do last year?", "weight": 1.0 },
-        { "id": "d6", "text": "How many home runs did Ohtani hit last season?", "weight": 0.9 },
-        { "id": "d7", "text": "Judge home vs away last season", "weight": 0.9 },
+        { "id": "d4", "text": "Who had the most stolen bases last season?", "weight": 1.0, "inSeasonText": "Who has the most stolen bases this season?" },
+        { "id": "d5", "text": "How did Juan Soto do last year?", "weight": 1.0, "inSeasonText": "How is Juan Soto doing this season?" },
+        { "id": "d6", "text": "How many home runs did Ohtani hit last season?", "weight": 0.9, "inSeasonText": "How many home runs has Ohtani hit this season?" },
+        { "id": "d7", "text": "Judge home vs away last season", "weight": 0.9, "inSeasonText": "Judge home vs away this season" },
         { "id": "d8", "text": "Who has come closest to hitting .400 since Ted Williams?", "weight": 0.8 },
-        { "id": "d9", "text": "Top 5 in batting average last season", "weight": 1.0 },
-        { "id": "d10", "text": "Lowest ERA among starters last season", "weight": 0.9 },
-        { "id": "d11", "text": "Compare Lindor and Bobby Witt Jr last season", "weight": 0.8 },
-        { "id": "d12", "text": "Kyle Tucker's splits vs lefties last season", "weight": 0.8 },
-        { "id": "d13", "text": "Did Trea Turner have any hot streaks last season?", "weight": 0.8 },
-        { "id": "d14", "text": "Elly De La Cruz last season", "weight": 0.9 },
+        { "id": "d9", "text": "Top 5 in batting average last season", "weight": 1.0, "inSeasonText": "Top 5 in batting average this season" },
+        { "id": "d10", "text": "Lowest ERA among starters last season", "weight": 0.9, "inSeasonText": "Lowest ERA among starters this season" },
+        { "id": "d11", "text": "Compare Lindor and Bobby Witt Jr last season", "weight": 0.8, "inSeasonText": "Compare Lindor and Bobby Witt Jr this season" },
+        { "id": "d12", "text": "Kyle Tucker's splits vs lefties last season", "weight": 0.8, "inSeasonText": "Kyle Tucker's splits vs lefties this season" },
+        { "id": "d13", "text": "Did Trea Turner have any hot streaks last season?", "weight": 0.8, "inSeasonText": "Did Trea Turner have any hot streaks this season?", "seasonFilter": "afterApril12" },
+        { "id": "d14", "text": "Elly De La Cruz last season", "weight": 0.9, "inSeasonText": "Elly De La Cruz this season" },
         { "id": "d15", "text": "What is WAR?", "weight": 0.8 },
         { "id": "d16", "text": "What does BABIP measure?", "weight": 0.7 },
         { "id": "d17", "text": "How many times has someone hit 50 home runs?", "weight": 0.8 },
         { "id": "d18", "text": "How many players have stolen 60 bases in a season?", "weight": 0.7 },
-        { "id": "d19", "text": "Who had the highest OPS+ last season?", "weight": 0.9 },
-        { "id": "d20", "text": "Who hit the most doubles last season?", "weight": 0.8 },
+        { "id": "d19", "text": "Who had the highest OPS+ last season?", "weight": 0.9, "inSeasonText": "Who has the highest OPS+ this season?" },
+        { "id": "d20", "text": "Who hit the most doubles last season?", "weight": 0.8, "inSeasonText": "Who has hit the most doubles this season?" },
 
-        { "id": "d21", "text": "Who led the league in RBIs last season?", "weight": 1.0 },
-        { "id": "d22", "text": "Most strikeouts by a pitcher last season", "weight": 0.9 },
-        { "id": "d23", "text": "Top 10 in hits last season", "weight": 1.0 },
-        { "id": "d24", "text": "Who had the best WHIP last season?", "weight": 0.9 },
-        { "id": "d25", "text": "Most saves last season", "weight": 0.8 },
-        { "id": "d26", "text": "Who hit the most triples last season?", "weight": 0.8 },
-        { "id": "d27", "text": "Top 5 in walks last season", "weight": 0.8 },
-        { "id": "d28", "text": "Who led the league in wins last season?", "weight": 0.9 },
+        { "id": "d21", "text": "Who led the league in RBIs last season?", "weight": 1.0, "inSeasonText": "Who leads the league in RBIs this season?" },
+        { "id": "d22", "text": "Most strikeouts by a pitcher last season", "weight": 0.9, "inSeasonText": "Most strikeouts by a pitcher this season" },
+        { "id": "d23", "text": "Top 10 in hits last season", "weight": 1.0, "inSeasonText": "Top 10 in hits this season" },
+        { "id": "d24", "text": "Who had the best WHIP last season?", "weight": 0.9, "inSeasonText": "Who has the best WHIP this season?" },
+        { "id": "d25", "text": "Most saves last season", "weight": 0.8, "inSeasonText": "Most saves this season" },
+        { "id": "d26", "text": "Who hit the most triples last season?", "weight": 0.8, "inSeasonText": "Who has hit the most triples this season?" },
+        { "id": "d27", "text": "Top 5 in walks last season", "weight": 0.8, "inSeasonText": "Top 5 in walks this season" },
+        { "id": "d28", "text": "Who led the league in wins last season?", "weight": 0.9, "inSeasonText": "Who leads the league in wins this season?" },
 
         { "id": "d29", "text": "Mookie Betts", "weight": 0.9 },
         { "id": "d30", "text": "Freddie Freeman", "weight": 0.8 },
         { "id": "d31", "text": "Gunnar Henderson", "weight": 0.9 },
         { "id": "d32", "text": "Bobby Witt Jr", "weight": 0.9 },
-        { "id": "d33", "text": "Yordan Alvarez's slash line last season", "weight": 0.8 },
-        { "id": "d34", "text": "When was Bryce Harper's coldest stretch last season?", "weight": 0.8 },
-        { "id": "d35", "text": "Corey Seager's stats last season", "weight": 0.8 },
-        { "id": "d36", "text": "Rafael Devers in September last season", "weight": 0.8 },
+        { "id": "d33", "text": "Yordan Alvarez's slash line last season", "weight": 0.8, "inSeasonText": "Yordan Alvarez's slash line this season" },
+        { "id": "d34", "text": "When was Bryce Harper's coldest stretch last season?", "weight": 0.8, "inSeasonText": "When was Bryce Harper's coldest stretch this season?", "seasonFilter": "afterApril12" },
+        { "id": "d35", "text": "Corey Seager's stats last season", "weight": 0.8, "inSeasonText": "Corey Seager's stats this season" },
+        { "id": "d36", "text": "Rafael Devers in September last season", "weight": 0.8, "seasonFilter": "offseasonOnly" },
 
         { "id": "d37", "text": "What is ERA+?", "weight": 0.8 },
         { "id": "d38", "text": "What does ISO measure?", "weight": 0.7 },
         { "id": "d39", "text": "What is wOBA?", "weight": 0.7 },
         { "id": "d40", "text": "What is FIP?", "weight": 0.7 },
 
-        { "id": "d41", "text": "Compare Soto and Judge last season", "weight": 0.9 },
-        { "id": "d42", "text": "Compare Devers and Jose Ramirez last season", "weight": 0.8 },
-        { "id": "d43", "text": "Vlad Guerrero Jr vs Pete Alonso last season", "weight": 0.8 },
+        { "id": "d41", "text": "Compare Soto and Judge last season", "weight": 0.9, "inSeasonText": "Compare Soto and Judge this season" },
+        { "id": "d42", "text": "Compare Devers and Jose Ramirez last season", "weight": 0.8, "inSeasonText": "Compare Devers and Jose Ramirez this season" },
+        { "id": "d43", "text": "Vlad Guerrero Jr vs Pete Alonso last season", "weight": 0.8, "inSeasonText": "Vlad Guerrero Jr vs Pete Alonso this season" },
 
         { "id": "d44", "text": "Most 30/30 seasons in baseball history?", "weight": 0.8 },
         { "id": "d45", "text": "Who has the longest hitting streak ever?", "weight": 0.8 },
         { "id": "d46", "text": "How many players have hit 40/40?", "weight": 0.7 },
         { "id": "d47", "text": "How many triple crowns have there been?", "weight": 0.7 },
-        { "id": "d48", "text": "Who had the most complete games last season?", "weight": 0.7 },
+        { "id": "d48", "text": "Who had the most complete games last season?", "weight": 0.7, "inSeasonText": "Who has the most complete games this season?" },
 
-        { "id": "d49", "text": "Did Ohtani have any hot streaks last season?", "weight": 0.8 },
-        { "id": "d50", "text": "Jose Ramirez home vs away last season", "weight": 0.8 },
+        { "id": "d49", "text": "Did Ohtani have any hot streaks last season?", "weight": 0.8, "inSeasonText": "Has Ohtani had any hot streaks this season?", "seasonFilter": "afterApril12" },
+        { "id": "d50", "text": "Jose Ramirez home vs away last season", "weight": 0.8, "inSeasonText": "Jose Ramirez home vs away this season" },
 
         { "id": "d51", "text": "Most home runs while batting .300+?", "weight": 0.8 },
         { "id": "d52", "text": "Most stolen bases with under 10 CS?", "weight": 0.8 },
         { "id": "d53", "text": "Highest batting average with 30+ home runs?", "weight": 0.8 },
         { "id": "d54", "text": "Lowest ERA with 200+ innings pitched?", "weight": 0.8 },
         { "id": "d55", "text": "Most wins with an ERA over 5.00?", "weight": 0.8 },
-        { "id": "d56", "text": "Highest OPS with fewer than 50 strikeouts?", "weight": 0.8 }
+        { "id": "d56", "text": "Highest OPS with fewer than 50 strikeouts?", "weight": 0.8 },
+
+        { "id": "d57", "text": "Who has the most RBIs in a single game?", "weight": 0.7, "seasonFilter": "earlySeason" },
+        { "id": "d58", "text": "Who has the most career grand slams?", "weight": 0.7, "seasonFilter": "earlySeason" },
+        { "id": "d59", "text": "Has anyone pitched a perfect game since 2010?", "weight": 0.7, "seasonFilter": "earlySeason" },
+        { "id": "d60", "text": "Who struck out the most batters in a single season?", "weight": 0.7, "seasonFilter": "earlySeason" }
     ],
     "templates": {
         "current": {
             "streak": [
-                "Did {player} have any hot streaks last season?",
-                "When was {player}'s coldest stretch last season?",
-                "Did {player} go on any hot runs last season?"
+                "Did {player} have any hot streaks {seasonLabel}?",
+                "When was {player}'s coldest stretch {seasonLabel}?",
+                "Did {player} go on any hot runs {seasonLabel}?"
             ],
             "comparison": [
-                "{player1} vs {player2} last season",
-                "Compare {player1} and {player2} last season"
+                "{player1} vs {player2} {seasonLabel}",
+                "Compare {player1} and {player2} {seasonLabel}"
             ],
             "splits": [
-                "How did {player} hit against lefties last season?",
-                "{player} platoon splits last season",
-                "{player}'s splits vs lefties last season"
+                "How did {player} hit against lefties {seasonLabel}?",
+                "{player} platoon splits {seasonLabel}",
+                "{player}'s splits vs lefties {seasonLabel}"
             ],
             "homeAway": [
-                "{player} home vs away last season",
-                "How did {player} hit at home last season?"
+                "{player} home vs away {seasonLabel}",
+                "How did {player} hit at home {seasonLabel}?"
             ],
             "playerLookup": [
-                "How did {player} do last season?",
-                "What was {player}'s slash line last season?",
-                "{player} last season"
+                "How did {player} do {seasonLabel}?",
+                "What was {player}'s slash line {seasonLabel}?",
+                "{player} {seasonLabel}"
             ]
         },
         "historical": {
