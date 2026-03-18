@@ -28,7 +28,12 @@ final class AppState: SearchHistoryTracking {
     var messages: [Message] = []
     var isLoading = false
     var currentStreamingText = ""
-    private var lastStreamingFlush: ContinuousClock.Instant = .now
+    /// Buffer for smooth streaming: network fills this, display timer drains it
+    private var streamingBuffer = ""
+    private var displayedLength = 0
+    private var streamingTimer: Timer?
+    private var streamingComplete = false
+    private var streamingMessageIndex: Int?
     var searchHistory: [String] = []
     /// Stores (originalQuery, ambiguousLastName) when disambiguation is pending
     var pendingDisambiguation: (query: String, lastName: String)?
@@ -918,10 +923,17 @@ final class AppState: SearchHistoryTracking {
         messages.append(Message(role: .user, content: trimmed))
         isLoading = true
         currentStreamingText = ""
+        streamingBuffer = ""
+        displayedLength = 0
+        streamingComplete = false
 
         // Add placeholder assistant message for streaming
         messages.append(Message(role: .assistant, content: ""))
         let streamingIndex = messages.count - 1
+        streamingMessageIndex = streamingIndex
+
+        // Start smooth display timer — reveals buffered text at a steady rate
+        startStreamingTimer()
 
         // For contextual follow-ups that couldn't be resolved locally,
         // build a self-contained prompt so Claude has full context.
@@ -935,24 +947,28 @@ final class AppState: SearchHistoryTracking {
                 let result = try await backendService.ask(
                     question: questionForBackend,
                     deviceId: Self.deviceId,
-                    history: historyForBackend
+                    history: historyForBackend,
+                    contextual: isContextual
                 ) { [self] chunk in
                     guard !Task.isCancelled, streamingIndex < messages.count else { return }
-                    currentStreamingText += chunk
-                    // Throttle UI updates to ~80ms intervals to avoid expensive re-renders per token
-                    let now = ContinuousClock.Instant.now
-                    if now - lastStreamingFlush >= .milliseconds(80) {
-                        lastStreamingFlush = now
-                        messages[streamingIndex] = Message(role: .assistant, content: currentStreamingText)
-                    }
+                    streamingBuffer += chunk
                 }
+                // Mark streaming as done — timer will finish revealing remaining text
+                streamingComplete = true
                 // Track after response so we know if it was intercepted
                 AnalyticsService.trackQuery(text: trimmed, type: result.intercepted ? .backendIntercept : .backendClaude)
-                // Final flush to ensure all text is shown
-                if streamingIndex < messages.count {
-                    messages[streamingIndex] = Message(role: .assistant, content: currentStreamingText)
+                // Wait for display timer to finish revealing all buffered text
+                while displayedLength < streamingBuffer.count {
+                    guard !Task.isCancelled else { return }
+                    try await Task.sleep(for: .milliseconds(16))
                 }
+                stopStreamingTimer()
                 guard !Task.isCancelled else { return }
+                // Final flush — ensure exact full text is shown
+                if streamingIndex < messages.count {
+                    messages[streamingIndex] = Message(role: .assistant, content: streamingBuffer)
+                    currentStreamingText = streamingBuffer
+                }
                 addToConversationHistory(question: trimmed, answer: result.text)
                 // Append contextual SUGGEST pills based on query content
                 if streamingIndex < messages.count {
@@ -966,6 +982,7 @@ final class AppState: SearchHistoryTracking {
                 currentStreamingText = ""
             } catch {
                 guard !Task.isCancelled else { return }
+                stopStreamingTimer()
                 isLoading = false
                 currentStreamingText = ""
                 guard streamingIndex < messages.count else { return }
@@ -1038,10 +1055,47 @@ final class AppState: SearchHistoryTracking {
     func clearConversation() {
         currentQueryTask?.cancel()
         currentQueryTask = nil
+        stopStreamingTimer()
         messages.removeAll()
         isLoading = false
         currentStreamingText = ""
+        streamingBuffer = ""
+        displayedLength = 0
         conversationHistory.removeAll()
+    }
+
+    // MARK: - Smooth streaming display
+
+    /// Starts a timer that reveals buffered text at a steady rate, eliminating visual choppiness.
+    private func startStreamingTimer() {
+        streamingTimer?.invalidate()
+        streamingTimer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.advanceStreamingDisplay()
+            }
+        }
+    }
+
+    private func stopStreamingTimer() {
+        streamingTimer?.invalidate()
+        streamingTimer = nil
+    }
+
+    private func advanceStreamingDisplay() {
+        guard let idx = streamingMessageIndex, idx < messages.count else { return }
+        let bufferLength = streamingBuffer.count
+        guard displayedLength < bufferLength else { return }
+
+        // Reveal characters at a steady pace: more chars per tick when buffer is large
+        let pending = bufferLength - displayedLength
+        // Base: 3 chars per tick (~187 chars/sec). Accelerate when buffer grows to avoid falling behind.
+        let charsThisTick = pending > 80 ? max(3, pending / 4) : (pending > 20 ? 4 : 3)
+        displayedLength = min(displayedLength + charsThisTick, bufferLength)
+
+        let endIndex = streamingBuffer.index(streamingBuffer.startIndex, offsetBy: displayedLength)
+        let visibleText = String(streamingBuffer[streamingBuffer.startIndex..<endIndex])
+        messages[idx] = Message(role: .assistant, content: visibleText)
+        currentStreamingText = visibleText
     }
 
     private func addToConversationHistory(question: String, answer: String) {

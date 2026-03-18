@@ -105,6 +105,22 @@ class LLMService:
             async for text in stream.text_stream:
                 yield text
 
+    async def stream_contextual(self, prompt: str):
+        """
+        Stream a response for a contextual follow-up.
+        The prompt already contains the original question, results, and follow-up.
+        """
+        msgs = [{"role": "user", "content": prompt}]
+        async with self.client.messages.stream(
+            model=MAIN_MODEL,
+            max_tokens=1024,
+            system=_cached_system(ANSWER_GENERATION_PROMPT),
+            extra_headers={"anthropic-beta": _CACHE_BETA},
+            messages=msgs,
+        ) as stream:
+            async for text in stream.text_stream:
+                yield text
+
     async def explain_stat(self, question: str) -> str:
         """Answer a stat explanation question directly — no SQL needed."""
         response = await self.client.messages.create(

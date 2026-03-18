@@ -35,18 +35,19 @@ class QueryRequest(BaseModel):
     question: str
     device_id: str
     history: list[dict] = []  # [{role: "user"|"assistant", content: "..."}]
+    contextual: bool = False  # True when iOS sends an enriched contextual follow-up prompt
 
 
 @router.post("/query")
 async def query(req: QueryRequest):
     return StreamingResponse(
-        _stream(req.question, req.device_id, req.history),
+        _stream(req.question, req.device_id, req.history, req.contextual),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
-async def _stream(question: str, device_id: str, history: list[dict]):
+async def _stream(question: str, device_id: str, history: list[dict], contextual: bool = False):
     """Core pipeline: quota check → route → SQL → execute → stream answer."""
 
     def event(data: dict) -> str:
@@ -60,6 +61,21 @@ async def _stream(question: str, device_id: str, history: list[dict]):
             "count": quota["count"],
             "reset": quota["reset"],
         })
+        return
+
+    # 1a. Contextual follow-up — iOS already built a self-contained prompt with
+    # the original question, results, and follow-up. Skip SQL generation and let
+    # Claude answer directly (these are analytical, not data-retrieval questions).
+    if contextual:
+        logger.info("query_contextual question_len=%d", len(question))
+        try:
+            async for chunk in llm.stream_contextual(question):
+                yield event({"type": "text", "text": chunk})
+        except Exception as e:
+            yield event({"type": "error", "message": str(e)})
+            return
+        yield event({"type": "done"})
+        increment_count(device_id)
         return
 
     # 2. Try local intercept first — zero Claude API cost

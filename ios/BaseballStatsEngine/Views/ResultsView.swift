@@ -22,6 +22,16 @@ struct ResultsView: View {
         visibleMessages.filter { $0.role == .user }.map(\.content)
     }
 
+    /// Scroll so the latest user question is pinned near the top — only for follow-ups
+    private func scrollToLatestQuestion(proxy: ScrollViewProxy) {
+        let userMessages = visibleMessages.filter { $0.role == .user }
+        if userMessages.count > 1, let latestUser = userMessages.last {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo(latestUser.id, anchor: .top)
+            }
+        }
+    }
+
     /// Whether the input area fits inline below results without scrolling
     private func fitsInline(in availableHeight: CGFloat) -> Bool {
         let inputEstimate: CGFloat = 110
@@ -106,12 +116,12 @@ struct ResultsView: View {
                             }
                         }
                         .onChange(of: appState.messages.count) {
-                            // Scroll to the latest user question — but only for follow-ups, not the initial query
-                            let userMessages = visibleMessages.filter { $0.role == .user }
-                            if userMessages.count > 1, let latestUser = userMessages.last {
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    proxy.scrollTo(latestUser.id, anchor: .top)
-                                }
+                            scrollToLatestQuestion(proxy: proxy)
+                        }
+                        .onChange(of: appState.isLoading) { _, loading in
+                            // Re-scroll when response finishes — content height has changed
+                            if !loading {
+                                scrollToLatestQuestion(proxy: proxy)
                             }
                         }
                     }
