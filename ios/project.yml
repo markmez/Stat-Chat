@@ -27,6 +27,8 @@ targets:
         buildPhase: resources
       - path: BaseballStatsEngine/Resources/suggestions_config.json
         buildPhase: resources
+      - path: BaseballStatsEngine/Resources/stat_config.json
+        buildPhase: resources
       - path: BaseballStatsEngine/Resources/StatChat.storekit
         buildPhase: resources
     dependencies:

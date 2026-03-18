@@ -58,7 +58,9 @@ Two separate code paths for player name resolution, each with different intent:
 - **`matchPlayer()`** — direct search (user typed a name in the search bar). Bare last name "Bench" → Johnny Bench. No common-word filtering. Called via `resolveSearch()` from HomeView.
 - **`findPlayerInText()`** — embedded name detection (parser scanning a natural language sentence for a player name). Skips last names in `commonWordLastNames` to avoid false matches like "show" → Eric Show.
 
-**`commonWordLastNames`** (~88 words): Comprehensive set of unambiguous player last names (only 1 player in DB) that are also common English words. Built by cross-referencing all single-player last names against common English vocabulary. Multi-player last names (judge, hill, young, king, etc.) don't need to be in this set — they're already rejected by the `players.count == 1` check.
+**`commonWordLastNames`** (~174 words): Comprehensive set of unambiguous player last names (only 1 player in DB) that are also common English words. Loaded from `shared/stat_config.json` (single source of truth). Multi-player last names (judge, hill, young, king, etc.) don't need to be in this set — they're already rejected by the `players.count == 1` check.
+
+**Shared config sync**: `shared/stat_config.json` contains stat aliases, common word last names, nickname aliases, and disambig maps. Both iOS (`PlayerNameMatcher.swift`) and Python (`name_matcher.py`) load from local copies at runtime. After editing, run `shared/sync_config.sh` to copy to `ios/BaseballStatsEngine/Resources/stat_config.json` and `backend/services/stat_config.json`.
 
 **Deciding what goes in `commonWordLastNames`:**
 1. Word has a baseball/query meaning (show, score, walk, speed, spring, force, pop, free) → **INCLUDE** — the word almost certainly isn't a player reference
@@ -219,7 +221,7 @@ Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The ma
 ### Backend — DEPLOYED & WORKING
 - **Live at** `https://stat-chat-production.up.railway.app`
 - **Railway setup**: project `stat-chat`, service `Stat-Chat`, volume mounted at `/data` (5 GB Hobby plan)
-- **Deploy method**: `cd backend && ./deploy.sh && railway up` (CLI, NOT GitHub auto-deploy). `deploy.sh` copies the DB into `backend/` for Docker build context. Disconnect GitHub from the main service in Railway dashboard, set root directory to `backend/`.
+- **Deploy method**: GitHub auto-deploy on the Stat-Chat service (root directory `backend/`). Push to GitHub triggers a Railway build. Cron service is NOT connected to GitHub (rarely changes, deploy manually if needed). `deploy.sh` is no longer needed for routine deploys. DB is NOT in the Docker image — the volume has it, refreshed by cron every 4 hours.
 - **DB baked into Docker image** at `/app/seed_db/baseball_stats_full.db`. On startup, `ensure_db()` copies to volume if missing (fast local copy). S3 (`https://stat-chat.s3.us-east-2.amazonaws.com/baseball_stats_full.db`) is last-resort fallback only. This fixed a production crash where S3 download failed during SSL read on cold start.
 - **Health check**: `/health` verifies DB is queryable (runs `SELECT 1 FROM players`), not just server up. `restartPolicyType = "on_failure"`, timeout 60s.
 - **Metering**: `services/metering.py` tracks device UUIDs, 5 free queries/week, weekly Monday reset. `METERING_DB_PATH=/data/metering.db`.

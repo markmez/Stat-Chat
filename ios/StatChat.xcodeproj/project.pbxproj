@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0F35C356B5576BF248D5E1AE /* stat_config.json in Resources */ = {isa = PBXBuildFile; fileRef = 6B50FD15492CCE031A905488 /* stat_config.json */; };
 		10E6361803A8FEA7A449A733 /* TeamCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5808AF2D60EBEB36D9CE0A5 /* TeamCardView.swift */; };
 		11B5072DDF250B89211A446B /* all_players.json in Resources */ = {isa = PBXBuildFile; fileRef = 4293560F253FA1568A32F30E /* all_players.json */; };
 		1987147EBAFFEC7CBDE9694E /* PaywallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0FB15832BA10076377EBB0F /* PaywallView.swift */; };
@@ -60,6 +61,7 @@
 		6788FF565D12FAFC3C30AD38 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		68E27B973CF2B1F2C0AA67E7 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		694155992A032023CEC3C780 /* suggestions_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = suggestions_config.json; sourceTree = "<group>"; };
+		6B50FD15492CCE031A905488 /* stat_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = stat_config.json; sourceTree = "<group>"; };
 		6BB3CC48A319FDD80408F09F /* StatChat.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = StatChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		797994603DE35696E898BBDA /* LeaderboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaderboardView.swift; sourceTree = "<group>"; };
 		7CB091836D4207BE27DEBA70 /* AnimatedPlaceholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimatedPlaceholder.swift; sourceTree = "<group>"; };
@@ -129,6 +131,7 @@
 				4293560F253FA1568A32F30E /* all_players.json */,
 				A161890890E908E9407731BF /* Assets.xcassets */,
 				FB9F66CC0E8964519268C478 /* baseball_stats.db */,
+				6B50FD15492CCE031A905488 /* stat_config.json */,
 				8A33F22FD3998B78C251B18E /* StatChat.storekit */,
 				694155992A032023CEC3C780 /* suggestions_config.json */,
 			);
@@ -263,6 +266,7 @@
 				497301EF41FE610D0BE621E8 /* StatChat.storekit in Resources */,
 				11B5072DDF250B89211A446B /* all_players.json in Resources */,
 				F41238CACD8719488CD332C1 /* baseball_stats.db in Resources */,
+				0F35C356B5576BF248D5E1AE /* stat_config.json in Resources */,
 				2EB8CE668E4DD876C161E895 /* suggestions_config.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

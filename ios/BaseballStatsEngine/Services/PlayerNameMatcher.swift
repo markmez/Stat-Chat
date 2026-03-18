@@ -19,53 +19,40 @@ enum PlayerNameMatcher {
     /// Fast lookup: ASCII-lowercased name → canonical name (for O(1) exact match instead of scanning sortedNames)
     nonisolated(unsafe) private(set) static var nameExactLookup: [String: String] = [:]
 
-    // MARK: - Nickname / alias mapping
-    // Maps common names, nicknames, and informal variants to canonical DB names.
-    // Keys must be lowercased.
-    private static let nicknameAliases: [String: String] = [
-        // Jazz Chisholm — merged under "Jazz Chisholm Jr."
-        "jazz chisholm": "Jazz Chisholm Jr.",
-        "jasrado chisholm": "Jazz Chisholm Jr.",
-        "jasrado chisholm jr.": "Jazz Chisholm Jr.",
-        "jasrado chisholm jr": "Jazz Chisholm Jr.",
-        // Ronald Acuña — merged under "Ronald Acuña Jr."
-        "ronald acuña": "Ronald Acuña Jr.",
-        "ronald acuna": "Ronald Acuña Jr.",
-        "ronald acuna jr.": "Ronald Acuña Jr.",
-        "ronald acuna jr": "Ronald Acuña Jr.",
-        "acuna jr.": "Ronald Acuña Jr.",
-        "acuna jr": "Ronald Acuña Jr.",
-        "acuña jr.": "Ronald Acuña Jr.",
-        "acuña jr": "Ronald Acuña Jr.",
-        // Giancarlo Stanton — played as "Mike Stanton" early career
-        "mike stanton": "Giancarlo Stanton",
-        // Ken Griffey — both stored as "Ken Griffey" with no Jr. suffix
-        "ken griffey jr.": "Ken Griffey",    // grifk002 (1989-2010) — resolved by disambigSrJrMap
-        "ken griffey jr": "Ken Griffey",
-        "ken griffey senior": "Ken Griffey",
-        "ken griffey sr.": "Ken Griffey",
-        "ken griffey sr": "Ken Griffey",
-        // Vladimir Guerrero Jr. — common short forms
-        "vlad guerrero jr.": "Vladimir Guerrero Jr.",
-        "vlad guerrero jr": "Vladimir Guerrero Jr.",
-        "vlad guerrero": "Vladimir Guerrero Jr.",
-        // Common "junior" suffix variant
-        "bobby witt junior": "Bobby Witt Jr.",
-        "fernando tatis junior": "Fernando Tatis Jr.",
-        "vladimir guerrero junior": "Vladimir Guerrero Jr.",
-        "lance mccullers junior": "Lance McCullers Jr.",
-    ]
+    // MARK: - Shared config (loaded from stat_config.json)
+
+    private struct StatConfigFile: Decodable {
+        let stat_aliases: [String: StatAliasEntry]
+        let pitching_only_stats: [String]
+        let common_word_last_names: [String]
+        let nickname_aliases: [String: String]
+        let disambig_sr_jr_map: [String: [String]]
+        let al_teams: [String]
+        let nl_teams: [String]
+
+        struct StatAliasEntry: Decodable {
+            let aliases: [String]
+            let abbrev: String
+            let name: String
+            let is_rate: Bool
+        }
+    }
+
+    private static let configFile: StatConfigFile = {
+        guard let url = Bundle.main.url(forResource: "stat_config", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let config = try? JSONDecoder().decode(StatConfigFile.self, from: data) else {
+            fatalError("stat_config.json missing or corrupt in app bundle")
+        }
+        return config
+    }()
+
+    // MARK: - Nickname / alias mapping (from shared config)
+
+    private static let nicknameAliases: [String: String] = configFile.nickname_aliases
 
     /// Sr./Jr. pairs where the base name (without suffix) should trigger disambiguation.
-    /// Maps the shared base name (lowercased) to the list of full names to offer.
-    /// Both players are legitimate searches, so we let the user choose.
-    private static let disambigSrJrMap: [String: [String]] = [
-        "bobby witt": ["Bobby Witt Jr.", "Bobby Witt"],
-        "fernando tatis": ["Fernando Tatis Jr.", "Fernando Tatis"],
-        "vladimir guerrero": ["Vladimir Guerrero Jr.", "Vladimir Guerrero"],
-        // Note: Ken Griffey Sr./Jr. are both stored as "Ken Griffey" — can't disambiguate until DB is fixed
-        "lance mccullers": ["Lance McCullers Jr.", "Lance McCullers"],
-    ]
+    private static let disambigSrJrMap: [String: [String]] = configFile.disambig_sr_jr_map
 
     /// The actual calendar year — used as the default season when no year is specified.
     /// This ensures queries like "Judge home runs" resolve to the current year (e.g. 2026),
@@ -95,95 +82,12 @@ enum PlayerNameMatcher {
         case career
     }
 
-    /// Maps lowercased aliases to stat info. Built from tuples, longest aliases first for matching.
+    /// Maps lowercased aliases to stat info. Built from shared config JSON.
     static let statAliasMap: [String: StatInfo] = {
-        let entries: [(aliases: [String], dbColumn: String, abbrev: String, name: String, isRate: Bool)] = [
-            (["home runs", "homers", "dingers", "hr", "home run", "hrs", "homer", "dinger", "taters"],
-             "home_runs", "HR", "Home Runs", false),
-            (["batting average", "average", "avg", "ba", "batting avg", "batting"],
-             "batting_avg", "AVG", "Batting Average", true),
-            (["runs batted in", "rbis", "rbi", "ribbies"],
-             "rbi", "RBI", "RBI", false),
-            (["on base plus slugging", "ops"],
-             "ops", "OPS", "OPS", true),
-            (["ops+", "ops plus", "adjusted ops"],
-             "ops_plus", "OPS+", "OPS+", true),
-            (["stolen bases", "steals", "sb", "stolen base", "bags", "steal", "stole"],
-             "stolen_bases", "SB", "Stolen Bases", false),
-            (["strikeouts", "ks", "k's", "strikeout", "punchouts", "so", "struck out"],
-             "strikeouts", "SO", "Strikeouts", false),
-            (["bases on balls", "walks", "bb", "walk"],
-             "walks", "BB", "Walks", false),
-            (["on-base percentage", "on base percentage", "obp", "on-base", "on base"],
-             "obp", "OBP", "On-Base Percentage", true),
-            (["slugging percentage", "slugging", "slg"],
-             "slg", "SLG", "Slugging Percentage", true),
-            (["runs scored", "runs"],
-             "runs", "R", "Runs", false),
-            (["hits", "h"],
-             "hits", "H", "Hits", false),
-            (["doubles", "2b"],
-             "doubles", "2B", "Doubles", false),
-            (["triples", "3b"],
-             "triples", "3B", "Triples", false),
-            (["games played", "games"],
-             "games", "G", "Games", false),
-            (["isolated power", "iso", "power"],
-             "iso", "ISO", "Isolated Power", true),
-            (["batting average on balls in play", "babip"],
-             "babip", "BABIP", "BABIP", true),
-            (["at-bats", "at bats", "ab"],
-             "at_bats", "AB", "At Bats", false),
-            (["caught stealing", "cs"],
-             "caught_stealing", "CS", "Caught Stealing", false),
-            (["hit by pitch", "hbp"],
-             "hit_by_pitch", "HBP", "Hit By Pitch", false),
-            (["intentional walks", "ibb"],
-             "intentional_walks", "IBB", "Intentional Walks", false),
-            // --- Pitching stats ---
-            (["earned run average", "era"],
-             "era", "ERA", "ERA", true),
-            (["walks and hits per innings pitched", "whip"],
-             "whip", "WHIP", "WHIP", true),
-            (["strikeouts per 9 innings", "k/9", "k per 9", "strikeouts per nine"],
-             "k_per_9", "K/9", "K/9", true),
-            (["walks per 9 innings", "bb/9", "bb per 9", "walks per nine"],
-             "bb_per_9", "BB/9", "BB/9", true),
-            (["strikeout to walk ratio", "k/bb", "k per bb", "strikeout walk ratio"],
-             "k_per_bb", "K/BB", "K/BB", true),
-            (["hits per 9 innings", "h/9", "h per 9", "hits per nine"],
-             "h_per_9", "H/9", "H/9", true),
-            (["home runs per 9 innings", "hr/9", "hr per 9"],
-             "hr_per_9", "HR/9", "HR/9", true),
-            (["batting average against", "baa", "opponents batting average", "opponent avg"],
-             "baa", "BAA", "BAA", true),
-            (["era+", "era plus", "adjusted era"],
-             "era_plus", "ERA+", "ERA+", true),
-            (["wins", "w"],
-             "wins", "W", "Wins", false),
-            (["losses"],
-             "losses", "L", "Losses", false),
-            (["saves", "sv"],
-             "saves", "SV", "Saves", false),
-            (["innings pitched", "ip", "innings"],
-             "innings_pitched", "IP", "Innings Pitched", false),
-            (["quality starts", "qs"],
-             "quality_starts", "QS", "Quality Starts", false),
-            (["complete games", "cg"],
-             "complete_games", "CG", "Complete Games", false),
-            (["games finished", "gf"],
-             "games_finished", "GF", "Games Finished", false),
-            (["wild pitches", "wp"],
-             "wild_pitches", "WP", "Wild Pitches", false),
-            (["balks", "bk"],
-             "balks", "BK", "Balks", false),
-            (["batters faced", "bf"],
-             "batters_faced", "BF", "Batters Faced", false),
-        ]
         var map: [String: StatInfo] = [:]
-        for entry in entries {
-            let info = StatInfo(dbColumn: entry.dbColumn, displayAbbrev: entry.abbrev,
-                                displayName: entry.name, isRate: entry.isRate)
+        for (dbColumn, entry) in configFile.stat_aliases {
+            let info = StatInfo(dbColumn: dbColumn, displayAbbrev: entry.abbrev,
+                                displayName: entry.name, isRate: entry.is_rate)
             for alias in entry.aliases {
                 map[alias] = info
             }
@@ -192,12 +96,7 @@ enum PlayerNameMatcher {
     }()
 
     /// Stats that are ONLY pitching (not shared with batting)
-    static let pitchingOnlyStats: Set<String> = [
-        "era", "whip", "k_per_9", "bb_per_9", "k_per_bb", "h_per_9", "hr_per_9",
-        "baa", "era_plus", "wins", "losses", "saves", "innings_pitched",
-        "quality_starts", "complete_games", "games_finished", "wild_pitches",
-        "balks", "batters_faced"
-    ]
+    static let pitchingOnlyStats: Set<String> = Set(configFile.pitching_only_stats)
 
     /// Check if a StatInfo represents a pitching-only stat
     static func isPitchingStat(_ stat: StatInfo) -> Bool {
@@ -1957,35 +1856,17 @@ enum PlayerNameMatcher {
     /// When someone types one of these, they almost certainly mean the word, not the player.
     /// The player is still reachable via full name or "see also" disambiguation.
     ///
-    /// NOTE: Only needs unambiguous last names (1 player in DB). Multi-player last names like
-    /// "young" (59 players), "hill" (43), "king" (28) are already rejected by the
-    /// `players.count == 1` check in findPlayerInText and the parser rejection guards.
+    /// Common English words that are also unambiguous player last names (1 player in DB).
+    /// Loaded from shared stat_config.json. Used by findPlayerInText to avoid false matches.
+    ///
+    /// NOTE: Multi-player last names like "young" (59 players), "hill" (43), "king" (28) are
+    /// already rejected by the `players.count == 1` check.
     ///
     /// EXCLUDED from this list (well-known players whose last names have no baseball meaning):
     /// bench (Johnny Bench), belt (Brandon Belt), story (Trevor Story), penny (Brad Penny),
     /// dye (Jermaine Dye), deer (Rob Deer), duke (Zach Duke), beer (Seth Beer),
     /// steer (Spencer Steer), cave (Jake Cave)
-    private static let commonWordLastNames: Set<String> = [
-        // Adjectives / adverbs / superlatives
-        "best", "good", "long", "strong", "more", "most",
-        "longest", "shortest", "highest", "lowest", "fastest", "slowest",
-        "clear", "dark", "fast", "free", "grey", "just", "low", "rich",
-        // Verbs commonly used in baseball queries
-        "bolt", "brush", "cage", "crane", "drill",
-        "fold", "force", "freeze", "hack", "halt", "hatch", "jump",
-        "lock", "mock", "pack", "peel", "pose", "rain", "read", "reel",
-        "sand", "score", "sell", "shave", "show", "span", "spring",
-        "stump", "walk",
-        // Nouns commonly used in baseball / query context
-        "bare", "beam", "board", "bone", "league",
-        "bunch", "cotton", "dam", "dial", "dock", "dove",
-        "eagle", "earl", "edge", "face", "fear", "fleet",
-        "font", "frost", "hammer", "hare", "hawk", "heard", "holder",
-        "host", "hurt", "knack", "lamp", "level", "light", "loan",
-        "mace", "marvel", "mole", "peace", "pie", "pole",
-        "pool", "pop", "root", "shell", "speed", "stem", "stern",
-        "strain", "strand", "way", "will", "winter", "worth",
-    ]
+    private static let commonWordLastNames: Set<String> = Set(configFile.common_word_last_names)
 
     static func findAmbiguousPlayers(_ input: String) -> [String]? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

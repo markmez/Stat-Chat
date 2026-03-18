@@ -1,0 +1,231 @@
+{
+  "_comment": "Shared config — single source of truth. iOS loads from bundled copy, Python loads from backend/services/ copy. After editing, copy to ios/BaseballStatsEngine/Resources/stat_config.json and backend/services/stat_config.json.",
+  "version": 2,
+  "stat_aliases": {
+    "home_runs": {
+      "aliases": ["home runs", "homers", "dingers", "hr", "home run", "hrs", "homer", "dinger", "taters"],
+      "abbrev": "HR", "name": "Home Runs", "is_rate": false
+    },
+    "batting_avg": {
+      "aliases": ["batting average", "average", "avg", "ba", "batting avg", "batting"],
+      "abbrev": "AVG", "name": "Batting Average", "is_rate": true
+    },
+    "rbi": {
+      "aliases": ["runs batted in", "rbis", "rbi", "ribbies"],
+      "abbrev": "RBI", "name": "RBI", "is_rate": false
+    },
+    "ops": {
+      "aliases": ["on base plus slugging", "ops"],
+      "abbrev": "OPS", "name": "OPS", "is_rate": true
+    },
+    "ops_plus": {
+      "aliases": ["ops+", "ops plus", "adjusted ops"],
+      "abbrev": "OPS+", "name": "OPS+", "is_rate": true
+    },
+    "stolen_bases": {
+      "aliases": ["stolen bases", "steals", "sb", "stolen base", "bags", "steal", "stole"],
+      "abbrev": "SB", "name": "Stolen Bases", "is_rate": false
+    },
+    "strikeouts": {
+      "aliases": ["strikeouts", "ks", "k's", "strikeout", "punchouts", "so", "struck out"],
+      "abbrev": "SO", "name": "Strikeouts", "is_rate": false
+    },
+    "walks": {
+      "aliases": ["bases on balls", "walks", "bb", "walk"],
+      "abbrev": "BB", "name": "Walks", "is_rate": false
+    },
+    "obp": {
+      "aliases": ["on-base percentage", "on base percentage", "obp", "on-base", "on base"],
+      "abbrev": "OBP", "name": "On-Base Percentage", "is_rate": true
+    },
+    "slg": {
+      "aliases": ["slugging percentage", "slugging", "slg"],
+      "abbrev": "SLG", "name": "Slugging Percentage", "is_rate": true
+    },
+    "runs": {
+      "aliases": ["runs scored", "runs"],
+      "abbrev": "R", "name": "Runs", "is_rate": false
+    },
+    "hits": {
+      "aliases": ["hits", "h"],
+      "abbrev": "H", "name": "Hits", "is_rate": false
+    },
+    "doubles": {
+      "aliases": ["doubles", "2b"],
+      "abbrev": "2B", "name": "Doubles", "is_rate": false
+    },
+    "triples": {
+      "aliases": ["triples", "3b"],
+      "abbrev": "3B", "name": "Triples", "is_rate": false
+    },
+    "games": {
+      "aliases": ["games played", "games"],
+      "abbrev": "G", "name": "Games", "is_rate": false
+    },
+    "iso": {
+      "aliases": ["isolated power", "iso", "power"],
+      "abbrev": "ISO", "name": "Isolated Power", "is_rate": true
+    },
+    "babip": {
+      "aliases": ["batting average on balls in play", "babip"],
+      "abbrev": "BABIP", "name": "BABIP", "is_rate": true
+    },
+    "at_bats": {
+      "aliases": ["at-bats", "at bats", "ab"],
+      "abbrev": "AB", "name": "At Bats", "is_rate": false
+    },
+    "caught_stealing": {
+      "aliases": ["caught stealing", "cs"],
+      "abbrev": "CS", "name": "Caught Stealing", "is_rate": false
+    },
+    "hit_by_pitch": {
+      "aliases": ["hit by pitch", "hbp"],
+      "abbrev": "HBP", "name": "Hit By Pitch", "is_rate": false
+    },
+    "intentional_walks": {
+      "aliases": ["intentional walks", "ibb"],
+      "abbrev": "IBB", "name": "Intentional Walks", "is_rate": false
+    },
+    "era": {
+      "aliases": ["earned run average", "era"],
+      "abbrev": "ERA", "name": "ERA", "is_rate": true
+    },
+    "whip": {
+      "aliases": ["walks and hits per innings pitched", "whip"],
+      "abbrev": "WHIP", "name": "WHIP", "is_rate": true
+    },
+    "k_per_9": {
+      "aliases": ["strikeouts per 9 innings", "k/9", "k per 9", "strikeouts per nine"],
+      "abbrev": "K/9", "name": "K/9", "is_rate": true
+    },
+    "bb_per_9": {
+      "aliases": ["walks per 9 innings", "bb/9", "bb per 9", "walks per nine"],
+      "abbrev": "BB/9", "name": "BB/9", "is_rate": true
+    },
+    "k_per_bb": {
+      "aliases": ["strikeout to walk ratio", "k/bb", "k per bb", "strikeout walk ratio"],
+      "abbrev": "K/BB", "name": "K/BB", "is_rate": true
+    },
+    "h_per_9": {
+      "aliases": ["hits per 9 innings", "h/9", "h per 9", "hits per nine"],
+      "abbrev": "H/9", "name": "H/9", "is_rate": true
+    },
+    "hr_per_9": {
+      "aliases": ["home runs per 9 innings", "hr/9", "hr per 9"],
+      "abbrev": "HR/9", "name": "HR/9", "is_rate": true
+    },
+    "baa": {
+      "aliases": ["batting average against", "baa", "opponents batting average", "opponent avg"],
+      "abbrev": "BAA", "name": "BAA", "is_rate": true
+    },
+    "era_plus": {
+      "aliases": ["era+", "era plus", "adjusted era"],
+      "abbrev": "ERA+", "name": "ERA+", "is_rate": true
+    },
+    "wins": {
+      "aliases": ["wins", "w"],
+      "abbrev": "W", "name": "Wins", "is_rate": false
+    },
+    "losses": {
+      "aliases": ["losses"],
+      "abbrev": "L", "name": "Losses", "is_rate": false
+    },
+    "saves": {
+      "aliases": ["saves", "sv"],
+      "abbrev": "SV", "name": "Saves", "is_rate": false
+    },
+    "innings_pitched": {
+      "aliases": ["innings pitched", "ip", "innings"],
+      "abbrev": "IP", "name": "Innings Pitched", "is_rate": false
+    },
+    "quality_starts": {
+      "aliases": ["quality starts", "qs"],
+      "abbrev": "QS", "name": "Quality Starts", "is_rate": false
+    },
+    "complete_games": {
+      "aliases": ["complete games", "cg"],
+      "abbrev": "CG", "name": "Complete Games", "is_rate": false
+    },
+    "games_finished": {
+      "aliases": ["games finished", "gf"],
+      "abbrev": "GF", "name": "Games Finished", "is_rate": false
+    },
+    "wild_pitches": {
+      "aliases": ["wild pitches", "wp"],
+      "abbrev": "WP", "name": "Wild Pitches", "is_rate": false
+    },
+    "balks": {
+      "aliases": ["balks", "bk"],
+      "abbrev": "BK", "name": "Balks", "is_rate": false
+    },
+    "batters_faced": {
+      "aliases": ["batters faced", "bf"],
+      "abbrev": "BF", "name": "Batters Faced", "is_rate": false
+    }
+  },
+  "pitching_only_stats": [
+    "era", "whip", "k_per_9", "bb_per_9", "k_per_bb", "h_per_9", "hr_per_9",
+    "baa", "era_plus", "wins", "losses", "saves", "innings_pitched",
+    "quality_starts", "complete_games", "games_finished", "wild_pitches",
+    "balks", "batters_faced"
+  ],
+  "common_word_last_names": [
+    "bare", "bass", "beam", "best", "board", "bolt", "bond", "bone",
+    "brush", "bunch", "cage", "camp", "cash", "chance", "class", "clear",
+    "click", "close", "cole", "cook", "cotton", "crane", "cross", "dam",
+    "dark", "deal", "dial", "dock", "dove", "drill", "eagle", "earl",
+    "edge", "end", "face", "fair", "fast", "fastest", "fear", "field",
+    "flag", "fleet", "flowers", "fold", "font", "force", "free", "freeze",
+    "friend", "frost", "good", "gore", "grace", "grant", "gray", "green",
+    "grey", "guest", "hack", "halt", "hammer", "hand", "hare", "hatch",
+    "hawk", "head", "heal", "heard", "highest", "holder", "horn", "host",
+    "house", "hurt", "jump", "just", "key", "knack", "lamb", "lamp",
+    "land", "law", "league", "level", "light", "loan", "lock", "long",
+    "longest", "love", "low", "lowest", "luck", "mace", "marsh", "marvel",
+    "may", "means", "minor", "mock", "mole", "more", "moss", "most",
+    "nix", "north", "offer", "pace", "pack", "page", "parent", "park",
+    "peace", "peel", "pie", "pole", "pool", "pop", "pose", "post",
+    "pride", "rain", "rash", "ray", "read", "reed", "reel", "rest",
+    "rich", "rock", "root", "rush", "sample", "sand", "score", "sell",
+    "sharp", "shave", "shaw", "shell", "shortest", "show", "slowest",
+    "span", "speed", "spring", "stem", "stern", "still", "stock", "stone",
+    "stout", "strain", "strand", "strong", "stump", "swift", "thorn",
+    "trace", "trade", "wade", "walk", "ward", "way", "web", "wells",
+    "west", "wild", "will", "winter", "wise", "wolf", "word", "worth"
+  ],
+  "nickname_aliases": {
+    "jazz chisholm": "Jazz Chisholm Jr.",
+    "jasrado chisholm": "Jazz Chisholm Jr.",
+    "jasrado chisholm jr.": "Jazz Chisholm Jr.",
+    "jasrado chisholm jr": "Jazz Chisholm Jr.",
+    "ronald acuña": "Ronald Acuña Jr.",
+    "ronald acuna": "Ronald Acuña Jr.",
+    "ronald acuna jr.": "Ronald Acuña Jr.",
+    "ronald acuna jr": "Ronald Acuña Jr.",
+    "acuna jr.": "Ronald Acuña Jr.",
+    "acuna jr": "Ronald Acuña Jr.",
+    "acuña jr.": "Ronald Acuña Jr.",
+    "acuña jr": "Ronald Acuña Jr.",
+    "mike stanton": "Giancarlo Stanton",
+    "ken griffey jr.": "Ken Griffey",
+    "ken griffey jr": "Ken Griffey",
+    "ken griffey senior": "Ken Griffey",
+    "ken griffey sr.": "Ken Griffey",
+    "ken griffey sr": "Ken Griffey",
+    "vlad guerrero jr.": "Vladimir Guerrero Jr.",
+    "vlad guerrero jr": "Vladimir Guerrero Jr.",
+    "vlad guerrero": "Vladimir Guerrero Jr.",
+    "bobby witt junior": "Bobby Witt Jr.",
+    "fernando tatis junior": "Fernando Tatis Jr.",
+    "vladimir guerrero junior": "Vladimir Guerrero Jr.",
+    "lance mccullers junior": "Lance McCullers Jr."
+  },
+  "disambig_sr_jr_map": {
+    "bobby witt": ["Bobby Witt Jr.", "Bobby Witt"],
+    "fernando tatis": ["Fernando Tatis Jr.", "Fernando Tatis"],
+    "vladimir guerrero": ["Vladimir Guerrero Jr.", "Vladimir Guerrero"],
+    "lance mccullers": ["Lance McCullers Jr.", "Lance McCullers"]
+  },
+  "al_teams": ["ANA", "ATH", "BAL", "BOS", "CHA", "CLE", "DET", "HOU", "KCA", "MIN", "NYA", "SEA", "TBA", "TEX", "TOR"],
+  "nl_teams": ["ARI", "ATL", "CHN", "CIN", "COL", "LAN", "MIA", "MIL", "NYN", "PHI", "PIT", "SDN", "SFN", "SLN", "WAS"]
+}
