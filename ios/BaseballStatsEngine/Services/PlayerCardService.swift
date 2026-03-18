@@ -225,6 +225,167 @@ enum PlayerCardService {
         return false
     }
 
+    /// Check if a player is active (last season within 1 year of current calendar year).
+    static func isActivePlayer(name: String) -> Bool {
+        let currentYear = Calendar.current.component(.year, from: Date())
+        let sql = """
+            SELECT MAX(s.season) FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name = '\(sanitize(name))'
+            """
+        if let result = try? db.execute(sql: sql),
+           let row = result.rows.first,
+           let year = Int(row[0]),
+           year >= currentYear - 1 {
+            return true
+        }
+        let pitchSql = """
+            SELECT MAX(sp.season) FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name = '\(sanitize(name))'
+            """
+        if let result = try? db.execute(sql: pitchSql),
+           let row = result.rows.first,
+           let year = Int(row[0]),
+           year >= currentYear - 1 {
+            return true
+        }
+        return false
+    }
+
+    /// Find a player's most recent season year (batting or pitching).
+    static func mostRecentSeason(name: String) -> Int? {
+        let sql = """
+            SELECT MAX(s.season) FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name = '\(sanitize(name))'
+            """
+        if let result = try? db.execute(sql: sql),
+           let row = result.rows.first,
+           let year = Int(row[0]) {
+            return year
+        }
+        let pitchSql = """
+            SELECT MAX(sp.season) FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name = '\(sanitize(name))'
+            """
+        if let result = try? db.execute(sql: pitchSql),
+           let row = result.rows.first,
+           let year = Int(row[0]) {
+            return year
+        }
+        return nil
+    }
+
+    /// Find a player's best season year by OPS (batters) or ERA (pitchers).
+    static func bestSeasonYear(name: String, isPitcher: Bool) -> Int? {
+        if isPitcher {
+            let sql = """
+                SELECT sp.season FROM season_pitching_stats sp
+                JOIN players p ON sp.player_id = p.player_id
+                WHERE p.name = '\(sanitize(name))' AND sp.innings_pitched >= 50
+                ORDER BY sp.era ASC LIMIT 1
+                """
+            if let result = try? db.execute(sql: sql),
+               let row = result.rows.first,
+               let year = Int(row[0]) {
+                return year
+            }
+        } else {
+            let sql = """
+                SELECT s.season FROM season_batting_stats s
+                JOIN players p ON s.player_id = p.player_id
+                WHERE p.name = '\(sanitize(name))' AND s.at_bats >= 100
+                ORDER BY s.ops DESC LIMIT 1
+                """
+            if let result = try? db.execute(sql: sql),
+               let row = result.rows.first,
+               let year = Int(row[0]) {
+                return year
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Universal season resolution
+
+    /// Resolve the effective season for a player query when no year was specified.
+    /// Active players → current year. Inactive players → most recent season in DB.
+    static func resolveEffectiveSeason(playerName: String, parsedSeason: Int, seasonExplicit: Bool) -> Int {
+        if !seasonExplicit && !isActivePlayer(name: playerName) {
+            return mostRecentSeason(name: playerName) ?? parsedSeason
+        }
+        return parsedSeason
+    }
+
+    /// Resolve the effective season for a team query when no year was specified.
+    /// Active teams → current year. Defunct/inactive teams → most recent season in DB.
+    static func resolveEffectiveTeamSeason(teamCode: String, parsedSeason: Int, seasonExplicit: Bool) -> Int {
+        if !seasonExplicit && !isActiveTeam(teamCode: teamCode) {
+            return mostRecentTeamSeason(teamCode: teamCode) ?? parsedSeason
+        }
+        return parsedSeason
+    }
+
+    /// Check if a team has data in the current or previous season.
+    static func isActiveTeam(teamCode: String) -> Bool {
+        let currentYear = Calendar.current.component(.year, from: Date())
+        let sql = "SELECT MAX(season) FROM season_batting_stats WHERE team = '\(sanitize(teamCode))'"
+        if let result = try? db.execute(sql: sql),
+           let row = result.rows.first,
+           let year = Int(row[0]) {
+            return year >= currentYear - 1
+        }
+        return false
+    }
+
+    /// Find a team's most recent season in the DB.
+    static func mostRecentTeamSeason(teamCode: String) -> Int? {
+        let sql = "SELECT MAX(season) FROM season_batting_stats WHERE team = '\(sanitize(teamCode))'"
+        if let result = try? db.execute(sql: sql),
+           let row = result.rows.first,
+           let year = Int(row[0]) {
+            return year
+        }
+        return nil
+    }
+
+    /// Generate a suggestion pill for a player query based on season resolution.
+    /// - `queryLabel`: the query fragment without the year, e.g. "Judge home runs", "Judge vs lefties"
+    /// - `careerLabel`: if non-nil, active players get this career pill (e.g. "Judge career HR").
+    ///   If nil (splits with no career builder), active players get a previous-year pill instead.
+    static func makeSeasonPill(
+        name: String, queryLabel: String, careerLabel: String?,
+        effectiveSeason: Int, seasonExplicit: Bool, isPitcher: Bool
+    ) -> String? {
+        guard !seasonExplicit else { return nil }
+        if !isActivePlayer(name: name) {
+            // Inactive → suggest their best year
+            if let bestYear = bestSeasonYear(name: name, isPitcher: isPitcher) {
+                return "\n[SUGGEST]\(queryLabel) \(bestYear)[/SUGGEST]"
+            }
+            return nil
+        } else if let careerLabel {
+            // Active + career builder available → suggest career
+            return "\n[SUGGEST]\(careerLabel)[/SUGGEST]"
+        } else {
+            // Active + no career builder → suggest previous year
+            let prevYear = effectiveSeason - 1
+            return "\n[SUGGEST]\(queryLabel) \(prevYear)[/SUGGEST]"
+        }
+    }
+
+    /// Generate a suggestion pill for a team query based on season resolution.
+    static func makeTeamSeasonPill(
+        teamCode: String, queryLabel: String,
+        effectiveSeason: Int, seasonExplicit: Bool
+    ) -> String? {
+        guard !seasonExplicit else { return nil }
+        let prevYear = effectiveSeason - 1
+        return "\n[SUGGEST]\(queryLabel) \(prevYear)[/SUGGEST]"
+    }
+
     /// Detect two-way players: meaningful batting stats (PA >= 130) AND meaningful pitching stats (ip_outs >= 90, ~30 IP).
     /// PA threshold of 130 exceeds what any pitcher would accumulate just from batting in their own starts (~4 PA × 32 GS = 128).
     /// IP threshold of 30 filters out position players doing blowout mop-up duty.
@@ -1688,7 +1849,10 @@ enum PlayerCardService {
             parts.append("[/STATGRID]")
         }
 
-        parts.append("\n[SUGGEST]how is \(displayName) doing lately[/SUGGEST]")
+        // Only suggest current form for active players (inactive players have no current form data)
+        if isActivePlayer(name: name) {
+            parts.append("\n[SUGGEST]how is \(displayName) doing lately[/SUGGEST]")
+        }
         parts.append("[SUGGEST]\(displayName) career[/SUGGEST]")
 
         return parts.joined(separator: "\n")
@@ -1908,7 +2072,10 @@ enum PlayerCardService {
             parts.append("[/STATGRID]")
 
             parts.append("\n[SUGGEST]\(displayName) \(mostRecentSeason)[/SUGGEST]")
-            parts.append("[SUGGEST]\(displayName) vs lefties[/SUGGEST]")
+            // Only suggest splits if platoon data exists for this player's era
+            if mostRecentSeason >= 1969 {
+                parts.append("[SUGGEST]\(displayName) vs lefties[/SUGGEST]")
+            }
 
             return parts.joined(separator: "\n")
         }
@@ -3897,7 +4064,9 @@ enum PlayerCardService {
             parts.append("[/STATGRID]")
 
             parts.append("\n[SUGGEST]\(displayName) \(season)[/SUGGEST]")
-            parts.append("[SUGGEST]how is \(displayName) doing lately[/SUGGEST]")
+            if isActivePlayer(name: name) {
+                parts.append("[SUGGEST]how is \(displayName) doing lately[/SUGGEST]")
+            }
 
             return parts.joined(separator: "\n")
         }
@@ -3960,7 +4129,9 @@ enum PlayerCardService {
             parts.append("[/STATGRID]")
 
             parts.append("\n[SUGGEST]\(displayName) \(season)[/SUGGEST]")
-            parts.append("[SUGGEST]how is \(displayName) doing lately[/SUGGEST]")
+            if isActivePlayer(name: name) {
+                parts.append("[SUGGEST]how is \(displayName) doing lately[/SUGGEST]")
+            }
 
             return parts.joined(separator: "\n")
         }
@@ -5130,7 +5301,9 @@ enum PlayerCardService {
         parts.append("ROW: " + displayValues.joined(separator: ", "))
         parts.append("[/STATGRID]")
 
-        parts.append("\n[SUGGEST]how is \(displayName) doing lately[/SUGGEST]")
+        if isActivePlayer(name: name) {
+            parts.append("\n[SUGGEST]how is \(displayName) doing lately[/SUGGEST]")
+        }
         parts.append("[SUGGEST]\(displayName) career[/SUGGEST]")
 
         return parts.joined(separator: "\n")

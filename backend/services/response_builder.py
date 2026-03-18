@@ -285,6 +285,33 @@ def _most_recent_season(conn: sqlite3.Connection, name: str,
     return datetime.now().year
 
 
+def _is_active_player(conn: sqlite3.Connection, name: str) -> bool:
+    """Check if a player has data in the current or previous year."""
+    current_year = datetime.now().year
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT MAX(s.season) FROM season_batting_stats s "
+        "JOIN players p ON s.player_id = p.player_id WHERE p.name = ?",
+        (_sanitize(name),),
+    )
+    row = cur.fetchone()
+    bat_year = int(row[0]) if row and row[0] else 0
+    cur.execute(
+        "SELECT MAX(sp.season) FROM season_pitching_stats sp "
+        "JOIN players p ON sp.player_id = p.player_id WHERE p.name = ?",
+        (_sanitize(name),),
+    )
+    row = cur.fetchone()
+    pitch_year = int(row[0]) if row and row[0] else 0
+    return max(bat_year, pitch_year) >= current_year - 1
+
+
+def _has_platoon_data(conn: sqlite3.Connection, name: str) -> bool:
+    """Check if platoon split data exists for a player (1969+ Chadwick or 2025+ MSF)."""
+    most_recent = _most_recent_season(conn, name)
+    return most_recent >= 1969
+
+
 def _career_rate_formula(stat: StatInfo) -> Optional[str]:
     """Return SQL expression for career rate stat, or None."""
     formulas = {
@@ -359,7 +386,8 @@ def build_season_summary(name: str, season: int) -> Optional[str]:
         parts.append("ROW: " + ", ".join(formatted))
         parts.append("[/STATGRID]")
 
-        parts.append(f"\n[SUGGEST]how is {display_name} doing lately[/SUGGEST]")
+        if _is_active_player(conn, name):
+            parts.append(f"\n[SUGGEST]how is {display_name} doing lately[/SUGGEST]")
         parts.append(f"[SUGGEST]{display_name} career[/SUGGEST]")
 
         return "\n".join(parts)
@@ -408,7 +436,8 @@ def build_pitching_season_summary(name: str, season: int) -> Optional[str]:
         parts.append("ROW: " + ", ".join(display_values))
         parts.append("[/STATGRID]")
 
-        parts.append(f"\n[SUGGEST]how is {display_name} doing lately[/SUGGEST]")
+        if _is_active_player(conn, name):
+            parts.append(f"\n[SUGGEST]how is {display_name} doing lately[/SUGGEST]")
         parts.append(f"[SUGGEST]{display_name} career[/SUGGEST]")
 
         return "\n".join(parts)
@@ -557,8 +586,10 @@ def build_comparison(name1: str, name2: str, season: Optional[int] = None) -> Op
         if not parts:
             return "I don't have enough data to compare these two players."
 
-        parts.append(f"\n[SUGGEST]{dn1} vs lefties[/SUGGEST]")
-        parts.append(f"[SUGGEST]{dn2} vs lefties[/SUGGEST]")
+        if _has_platoon_data(conn, name1):
+            parts.append(f"\n[SUGGEST]{dn1} vs lefties[/SUGGEST]")
+        if _has_platoon_data(conn, name2):
+            parts.append(f"[SUGGEST]{dn2} vs lefties[/SUGGEST]")
 
         return "\n".join(parts)
     finally:
@@ -701,8 +732,10 @@ def build_pitching_comparison(name1: str, name2: str, season: Optional[int] = No
         if not parts:
             return "I don't have enough pitching data to compare these two players."
 
-        parts.append(f"\n[SUGGEST]{dn1} vs lefties[/SUGGEST]")
-        parts.append(f"[SUGGEST]{dn2} vs lefties[/SUGGEST]")
+        if _has_platoon_data(conn, name1):
+            parts.append(f"\n[SUGGEST]{dn1} vs lefties[/SUGGEST]")
+        if _has_platoon_data(conn, name2):
+            parts.append(f"[SUGGEST]{dn2} vs lefties[/SUGGEST]")
 
         return "\n".join(parts)
     finally:
@@ -854,14 +887,16 @@ def build_slash_line_lookup(name: str, season: int) -> Optional[str]:
         ops = _format_rate(row[5])
         team_display = _team_full_name(team)
 
-        return (
+        result = (
             f"**{display_name}**'s slash line in {season} ({team_display}):\n\n"
             f"[STATGRID]\nHEADER: AVG, OBP, SLG, OPS\n"
             f"ROW: {avg}, {obp}, {slg}, {ops}\n[/STATGRID]\n\n"
             f"[TIP]Tap a player name for their full profile.[/TIP]\n\n"
-            f"[SUGGEST]{display_name} last season[/SUGGEST]\n"
-            f"[SUGGEST]{display_name} vs lefties[/SUGGEST]"
+            f"[SUGGEST]{display_name} last season[/SUGGEST]"
         )
+        if _has_platoon_data(conn, name):
+            result += f"\n[SUGGEST]{display_name} vs lefties[/SUGGEST]"
+        return result
     finally:
         conn.close()
 
@@ -949,7 +984,8 @@ def build_career_lookup(name: str, stat_info: Optional[StatInfo] = None) -> Opti
             parts.append(f"ROW {season_count} Seasons: " + ", ".join(career_values))
             parts.append("[/STATGRID]")
             parts.append(f"\n[SUGGEST]{display_name} {most_recent}[/SUGGEST]")
-            parts.append(f"[SUGGEST]{display_name} vs lefties[/SUGGEST]")
+            if _has_platoon_data(conn, name):
+                parts.append(f"[SUGGEST]{display_name} vs lefties[/SUGGEST]")
 
             return "\n".join(parts)
     finally:
@@ -1036,7 +1072,8 @@ def build_pitching_career_lookup(name: str, stat_info: Optional[StatInfo] = None
             parts.append(f"ROW {season_count} Seasons: " + ", ".join(career_values))
             parts.append("[/STATGRID]")
             parts.append(f"\n[SUGGEST]{display_name} {most_recent}[/SUGGEST]")
-            parts.append(f"[SUGGEST]{display_name} vs lefties[/SUGGEST]")
+            if _has_platoon_data(conn, name):
+                parts.append(f"[SUGGEST]{display_name} vs lefties[/SUGGEST]")
 
             return "\n".join(parts)
     finally:
@@ -1686,7 +1723,8 @@ def build_risp_splits(name: str, season: int) -> Optional[str]:
             parts.append(f"ROW {split_label}: " + ", ".join(values))
         parts.append("[/STATGRID]")
         parts.append(f"\n[SUGGEST]{display_name} {season}[/SUGGEST]")
-        parts.append(f"[SUGGEST]{display_name} vs lefties {season}[/SUGGEST]")
+        if _has_platoon_data(conn, name):
+            parts.append(f"[SUGGEST]{display_name} vs lefties {season}[/SUGGEST]")
 
         return "\n".join(parts)
     finally:
@@ -1894,7 +1932,8 @@ def build_count_splits(name: str, counts: Optional[list[str]] = None, season: in
             parts.append(f"ROW {label}: " + ", ".join(values))
         parts.append("[/STATGRID]")
         parts.append(f"\n[SUGGEST]{display_name} {season}[/SUGGEST]")
-        parts.append(f"[SUGGEST]{display_name} vs lefties {season}[/SUGGEST]")
+        if _has_platoon_data(conn, name):
+            parts.append(f"[SUGGEST]{display_name} vs lefties {season}[/SUGGEST]")
 
         return "\n".join(parts)
     finally:
@@ -2028,7 +2067,8 @@ def build_month_stats(name: str, month: int, season: int) -> Optional[str]:
         )
         parts.append("[/STATGRID]")
         parts.append(f"\n[SUGGEST]{display_name} {season}[/SUGGEST]")
-        parts.append(f"[SUGGEST]how is {display_name} doing lately[/SUGGEST]")
+        if _is_active_player(conn, name):
+            parts.append(f"[SUGGEST]how is {display_name} doing lately[/SUGGEST]")
 
         return "\n".join(parts)
     finally:

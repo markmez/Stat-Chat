@@ -723,7 +723,8 @@ enum PlayerNameMatcher {
 
     /// Detect queries like "Judge home runs", "Ohtani's OPS", "Soto RBI 2024".
     /// Requires player name + stat keyword, excludes leaderboard words.
-    static func parseSingleStatLookup(_ input: String) -> (name: String, stat: StatInfo, season: Int)? {
+    /// `seasonExplicit` is true when the user specified a year or relative season phrase.
+    static func parseSingleStatLookup(_ input: String) -> (name: String, stat: StatInfo, season: Int, seasonExplicit: Bool)? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         // Exclude leaderboard patterns — those belong to parseLeaderboard
@@ -740,19 +741,21 @@ enum PlayerNameMatcher {
         // Must have a player name
         guard let name = findPlayerInText(lower) else { return nil }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
-        return (name, stat, season)
+        let explicitSeason = detectSeason(lower, defaultToMostRecent: false)
+        let season = explicitSeason ?? currentCalendarYear
+        return (name, stat, season, explicitSeason != nil)
     }
 
     // MARK: - Slash line parser
 
     /// Detect "slash line" queries: "Judge's slash line", "What is Soto's slash line last season"
-    static func parseSlashLineLookup(_ input: String) -> (name: String, season: Int)? {
+    static func parseSlashLineLookup(_ input: String) -> (name: String, season: Int, seasonExplicit: Bool)? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard lower.contains("slash line") || lower.contains("slashline") || lower.contains("slash-line") else { return nil }
         guard let name = findPlayerInText(lower) else { return nil }
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
-        return (name, season)
+        let explicitSeason = detectSeason(lower, defaultToMostRecent: false)
+        let season = explicitSeason ?? currentCalendarYear
+        return (name, season, explicitSeason != nil)
     }
 
     // MARK: - Team alias infrastructure
@@ -922,8 +925,8 @@ enum PlayerNameMatcher {
     // MARK: - Platoon splits parser
 
     /// Detect queries like "Judge vs lefties", "Soto splits", "Ohtani against RHP 2024".
-    /// Returns (name, hand, season) where hand is "LHP", "RHP", or nil (both).
-    static func parsePlatoonSplits(_ input: String) -> (name: String, hand: String?, season: Int)? {
+    /// Returns (name, hand, season, seasonExplicit) where hand is "LHP", "RHP", or nil (both).
+    static func parsePlatoonSplits(_ input: String) -> (name: String, hand: String?, season: Int, seasonExplicit: Bool)? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         let lhpTriggers = ["vs lefties", "against lefties", "vs left-handed", "vs lhp",
@@ -954,15 +957,16 @@ enum PlayerNameMatcher {
         // Must have a player name
         guard let name = findPlayerInText(lower) else { return nil }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
-        return (name, hand, season)
+        let explicitSeason = detectSeason(lower, defaultToMostRecent: false)
+        let season = explicitSeason ?? currentCalendarYear
+        return (name, hand, season, explicitSeason != nil)
     }
 
     // MARK: - Home/away splits parser
 
     /// Detect queries like "Judge home vs away", "Soto at home", "Ohtani road splits".
     /// Returns player name, location filter (home/away/nil for both), and season.
-    static func parseHomeAwaySplits(_ input: String) -> (name: String, location: String?, season: Int)? {
+    static func parseHomeAwaySplits(_ input: String) -> (name: String, location: String?, season: Int, seasonExplicit: Bool)? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         let homeTriggers = ["at home", "home splits", "home stats", "home numbers",
@@ -990,15 +994,16 @@ enum PlayerNameMatcher {
         // Must have a player name
         guard let name = findPlayerInText(lower) else { return nil }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
-        return (name, location, season)
+        let explicitSeason = detectSeason(lower, defaultToMostRecent: false)
+        let season = explicitSeason ?? currentCalendarYear
+        return (name, location, season, explicitSeason != nil)
     }
 
     // MARK: - Pitch type splits parser
 
     /// Detect queries like "how did X hit against sliders", "X vs fastballs", "X pitch type splits".
     /// Returns player name, optional specific pitch type, and season.
-    static func parsePitchTypeSplits(_ input: String) -> (name: String, pitchType: String?, season: Int)? {
+    static func parsePitchTypeSplits(_ input: String) -> (name: String, pitchType: String?, season: Int, seasonExplicit: Bool)? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         let pitchTypeMap: [(patterns: [String], dbValue: String)] = [
@@ -1050,15 +1055,16 @@ enum PlayerNameMatcher {
         guard hasTrigger else { return nil }
         guard let name = findPlayerInText(lower) else { return nil }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
-        return (name, pitchType, season)
+        let explicitSeason = detectSeason(lower, defaultToMostRecent: false)
+        let season = explicitSeason ?? currentCalendarYear
+        return (name, pitchType, season, explicitSeason != nil)
     }
 
     // MARK: - Count splits parser
 
     /// Detect queries like "X with two strikes", "X in 3-2 counts", "X ahead in the count".
     /// Returns player name, optional count state filter, and season.
-    static func parseCountSplits(_ input: String) -> (name: String, counts: [String]?, season: Int)? {
+    static func parseCountSplits(_ input: String) -> (name: String, counts: [String]?, season: Int, seasonExplicit: Bool)? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         // Specific ball-strike count (e.g. "3-2", "0-2")
@@ -1104,15 +1110,16 @@ enum PlayerNameMatcher {
         guard hasTrigger else { return nil }
         guard let name = findPlayerInText(lower) else { return nil }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
-        return (name, counts, season)
+        let explicitSeason = detectSeason(lower, defaultToMostRecent: false)
+        let season = explicitSeason ?? currentCalendarYear
+        return (name, counts, season, explicitSeason != nil)
     }
 
     // MARK: - RISP splits parser
 
     /// Detect queries like "X with runners in scoring position", "X with RISP".
     /// Returns player name and season.
-    static func parseRISPSplits(_ input: String) -> (name: String, season: Int)? {
+    static func parseRISPSplits(_ input: String) -> (name: String, season: Int, seasonExplicit: Bool)? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         let triggers = ["runners in scoring position", "risp", "scoring position",
@@ -1122,8 +1129,9 @@ enum PlayerNameMatcher {
         guard triggers.contains(where: { lower.contains($0) }) else { return nil }
         guard let name = findPlayerInText(lower) else { return nil }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
-        return (name, season)
+        let explicitSeason = detectSeason(lower, defaultToMostRecent: false)
+        let season = explicitSeason ?? currentCalendarYear
+        return (name, season, explicitSeason != nil)
     }
 
     // MARK: - Catch-all player + stat parser
@@ -1131,15 +1139,16 @@ enum PlayerNameMatcher {
     /// Last-resort parser: any query with a recognizable player name + stat keyword.
     /// Only called after all specific parsers have failed. Catches unusual phrasings like
     /// "Judge's home runs", "tell me Ohtani's ERA", "what was Soto's OPS last year".
-    static func parseCatchAllPlayerStat(_ input: String) -> (name: String, stat: StatInfo, season: Int, isCareer: Bool)? {
+    static func parseCatchAllPlayerStat(_ input: String) -> (name: String, stat: StatInfo, season: Int, isCareer: Bool, seasonExplicit: Bool)? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         guard let stat = matchStat(lower) else { return nil }
         guard let name = findPlayerInText(lower) else { return nil }
 
         let isCareer = containsWord("career", in: lower)
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
-        return (name, stat, season, isCareer)
+        let explicitSeason = detectSeason(lower, defaultToMostRecent: false)
+        let season = explicitSeason ?? currentCalendarYear
+        return (name, stat, season, isCareer, explicitSeason != nil)
     }
 
     // MARK: - Leaderboard parser
@@ -1663,7 +1672,7 @@ enum PlayerNameMatcher {
 
     /// Detect queries like "Yankees hitters", "Dodgers OPS leaders", "Mets home runs 2024".
     /// Requires team alias match, no player name.
-    static func parseTeamStats(_ input: String) -> (teamCode: String, stat: StatInfo?, season: Int)? {
+    static func parseTeamStats(_ input: String) -> (teamCode: String, stat: StatInfo?, season: Int, seasonExplicit: Bool)? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         // Must have a team alias
@@ -1679,15 +1688,16 @@ enum PlayerNameMatcher {
         }
 
         let stat = matchStat(lower)
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
-        return (teamCode, stat, season)
+        let explicitSeason = detectSeason(lower, defaultToMostRecent: false)
+        let season = explicitSeason ?? currentCalendarYear
+        return (teamCode, stat, season, explicitSeason != nil)
     }
 
     // MARK: - Team total parser
 
     /// Detect aggregate team queries like "how many home runs did the Yankees hit?", "Yankees total RBI".
     /// Requires team + stat + aggregate phrasing. No player name.
-    static func parseTeamTotal(_ input: String) -> (teamCode: String, stat: StatInfo, season: Int)? {
+    static func parseTeamTotal(_ input: String) -> (teamCode: String, stat: StatInfo, season: Int, seasonExplicit: Bool)? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         // Must have a team alias
@@ -1713,15 +1723,16 @@ enum PlayerNameMatcher {
                 && !commonWordLastNames.contains(lastName) { return nil }
         }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
-        return (teamCode, stat, season)
+        let explicitSeason = detectSeason(lower, defaultToMostRecent: false)
+        let season = explicitSeason ?? currentCalendarYear
+        return (teamCode, stat, season, explicitSeason != nil)
     }
 
     // MARK: - Team ranking parser
 
     /// Detect team-ranking queries like "what team hit the most home runs?", "which team had the highest OPS?".
     /// Returns stat + season. No specific team required.
-    static func parseTeamRanking(_ input: String) -> (stat: StatInfo, season: Int)? {
+    static func parseTeamRanking(_ input: String) -> (stat: StatInfo, season: Int, seasonExplicit: Bool)? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         // Must have a team-ranking signal
@@ -1736,8 +1747,9 @@ enum PlayerNameMatcher {
         // Must have a stat keyword
         guard let stat = matchStat(lower) else { return nil }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
-        return (stat, season)
+        let explicitSeason = detectSeason(lower, defaultToMostRecent: false)
+        let season = explicitSeason ?? currentCalendarYear
+        return (stat, season, explicitSeason != nil)
     }
 
     // MARK: - Month query parser
@@ -1745,7 +1757,7 @@ enum PlayerNameMatcher {
     /// Detect queries like "How did Judge hit in September?", "Ohtani's stats in July",
     /// "Judge in April 2025", "Soto September stats", "Judge in May last season".
     /// Returns (playerName, month 1-12, season).
-    static func parseMonthQuery(_ input: String) -> (playerName: String, month: Int, season: Int)? {
+    static func parseMonthQuery(_ input: String) -> (playerName: String, month: Int, season: Int, seasonExplicit: Bool)? {
         let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         // Must mention a month
@@ -1779,8 +1791,9 @@ enum PlayerNameMatcher {
         // Find a player name
         guard let name = findPlayerInText(lower) else { return nil }
 
-        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
-        return (name, month, season)
+        let explicitSeason = detectSeason(lower, defaultToMostRecent: false)
+        let season = explicitSeason ?? currentCalendarYear
+        return (name, month, season, explicitSeason != nil)
     }
 
     // MARK: - Fuzzy matching

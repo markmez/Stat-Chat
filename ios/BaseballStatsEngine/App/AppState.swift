@@ -127,7 +127,22 @@ final class AppState: SearchHistoryTracking {
         // Intercept comparison queries — build response from structured data
         let compResult = PlayerNameMatcher.parseComparison(trimmed)
         if let (p1, p2, compSeason, compAlternatives) = compResult {
+            let compSeasonExplicit = compSeason != nil
             let seeAlsoTag = compAlternatives.isEmpty ? "" : "\n[SEEALSO]\(compAlternatives.joined(separator: ","))[/SEEALSO]"
+            // When no season specified, add suggestion pill for current year if both active
+            let compPill: String
+            if !compSeasonExplicit {
+                let p1Active = PlayerCardService.isActivePlayer(name: p1)
+                let p2Active = PlayerCardService.isActivePlayer(name: p2)
+                if p1Active && p2Active {
+                    let currentYear = Calendar.current.component(.year, from: Date())
+                    compPill = "\n[SUGGEST]\(p1) vs \(p2) \(currentYear)[/SUGGEST]"
+                } else {
+                    compPill = ""
+                }
+            } else {
+                compPill = ""
+            }
             let bothLocal = PlayerCardService.hasLocalData(name: p1) && PlayerCardService.hasLocalData(name: p2)
             if bothLocal {
                 // Both in local DB — synchronous
@@ -137,7 +152,7 @@ final class AppState: SearchHistoryTracking {
                 } else {
                     response = PlayerCardService.buildComparison(player1: p1, player2: p2, season: compSeason)
                 }
-                response += seeAlsoTag
+                response += compPill + seeAlsoTag
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: "Compared \(p1) and \(p2). \(response)")
@@ -153,7 +168,7 @@ final class AppState: SearchHistoryTracking {
                 AnalyticsService.trackQuery(text: trimmed, type: .backendComparison)
                 currentQueryTask = Task {
                     var response = await PlayerCardService.buildComparisonAsync(player1: p1, player2: p2, season: compSeason)
-                    response += seeAlsoTag
+                    response += compPill + seeAlsoTag
                     guard !Task.isCancelled else { return }
                     messages[loadingIndex] = Message(role: .assistant, content: response)
                     isLoading = false
@@ -166,15 +181,37 @@ final class AppState: SearchHistoryTracking {
         // Intercept streak history queries — build response from DB, skip Claude
         // Only intercept if the query targets a season we have locally
         if let streak = PlayerNameMatcher.parseStreakQuery(trimmed) {
-            let targetSeason = streak.season ?? currentSeasonYear
+            let seasonExplicit = streak.season != nil
+            let isActive = PlayerCardService.isActivePlayer(name: streak.name)
+            let isPitcher = PlayerCardService.isPitcher(name: streak.name)
+            // For streaks, nil season = search all seasons. But for inactive players
+            // with no explicit season, pass nil (all seasons) rather than defaulting to current year.
+            let effectiveSeason: Int?
+            if seasonExplicit {
+                effectiveSeason = streak.season
+            } else if isActive {
+                effectiveSeason = nil  // nil = all seasons is fine for active players
+            } else {
+                effectiveSeason = nil  // nil = all seasons for inactive too — shows their career streaks
+            }
+            let targetSeason = effectiveSeason ?? (isActive ? currentSeasonYear : (PlayerCardService.mostRecentSeason(name: streak.name) ?? currentSeasonYear))
             if PlayerCardService.isLocalSeason(targetSeason) {
                 let response: String?
-                if PlayerCardService.isPitcher(name: streak.name) {
-                    response = PlayerCardService.buildPitchingStreakList(name: streak.name, performance: streak.performance, season: streak.season)
+                if isPitcher {
+                    response = PlayerCardService.buildPitchingStreakList(name: streak.name, performance: streak.performance, season: effectiveSeason)
                 } else {
-                    response = PlayerCardService.buildStreakList(name: streak.name, performance: streak.performance, season: streak.season)
+                    response = PlayerCardService.buildStreakList(name: streak.name, performance: streak.performance, season: effectiveSeason)
                 }
-                if let response {
+                if var response {
+                    if !seasonExplicit {
+                        let perfLabel = streak.performance == "hot" ? "hot streaks" : "cold streaks"
+                        if let pill = PlayerCardService.makeSeasonPill(
+                            name: streak.name, queryLabel: "\(streak.name) \(perfLabel)",
+                            careerLabel: nil, effectiveSeason: targetSeason,
+                            seasonExplicit: false, isPitcher: isPitcher) {
+                            response += pill
+                        }
+                    }
                     messages.append(Message(role: .user, content: trimmed))
                     messages.append(Message(role: .assistant, content: response))
                     addToConversationHistory(question: trimmed, answer: response)
@@ -204,7 +241,16 @@ final class AppState: SearchHistoryTracking {
 
         // Intercept slash line queries — "Judge's slash line", "Soto slash line last season"
         if let slashLine = PlayerNameMatcher.parseSlashLineLookup(trimmed) {
-            if let response = PlayerCardService.buildSlashLineLookup(name: slashLine.name, season: slashLine.season) {
+            let isPitcher = PlayerCardService.isPitcher(name: slashLine.name)
+            let effectiveSeason = PlayerCardService.resolveEffectiveSeason(
+                playerName: slashLine.name, parsedSeason: slashLine.season, seasonExplicit: slashLine.seasonExplicit)
+            if var response = PlayerCardService.buildSlashLineLookup(name: slashLine.name, season: effectiveSeason) {
+                if let pill = PlayerCardService.makeSeasonPill(
+                    name: slashLine.name, queryLabel: "\(slashLine.name) slash line",
+                    careerLabel: nil, effectiveSeason: effectiveSeason,
+                    seasonExplicit: slashLine.seasonExplicit, isPitcher: isPitcher) {
+                    response += pill
+                }
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
@@ -215,13 +261,44 @@ final class AppState: SearchHistoryTracking {
 
         // Intercept single-stat lookup queries — "Judge home runs", "Ohtani OPS"
         if let lookup = PlayerNameMatcher.parseSingleStatLookup(trimmed) {
+            let isPitching = PlayerCardService.isPitcher(name: lookup.name) || PlayerNameMatcher.isPitchingStat(lookup.stat)
+            let statPill = lookup.stat.pillName
+
+            // No year specified — active players get current year + career pill,
+            // inactive players get career stats + best year pill
+            if !lookup.seasonExplicit && !PlayerCardService.isActivePlayer(name: lookup.name) {
+                // Inactive player → career stats
+                let response: String?
+                if isPitching {
+                    response = PlayerCardService.buildPitchingCareerLookup(name: lookup.name, stat: lookup.stat)
+                } else {
+                    response = PlayerCardService.buildCareerLookup(name: lookup.name, stat: lookup.stat)
+                }
+                if var response {
+                    if let bestYear = PlayerCardService.bestSeasonYear(name: lookup.name, isPitcher: isPitching) {
+                        response += "\n[SUGGEST]\(lookup.name) \(statPill) in \(bestYear)[/SUGGEST]"
+                    }
+                    messages.append(Message(role: .user, content: trimmed))
+                    messages.append(Message(role: .assistant, content: response))
+                    addToConversationHistory(question: trimmed, answer: response)
+                    lastResultContext = ResultContext(type: .statLookup, playerNames: [lookup.name], stat: lookup.stat, season: nil, originalQuery: trimmed)
+                    AnalyticsService.trackQuery(text: trimmed, type: .localCareer)
+                    return
+                }
+            }
+
+            // Active player or explicit season — show season stats
             let response: String?
-            if PlayerCardService.isPitcher(name: lookup.name) || PlayerNameMatcher.isPitchingStat(lookup.stat) {
+            if isPitching {
                 response = PlayerCardService.buildPitchingSingleStatLookup(name: lookup.name, stat: lookup.stat, season: lookup.season)
             } else {
                 response = PlayerCardService.buildSingleStatLookup(name: lookup.name, stat: lookup.stat, season: lookup.season)
             }
-            if let response {
+            if var response {
+                // Active player with no explicit season → add career suggestion pill
+                if !lookup.seasonExplicit {
+                    response += "\n[SUGGEST]\(lookup.name) career \(statPill)[/SUGGEST]"
+                }
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
@@ -251,13 +328,23 @@ final class AppState: SearchHistoryTracking {
         // Intercept platoon splits queries — "Judge vs lefties", "Soto splits"
         // Must run BEFORE season lookup to avoid "Judge vs lefties last season" matching as a season query
         if let splits = PlayerNameMatcher.parsePlatoonSplits(trimmed) {
+            let isPitcher = PlayerCardService.isPitcher(name: splits.name)
+            let effectiveSeason = PlayerCardService.resolveEffectiveSeason(
+                playerName: splits.name, parsedSeason: splits.season, seasonExplicit: splits.seasonExplicit)
             let response: String?
-            if PlayerCardService.isPitcher(name: splits.name) {
-                response = PlayerCardService.buildPitchingPlatoonSplits(name: splits.name, hand: splits.hand, season: splits.season)
+            if isPitcher {
+                response = PlayerCardService.buildPitchingPlatoonSplits(name: splits.name, hand: splits.hand, season: effectiveSeason)
             } else {
-                response = PlayerCardService.buildPlatoonSplits(name: splits.name, hand: splits.hand, season: splits.season)
+                response = PlayerCardService.buildPlatoonSplits(name: splits.name, hand: splits.hand, season: effectiveSeason)
             }
-            if let response {
+            if var response {
+                let handLabel = splits.hand == "LHP" ? "vs lefties" : splits.hand == "RHP" ? "vs righties" : "splits"
+                if let pill = PlayerCardService.makeSeasonPill(
+                    name: splits.name, queryLabel: "\(splits.name) \(handLabel)",
+                    careerLabel: nil, effectiveSeason: effectiveSeason,
+                    seasonExplicit: splits.seasonExplicit, isPitcher: isPitcher) {
+                    response += pill
+                }
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
@@ -269,13 +356,23 @@ final class AppState: SearchHistoryTracking {
         // Intercept home/away splits queries — "Judge home vs away", "Soto at home"
         // Must run BEFORE season lookup to avoid "Judge at home last season" matching as a season query
         if let splits = PlayerNameMatcher.parseHomeAwaySplits(trimmed) {
+            let isPitcher = PlayerCardService.isPitcher(name: splits.name)
+            let effectiveSeason = PlayerCardService.resolveEffectiveSeason(
+                playerName: splits.name, parsedSeason: splits.season, seasonExplicit: splits.seasonExplicit)
             let response: String?
-            if PlayerCardService.isPitcher(name: splits.name) {
-                response = PlayerCardService.buildPitchingHomeAwaySplits(name: splits.name, location: splits.location, season: splits.season)
+            if isPitcher {
+                response = PlayerCardService.buildPitchingHomeAwaySplits(name: splits.name, location: splits.location, season: effectiveSeason)
             } else {
-                response = PlayerCardService.buildHomeAwaySplits(name: splits.name, location: splits.location, season: splits.season)
+                response = PlayerCardService.buildHomeAwaySplits(name: splits.name, location: splits.location, season: effectiveSeason)
             }
-            if let response {
+            if var response {
+                let locLabel = splits.location == "home" ? "at home" : splits.location == "away" ? "on the road" : "home vs away"
+                if let pill = PlayerCardService.makeSeasonPill(
+                    name: splits.name, queryLabel: "\(splits.name) \(locLabel)",
+                    careerLabel: nil, effectiveSeason: effectiveSeason,
+                    seasonExplicit: splits.seasonExplicit, isPitcher: isPitcher) {
+                    response += pill
+                }
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
@@ -286,13 +383,22 @@ final class AppState: SearchHistoryTracking {
 
         // Intercept RISP splits queries — "Judge with RISP", "Soto with runners in scoring position"
         if let rispQuery = PlayerNameMatcher.parseRISPSplits(trimmed) {
+            let isPitcher = PlayerCardService.isPitcher(name: rispQuery.name)
+            let effectiveSeason = PlayerCardService.resolveEffectiveSeason(
+                playerName: rispQuery.name, parsedSeason: rispQuery.season, seasonExplicit: rispQuery.seasonExplicit)
             let response: String?
-            if PlayerCardService.isPitcher(name: rispQuery.name) {
-                response = PlayerCardService.buildPitchingRISPSplits(name: rispQuery.name, season: rispQuery.season)
+            if isPitcher {
+                response = PlayerCardService.buildPitchingRISPSplits(name: rispQuery.name, season: effectiveSeason)
             } else {
-                response = PlayerCardService.buildRISPSplits(name: rispQuery.name, season: rispQuery.season)
+                response = PlayerCardService.buildRISPSplits(name: rispQuery.name, season: effectiveSeason)
             }
-            if let response {
+            if var response {
+                if let pill = PlayerCardService.makeSeasonPill(
+                    name: rispQuery.name, queryLabel: "\(rispQuery.name) RISP",
+                    careerLabel: nil, effectiveSeason: effectiveSeason,
+                    seasonExplicit: rispQuery.seasonExplicit, isPitcher: isPitcher) {
+                    response += pill
+                }
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
@@ -303,13 +409,23 @@ final class AppState: SearchHistoryTracking {
 
         // Intercept pitch type splits queries — "Judge vs sliders", "Ohtani against fastballs"
         if let ptQuery = PlayerNameMatcher.parsePitchTypeSplits(trimmed) {
+            let isPitcher = PlayerCardService.isPitcher(name: ptQuery.name)
+            let effectiveSeason = PlayerCardService.resolveEffectiveSeason(
+                playerName: ptQuery.name, parsedSeason: ptQuery.season, seasonExplicit: ptQuery.seasonExplicit)
             let response: String?
-            if PlayerCardService.isPitcher(name: ptQuery.name) {
-                response = PlayerCardService.buildPitchingPitchTypeSplits(name: ptQuery.name, pitchType: ptQuery.pitchType, season: ptQuery.season)
+            if isPitcher {
+                response = PlayerCardService.buildPitchingPitchTypeSplits(name: ptQuery.name, pitchType: ptQuery.pitchType, season: effectiveSeason)
             } else {
-                response = PlayerCardService.buildPitchTypeSplits(name: ptQuery.name, pitchType: ptQuery.pitchType, season: ptQuery.season)
+                response = PlayerCardService.buildPitchTypeSplits(name: ptQuery.name, pitchType: ptQuery.pitchType, season: effectiveSeason)
             }
-            if let response {
+            if var response {
+                let pitchLabel = ptQuery.pitchType != nil ? "vs \(ptQuery.pitchType!.lowercased())s" : "pitch type splits"
+                if let pill = PlayerCardService.makeSeasonPill(
+                    name: ptQuery.name, queryLabel: "\(ptQuery.name) \(pitchLabel)",
+                    careerLabel: nil, effectiveSeason: effectiveSeason,
+                    seasonExplicit: ptQuery.seasonExplicit, isPitcher: isPitcher) {
+                    response += pill
+                }
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
@@ -320,13 +436,22 @@ final class AppState: SearchHistoryTracking {
 
         // Intercept count splits queries — "Judge with two strikes", "Soto in 3-2 counts"
         if let countQuery = PlayerNameMatcher.parseCountSplits(trimmed) {
+            let isPitcher = PlayerCardService.isPitcher(name: countQuery.name)
+            let effectiveSeason = PlayerCardService.resolveEffectiveSeason(
+                playerName: countQuery.name, parsedSeason: countQuery.season, seasonExplicit: countQuery.seasonExplicit)
             let response: String?
-            if PlayerCardService.isPitcher(name: countQuery.name) {
-                response = PlayerCardService.buildPitchingCountSplits(name: countQuery.name, counts: countQuery.counts, season: countQuery.season)
+            if isPitcher {
+                response = PlayerCardService.buildPitchingCountSplits(name: countQuery.name, counts: countQuery.counts, season: effectiveSeason)
             } else {
-                response = PlayerCardService.buildCountSplits(name: countQuery.name, counts: countQuery.counts, season: countQuery.season)
+                response = PlayerCardService.buildCountSplits(name: countQuery.name, counts: countQuery.counts, season: effectiveSeason)
             }
-            if let response {
+            if var response {
+                if let pill = PlayerCardService.makeSeasonPill(
+                    name: countQuery.name, queryLabel: "\(countQuery.name) count splits",
+                    careerLabel: nil, effectiveSeason: effectiveSeason,
+                    seasonExplicit: countQuery.seasonExplicit, isPitcher: isPitcher) {
+                    response += pill
+                }
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
@@ -337,9 +462,20 @@ final class AppState: SearchHistoryTracking {
 
         // Intercept month stats queries — "Judge in September", "Ohtani's stats in July"
         // Must run BEFORE season lookup to avoid "Devers in September last season" matching as a season query
-        if let monthQuery = PlayerNameMatcher.parseMonthQuery(trimmed),
-           PlayerCardService.isLocalSeason(monthQuery.season) {
-            if let response = PlayerCardService.buildMonthStats(name: monthQuery.playerName, month: monthQuery.month, season: monthQuery.season) {
+        if let monthQuery = PlayerNameMatcher.parseMonthQuery(trimmed) {
+            let isPitcher = PlayerCardService.isPitcher(name: monthQuery.playerName)
+            let effectiveSeason = PlayerCardService.resolveEffectiveSeason(
+                playerName: monthQuery.playerName, parsedSeason: monthQuery.season, seasonExplicit: monthQuery.seasonExplicit)
+            if PlayerCardService.isLocalSeason(effectiveSeason),
+               var response = PlayerCardService.buildMonthStats(name: monthQuery.playerName, month: monthQuery.month, season: effectiveSeason) {
+                let monthNames = ["", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+                let monthName = monthQuery.month >= 1 && monthQuery.month <= 12 ? monthNames[monthQuery.month] : ""
+                if let pill = PlayerCardService.makeSeasonPill(
+                    name: monthQuery.playerName, queryLabel: "\(monthQuery.playerName) in \(monthName)",
+                    careerLabel: nil, effectiveSeason: effectiveSeason,
+                    seasonExplicit: monthQuery.seasonExplicit, isPitcher: isPitcher) {
+                    response += pill
+                }
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
@@ -522,45 +658,66 @@ final class AppState: SearchHistoryTracking {
         }
 
         // Intercept team ranking queries — "what team hit the most HR?"
-        if let teamRanking = PlayerNameMatcher.parseTeamRanking(trimmed),
-           PlayerCardService.isLocalSeason(teamRanking.season) {
-            let response = PlayerCardService.buildTeamRanking(
-                stat: teamRanking.stat, season: teamRanking.season)
-            messages.append(Message(role: .user, content: trimmed))
-            messages.append(Message(role: .assistant, content: response))
-            addToConversationHistory(question: trimmed, answer: response)
-            AnalyticsService.trackQuery(text: trimmed, type: .localTeamRanking)
-            return
+        if let teamRanking = PlayerNameMatcher.parseTeamRanking(trimmed) {
+            // Team rankings are aggregate (no single team) so no team-specific season resolution needed,
+            // but if no year specified, default to current year (reasonable for "which team" queries)
+            if PlayerCardService.isLocalSeason(teamRanking.season) {
+                var response = PlayerCardService.buildTeamRanking(
+                    stat: teamRanking.stat, season: teamRanking.season)
+                if !teamRanking.seasonExplicit {
+                    let prevYear = teamRanking.season - 1
+                    response += "\n[SUGGEST]team \(teamRanking.stat.pillName) leaders \(prevYear)[/SUGGEST]"
+                }
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localTeamRanking)
+                return
+            }
         }
 
         // Intercept team total queries — "how many HR did the Yankees hit?"
-        if let teamTotal = PlayerNameMatcher.parseTeamTotal(trimmed),
-           PlayerCardService.isLocalSeason(teamTotal.season) {
-            let response = PlayerCardService.buildTeamTotal(
-                teamCode: teamTotal.teamCode, stat: teamTotal.stat, season: teamTotal.season)
-            messages.append(Message(role: .user, content: trimmed))
-            messages.append(Message(role: .assistant, content: response))
-            addToConversationHistory(question: trimmed, answer: response)
-            AnalyticsService.trackQuery(text: trimmed, type: .localTeamTotal)
-            return
+        if let teamTotal = PlayerNameMatcher.parseTeamTotal(trimmed) {
+            let effectiveSeason = PlayerCardService.resolveEffectiveTeamSeason(
+                teamCode: teamTotal.teamCode, parsedSeason: teamTotal.season, seasonExplicit: teamTotal.seasonExplicit)
+            if PlayerCardService.isLocalSeason(effectiveSeason) {
+                var response = PlayerCardService.buildTeamTotal(
+                    teamCode: teamTotal.teamCode, stat: teamTotal.stat, season: effectiveSeason)
+                if !teamTotal.seasonExplicit {
+                    let prevYear = effectiveSeason - 1
+                    response += "\n[SUGGEST]\(trimmed) \(prevYear)[/SUGGEST]"
+                }
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localTeamTotal)
+                return
+            }
         }
 
         // Intercept team stats queries — "Yankees hitters", "Dodgers OPS leaders"
-        if let teamQuery = PlayerNameMatcher.parseTeamStats(trimmed),
-           PlayerCardService.isLocalSeason(teamQuery.season) {
-            let response: String
-            if let stat = teamQuery.stat, PlayerNameMatcher.isPitchingStat(stat) {
-                response = PlayerCardService.buildPitchingTeamStats(
-                    teamCode: teamQuery.teamCode, stat: stat, season: teamQuery.season)
-            } else {
-                response = PlayerCardService.buildTeamStats(
-                    teamCode: teamQuery.teamCode, stat: teamQuery.stat, season: teamQuery.season)
+        if let teamQuery = PlayerNameMatcher.parseTeamStats(trimmed) {
+            let effectiveSeason = PlayerCardService.resolveEffectiveTeamSeason(
+                teamCode: teamQuery.teamCode, parsedSeason: teamQuery.season, seasonExplicit: teamQuery.seasonExplicit)
+            if PlayerCardService.isLocalSeason(effectiveSeason) {
+                var response: String
+                if let stat = teamQuery.stat, PlayerNameMatcher.isPitchingStat(stat) {
+                    response = PlayerCardService.buildPitchingTeamStats(
+                        teamCode: teamQuery.teamCode, stat: stat, season: effectiveSeason)
+                } else {
+                    response = PlayerCardService.buildTeamStats(
+                        teamCode: teamQuery.teamCode, stat: teamQuery.stat, season: effectiveSeason)
+                }
+                if !teamQuery.seasonExplicit {
+                    let prevYear = effectiveSeason - 1
+                    response += "\n[SUGGEST]\(trimmed) \(prevYear)[/SUGGEST]"
+                }
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localTeamStats)
+                return
             }
-            messages.append(Message(role: .user, content: trimmed))
-            messages.append(Message(role: .assistant, content: response))
-            addToConversationHistory(question: trimmed, answer: response)
-            AnalyticsService.trackQuery(text: trimmed, type: .localTeamStats)
-            return
         }
 
         // Intercept leaderboard queries — "HR leaders", "top 5 OPS"
@@ -647,22 +804,40 @@ final class AppState: SearchHistoryTracking {
         // Catch-all: any query with a recognizable player name + stat keyword.
         // Runs after all specific parsers — catches unusual phrasings that slipped through.
         if let catchAll = PlayerNameMatcher.parseCatchAllPlayerStat(trimmed) {
-            let response: String?
             let isPitching = PlayerCardService.isPitcher(name: catchAll.name) || PlayerNameMatcher.isPitchingStat(catchAll.stat)
-            if catchAll.isCareer {
+            let statPill = catchAll.stat.pillName
+
+            // Explicit career or (no year + inactive player) → career stats
+            if catchAll.isCareer || (!catchAll.seasonExplicit && !PlayerCardService.isActivePlayer(name: catchAll.name)) {
+                let response: String?
                 if isPitching {
                     response = PlayerCardService.buildPitchingCareerLookup(name: catchAll.name, stat: catchAll.stat)
                 } else {
                     response = PlayerCardService.buildCareerLookup(name: catchAll.name, stat: catchAll.stat)
                 }
-            } else {
-                if isPitching {
-                    response = PlayerCardService.buildPitchingSingleStatLookup(name: catchAll.name, stat: catchAll.stat, season: catchAll.season)
-                } else {
-                    response = PlayerCardService.buildSingleStatLookup(name: catchAll.name, stat: catchAll.stat, season: catchAll.season)
+                if var response {
+                    if !catchAll.isCareer, let bestYear = PlayerCardService.bestSeasonYear(name: catchAll.name, isPitcher: isPitching) {
+                        response += "\n[SUGGEST]\(catchAll.name) \(statPill) in \(bestYear)[/SUGGEST]"
+                    }
+                    messages.append(Message(role: .user, content: trimmed))
+                    messages.append(Message(role: .assistant, content: response))
+                    addToConversationHistory(question: trimmed, answer: response)
+                    AnalyticsService.trackQuery(text: trimmed, type: .localCatchAll)
+                    return
                 }
             }
-            if let response {
+
+            // Active player or explicit season → season stats
+            let response: String?
+            if isPitching {
+                response = PlayerCardService.buildPitchingSingleStatLookup(name: catchAll.name, stat: catchAll.stat, season: catchAll.season)
+            } else {
+                response = PlayerCardService.buildSingleStatLookup(name: catchAll.name, stat: catchAll.stat, season: catchAll.season)
+            }
+            if var response {
+                if !catchAll.seasonExplicit {
+                    response += "\n[SUGGEST]\(catchAll.name) career \(statPill)[/SUGGEST]"
+                }
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)

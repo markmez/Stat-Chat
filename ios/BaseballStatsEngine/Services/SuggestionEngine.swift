@@ -465,20 +465,44 @@ final class SuggestionEngine {
         }
     }
 
+    /// Minimum season year with game-level data (game logs, splits, streaks).
+    /// Season-level stats exist for all years, but detailed data only from 2016+.
+    private static let localGameDataMinYear = 2016
+
     private func generateForPlayer(_ player: String, category: Category, allPlayers: [String], usedTexts: inout Set<String>) -> Suggestion? {
         let historical = !isCurrentPlayer(player)
-        let lastYear = historical ? lastSeasonYear(for: player) : nil
-        let yearStr = lastYear.map { String($0) } ?? "his career"
+        let lastYear = lastSeasonYear(for: player)
+
+        // Skip players entirely outside our local data range — we can't answer anything locally
+        guard let playerLastYear = lastYear, playerLastYear >= Self.localGameDataMinYear else {
+            // Allow only leaderboard/milestone/statExplanation (not player-specific)
+            if category == .leaderboard || category == .milestone || category == .statExplanation {
+                return generateForCategory(category, players: allPlayers, usedTexts: &usedTexts)
+            }
+            return nil
+        }
+
+        let yearStr = historical ? String(playerLastYear) : "his career"
         let t = config.templates
+
+        // Streak, splits, homeAway need game-level data — only available for localGameDataMinYear+
+        // For historical players, check that their last season has game data
+        let hasGameData = playerLastYear >= Self.localGameDataMinYear
 
         let templates: [String]
         switch category {
-        case .streak: templates = historical ? t.historical.streak : t.current.streak
-        case .splits: templates = historical ? t.historical.splits : t.current.splits
-        case .homeAway: templates = historical ? t.historical.homeAway : t.current.homeAway
+        case .streak:
+            guard hasGameData else { return nil }
+            templates = historical ? t.historical.streak : t.current.streak
+        case .splits:
+            guard hasGameData else { return nil }
+            templates = historical ? t.historical.splits : t.current.splits
+        case .homeAway:
+            guard hasGameData else { return nil }
+            templates = historical ? t.historical.homeAway : t.current.homeAway
         case .playerLookup: templates = historical ? t.historical.playerLookup : t.current.playerLookup
         case .comparison:
-            let others = allPlayers.filter { $0 != player }
+            let others = allPlayers.filter { $0 != player && (lastSeasonYear(for: $0) ?? 0) >= Self.localGameDataMinYear }
             guard let other = others.randomElement() else { return nil }
             let pool = historical ? t.historical.comparison : t.current.comparison
             guard let template = pool.randomElement() else { return nil }
