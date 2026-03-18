@@ -1,0 +1,73 @@
+ID,Query (Offseason),Query (In-Season),Type,Suggestion Pill 1,Suggestion Pill 2,Suggestion Pill 3,Suggestion Pill 4
+d1,Who led the league in home runs last season?,Who leads the league in home runs this season?,Leaderboard,all-time single season hr leaders,career hr leaders,2025 hr leaders (AL),2025 hr leaders (NL)
+d2,Top 10 in OPS last season,Top 10 in OPS this season,Leaderboard,all-time single season ops leaders,career ops leaders,2025 ops leaders (AL),2025 ops leaders (NL)
+d4,Who had the most stolen bases last season?,Who has the most stolen bases this season?,Leaderboard,all-time single season sb leaders,career sb leaders,2025 sb leaders (AL),2025 sb leaders (NL)
+d5,How did Juan Soto do last year?,How is Juan Soto doing this season?,Season Lookup,2025 ops leaders,Juan Soto career ops,
+d6,How many home runs did Ohtani hit last season?,How many home runs has Ohtani hit this season?,Single Stat,2025 hr leaders,Shohei Ohtani career hr,
+d7,Judge home vs away last season,Judge home vs away this season,Home/Away Splits,Aaron Judge 2025,,
+d8,Who has come closest to hitting .400 since Ted Williams?,,Since Leaderboard,all-time single season avg leaders,avg leaders since 1942 (AL),avg leaders since 1942 (NL),
+d9,Top 5 in batting average last season,Top 5 in batting average this season,Leaderboard,all-time single season avg leaders,career avg leaders,2025 avg leaders (AL),2025 avg leaders (NL)
+d10,Lowest ERA among starters last season,Lowest ERA among starters this season,Leaderboard,all-time single season era leaders,career era leaders,2025 era leaders (AL),2025 era leaders (NL)
+d11,Compare Lindor and Bobby Witt Jr last season,Compare Lindor and Bobby Witt Jr this season,Comparison,Francisco Lindor vs lefties,Bobby Witt Jr vs lefties,
+d12,Kyle Tucker's splits vs lefties last season,Kyle Tucker's splits vs lefties this season,Platoon Splits,Kyle Tucker 2025,,
+d13,Did Trea Turner have any hot streaks last season? [afterApril12],Did Trea Turner have any hot streaks this season?,Streak,Trea Turner cold streaks,,
+d14,Elly De La Cruz last season,Elly De La Cruz this season,Season Lookup,2025 ops leaders,Elly De La Cruz career ops,
+d16,What does BABIP measure?,,Stat Definition,babip leaders,career babip leaders,
+d17,How many times has someone hit 50 home runs?,,Milestone (Backend),hr leaders,career hr leaders,
+d18,How many players have stolen 60 bases in a season?,,Milestone (Backend),sb leaders,career sb leaders,
+d19,Who had the highest OPS+ last season?,Who has the highest OPS+ this season?,Leaderboard,all-time single season ops+ leaders,career ops leaders,2025 ops+ leaders (AL),2025 ops+ leaders (NL)
+d20,Who hit the most doubles last season?,Who has hit the most doubles this season?,Leaderboard,all-time single season 2b leaders,career 2b leaders,2025 2b leaders (AL),2025 2b leaders (NL)
+d21,Who led the league in RBIs last season?,Who leads the league in RBIs this season?,Leaderboard,all-time single season rbi leaders,career rbi leaders,2025 rbi leaders (AL),2025 rbi leaders (NL)
+d22,Most strikeouts by a pitcher last season,Most strikeouts by a pitcher this season,Leaderboard,all-time single season so leaders,career so leaders,2025 so leaders (AL),2025 so leaders (NL)
+d23,Top 10 in hits last season,Top 10 in hits this season,Leaderboard,all-time single season h leaders,career h leaders,2025 h leaders (AL),2025 h leaders (NL)
+d24,Who had the best WHIP last season?,Who has the best WHIP this season?,Leaderboard,all-time single season whip leaders,career whip leaders,2025 whip leaders (AL),2025 whip leaders (NL)
+d25,Most saves last season,Most saves this season,Leaderboard,all-time single season sv leaders,career sv leaders,2025 sv leaders (AL),2025 sv leaders (NL)
+d26,Who hit the most triples last season?,Who has hit the most triples this season?,Leaderboard,all-time single season 3b leaders,career 3b leaders,2025 3b leaders (AL),2025 3b leaders (NL)
+d27,Top 5 in walks last season,Top 5 in walks this season,Leaderboard,all-time single season bb leaders,career bb leaders,2025 bb leaders (AL),2025 bb leaders (NL)
+d28,Who led the league in wins last season?,Who leads the league in wins this season?,Leaderboard,all-time single season w leaders,career w leaders,2025 w leaders (AL),2025 w leaders (NL)
+d29,Mookie Betts,,Season Lookup,2025 ops leaders,Mookie Betts career ops,
+d30,Freddie Freeman,,Season Lookup,2025 ops leaders,Freddie Freeman career ops,
+d31,Gunnar Henderson,,Season Lookup,2025 ops leaders,Gunnar Henderson career ops,
+d32,Bobby Witt Jr,,Season Lookup,2025 ops leaders,Bobby Witt Jr career ops,
+d33,Yordan Alvarez's slash line last season,Yordan Alvarez's slash line this season,Slash Line,Yordan Alvarez last season,Yordan Alvarez vs lefties,
+d34,When was Bryce Harper's coldest stretch last season? [afterApril12],When was Bryce Harper's coldest stretch this season?,Streak,Bryce Harper hot streaks,,
+d35,Corey Seager's stats last season,Corey Seager's stats this season,Season Lookup,2025 ops leaders,Corey Seager career ops,
+d36,Rafael Devers in September last season [offseasonOnly],,Month Stats,Rafael Devers 2025,,
+d38,What does ISO measure?,,Stat Definition,iso leaders,career iso leaders,
+d41,Compare Soto and Judge last season,Compare Soto and Judge this season,Comparison,Juan Soto vs lefties,Aaron Judge vs lefties,
+d42,Compare Devers and Jose Ramirez last season,Compare Devers and Jose Ramirez this season,Comparison,Rafael Devers vs lefties,Jose Ramirez vs lefties,
+d43,Vlad Guerrero Jr vs Pete Alonso last season,Vlad Guerrero Jr vs Pete Alonso this season,Comparison,Vlad Guerrero Jr vs lefties,Pete Alonso vs lefties,
+d44,Most 30/30 seasons in baseball history?,,Composite Threshold (Local),(no pills),,
+d45,Who has the longest hitting streak ever?,,Consecutive Streak (Local),<top player> <season>,how is <top player> doing lately,
+d46,How many players have hit 40/40?,,Composite Threshold (Local),(no pills),,
+d47,How many triple crowns have there been?,,Triple Crown (Local),(no pills),,
+d48,Who had the most complete games last season?,Who has the most complete games this season?,Leaderboard,all-time single season cg leaders,career cg leaders,2025 cg leaders (AL),2025 cg leaders (NL)
+d49,Did Ohtani have any hot streaks last season? [afterApril12],Has Ohtani had any hot streaks this season?,Streak,Shohei Ohtani cold streaks,,
+d50,Jose Ramirez home vs away last season,Jose Ramirez home vs away this season,Home/Away Splits,Jose Ramirez 2025,,
+d51,Most home runs while batting .300+?,,Filtered Leaderboard,Most hr with .300+ avg all-time,most hr with .300+ avg (AL),most hr with .300+ avg (NL),
+d52,Most stolen bases with under 10 CS?,,Filtered Leaderboard,Most sb with 10 or fewer cs all-time,most sb with 10 or fewer cs (AL),most sb with 10 or fewer cs (NL),
+d53,Highest batting average with 30+ home runs?,,Filtered Leaderboard,Highest avg with 30+ hr all-time,highest avg with 30+ hr (AL),highest avg with 30+ hr (NL),
+d54,Lowest ERA with 200+ innings pitched?,,Filtered Leaderboard,Lowest era with 200+ ip all-time,lowest era with 200+ ip (AL),lowest era with 200+ ip (NL),
+d55,Most wins with an ERA over 5.00?,,Filtered Leaderboard,Most w with 5.00+ era all-time,most w with 5.00+ era (AL),most w with 5.00+ era (NL),
+d56,Highest OPS with fewer than 50 strikeouts?,,Filtered Leaderboard,Highest ops with 50 or fewer so all-time,highest ops with 50 or fewer so (AL),highest ops with 50 or fewer so (NL),
+d57,Who has the most RBIs in a single game? [earlySeason],,Milestone (Backend),rbi leaders,career rbi leaders,
+d58,Who has the most career grand slams? [earlySeason],,Milestone (Backend),hr leaders,career hr leaders,
+d59,Has anyone pitched a perfect game since 2010? [earlySeason],,Milestone (Backend),Claude fallback pills,,
+d60,Who struck out the most batters in a single season? [earlySeason],,Leaderboard,all-time single season so leaders,career so leaders,,
+d61,Longest hitting streak last season,Longest hitting streak this season,Consecutive Streak (Local),<top player> <season>,how is <top player> doing lately,
+d62,Corbin Carroll,,Season Lookup,2025 ops leaders,Corbin Carroll career ops,
+d63,Julio Rodriguez,,Season Lookup,2025 ops leaders,Julio Rodriguez career ops,
+d64,Adley Rutschman,,Season Lookup,2025 ops leaders,Adley Rutschman career ops,
+d65,Marcell Ozuna,,Season Lookup,2025 ops leaders,Marcell Ozuna career ops,
+d66,Manny Machado,,Season Lookup,2025 ops leaders,Manny Machado career ops,
+d67,Fernando Tatis Jr,,Season Lookup,2025 ops leaders,Fernando Tatis Jr career ops,
+d68,Jackson Chourio,,Season Lookup,2025 ops leaders,Jackson Chourio career ops,
+d69,Jarren Duran,,Season Lookup,2025 ops leaders,Jarren Duran career ops,
+d70,Matt Olson,,Season Lookup,2025 ops leaders,Matt Olson career ops,
+d71,CJ Abrams,,Season Lookup,2025 ops leaders,CJ Abrams career ops,
+d72,Babe Ruth,,Season Lookup (Backend),<player> <last season>,<player> vs lefties,
+d73,Mickey Mantle,,Season Lookup (Backend),<player> <last season>,<player> vs lefties,
+d74,Willie Mays,,Season Lookup (Backend),<player> <last season>,<player> vs lefties,
+d75,Hank Aaron,,Season Lookup (Backend),<player> <last season>,<player> vs lefties,
+d76,Ketel Marte,,Season Lookup,2025 ops leaders,Ketel Marte career ops,
+d77,Marcus Semien,,Season Lookup,2025 ops leaders,Marcus Semien career ops,

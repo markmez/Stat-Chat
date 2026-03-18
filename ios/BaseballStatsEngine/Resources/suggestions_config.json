@@ -1,5 +1,5 @@
 {
-    "version": 5,
+    "version": 6,
     "algorithm": {
         "impressionThreshold": 6,
         "poolSize": 12,
@@ -48,8 +48,8 @@
         { "id": "d36", "text": "Rafael Devers in September last season", "weight": 0.8, "seasonFilter": "offseasonOnly" },
 
         { "id": "d38", "text": "What does ISO measure?", "weight": 0.7 },
-        { "id": "d39", "text": "What is wOBA?", "weight": 0.7 },
-        { "id": "d40", "text": "What is FIP?", "weight": 0.7 },
+        { "id": "d76", "text": "Ketel Marte", "weight": 0.8 },
+        { "id": "d77", "text": "Marcus Semien", "weight": 0.8 },
 
         { "id": "d41", "text": "Compare Soto and Judge last season", "weight": 0.9, "inSeasonText": "Compare Soto and Judge this season" },
         { "id": "d42", "text": "Compare Devers and Jose Ramirez last season", "weight": 0.8, "inSeasonText": "Compare Devers and Jose Ramirez this season" },
