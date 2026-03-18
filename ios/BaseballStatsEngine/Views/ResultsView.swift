@@ -244,7 +244,7 @@ struct ResultsView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(.white, in: RoundedRectangle(cornerRadius: 14))
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
             .shadow(color: deepBlue.opacity(0.12), radius: 12, y: 4)
             .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
             .padding(.horizontal, 16)

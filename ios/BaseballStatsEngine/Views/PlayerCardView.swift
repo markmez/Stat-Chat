@@ -248,7 +248,7 @@ struct PlayerCardView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(
                                     RoundedRectangle(cornerRadius: 12)
-                                        .fill(.white)
+                                        .fill(Color(uiColor: .secondarySystemBackground))
                     .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
                     .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
                                 )
@@ -377,7 +377,7 @@ struct PlayerCardView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(.white, in: RoundedRectangle(cornerRadius: 14))
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
                 .shadow(color: deepBlue.opacity(0.12), radius: 12, y: 4)
                 .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
                 .padding(.horizontal, 16)
@@ -456,7 +456,7 @@ struct PlayerCardView: View {
                         .padding(.vertical, 12)
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(.white)
+                                .fill(Color(uiColor: .secondarySystemBackground))
                     .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
                     .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
                         )
@@ -606,7 +606,7 @@ struct PlayerCardView: View {
                         .padding(.vertical, 12)
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(.white)
+                                .fill(Color(uiColor: .secondarySystemBackground))
                     .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
                     .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
                         )
@@ -918,7 +918,7 @@ struct PlayerCardView: View {
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(.white)
+                    .fill(Color(uiColor: .secondarySystemBackground))
                     .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
                     .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
             )
@@ -1373,7 +1373,7 @@ struct PlayerCardView: View {
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(.white)
+                    .fill(Color(uiColor: .secondarySystemBackground))
                     .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
                     .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
             )
@@ -1826,7 +1826,7 @@ struct PlayerCardView: View {
                     .padding(.vertical, 12)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(.white)
+                            .fill(Color(uiColor: .secondarySystemBackground))
                     .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
                     .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
                     )
@@ -1905,7 +1905,7 @@ struct PlayerCardView: View {
                     .padding(.vertical, 12)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(.white)
+                            .fill(Color(uiColor: .secondarySystemBackground))
                     .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
                     .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
                     )

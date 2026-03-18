@@ -699,7 +699,7 @@ struct StatGridView: View {
         .background {
             if !suppressBackground {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(.white)
+                    .fill(Color(uiColor: .secondarySystemBackground))
                     .shadow(color: Color(red: 0.1, green: 0.25, blue: 0.7).opacity(0.10), radius: 10, y: 3)
                     .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
             }
@@ -759,7 +759,7 @@ struct PartialStatGridView: View {
             .padding(8)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(.white)
+                    .fill(Color(uiColor: .secondarySystemBackground))
                     .shadow(color: Color(red: 0.1, green: 0.25, blue: 0.7).opacity(0.10), radius: 10, y: 3)
                     .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
             )
