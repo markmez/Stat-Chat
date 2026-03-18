@@ -3732,6 +3732,16 @@ enum PlayerCardService {
     // MARK: - Count splits (chat response builder)
 
     /// Build a count splits response for chat queries like "X with two strikes".
+    /// Label for an aggregate count grouping (e.g. "Two Strikes", "Ahead").
+    private static func countGroupLabel(_ counts: [String]?) -> String? {
+        guard let counts else { return nil }
+        let set = Set(counts)
+        if set == Set(["0-2", "1-2", "2-2", "3-2"]) { return "Two Strikes" }
+        if set == Set(["1-0", "2-0", "2-1", "3-0", "3-1"]) { return "Ahead" }
+        if set == Set(["0-1", "0-2", "1-2"]) { return "Behind" }
+        return nil
+    }
+
     static func buildCountSplits(name: String, counts: [String]?, season: Int) -> String? {
         let info = fetchPlayerInfo(name: name)
         let displayName = info?.name ?? name
@@ -3758,8 +3768,11 @@ enum PlayerCardService {
         let headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
 
         let subtitle: String
+        let groupLabel = Self.countGroupLabel(counts)
         if let counts, counts.count == 1 {
             subtitle = "in \(counts[0]) Counts"
+        } else if let groupLabel {
+            subtitle = "With \(groupLabel)"
         } else if let counts, counts.count <= 4 {
             subtitle = "in \(counts.joined(separator: "/")) Counts"
         } else {
@@ -3771,6 +3784,31 @@ enum PlayerCardService {
 
         parts.append("[STATGRID]")
         parts.append("HEADER: " + headers.joined(separator: ", "))
+
+        // When showing a named group with multiple counts, add an aggregate row first
+        if let groupLabel, result.rows.count > 1 {
+            var totAB = 0, totH = 0, tot2B = 0, tot3B = 0, totHR = 0, totRBI = 0, totBB = 0, totSO = 0
+            for row in result.rows {
+                totAB += Int(row[1]) ?? 0; totH += Int(row[2]) ?? 0
+                tot2B += Int(row[3]) ?? 0; tot3B += Int(row[4]) ?? 0
+                totHR += Int(row[5]) ?? 0; totRBI += Int(row[6]) ?? 0
+                totBB += Int(row[7]) ?? 0; totSO += Int(row[8]) ?? 0
+            }
+            let avg = totAB > 0 ? Double(totH) / Double(totAB) : 0
+            let sf = 0 // sacrifice flies not in this query
+            let hbp = 0
+            let pa = totAB + totBB + hbp + sf
+            let obp = pa > 0 ? Double(totH + totBB + hbp) / Double(pa) : 0
+            let tb = totH - tot2B - tot3B - totHR + 2 * tot2B + 3 * tot3B + 4 * totHR
+            let slg = totAB > 0 ? Double(tb) / Double(totAB) : 0
+            let ops = obp + slg
+            let aggValues = ["\(totAB)", "\(totH)", "\(tot2B)", "\(tot3B)", "\(totHR)", "\(totRBI)",
+                             "\(totBB)", "\(totSO)",
+                             formatRate(String(format: "%.3f", avg)), formatRate(String(format: "%.3f", obp)),
+                             formatRate(String(format: "%.3f", slg)), formatRate(String(format: "%.3f", ops))]
+            parts.append("ROW \(groupLabel): " + aggValues.joined(separator: ", "))
+        }
+
         for row in result.rows {
             let label = row[0]
             let values = formatValues(headers: headers, values: Array(row.dropFirst()))
@@ -3811,8 +3849,13 @@ enum PlayerCardService {
         let headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
 
         let subtitle: String
+        let groupLabel = Self.countGroupLabel(counts)
         if let counts, counts.count == 1 {
             subtitle = "in \(counts[0]) Counts"
+        } else if let groupLabel {
+            subtitle = "With \(groupLabel)"
+        } else if let counts, counts.count <= 4 {
+            subtitle = "in \(counts.joined(separator: "/")) Counts"
         } else {
             subtitle = "By Count"
         }
@@ -3822,6 +3865,31 @@ enum PlayerCardService {
 
         parts.append("[STATGRID]")
         parts.append("HEADER: " + headers.joined(separator: ", "))
+
+        // When showing a named group with multiple counts, add an aggregate row first
+        if let groupLabel, result.rows.count > 1 {
+            var totAB = 0, totH = 0, tot2B = 0, tot3B = 0, totHR = 0, totBB = 0, totSO = 0
+            for row in result.rows {
+                totAB += Int(row[1]) ?? 0; totH += Int(row[2]) ?? 0
+                tot2B += Int(row[3]) ?? 0; tot3B += Int(row[4]) ?? 0
+                totHR += Int(row[5]) ?? 0
+                totBB += Int(row[6]) ?? 0; totSO += Int(row[7]) ?? 0
+            }
+            let avg = totAB > 0 ? Double(totH) / Double(totAB) : 0
+            let hbp = 0
+            let sf = 0
+            let pa = totAB + totBB + hbp + sf
+            let obp = pa > 0 ? Double(totH + totBB + hbp) / Double(pa) : 0
+            let tb = totH - tot2B - tot3B - totHR + 2 * tot2B + 3 * tot3B + 4 * totHR
+            let slg = totAB > 0 ? Double(tb) / Double(totAB) : 0
+            let ops = obp + slg
+            let aggValues = ["\(totAB)", "\(totH)", "\(tot2B)", "\(tot3B)", "\(totHR)",
+                             "\(totBB)", "\(totSO)",
+                             formatRate(String(format: "%.3f", avg)), formatRate(String(format: "%.3f", obp)),
+                             formatRate(String(format: "%.3f", slg)), formatRate(String(format: "%.3f", ops))]
+            parts.append("ROW \(groupLabel): " + aggValues.joined(separator: ", "))
+        }
+
         for row in result.rows {
             let label = row[0]
             let values = formatPitchingValues(headers: headers, values: Array(row.dropFirst()))

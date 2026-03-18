@@ -285,6 +285,20 @@ def _most_recent_season(conn: sqlite3.Connection, name: str,
     return datetime.now().year
 
 
+def _count_group_label(counts: Optional[list[str]]) -> Optional[str]:
+    """Map a list of count states to a named group label."""
+    if not counts:
+        return None
+    s = set(counts)
+    if s == {"0-2", "1-2", "2-2", "3-2"}:
+        return "Two Strikes"
+    if s == {"1-0", "2-0", "2-1", "3-0", "3-1"}:
+        return "Ahead"
+    if s == {"0-1", "0-2", "1-2"}:
+        return "Behind"
+    return None
+
+
 def _is_active_player(conn: sqlite3.Connection, name: str) -> bool:
     """Check if a player has data in the current or previous year."""
     current_year = datetime.now().year
@@ -1917,8 +1931,11 @@ def build_count_splits(name: str, counts: Optional[list[str]] = None, season: in
 
         headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
 
+        group_label = _count_group_label(counts)
         if counts and len(counts) == 1:
             subtitle = f"in {counts[0]} Counts"
+        elif group_label:
+            subtitle = f"With {group_label}"
         elif counts and len(counts) <= 4:
             subtitle = f"in {'/'.join(counts)} Counts"
         else:
@@ -1928,6 +1945,29 @@ def build_count_splits(name: str, counts: Optional[list[str]] = None, season: in
         parts.append(f"**{display_name}** \u2014 {season} {subtitle}\n")
         parts.append("[STATGRID]")
         parts.append("HEADER: " + ", ".join(headers))
+
+        # When showing a named group with multiple counts, add an aggregate row first
+        if group_label and len(rows) > 1:
+            tot_ab = sum(int(r[1] or 0) for r in rows)
+            tot_h = sum(int(r[2] or 0) for r in rows)
+            tot_2b = sum(int(r[3] or 0) for r in rows)
+            tot_3b = sum(int(r[4] or 0) for r in rows)
+            tot_hr = sum(int(r[5] or 0) for r in rows)
+            tot_rbi = sum(int(r[6] or 0) for r in rows)
+            tot_bb = sum(int(r[7] or 0) for r in rows)
+            tot_so = sum(int(r[8] or 0) for r in rows)
+            avg = tot_h / tot_ab if tot_ab > 0 else 0
+            pa = tot_ab + tot_bb
+            obp = (tot_h + tot_bb) / pa if pa > 0 else 0
+            tb = tot_h - tot_2b - tot_3b - tot_hr + 2 * tot_2b + 3 * tot_3b + 4 * tot_hr
+            slg = tb / tot_ab if tot_ab > 0 else 0
+            ops = obp + slg
+            agg_vals = [str(tot_ab), str(tot_h), str(tot_2b), str(tot_3b), str(tot_hr),
+                        str(tot_rbi), str(tot_bb), str(tot_so),
+                        _format_rate(f"{avg:.3f}"), _format_rate(f"{obp:.3f}"),
+                        _format_rate(f"{slg:.3f}"), _format_rate(f"{ops:.3f}")]
+            parts.append(f"ROW {group_label}: " + ", ".join(agg_vals))
+
         for row in rows:
             label = str(row[0])
             values = _format_values(headers, [str(v) if v is not None else "" for v in row[1:]])
@@ -1978,8 +2018,13 @@ def build_pitching_count_splits(name: str, counts: Optional[list[str]] = None, s
 
         headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
 
+        group_label = _count_group_label(counts)
         if counts and len(counts) == 1:
             subtitle = f"in {counts[0]} Counts"
+        elif group_label:
+            subtitle = f"With {group_label}"
+        elif counts and len(counts) <= 4:
+            subtitle = f"in {'/'.join(counts)} Counts"
         else:
             subtitle = "By Count"
 
@@ -1987,6 +2032,28 @@ def build_pitching_count_splits(name: str, counts: Optional[list[str]] = None, s
         parts.append(f"**{display_name}** \u2014 {season} {subtitle} (Pitching)\n")
         parts.append("[STATGRID]")
         parts.append("HEADER: " + ", ".join(headers))
+
+        # When showing a named group with multiple counts, add an aggregate row first
+        if group_label and len(rows) > 1:
+            tot_ab = sum(int(r[1] or 0) for r in rows)
+            tot_h = sum(int(r[2] or 0) for r in rows)
+            tot_2b = sum(int(r[3] or 0) for r in rows)
+            tot_3b = sum(int(r[4] or 0) for r in rows)
+            tot_hr = sum(int(r[5] or 0) for r in rows)
+            tot_bb = sum(int(r[6] or 0) for r in rows)
+            tot_so = sum(int(r[7] or 0) for r in rows)
+            avg = tot_h / tot_ab if tot_ab > 0 else 0
+            pa = tot_ab + tot_bb
+            obp = (tot_h + tot_bb) / pa if pa > 0 else 0
+            tb = tot_h - tot_2b - tot_3b - tot_hr + 2 * tot_2b + 3 * tot_3b + 4 * tot_hr
+            slg = tb / tot_ab if tot_ab > 0 else 0
+            ops = obp + slg
+            agg_vals = [str(tot_ab), str(tot_h), str(tot_2b), str(tot_3b), str(tot_hr),
+                        str(tot_bb), str(tot_so),
+                        _format_rate(f"{avg:.3f}"), _format_rate(f"{obp:.3f}"),
+                        _format_rate(f"{slg:.3f}"), _format_rate(f"{ops:.3f}")]
+            parts.append(f"ROW {group_label}: " + ", ".join(agg_vals))
+
         for row in rows:
             label = str(row[0])
             values = _format_pitching_values(headers, [str(v) if v is not None else "" for v in row[1:]])
