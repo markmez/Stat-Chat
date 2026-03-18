@@ -1320,10 +1320,27 @@ def main():
     if args.season is None:
         year = date.today().year
         month = date.today().month
-        if month < 3 or (month == 3 and date.today().day < 25):
+        day = date.today().day
+        if month < 3 or (month == 3 and day < 25):
             args.season = f"{year}-preseason"
         elif month >= 10:
             args.season = f"{year}-playoff"
+        elif month == 3 and day <= 27:
+            # Opening Day window (March 25-27): only switch to regular once
+            # MSF actually has regular season data. Avoids wiping spring training
+            # before any regular season games have been played.
+            try:
+                probe = msf_get(f"{year}-regular/player_stats_totals.json", {"position": "C,1B,2B,3B,SS,LF,CF,RF,DH,OF", "limit": "1"})
+                totals = (probe or {}).get("playerStatsTotals", [])
+                if totals:
+                    args.season = f"{year}-regular"
+                    print(f"Regular season data available — switching to regular")
+                else:
+                    args.season = f"{year}-preseason"
+                    print(f"No regular season data yet — staying on preseason")
+            except Exception:
+                args.season = f"{year}-preseason"
+                print(f"Could not probe regular season — staying on preseason")
         else:
             args.season = f"{year}-regular"
         print(f"Auto-detected season: {args.season}")
