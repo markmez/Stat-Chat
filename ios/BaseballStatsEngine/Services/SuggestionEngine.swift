@@ -449,14 +449,14 @@ final class SuggestionEngine {
     private func generateForCategory(_ category: Category, players: [String], usedTexts: inout Set<String>) -> Suggestion? {
         switch category {
         case .leaderboard:
-            let pool = config.defaults.filter { $0.text.lowercased().contains("top ") || $0.text.lowercased().contains("who led") || $0.text.lowercased().contains("who had the") || $0.text.lowercased().contains("lowest") }
-            return pickUnused(from: pool.map(\.text), ids: pool.map(\.id), usedTexts: &usedTexts)
+            let pool = config.defaults.filter { passesSeasonFilter($0) && ($0.text.lowercased().contains("top ") || $0.text.lowercased().contains("who led") || $0.text.lowercased().contains("who had the") || $0.text.lowercased().contains("lowest")) }
+            return pickUnused(from: pool.map { displayText(for: $0) }, ids: pool.map(\.id), usedTexts: &usedTexts)
         case .milestone:
-            let pool = config.defaults.filter { $0.text.lowercased().contains("how many times") || $0.text.lowercased().contains("how many players") || $0.text.lowercased().contains("closest to") }
-            return pickUnused(from: pool.map(\.text), ids: pool.map(\.id), usedTexts: &usedTexts)
+            let pool = config.defaults.filter { passesSeasonFilter($0) && ($0.text.lowercased().contains("how many times") || $0.text.lowercased().contains("how many players") || $0.text.lowercased().contains("closest to")) }
+            return pickUnused(from: pool.map { displayText(for: $0) }, ids: pool.map(\.id), usedTexts: &usedTexts)
         case .statExplanation:
-            let pool = config.defaults.filter { $0.text.lowercased().contains("what is") || $0.text.lowercased().contains("what does") }
-            return pickUnused(from: pool.map(\.text), ids: pool.map(\.id), usedTexts: &usedTexts)
+            let pool = config.defaults.filter { passesSeasonFilter($0) && ($0.text.lowercased().contains("what is") || $0.text.lowercased().contains("what does")) }
+            return pickUnused(from: pool.map { displayText(for: $0) }, ids: pool.map(\.id), usedTexts: &usedTexts)
         default:
             if let player = players.randomElement() {
                 return generateForPlayer(player, category: category, allPlayers: players, usedTexts: &usedTexts)

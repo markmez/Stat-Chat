@@ -108,9 +108,9 @@ enum PlayerNameMatcher {
              "ops", "OPS", "OPS", true),
             (["ops+", "ops plus", "adjusted ops"],
              "ops_plus", "OPS+", "OPS+", true),
-            (["stolen bases", "steals", "sb", "stolen base", "bags"],
+            (["stolen bases", "steals", "sb", "stolen base", "bags", "steal", "stole"],
              "stolen_bases", "SB", "Stolen Bases", false),
-            (["strikeouts", "ks", "k's", "strikeout", "punchouts"],
+            (["strikeouts", "ks", "k's", "strikeout", "punchouts", "so", "struck out"],
              "strikeouts", "SO", "Strikeouts", false),
             (["bases on balls", "walks", "bb", "walk"],
              "walks", "BB", "Walks", false),
@@ -120,7 +120,7 @@ enum PlayerNameMatcher {
              "slg", "SLG", "Slugging Percentage", true),
             (["runs scored", "runs"],
              "runs", "R", "Runs", false),
-            (["hits"],
+            (["hits", "h"],
              "hits", "H", "Hits", false),
             (["doubles", "2b"],
              "doubles", "2B", "Doubles", false),
@@ -1095,6 +1095,154 @@ enum PlayerNameMatcher {
         return (name, location, season)
     }
 
+    // MARK: - Pitch type splits parser
+
+    /// Detect queries like "how did X hit against sliders", "X vs fastballs", "X pitch type splits".
+    /// Returns player name, optional specific pitch type, and season.
+    static func parsePitchTypeSplits(_ input: String) -> (name: String, pitchType: String?, season: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        let pitchTypeMap: [(patterns: [String], dbValue: String)] = [
+            (["fastball", "fastballs", "4-seam", "4-seamers", "four-seam", "four seam", "heater", "heaters"], "4-Seam"),
+            (["sinker", "sinkers", "two-seam", "two seam", "2-seam"], "Sinker"),
+            (["slider", "sliders"], "Slider"),
+            (["changeup", "changeups", "change-up", "change up"], "Change"),
+            (["curveball", "curveballs", "curve", "curves"], "Curve"),
+            (["cutter", "cutters", "cut fastball"], "Cutter"),
+            (["sweeper", "sweepers"], "Sweeper"),
+            (["splitter", "splitters", "split-finger", "split finger"], "Split"),
+        ]
+
+        let generalTriggers = ["pitch type splits", "pitch type", "by pitch type", "by pitch",
+                               "pitch splits", "against each pitch"]
+
+        var pitchType: String?
+        var hasTrigger = false
+
+        for (patterns, dbValue) in pitchTypeMap {
+            if patterns.contains(where: { lower.contains($0) }) {
+                pitchType = dbValue
+                hasTrigger = true
+                break
+            }
+        }
+
+        if !hasTrigger {
+            hasTrigger = generalTriggers.contains(where: { lower.contains($0) })
+        }
+
+        // Also catch "against [pitch]" and "vs [pitch]" patterns
+        if !hasTrigger {
+            let contextTriggers = ["against ", "vs "]
+            for trigger in contextTriggers {
+                if lower.contains(trigger) {
+                    for (patterns, dbValue) in pitchTypeMap {
+                        if patterns.contains(where: { lower.contains(trigger + $0) }) {
+                            pitchType = dbValue
+                            hasTrigger = true
+                            break
+                        }
+                    }
+                }
+                if hasTrigger { break }
+            }
+        }
+
+        guard hasTrigger else { return nil }
+        guard let name = findPlayerInText(lower) else { return nil }
+
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
+        return (name, pitchType, season)
+    }
+
+    // MARK: - Count splits parser
+
+    /// Detect queries like "X with two strikes", "X in 3-2 counts", "X ahead in the count".
+    /// Returns player name, optional count state filter, and season.
+    static func parseCountSplits(_ input: String) -> (name: String, counts: [String]?, season: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Specific ball-strike count (e.g. "3-2", "0-2")
+        let countRegex = try! NSRegularExpression(pattern: "\\b([0-3]-[0-2])\\b")
+        var specificCounts: [String] = []
+        let matches = countRegex.matches(in: lower, range: NSRange(lower.startIndex..., in: lower))
+        for match in matches {
+            if let range = Range(match.range(at: 1), in: lower) {
+                specificCounts.append(String(lower[range]))
+            }
+        }
+
+        // Natural language count groupings
+        let twoStrikePatterns = ["two strikes", "2 strikes", "two-strike", "2-strike"]
+        let fullCountPatterns = ["full count", "3-2 count"]
+        let aheadPatterns = ["ahead in the count", "hitter's count", "hitters count", "batter's count"]
+        let behindPatterns = ["behind in the count", "pitcher's count", "pitchers count"]
+        let generalTriggers = ["count splits", "by count", "count stats"]
+
+        var counts: [String]?
+        var hasTrigger = false
+
+        if !specificCounts.isEmpty {
+            counts = specificCounts
+            hasTrigger = true
+        } else if twoStrikePatterns.contains(where: { lower.contains($0) }) {
+            counts = ["0-2", "1-2", "2-2", "3-2"]
+            hasTrigger = true
+        } else if fullCountPatterns.contains(where: { lower.contains($0) }) {
+            counts = ["3-2"]
+            hasTrigger = true
+        } else if aheadPatterns.contains(where: { lower.contains($0) }) {
+            counts = ["1-0", "2-0", "2-1", "3-0", "3-1"]
+            hasTrigger = true
+        } else if behindPatterns.contains(where: { lower.contains($0) }) {
+            counts = ["0-1", "0-2", "1-2"]
+            hasTrigger = true
+        } else if generalTriggers.contains(where: { lower.contains($0) }) {
+            counts = nil  // show all
+            hasTrigger = true
+        }
+
+        guard hasTrigger else { return nil }
+        guard let name = findPlayerInText(lower) else { return nil }
+
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
+        return (name, counts, season)
+    }
+
+    // MARK: - RISP splits parser
+
+    /// Detect queries like "X with runners in scoring position", "X with RISP".
+    /// Returns player name and season.
+    static func parseRISPSplits(_ input: String) -> (name: String, season: Int)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        let triggers = ["runners in scoring position", "risp", "scoring position",
+                        "runners on base", "men on base", "clutch hitting", "clutch stats",
+                        "with runners on"]
+
+        guard triggers.contains(where: { lower.contains($0) }) else { return nil }
+        guard let name = findPlayerInText(lower) else { return nil }
+
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
+        return (name, season)
+    }
+
+    // MARK: - Catch-all player + stat parser
+
+    /// Last-resort parser: any query with a recognizable player name + stat keyword.
+    /// Only called after all specific parsers have failed. Catches unusual phrasings like
+    /// "Judge's home runs", "tell me Ohtani's ERA", "what was Soto's OPS last year".
+    static func parseCatchAllPlayerStat(_ input: String) -> (name: String, stat: StatInfo, season: Int, isCareer: Bool)? {
+        let lower = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        guard let stat = matchStat(lower) else { return nil }
+        guard let name = findPlayerInText(lower) else { return nil }
+
+        let isCareer = containsWord("career", in: lower)
+        let season = detectSeason(lower, defaultToMostRecent: true) ?? currentCalendarYear
+        return (name, stat, season, isCareer)
+    }
+
     // MARK: - Leaderboard parser
 
     /// Detect queries like "HR leaders", "top 5 OPS", "who hit the most home runs?".
@@ -1829,7 +1977,7 @@ enum PlayerNameMatcher {
         "sand", "score", "sell", "shave", "show", "span", "spring",
         "stump", "walk",
         // Nouns commonly used in baseball / query context
-        "bare", "beam", "board", "bone",
+        "bare", "beam", "board", "bone", "league",
         "bunch", "cotton", "dam", "dial", "dock", "dove",
         "eagle", "earl", "edge", "face", "fear", "fleet",
         "font", "frost", "hammer", "hare", "hawk", "heard", "holder",

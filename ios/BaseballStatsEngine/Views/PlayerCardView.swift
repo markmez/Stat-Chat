@@ -2268,13 +2268,13 @@ struct PlayerCardView: View {
         if isStarter {
             // Scale based on starts: project to 33-start season
             targetApps = 33.0
-            paceLabel = "33-Start Pace"
+            paceLabel = "Full Season Pace"
             divisor = Double(max(gs, 1))
         } else {
             // Scale based on relief appearances: project to 65-game season
             let reliefApps = gamesInt - gs
             targetApps = 65.0
-            paceLabel = "65-Game Pace"
+            paceLabel = "Full Season Pace"
             divisor = Double(max(reliefApps, 1))
         }
 

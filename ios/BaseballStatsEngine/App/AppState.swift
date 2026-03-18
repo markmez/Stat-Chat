@@ -57,7 +57,7 @@ final class AppState: SearchHistoryTracking {
 
     /// Structured metadata about the last result for follow-up resolution.
     struct ResultContext {
-        enum ResultType { case leaderboard, comparison, statLookup }
+        enum ResultType { case leaderboard, comparison, statLookup, seasonLookup, platoonSplits, homeAwaySplits, rispSplits, pitchTypeSplits, countSplits }
         let type: ResultType
         let playerNames: [String]
         let stat: PlayerNameMatcher.StatInfo?
@@ -225,6 +225,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
+                lastResultContext = ResultContext(type: .statLookup, playerNames: [lookup.name], stat: lookup.stat, season: lookup.season, originalQuery: trimmed)
                 AnalyticsService.trackQuery(text: trimmed, type: .localStatLookup)
                 return
             }
@@ -283,6 +284,57 @@ final class AppState: SearchHistoryTracking {
             }
         }
 
+        // Intercept RISP splits queries — "Judge with RISP", "Soto with runners in scoring position"
+        if let rispQuery = PlayerNameMatcher.parseRISPSplits(trimmed) {
+            let response: String?
+            if PlayerCardService.isPitcher(name: rispQuery.name) {
+                response = PlayerCardService.buildPitchingRISPSplits(name: rispQuery.name, season: rispQuery.season)
+            } else {
+                response = PlayerCardService.buildRISPSplits(name: rispQuery.name, season: rispQuery.season)
+            }
+            if let response {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localRISP)
+                return
+            }
+        }
+
+        // Intercept pitch type splits queries — "Judge vs sliders", "Ohtani against fastballs"
+        if let ptQuery = PlayerNameMatcher.parsePitchTypeSplits(trimmed) {
+            let response: String?
+            if PlayerCardService.isPitcher(name: ptQuery.name) {
+                response = PlayerCardService.buildPitchingPitchTypeSplits(name: ptQuery.name, pitchType: ptQuery.pitchType, season: ptQuery.season)
+            } else {
+                response = PlayerCardService.buildPitchTypeSplits(name: ptQuery.name, pitchType: ptQuery.pitchType, season: ptQuery.season)
+            }
+            if let response {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localPitchType)
+                return
+            }
+        }
+
+        // Intercept count splits queries — "Judge with two strikes", "Soto in 3-2 counts"
+        if let countQuery = PlayerNameMatcher.parseCountSplits(trimmed) {
+            let response: String?
+            if PlayerCardService.isPitcher(name: countQuery.name) {
+                response = PlayerCardService.buildPitchingCountSplits(name: countQuery.name, counts: countQuery.counts, season: countQuery.season)
+            } else {
+                response = PlayerCardService.buildCountSplits(name: countQuery.name, counts: countQuery.counts, season: countQuery.season)
+            }
+            if let response {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localCountSplits)
+                return
+            }
+        }
+
         // Intercept month stats queries — "Judge in September", "Ohtani's stats in July"
         // Must run BEFORE season lookup to avoid "Devers in September last season" matching as a season query
         if let monthQuery = PlayerNameMatcher.parseMonthQuery(trimmed),
@@ -308,6 +360,7 @@ final class AppState: SearchHistoryTracking {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
+                lastResultContext = ResultContext(type: .seasonLookup, playerNames: [playerName], stat: nil, season: season, originalQuery: trimmed)
                 AnalyticsService.trackQuery(text: trimmed, type: .localSeasonLookup)
                 return
             }
@@ -589,6 +642,33 @@ final class AppState: SearchHistoryTracking {
             addToConversationHistory(question: trimmed, answer: response)
             AnalyticsService.trackQuery(text: trimmed, type: .localStatDefinition)
             return
+        }
+
+        // Catch-all: any query with a recognizable player name + stat keyword.
+        // Runs after all specific parsers — catches unusual phrasings that slipped through.
+        if let catchAll = PlayerNameMatcher.parseCatchAllPlayerStat(trimmed) {
+            let response: String?
+            let isPitching = PlayerCardService.isPitcher(name: catchAll.name) || PlayerNameMatcher.isPitchingStat(catchAll.stat)
+            if catchAll.isCareer {
+                if isPitching {
+                    response = PlayerCardService.buildPitchingCareerLookup(name: catchAll.name, stat: catchAll.stat)
+                } else {
+                    response = PlayerCardService.buildCareerLookup(name: catchAll.name, stat: catchAll.stat)
+                }
+            } else {
+                if isPitching {
+                    response = PlayerCardService.buildPitchingSingleStatLookup(name: catchAll.name, stat: catchAll.stat, season: catchAll.season)
+                } else {
+                    response = PlayerCardService.buildSingleStatLookup(name: catchAll.name, stat: catchAll.stat, season: catchAll.season)
+                }
+            }
+            if let response {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localCatchAll)
+                return
+            }
         }
 
         // Ambiguous last name — show disambiguation with tappable player links
@@ -997,6 +1077,32 @@ final class AppState: SearchHistoryTracking {
                         )
                         return "[DIDYOUMEAN]\(interpretation)[/DIDYOUMEAN]\n" + response
                     }
+                } else if ctx.type == .statLookup, let stat = ctx.stat, let player = ctx.playerNames.first {
+                    let isPitching = PlayerCardService.isPitcher(name: player) || PlayerNameMatcher.isPitchingStat(stat)
+                    let interpretation = "\(player) \(stat.displayName) in \(year)"
+                    let response: String?
+                    if isPitching {
+                        response = PlayerCardService.buildPitchingSingleStatLookup(name: player, stat: stat, season: year)
+                    } else {
+                        response = PlayerCardService.buildSingleStatLookup(name: player, stat: stat, season: year)
+                    }
+                    if let response {
+                        lastResultContext = ResultContext(type: .statLookup, playerNames: [player], stat: stat, season: year, originalQuery: question)
+                        return "[DIDYOUMEAN]\(interpretation)[/DIDYOUMEAN]\n" + response
+                    }
+                } else if ctx.type == .seasonLookup, let player = ctx.playerNames.first {
+                    let isPitching = PlayerCardService.isPitcher(name: player)
+                    let interpretation = "\(player) in \(year)"
+                    let response: String?
+                    if isPitching {
+                        response = PlayerCardService.buildPitchingSeasonSummary(name: player, season: year)
+                    } else {
+                        response = PlayerCardService.buildSeasonSummary(name: player, season: year)
+                    }
+                    if let response {
+                        lastResultContext = ResultContext(type: .seasonLookup, playerNames: [player], stat: nil, season: year, originalQuery: question)
+                        return "[DIDYOUMEAN]\(interpretation)[/DIDYOUMEAN]\n" + response
+                    }
                 } else if ctx.type == .comparison, ctx.playerNames.count == 2 {
                     let p1 = ctx.playerNames[0], p2 = ctx.playerNames[1]
                     let isPitching = PlayerCardService.isPitcher(name: p1) && PlayerCardService.isPitcher(name: p2)
@@ -1033,6 +1139,62 @@ final class AppState: SearchHistoryTracking {
                     let interpretation = "\(seasonLabel)\(stat.displayName) for same players"
                     lastResultContext = ResultContext(type: ctx.type, playerNames: ctx.playerNames, stat: stat, season: ctx.season, originalQuery: question)
                     return "[DIDYOUMEAN]\(interpretation)[/DIDYOUMEAN]\n" + result
+                }
+            }
+        }
+
+        // Pattern 5: "what about [player]?" — substitute player in same query type
+        if lower.count < 40, let ctx = lastResultContext {
+            let stripped = lower
+                .replacingOccurrences(of: "^(what about |how about |and |now |show me |show )", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "\\?$", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespaces)
+
+            if let newPlayer = PlayerNameMatcher.findPlayerInText(stripped) ?? PlayerNameMatcher.matchPlayer(stripped) {
+                let season = ctx.season ?? PlayerNameMatcher.currentCalendarYear
+                switch ctx.type {
+                case .statLookup:
+                    if let stat = ctx.stat {
+                        let isPitching = PlayerCardService.isPitcher(name: newPlayer) || PlayerNameMatcher.isPitchingStat(stat)
+                        let response: String?
+                        if isPitching {
+                            response = PlayerCardService.buildPitchingSingleStatLookup(name: newPlayer, stat: stat, season: season)
+                        } else {
+                            response = PlayerCardService.buildSingleStatLookup(name: newPlayer, stat: stat, season: season)
+                        }
+                        if let response {
+                            lastResultContext = ResultContext(type: .statLookup, playerNames: [newPlayer], stat: stat, season: season, originalQuery: question)
+                            return response
+                        }
+                    }
+                case .leaderboard:
+                    if let stat = ctx.stat {
+                        let isPitching = PlayerCardService.isPitcher(name: newPlayer) || PlayerNameMatcher.isPitchingStat(stat)
+                        let response: String?
+                        if isPitching {
+                            response = PlayerCardService.buildPitchingSingleStatLookup(name: newPlayer, stat: stat, season: season)
+                        } else {
+                            response = PlayerCardService.buildSingleStatLookup(name: newPlayer, stat: stat, season: season)
+                        }
+                        if let response {
+                            lastResultContext = ResultContext(type: .statLookup, playerNames: [newPlayer], stat: stat, season: season, originalQuery: question)
+                            return response
+                        }
+                    }
+                case .seasonLookup:
+                    let isPitching = PlayerCardService.isPitcher(name: newPlayer)
+                    let response: String?
+                    if isPitching {
+                        response = PlayerCardService.buildPitchingSeasonSummary(name: newPlayer, season: season)
+                    } else {
+                        response = PlayerCardService.buildSeasonSummary(name: newPlayer, season: season)
+                    }
+                    if let response {
+                        lastResultContext = ResultContext(type: .seasonLookup, playerNames: [newPlayer], stat: nil, season: season, originalQuery: question)
+                        return response
+                    }
+                default:
+                    break
                 }
             }
         }

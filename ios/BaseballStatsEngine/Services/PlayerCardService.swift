@@ -143,6 +143,16 @@ enum PlayerCardService {
     static let localMinYear = 2016
     static let localMaxYear = 2025
 
+    /// Map AL/NL league to Retrosheet team codes for SQL filtering.
+    /// The DB has no `league` column — we filter by team membership instead.
+    private static let alTeams = "('ANA','ATH','BAL','BOS','CHA','CLE','DET','HOU','KCA','MIN','NYA','SEA','TBA','TEX','TOR')"
+    private static let nlTeams = "('ARI','ATL','CHN','CIN','COL','LAN','MIA','MIL','NYN','PHI','PIT','SDN','SFN','SLN','WAS')"
+
+    private static func leagueTeamClause(_ league: String, alias: String) -> String {
+        let teams = league == "AL" ? alTeams : nlTeams
+        return "\(alias).team IN \(teams)"
+    }
+
     /// Whether a given season is within local DB range.
     static func isLocalSeason(_ year: Int) -> Bool {
         year >= localMinYear && year <= localMaxYear
@@ -1739,7 +1749,7 @@ enum PlayerCardService {
         }
 
         let oppositePerf = performance == "hot" ? "cold" : "hot"
-        parts.append("\n[SUGGEST]\(displayName) \(oppositePerf) streaks[/SUGGEST]")
+        parts.append("\n[SUGGEST]\(displayName) \(oppositePerf) streaks \(targetSeason)[/SUGGEST]")
 
         return parts.joined(separator: "\n")
     }
@@ -1793,7 +1803,7 @@ enum PlayerCardService {
 
         // Brief comparison to full season
         parts.append("\nThat's up from his \(season) season line of \(seasonAvg)/\(seasonOps) (AVG/OPS).")
-        parts.append("\n[SUGGEST]\(displayName) hot streaks[/SUGGEST]")
+        parts.append("\n[SUGGEST]\(displayName) hot streaks \(season)[/SUGGEST]")
 
         return parts.joined(separator: "\n")
     }
@@ -2006,7 +2016,7 @@ enum PlayerCardService {
 
     /// Build a filtered leaderboard for "who hit 40 home runs?" or "players batting over .300".
     static func buildThresholdLeaderboard(stat: PlayerNameMatcher.StatInfo, threshold: Double, comparison: String, season: Int, league: String? = nil) -> String {
-        let leagueFilter = league.map { " AND s.league = '\($0)'" } ?? ""
+        let leagueFilter = league.map { " AND \(leagueTeamClause($0, alias: "s"))" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
 
         // Rate stats need a PA minimum
@@ -2111,7 +2121,7 @@ enum PlayerCardService {
         }
 
         let badEraFilter = isPitching ? eraDataFilter(prefix: prefix, stat: stat) : ""
-        let leagueFilter = league.map { " AND \(prefix).league = '\($0)'" } ?? ""
+        let leagueFilter = league.map { " AND \(leagueTeamClause($0, alias: prefix))" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
 
         let sql = """
@@ -2203,7 +2213,7 @@ enum PlayerCardService {
 
         let birthdateFilter = (superlative == .youngest || superlative == .oldest) ? " AND p.birthdate IS NOT NULL" : ""
         let badEraFilter = isPitching ? eraDataFilter(prefix: prefix, stat: stat) : ""
-        let leagueFilter = league.map { " AND \(prefix).league = '\($0)'" } ?? ""
+        let leagueFilter = league.map { " AND \(leagueTeamClause($0, alias: prefix))" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
 
         let sql = """
@@ -2289,7 +2299,7 @@ enum PlayerCardService {
         let table = isPitching ? "season_pitching_stats" : "season_batting_stats"
         let prefix = isPitching ? "sp" : "s"
         let seasonFilter = season.map { " AND \(prefix).season = \($0)" } ?? ""
-        let leagueFilter = league.map { " AND \(prefix).league = '\($0)'" } ?? ""
+        let leagueFilter = league.map { " AND \(leagueTeamClause($0, alias: prefix))" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
         let scopeLabel = season.map { String($0) } ?? "All-Time"
 
@@ -2408,7 +2418,7 @@ enum PlayerCardService {
     static func buildMilestone(stat: PlayerNameMatcher.StatInfo, threshold: Double, since: Int?, isPitching: Bool, league: String? = nil) -> String {
         let table = isPitching ? "season_pitching_stats" : "season_batting_stats"
         let sinceFilter = since.map { " AND s.season >= \($0)" } ?? ""
-        let leagueFilter = league.map { " AND s.league = '\($0)'" } ?? ""
+        let leagueFilter = league.map { " AND \(leagueTeamClause($0, alias: "s"))" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
 
         // For pitching rate stats like ERA, lower is better
@@ -3003,7 +3013,7 @@ enum PlayerCardService {
     }
 
     private static func buildSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, season: Int, limit: Int, league: String? = nil) -> String {
-        let leagueFilter = league.map { " AND s.league = '\($0)'" } ?? ""
+        let leagueFilter = league.map { " AND \(leagueTeamClause($0, alias: "s"))" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
 
         // Rate stats need a PA minimum
@@ -3117,7 +3127,7 @@ enum PlayerCardService {
     }
 
     private static func buildAllTimeSingleSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int, league: String? = nil) -> String {
-        let leagueFilter = league.map { " AND s.league = '\($0)'" } ?? ""
+        let leagueFilter = league.map { " AND \(leagueTeamClause($0, alias: "s"))" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
         let paFilter = stat.isRate ? " WHERE s.plate_appearances >= 400\(leagueFilter)" : (leagueFilter.isEmpty ? "" : " WHERE \(leagueFilter.dropFirst(5))")
 
@@ -3169,7 +3179,7 @@ enum PlayerCardService {
     }
 
     private static func buildAllTimeSinceLeaderboard(stat: PlayerNameMatcher.StatInfo, sinceYear: Int, limit: Int, league: String? = nil) -> String {
-        let leagueFilter = league.map { " AND s.league = '\($0)'" } ?? ""
+        let leagueFilter = league.map { " AND \(leagueTeamClause($0, alias: "s"))" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
         let paFilter = stat.isRate ? " AND s.plate_appearances >= 400" : ""
 
@@ -3221,7 +3231,7 @@ enum PlayerCardService {
     }
 
     private static func buildCareerLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int, league: String? = nil) -> String {
-        let leagueFilter = league.map { " WHERE s.league = '\($0)'" } ?? ""
+        let leagueFilter = league.map { " WHERE \(leagueTeamClause($0, alias: "s"))" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
         let selectExpr: String
         if stat.isRate {
@@ -3443,6 +3453,279 @@ enum PlayerCardService {
 
         guard !rows.isEmpty else { return nil }
         return StatGridParser.StatGrid(headers: headers, rows: rows)
+    }
+
+    // MARK: - Pitch type splits (chat response builder)
+
+    /// Build a pitch type splits response for chat queries like "X vs sliders".
+    static func buildPitchTypeSplits(name: String, pitchType: String?, season: Int) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        var filter = ""
+        if let pitchType {
+            filter = " AND pts.pitch_type = '\(pitchType)'"
+        }
+
+        let sql = """
+            SELECT pts.pitch_type, pts.at_bats, pts.hits,
+                   pts.doubles, pts.triples, pts.home_runs, pts.rbi,
+                   pts.walks, pts.strikeouts,
+                   pts.batting_avg, pts.obp, pts.slg, pts.ops
+            FROM pitch_type_batting_splits pts
+            JOIN players p ON pts.player_id = p.player_id
+            WHERE p.name = '\(sanitize(name))' AND pts.season = \(season)\(filter)
+            ORDER BY pts.at_bats DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+
+        let subtitle = pitchType.map { "vs \($0)" } ?? "By Pitch Type"
+
+        var parts: [String] = []
+        parts.append("**\(displayName)** \u{2014} \(season) \(subtitle)\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + headers.joined(separator: ", "))
+        for row in result.rows {
+            let label = row[0]
+            let values = formatValues(headers: headers, values: Array(row.dropFirst()))
+            parts.append("ROW \(label): " + values.joined(separator: ", "))
+        }
+        parts.append("[/STATGRID]")
+
+        parts.append("\n[SUGGEST]\(displayName) \(season)[/SUGGEST]")
+        parts.append("[SUGGEST]\(displayName) vs lefties \(season)[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    /// Build pitch type splits for a pitcher.
+    static func buildPitchingPitchTypeSplits(name: String, pitchType: String?, season: Int) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        var filter = ""
+        if let pitchType {
+            filter = " AND pts.pitch_type = '\(pitchType)'"
+        }
+
+        let sql = """
+            SELECT pts.pitch_type, pts.at_bats, pts.hits,
+                   pts.doubles, pts.triples, pts.home_runs,
+                   pts.walks, pts.strikeouts,
+                   pts.batting_avg_against, pts.obp_against, pts.slg_against, pts.ops_against
+            FROM pitch_type_pitching_splits pts
+            JOIN players p ON pts.player_id = p.player_id
+            WHERE p.name = '\(sanitize(name))' AND pts.season = \(season)\(filter)
+            ORDER BY pts.at_bats DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+
+        let subtitle = pitchType.map { "vs \($0)" } ?? "By Pitch Type"
+
+        var parts: [String] = []
+        parts.append("**\(displayName)** \u{2014} \(season) \(subtitle) (Pitching)\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + headers.joined(separator: ", "))
+        for row in result.rows {
+            let label = row[0]
+            let values = formatPitchingValues(headers: headers, values: Array(row.dropFirst()))
+            parts.append("ROW \(label): " + values.joined(separator: ", "))
+        }
+        parts.append("[/STATGRID]")
+
+        parts.append("\n[SUGGEST]\(displayName) \(season)[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - Count splits (chat response builder)
+
+    /// Build a count splits response for chat queries like "X with two strikes".
+    static func buildCountSplits(name: String, counts: [String]?, season: Int) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        var filter = ""
+        if let counts, !counts.isEmpty {
+            let inClause = counts.map { "'\($0)'" }.joined(separator: ", ")
+            filter = " AND cs.count_state IN (\(inClause))"
+        }
+
+        let sql = """
+            SELECT cs.count_state, cs.at_bats, cs.hits,
+                   cs.doubles, cs.triples, cs.home_runs, cs.rbi,
+                   cs.walks, cs.strikeouts,
+                   cs.batting_avg, cs.obp, cs.slg, cs.ops
+            FROM count_batting_splits cs
+            JOIN players p ON cs.player_id = p.player_id
+            WHERE p.name = '\(sanitize(name))' AND cs.season = \(season)\(filter)
+            ORDER BY cs.count_state
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+
+        let subtitle: String
+        if let counts, counts.count == 1 {
+            subtitle = "in \(counts[0]) Counts"
+        } else if let counts, counts.count <= 4 {
+            subtitle = "in \(counts.joined(separator: "/")) Counts"
+        } else {
+            subtitle = "By Count"
+        }
+
+        var parts: [String] = []
+        parts.append("**\(displayName)** \u{2014} \(season) \(subtitle)\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + headers.joined(separator: ", "))
+        for row in result.rows {
+            let label = row[0]
+            let values = formatValues(headers: headers, values: Array(row.dropFirst()))
+            parts.append("ROW \(label): " + values.joined(separator: ", "))
+        }
+        parts.append("[/STATGRID]")
+
+        parts.append("\n[SUGGEST]\(displayName) \(season)[/SUGGEST]")
+        parts.append("[SUGGEST]\(displayName) vs lefties \(season)[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    /// Build count splits for a pitcher.
+    static func buildPitchingCountSplits(name: String, counts: [String]?, season: Int) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        var filter = ""
+        if let counts, !counts.isEmpty {
+            let inClause = counts.map { "'\($0)'" }.joined(separator: ", ")
+            filter = " AND cs.count_state IN (\(inClause))"
+        }
+
+        let sql = """
+            SELECT cs.count_state, cs.at_bats, cs.hits,
+                   cs.doubles, cs.triples, cs.home_runs,
+                   cs.walks, cs.strikeouts,
+                   cs.batting_avg_against, cs.obp_against, cs.slg_against, cs.ops_against
+            FROM count_pitching_splits cs
+            JOIN players p ON cs.player_id = p.player_id
+            WHERE p.name = '\(sanitize(name))' AND cs.season = \(season)\(filter)
+            ORDER BY cs.count_state
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+
+        let subtitle: String
+        if let counts, counts.count == 1 {
+            subtitle = "in \(counts[0]) Counts"
+        } else {
+            subtitle = "By Count"
+        }
+
+        var parts: [String] = []
+        parts.append("**\(displayName)** \u{2014} \(season) \(subtitle) (Pitching)\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + headers.joined(separator: ", "))
+        for row in result.rows {
+            let label = row[0]
+            let values = formatPitchingValues(headers: headers, values: Array(row.dropFirst()))
+            parts.append("ROW \(label): " + values.joined(separator: ", "))
+        }
+        parts.append("[/STATGRID]")
+
+        parts.append("\n[SUGGEST]\(displayName) \(season)[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    // MARK: - RISP splits (chat response builder)
+
+    /// Build a RISP splits response for chat queries like "X with runners in scoring position".
+    static func buildRISPSplits(name: String, season: Int) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        let sql = """
+            SELECT rs.split, rs.at_bats, rs.hits,
+                   rs.doubles, rs.triples, rs.home_runs, rs.rbi,
+                   rs.walks, rs.strikeouts,
+                   rs.batting_avg, rs.obp, rs.slg, rs.ops
+            FROM risp_batting_splits rs
+            JOIN players p ON rs.player_id = p.player_id
+            WHERE p.name = '\(sanitize(name))' AND rs.season = \(season)
+            ORDER BY rs.split DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+
+        var parts: [String] = []
+        parts.append("**\(displayName)** \u{2014} \(season) With Runners in Scoring Position\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + headers.joined(separator: ", "))
+        for row in result.rows.prefix(2) {
+            let splitLabel = row[0] == "RISP" ? "RISP" : "Non-RISP"
+            let values = formatValues(headers: headers, values: Array(row.dropFirst()))
+            parts.append("ROW \(splitLabel): " + values.joined(separator: ", "))
+        }
+        parts.append("[/STATGRID]")
+
+        parts.append("\n[SUGGEST]\(displayName) \(season)[/SUGGEST]")
+        parts.append("[SUGGEST]\(displayName) vs lefties \(season)[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
+    }
+
+    /// Build RISP splits for a pitcher.
+    static func buildPitchingRISPSplits(name: String, season: Int) -> String? {
+        let info = fetchPlayerInfo(name: name)
+        let displayName = info?.name ?? name
+
+        let sql = """
+            SELECT rs.split, rs.at_bats, rs.hits,
+                   rs.doubles, rs.triples, rs.home_runs,
+                   rs.walks, rs.strikeouts,
+                   rs.batting_avg_against, rs.obp_against, rs.slg_against, rs.ops_against
+            FROM risp_pitching_splits rs
+            JOIN players p ON rs.player_id = p.player_id
+            WHERE p.name = '\(sanitize(name))' AND rs.season = \(season)
+            ORDER BY rs.split DESC
+            """
+        guard let result = try? db.execute(sql: sql),
+              !result.rows.isEmpty else { return nil }
+
+        let headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+
+        var parts: [String] = []
+        parts.append("**\(displayName)** \u{2014} \(season) With RISP (Pitching)\n")
+
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + headers.joined(separator: ", "))
+        for row in result.rows.prefix(2) {
+            let splitLabel = row[0] == "RISP" ? "RISP" : "Non-RISP"
+            let values = formatPitchingValues(headers: headers, values: Array(row.dropFirst()))
+            parts.append("ROW \(splitLabel): " + values.joined(separator: ", "))
+        }
+        parts.append("[/STATGRID]")
+
+        parts.append("\n[SUGGEST]\(displayName) \(season)[/SUGGEST]")
+
+        return parts.joined(separator: "\n")
     }
 
     // MARK: - Streaks
@@ -4906,7 +5189,7 @@ enum PlayerCardService {
         }
 
         let oppositePerf = performance == "hot" ? "cold" : "hot"
-        parts.append("\n[SUGGEST]\(displayName) \(oppositePerf) streaks[/SUGGEST]")
+        parts.append("\n[SUGGEST]\(displayName) \(oppositePerf) streaks \(targetSeason)[/SUGGEST]")
 
         return parts.joined(separator: "\n")
     }
@@ -4962,7 +5245,7 @@ enum PlayerCardService {
         parts.append("[/STATGRID]")
 
         parts.append("\nThat's compared to his \(season) season ERA of \(seasonEra).")
-        parts.append("\n[SUGGEST]\(displayName) hot streaks[/SUGGEST]")
+        parts.append("\n[SUGGEST]\(displayName) hot streaks \(season)[/SUGGEST]")
 
         return parts.joined(separator: "\n")
     }
@@ -5069,7 +5352,7 @@ enum PlayerCardService {
     }
 
     private static func buildPitchingSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, season: Int, limit: Int, league: String? = nil) -> String {
-        let leagueFilter = league.map { " AND sp.league = '\($0)'" } ?? ""
+        let leagueFilter = league.map { " AND \(leagueTeamClause($0, alias: "sp"))" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
 
         // Rate stats need an IP minimum
@@ -5138,7 +5421,7 @@ enum PlayerCardService {
     }
 
     private static func buildPitchingAllTimeSingleSeasonLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int, league: String? = nil) -> String {
-        let leagueFilter = league.map { " AND sp.league = '\($0)'" } ?? ""
+        let leagueFilter = league.map { " AND \(leagueTeamClause($0, alias: "sp"))" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
         let ipFilter = stat.isRate ? " WHERE sp.ip_outs >= 486\(leagueFilter)" : (leagueFilter.isEmpty ? "" : " WHERE \(leagueFilter.dropFirst(5))")
         let orderDir = (stat.displayAbbrev == "ERA" || stat.displayAbbrev == "WHIP" || stat.displayAbbrev == "BB/9" || stat.displayAbbrev == "BAA") ? "ASC" : "DESC"
@@ -5189,7 +5472,7 @@ enum PlayerCardService {
     }
 
     private static func buildPitchingAllTimeSinceLeaderboard(stat: PlayerNameMatcher.StatInfo, sinceYear: Int, limit: Int, league: String? = nil) -> String {
-        let leagueFilter = league.map { " AND sp.league = '\($0)'" } ?? ""
+        let leagueFilter = league.map { " AND \(leagueTeamClause($0, alias: "sp"))" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
         let ipFilter = stat.isRate ? " AND sp.ip_outs >= 486" : ""
         let orderDir = (stat.displayAbbrev == "ERA" || stat.displayAbbrev == "WHIP" || stat.displayAbbrev == "BB/9" || stat.displayAbbrev == "BAA") ? "ASC" : "DESC"
@@ -5240,7 +5523,7 @@ enum PlayerCardService {
     }
 
     private static func buildPitchingCareerLeaderboard(stat: PlayerNameMatcher.StatInfo, limit: Int, league: String? = nil) -> String {
-        let leagueFilter = league.map { " AND sp.league = '\($0)'" } ?? ""
+        let leagueFilter = league.map { " AND \(leagueTeamClause($0, alias: "sp"))" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
 
         let selectExpr: String
@@ -5513,7 +5796,7 @@ enum PlayerCardService {
     // MARK: - Pitching threshold leaderboard (chat response builder)
 
     static func buildPitchingThresholdLeaderboard(stat: PlayerNameMatcher.StatInfo, threshold: Double, comparison: String, season: Int, league: String? = nil) -> String {
-        let leagueFilter = league.map { " AND sp.league = '\($0)'" } ?? ""
+        let leagueFilter = league.map { " AND \(leagueTeamClause($0, alias: "sp"))" } ?? ""
         let leagueLabel = league.map { " (\($0))" } ?? ""
 
         let ipMin: String?

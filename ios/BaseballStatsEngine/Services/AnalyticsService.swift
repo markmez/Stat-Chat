@@ -40,6 +40,10 @@ enum AnalyticsService {
         case localTeamStats = "local_team_stats"
         case localStatDefinition = "local_stat_definition"
         case localDisambiguation = "local_disambiguation"
+        case localRISP = "local_risp"
+        case localPitchType = "local_pitch_type"
+        case localCountSplits = "local_count_splits"
+        case localCatchAll = "local_catch_all"
         // Backend
         case backendClaude = "backend_claude"
         case backendComparison = "backend_comparison"
