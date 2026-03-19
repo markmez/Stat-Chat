@@ -41,6 +41,7 @@ final class AppState: SearchHistoryTracking {
     var disambiguatedPlayerName: String?
     private(set) var weeklyQueryCount: Int = 0
     var showPaywall = false
+    var showUpdateBanner = false
     /// Query that was blocked by the paywall — auto-retried after successful purchase
     var pendingPaywallQuery: String?
     var appearanceMode: AppearanceMode = .system {
@@ -490,6 +491,30 @@ final class AppState: SearchHistoryTracking {
 
         // Generic fallback
         return "Something went wrong. Please try again."
+    }
+
+    // MARK: - Update banner
+
+    private static let appConfigURL = URL(string: "https://stat-chat.s3.us-east-2.amazonaws.com/app_config.json")!
+
+    func checkForUpdate() async {
+        var request = URLRequest(url: Self.appConfigURL)
+        request.timeoutInterval = 5
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let json = try? JSONDecoder().decode(AppConfig.self, from: data) else { return }
+
+        let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+        if current.compare(json.minVersion, options: .numeric) == .orderedAscending {
+            showUpdateBanner = true
+        }
+    }
+
+    private struct AppConfig: Decodable {
+        let minVersion: String
+        enum CodingKeys: String, CodingKey {
+            case minVersion = "min_version"
+        }
     }
 
     /// Build contextual SUGGEST pills for Claude fallthrough responses based on query content.
