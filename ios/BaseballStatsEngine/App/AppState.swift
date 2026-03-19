@@ -261,6 +261,14 @@ final class AppState: SearchHistoryTracking {
                         messages[streamingIndex] = Message(role: .assistant, content: existing + "\n\n" + pills)
                     }
                 }
+                // "Did you mean?" — if query contains a well-known player's common-word last name
+                if streamingIndex < messages.count {
+                    let didYouMean = buildDidYouMeanLink(for: trimmed)
+                    if !didYouMean.isEmpty {
+                        let existing = messages[streamingIndex].content
+                        messages[streamingIndex] = Message(role: .assistant, content: existing + "\n\n" + didYouMean)
+                    }
+                }
                 isLoading = false
                 currentStreamingText = ""
             } catch {
@@ -480,6 +488,37 @@ final class AppState: SearchHistoryTracking {
     }
 
     /// Build contextual SUGGEST pills for Claude fallthrough responses based on query content.
+    /// Check if the query contains a well-known player's last name that's also a common word.
+    /// Returns a "Did you mean [Player]?" link if so, empty string otherwise.
+    private func buildDidYouMeanLink(for query: String) -> String {
+        let words = query.lowercased().split(separator: " ").map(String.init)
+        // Only trigger for multi-word queries (single word goes straight to the player)
+        guard words.count > 1 else { return "" }
+
+        let commonWords = PlayerNameMatcher.commonWordLastNames
+        let minCareerGames = 400
+
+        for word in words {
+            let ascii = PlayerNameMatcher.stripDiacritics(word)
+            guard commonWords.contains(ascii),
+                  let players = PlayerNameMatcher.lastNameIndex[ascii],
+                  players.count == 1,
+                  let player = players.first else { continue }
+
+            // Only suggest well-known players
+            let db = DatabaseService()
+            if let result = try? db.execute(sql: """
+                SELECT COALESCE(career_games, 0) FROM players
+                WHERE name = '\(player.replacingOccurrences(of: "'", with: "''"))'
+                """), let row = result.rows.first,
+               let games = Int(row[0]), games >= minCareerGames {
+                let encoded = player.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? player
+                return "Looking for [\(player)](statchat://player/\(encoded))?"
+            }
+        }
+        return ""
+    }
+
     private func buildFallbackPills(for query: String) -> String {
         let lower = query.lowercased()
         var pills: [String] = []

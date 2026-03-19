@@ -1807,6 +1807,12 @@ enum PlayerNameMatcher {
         let ascii = stripDiacritics(lower)
         let threshold = ascii.count >= 4 ? 2 : 1
 
+        // If input is an exact last name (even if suppressed by commonWordLastNames),
+        // return those players rather than fuzzy-matching to something unrelated
+        if let exactPlayers = lastNameIndex[ascii], !exactPlayers.isEmpty {
+            return exactPlayers
+        }
+
         // Check against full names first (accent-insensitive) — single best match
         var bestMatch: String? = nil
         var bestDistance = Int.max
