@@ -799,113 +799,110 @@ struct PlayerCardView: View {
 
     // MARK: - Pitching Form Section
 
+    @ViewBuilder
     private func pitchingFormSection(season: PitchingSeasonData) -> some View {
-        guard let form = season.currentForm else { return AnyView(EmptyView()) }
+        if let form = season.currentForm {
+            let numGamesShown = pitchingFormSliderGameNumber ?? form.numGames
+            let effectiveGameNumber = form.totalSeasonGames - numGamesShown + 1
+            let (formGrid, formNumGames, formStartDate) = recomputePitchingFormStats(
+                season: season, fromGameNumber: effectiveGameNumber
+            )
+            let formattedDate = PlayerCardService.formatDateShort(formStartDate)
 
-        let numGamesShown = pitchingFormSliderGameNumber ?? form.numGames
-        let effectiveGameNumber = form.totalSeasonGames - numGamesShown + 1
-        let (formGrid, formNumGames, formStartDate) = recomputePitchingFormStats(
-            season: season, fromGameNumber: effectiveGameNumber
-        )
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Hot Streak")
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 20)
 
-        let formattedDate = PlayerCardService.formatDateShort(formStartDate)
-
-        return AnyView(VStack(alignment: .leading, spacing: 8) {
-            Text("Hot Streak")
-                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 20)
-
-            VStack(alignment: .leading, spacing: 12) {
-                // Subtitle + slider
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 4) {
-                        Text("Since \(formattedDate) (\(formNumGames) games)")
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-
-                        if pitchingFormSliderGameNumber != nil {
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.15)) {
-                                    pitchingFormSliderGameNumber = nil
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 4) {
+                            Text("Since \(formattedDate) (\(formNumGames) games)")
+                                .font(.system(.subheadline, design: .rounded))
+                                .foregroundStyle(.secondary)
+                            if pitchingFormSliderGameNumber != nil {
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.15)) {
+                                        pitchingFormSliderGameNumber = nil
+                                    }
+                                } label: {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: "arrow.counterclockwise")
+                                            .font(.system(size: 12, weight: .semibold))
+                                        Text("Reset")
+                                            .font(.system(.caption2, design: .rounded, weight: .medium))
+                                    }
+                                    .foregroundStyle(deepBlue.opacity(0.7))
                                 }
-                            } label: {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "arrow.counterclockwise")
-                                        .font(.system(size: 12, weight: .semibold))
-                                    Text("Reset")
-                                        .font(.system(.caption2, design: .rounded, weight: .medium))
-                                }
-                                .foregroundStyle(deepBlue.opacity(0.7))
+                                .buttonStyle(.plain)
+                                .transition(.opacity)
                             }
-                            .buttonStyle(.plain)
-                            .transition(.opacity)
+                        }
+                        .padding(.horizontal, 14)
+
+                        Slider(
+                            value: Binding<Double>(
+                                get: { form.totalSeasonGames < 2 ? Double(max(form.totalSeasonGames, 2)) : Double(numGamesShown) },
+                                set: { newValue in
+                                    pitchingFormSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
+                                }
+                            ),
+                            in: 1...Double(max(form.totalSeasonGames, 2)),
+                            step: 1
+                        )
+                        .tint(deepBlue)
+                        .disabled(form.totalSeasonGames < 2 || pitchingGameLogs == nil)
+                        .opacity(pitchingGameLogs != nil ? 1 : 0.3)
+                        .padding(.horizontal, 14)
+                    }
+                    .task {
+                        if pitchingGameLogs == nil {
+                            await loadPitchingGameLogs(name: playerName, season: season.year)
                         }
                     }
-                    .padding(.horizontal, 14)
 
-                    Slider(
-                        value: Binding<Double>(
-                            get: { form.totalSeasonGames < 2 ? Double(max(form.totalSeasonGames, 2)) : Double(numGamesShown) },
-                            set: { newValue in
-                                pitchingFormSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
-                            }
-                        ),
-                        in: 1...Double(max(form.totalSeasonGames, 2)),
-                        step: 1
-                    )
-                    .tint(deepBlue)
-                    .disabled(form.totalSeasonGames < 2 || pitchingGameLogs == nil)
-                    .opacity(pitchingGameLogs != nil ? 1 : 0.3)
-                    .padding(.horizontal, 14)
-                }
-                .task {
-                    if pitchingGameLogs == nil {
-                        await loadPitchingGameLogs(name: playerName, season: season.year)
+                    StatGridView(grid: formGrid, suppressBackground: true)
+
+                    Rectangle()
+                        .fill(Color(uiColor: .separator).opacity(0.3))
+                        .frame(height: 1)
+                        .padding(.horizontal, 14)
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showPitchingFormProjection.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("Full Season Projection")
+                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(.primary)
+                            Image(systemName: showPitchingFormProjection ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 14)
+                    }
+                    .buttonStyle(.plain)
+
+                    if showPitchingFormProjection {
+                        let projectedGrid = buildPitchingFormProjection(
+                            season: season, formGrid: formGrid, formNumGames: formNumGames
+                        )
+                        StatGridView(grid: projectedGrid, suppressBackground: true)
                     }
                 }
-
-                StatGridView(grid: formGrid, suppressBackground: true)
-
-                // Collapsible projection
-                Rectangle()
-                    .fill(Color(uiColor: .separator).opacity(0.3))
-                    .frame(height: 1)
-                    .padding(.horizontal, 14)
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showPitchingFormProjection.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Full Season Projection")
-                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                            .foregroundStyle(.primary)
-                        Image(systemName: showPitchingFormProjection ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 14)
-                }
-                .buttonStyle(.plain)
-
-                if showPitchingFormProjection {
-                    let projectedGrid = buildPitchingFormProjection(
-                        season: season, formGrid: formGrid, formNumGames: formNumGames
-                    )
-                    StatGridView(grid: projectedGrid, suppressBackground: true)
-                }
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(uiColor: .secondarySystemBackground))
+                        .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
+                        .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
+                )
+                .padding(.horizontal, 6)
             }
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(uiColor: .secondarySystemBackground))
-                    .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
-                    .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
-            )
-            .padding(.horizontal, 6)
-        })
+        }
     }
 
     private func recomputePitchingFormStats(
@@ -1238,145 +1235,140 @@ struct PlayerCardView: View {
         }
     }
 
+    @ViewBuilder
     private func currentFormSection(season: SeasonData) -> some View {
-        guard let form = season.currentForm else { return AnyView(EmptyView()) }
+        if let form = season.currentForm {
+            let numGamesShown = formSliderGameNumber ?? form.numGames
+            let effectiveGameNumber = form.totalSeasonGames - numGamesShown + 1
+            let (formGrid, formNumGames, formStartDate) = recomputeFormStats(
+                season: season, fromGameNumber: effectiveGameNumber
+            )
+            let formattedDate = PlayerCardService.formatDateShort(formStartDate)
+            let hasRemainingGames = season.teamGames < 162
+            let availableModes: [FormProjectionMode] = hasRemainingGames
+                ? FormProjectionMode.allCases
+                : [.pace]
 
-        // Slider controls "last N games" — convert to game number for recompute
-        let numGamesShown = formSliderGameNumber ?? form.numGames
-        let effectiveGameNumber = form.totalSeasonGames - numGamesShown + 1
-        let (formGrid, formNumGames, formStartDate) = recomputeFormStats(
-            season: season, fromGameNumber: effectiveGameNumber
-        )
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Hot Streak")
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 20)
 
-        let formattedDate = PlayerCardService.formatDateShort(formStartDate)
-
-        let hasRemainingGames = season.teamGames < 162
-        let availableModes: [FormProjectionMode] = hasRemainingGames
-            ? FormProjectionMode.allCases
-            : [.pace]
-
-        return AnyView(VStack(alignment: .leading, spacing: 8) {
-            Text("Hot Streak")
-                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 20)
-
-            VStack(alignment: .leading, spacing: 12) {
-                // Subtitle + slider
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 4) {
-                        Text("Since \(formattedDate) (\(formNumGames) games)")
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-
-                        if formSliderGameNumber != nil {
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.15)) {
-                                    formSliderGameNumber = nil
-                                }
-                            } label: {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "arrow.counterclockwise")
-                                        .font(.system(size: 12, weight: .semibold))
-                                    Text("Reset")
-                                        .font(.system(.caption2, design: .rounded, weight: .medium))
-                                }
-                                .foregroundStyle(deepBlue.opacity(0.7))
-                            }
-                            .buttonStyle(.plain)
-                            .transition(.opacity)
-                        }
-                    }
-                    .padding(.horizontal, 14)
-
-                    Slider(
-                        value: Binding<Double>(
-                            get: { form.totalSeasonGames < 2 ? Double(max(form.totalSeasonGames, 2)) : Double(numGamesShown) },
-                            set: { newValue in
-                                formSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
-                            }
-                        ),
-                        in: 1...Double(max(form.totalSeasonGames, 2)),
-                        step: 1
-                    )
-                    .tint(deepBlue)
-                    .disabled(form.totalSeasonGames < 2 || gameLogs == nil)
-                    .opacity(gameLogs != nil ? 1 : 0.3)
-                    .padding(.horizontal, 14)
-                }
-                .task {
-                    if gameLogs == nil {
-                        await loadBattingGameLogs(name: playerName, season: season.year)
-                    }
-                }
-
-                StatGridView(grid: formGrid, suppressBackground: true)
-
-                // Collapsible projection
-                Rectangle()
-                    .fill(Color(uiColor: .separator).opacity(0.3))
-                    .frame(height: 1)
-                    .padding(.horizontal, 14)
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showFormProjection.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Full Season Projection")
-                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                            .foregroundStyle(.primary)
-                        Image(systemName: showFormProjection ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 14)
-                }
-                .buttonStyle(.plain)
-
-                if showFormProjection {
+                VStack(alignment: .leading, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 0) {
-                            ForEach(availableModes, id: \.self) { mode in
+                        HStack(spacing: 4) {
+                            Text("Since \(formattedDate) (\(formNumGames) games)")
+                                .font(.system(.subheadline, design: .rounded))
+                                .foregroundStyle(.secondary)
+                            if formSliderGameNumber != nil {
                                 Button {
                                     withAnimation(.easeInOut(duration: 0.15)) {
-                                        formProjectionMode = mode
+                                        formSliderGameNumber = nil
                                     }
                                 } label: {
-                                    Text(mode.rawValue)
-                                        .font(.system(.caption, design: .rounded, weight: .medium))
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 5)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 6)
-                                                .fill(formProjectionMode == mode
-                                                      ? deepBlue.opacity(0.12)
-                                                      : Color.clear)
-                                        )
-                                        .foregroundStyle(formProjectionMode == mode ? deepBlue : .secondary)
+                                    HStack(spacing: 3) {
+                                        Image(systemName: "arrow.counterclockwise")
+                                            .font(.system(size: 12, weight: .semibold))
+                                        Text("Reset")
+                                            .font(.system(.caption2, design: .rounded, weight: .medium))
+                                    }
+                                    .foregroundStyle(deepBlue.opacity(0.7))
                                 }
+                                .buttonStyle(.plain)
+                                .transition(.opacity)
                             }
                         }
                         .padding(.horizontal, 14)
 
-                        let projectedGrid = buildFormProjection(
-                            season: season, formGrid: formGrid, formNumGames: formNumGames,
-                            effectiveGameNumber: effectiveGameNumber
+                        Slider(
+                            value: Binding<Double>(
+                                get: { form.totalSeasonGames < 2 ? Double(max(form.totalSeasonGames, 2)) : Double(numGamesShown) },
+                                set: { newValue in
+                                    formSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
+                                }
+                            ),
+                            in: 1...Double(max(form.totalSeasonGames, 2)),
+                            step: 1
                         )
-                        StatGridView(grid: projectedGrid, suppressBackground: true)
+                        .tint(deepBlue)
+                        .disabled(form.totalSeasonGames < 2 || gameLogs == nil)
+                        .opacity(gameLogs != nil ? 1 : 0.3)
+                        .padding(.horizontal, 14)
+                    }
+                    .task {
+                        if gameLogs == nil {
+                            await loadBattingGameLogs(name: playerName, season: season.year)
+                        }
+                    }
+
+                    StatGridView(grid: formGrid, suppressBackground: true)
+
+                    Rectangle()
+                        .fill(Color(uiColor: .separator).opacity(0.3))
+                        .frame(height: 1)
+                        .padding(.horizontal, 14)
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showFormProjection.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("Full Season Projection")
+                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(.primary)
+                            Image(systemName: showFormProjection ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 14)
+                    }
+                    .buttonStyle(.plain)
+
+                    if showFormProjection {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 0) {
+                                ForEach(availableModes, id: \.self) { mode in
+                                    Button {
+                                        withAnimation(.easeInOut(duration: 0.15)) {
+                                            formProjectionMode = mode
+                                        }
+                                    } label: {
+                                        Text(mode.rawValue)
+                                            .font(.system(.caption, design: .rounded, weight: .medium))
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 5)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 6)
+                                                    .fill(formProjectionMode == mode
+                                                          ? deepBlue.opacity(0.12)
+                                                          : Color.clear)
+                                            )
+                                            .foregroundStyle(formProjectionMode == mode ? deepBlue : .secondary)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 14)
+
+                            let projectedGrid = buildFormProjection(
+                                season: season, formGrid: formGrid, formNumGames: formNumGames,
+                                effectiveGameNumber: effectiveGameNumber
+                            )
+                            StatGridView(grid: projectedGrid, suppressBackground: true)
+                        }
                     }
                 }
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(uiColor: .secondarySystemBackground))
+                        .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
+                        .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
+                )
+                .padding(.horizontal, 6)
             }
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(uiColor: .secondarySystemBackground))
-                    .shadow(color: deepBlue.opacity(0.10), radius: 10, y: 3)
-                    .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
-            )
-            .padding(.horizontal, 6)
-        })
+        }
     }
 
     /// Recompute form stats from game logs starting at a given game number.
