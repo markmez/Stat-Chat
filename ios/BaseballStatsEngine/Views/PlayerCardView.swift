@@ -844,39 +844,20 @@ struct PlayerCardView: View {
                     }
                     .padding(.horizontal, 14)
 
-                    if pitchingGameLogs != nil {
-                        ZStack {
-                            let sliderMax = Double(max(form.totalSeasonGames, 2))
-                            Slider(
-                                value: Binding<Double>(
-                                    get: { form.totalSeasonGames < 2 ? sliderMax : Double(numGamesShown) },
-                                    set: { newValue in
-                                        pitchingFormSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
-                                    }
-                                ),
-                                in: 1...sliderMax,
-                                step: 1
-                            )
-                            .tint(deepBlue)
-                            .disabled(form.totalSeasonGames < 2)
-
-                            if pitchingFormSliderGameNumber != nil {
-                                GeometryReader { geo in
-                                    let range = Double(max(form.totalSeasonGames, 2)) - 1
-                                    let pct = range > 0 ? (Double(form.numGames) - 1) / range : 0
-                                    let trackWidth = geo.size.width - 28
-                                    let xPos = 14 + trackWidth * pct
-
-                                    Rectangle()
-                                        .fill(deepBlue.opacity(0.5))
-                                        .frame(width: 2, height: 14)
-                                        .position(x: xPos, y: geo.size.height / 2)
-                                        .allowsHitTesting(false)
-                                }
+                    Slider(
+                        value: Binding<Double>(
+                            get: { form.totalSeasonGames < 2 ? Double(max(form.totalSeasonGames, 2)) : Double(numGamesShown) },
+                            set: { newValue in
+                                pitchingFormSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
                             }
-                        }
-                        .padding(.horizontal, 14)
-                    }
+                        ),
+                        in: 1...Double(max(form.totalSeasonGames, 2)),
+                        step: 1
+                    )
+                    .tint(deepBlue)
+                    .disabled(form.totalSeasonGames < 2 || pitchingGameLogs == nil)
+                    .opacity(pitchingGameLogs != nil ? 1 : 0.3)
+                    .padding(.horizontal, 14)
                 }
                 .task {
                     if pitchingGameLogs == nil {
@@ -1308,40 +1289,20 @@ struct PlayerCardView: View {
                     }
                     .padding(.horizontal, 14)
 
-                    if gameLogs != nil {
-                        ZStack {
-                            let sliderMax = Double(max(form.totalSeasonGames, 2))
-                            Slider(
-                                value: Binding<Double>(
-                                    get: { form.totalSeasonGames < 2 ? sliderMax : Double(numGamesShown) },
-                                    set: { newValue in
-                                        formSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
-                                    }
-                                ),
-                                in: 1...sliderMax,
-                                step: 1
-                            )
-                            .tint(deepBlue)
-                            .disabled(form.totalSeasonGames < 2)
-
-                            // Tick mark at detected position
-                            if formSliderGameNumber != nil {
-                                GeometryReader { geo in
-                                    let range = Double(max(form.totalSeasonGames, 2)) - 1
-                                    let pct = range > 0 ? (Double(form.numGames) - 1) / range : 0
-                                    let trackWidth = geo.size.width - 28
-                                    let xPos = 14 + trackWidth * pct
-
-                                    Rectangle()
-                                        .fill(deepBlue.opacity(0.5))
-                                        .frame(width: 2, height: 14)
-                                        .position(x: xPos, y: geo.size.height / 2)
-                                        .allowsHitTesting(false)
-                                }
+                    Slider(
+                        value: Binding<Double>(
+                            get: { form.totalSeasonGames < 2 ? Double(max(form.totalSeasonGames, 2)) : Double(numGamesShown) },
+                            set: { newValue in
+                                formSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
                             }
-                        }
-                        .padding(.horizontal, 14)
-                    }
+                        ),
+                        in: 1...Double(max(form.totalSeasonGames, 2)),
+                        step: 1
+                    )
+                    .tint(deepBlue)
+                    .disabled(form.totalSeasonGames < 2 || gameLogs == nil)
+                    .opacity(gameLogs != nil ? 1 : 0.3)
+                    .padding(.horizontal, 14)
                 }
                 .task {
                     if gameLogs == nil {
