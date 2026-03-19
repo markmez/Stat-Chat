@@ -1948,7 +1948,7 @@ enum PlayerNameMatcher {
         return nil
     }
 
-    /// Sort player names by prominence: current players first, then by career games descending.
+    /// Sort player names by prominence: recent players first, then by career games descending.
     /// Returns (sortedNames, dominantIndex?) — dominantIndex is set when one player is clearly
     /// more relevant (e.g., only current player, or vastly more career games).
     /// Uses career_games and last_season columns from the players table (no stats tables needed).
@@ -1973,23 +1973,25 @@ enum PlayerNameMatcher {
             infos.append((name, lastSeason, totalGames))
         }
 
-        // Sort: current players first, then by total games descending
+        // "Recent" = played within last 2 years (handles injury-missed seasons like Cole 2025)
+        let recentThreshold = currentYear - 2
+
+        // Sort: recent players first, then by total games descending
         let sorted = infos.sorted { a, b in
-            let aCurrent = a.lastSeason >= currentYear - 1
-            let bCurrent = b.lastSeason >= currentYear - 1
-            if aCurrent != bCurrent { return aCurrent }
+            let aRecent = a.lastSeason >= recentThreshold
+            let bRecent = b.lastSeason >= recentThreshold
+            if aRecent != bRecent { return aRecent }
             return a.totalGames > b.totalGames
         }
 
         // Determine if one player is clearly dominant
         var dominantIndex: Int? = nil
-        let currentPlayers = sorted.filter { $0.lastSeason >= currentYear - 1 }
-        if currentPlayers.count == 1 {
-            // Only one current player among historical ones → auto-select
+        let recentPlayers = sorted.filter { $0.lastSeason >= recentThreshold }
+        if recentPlayers.count == 1 && recentPlayers[0].totalGames >= 100 {
+            // Only one recent player with meaningful career → auto-select
             dominantIndex = 0
-        } else if currentPlayers.count >= 2 && currentPlayers[0].totalGames >= currentPlayers[1].totalGames * 3 {
-            // Among current players, top one has 3x+ more games → auto-select
-            // Handles common names (Ramirez, Diaz) where the star is clearly dominant
+        } else if recentPlayers.count >= 2 && recentPlayers[0].totalGames >= recentPlayers[1].totalGames * 3 {
+            // Among recent players, top one has 3x+ more games → auto-select
             dominantIndex = 0
         } else if sorted.count >= 2 && sorted[0].totalGames >= sorted[1].totalGames * 5 {
             // Top player has 5x+ more games than the runner-up → auto-select
