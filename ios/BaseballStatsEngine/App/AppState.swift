@@ -131,34 +131,20 @@ final class AppState: SearchHistoryTracking {
         }
 
         // Intercept comparison queries — build response from structured data
+        // Only use local when an explicit season in 2016-2025 is specified; otherwise backend has current data
         let compResult = PlayerNameMatcher.parseComparison(trimmed)
         if let (p1, p2, compSeason, compAlternatives) = compResult {
             let compSeasonExplicit = compSeason != nil
             let seeAlsoTag = compAlternatives.isEmpty ? "" : "\n[SEEALSO]\(compAlternatives.joined(separator: ","))[/SEEALSO]"
-            // When no season specified, add suggestion pill for current year if both active
-            let compPill: String
-            if !compSeasonExplicit {
-                let p1Active = PlayerCardService.isActivePlayer(name: p1)
-                let p2Active = PlayerCardService.isActivePlayer(name: p2)
-                if p1Active && p2Active {
-                    let currentYear = Calendar.current.component(.year, from: Date())
-                    compPill = "\n[SUGGEST]\(p1) vs \(p2) \(currentYear)[/SUGGEST]"
-                } else {
-                    compPill = ""
-                }
-            } else {
-                compPill = ""
-            }
-            let bothLocal = PlayerCardService.hasLocalData(name: p1) && PlayerCardService.hasLocalData(name: p2)
-            if bothLocal {
-                // Both in local DB — synchronous
+            if compSeasonExplicit, let cs = compSeason, PlayerCardService.isLocalSeason(cs) {
+                // Explicit season in local range — synchronous local lookup
                 var response: String
                 if PlayerCardService.isPitcher(name: p1) && PlayerCardService.isPitcher(name: p2) {
                     response = PlayerCardService.buildPitchingComparison(player1: p1, player2: p2, season: compSeason)
                 } else {
                     response = PlayerCardService.buildComparison(player1: p1, player2: p2, season: compSeason)
                 }
-                response += compPill + seeAlsoTag
+                response += seeAlsoTag
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: "Compared \(p1) and \(p2). \(response)")
@@ -166,7 +152,7 @@ final class AppState: SearchHistoryTracking {
                 AnalyticsService.trackQuery(text: trimmed, type: .localComparison)
                 return
             } else {
-                // One or both need backend data — async fetch
+                // No explicit season or season outside local range — async backend fetch
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: ""))
                 let loadingIndex = messages.count - 1
@@ -174,7 +160,7 @@ final class AppState: SearchHistoryTracking {
                 AnalyticsService.trackQuery(text: trimmed, type: .backendComparison)
                 currentQueryTask = Task {
                     var response = await PlayerCardService.buildComparisonAsync(player1: p1, player2: p2, season: compSeason)
-                    response += compPill + seeAlsoTag
+                    response += seeAlsoTag
                     guard !Task.isCancelled else { return }
                     messages[loadingIndex] = Message(role: .assistant, content: response)
                     isLoading = false
@@ -185,45 +171,22 @@ final class AppState: SearchHistoryTracking {
         }
 
         // Intercept streak history queries — build response from DB, skip Claude
-        // Only intercept if the query targets a season we have locally
-        if let streak = PlayerNameMatcher.parseStreakQuery(trimmed) {
-            let seasonExplicit = streak.season != nil
-            let isActive = PlayerCardService.isActivePlayer(name: streak.name)
+        // Only intercept when an explicit season in 2016-2025 is specified
+        if let streak = PlayerNameMatcher.parseStreakQuery(trimmed),
+           let streakSeason = streak.season, PlayerCardService.isLocalSeason(streakSeason) {
             let isPitcher = PlayerCardService.isPitcher(name: streak.name)
-            // For streaks, nil season = search all seasons. But for inactive players
-            // with no explicit season, pass nil (all seasons) rather than defaulting to current year.
-            let effectiveSeason: Int?
-            if seasonExplicit {
-                effectiveSeason = streak.season
-            } else if isActive {
-                effectiveSeason = nil  // nil = all seasons is fine for active players
+            let response: String?
+            if isPitcher {
+                response = PlayerCardService.buildPitchingStreakList(name: streak.name, performance: streak.performance, season: streakSeason)
             } else {
-                effectiveSeason = nil  // nil = all seasons for inactive too — shows their career streaks
+                response = PlayerCardService.buildStreakList(name: streak.name, performance: streak.performance, season: streakSeason)
             }
-            let targetSeason = effectiveSeason ?? (isActive ? currentSeasonYear : (PlayerCardService.mostRecentSeason(name: streak.name) ?? currentSeasonYear))
-            if PlayerCardService.isLocalSeason(targetSeason) {
-                let response: String?
-                if isPitcher {
-                    response = PlayerCardService.buildPitchingStreakList(name: streak.name, performance: streak.performance, season: effectiveSeason)
-                } else {
-                    response = PlayerCardService.buildStreakList(name: streak.name, performance: streak.performance, season: effectiveSeason)
-                }
-                if var response {
-                    if !seasonExplicit {
-                        let perfLabel = streak.performance == "hot" ? "hot streaks" : "cold streaks"
-                        if let pill = PlayerCardService.makeSeasonPill(
-                            name: streak.name, queryLabel: "\(streak.name) \(perfLabel)",
-                            careerLabel: nil, effectiveSeason: targetSeason,
-                            seasonExplicit: false, isPitcher: isPitcher) {
-                            response += pill
-                        }
-                    }
-                    messages.append(Message(role: .user, content: trimmed))
-                    messages.append(Message(role: .assistant, content: response))
-                    addToConversationHistory(question: trimmed, answer: response)
-                    AnalyticsService.trackQuery(text: trimmed, type: .localStreak)
-                    return
-                }
+            if let response {
+                messages.append(Message(role: .user, content: trimmed))
+                messages.append(Message(role: .assistant, content: response))
+                addToConversationHistory(question: trimmed, answer: response)
+                AnalyticsService.trackQuery(text: trimmed, type: .localStreak)
+                return
             }
         }
 
@@ -267,47 +230,17 @@ final class AppState: SearchHistoryTracking {
         }
 
         // Intercept single-stat lookup queries — "Judge home runs", "Ohtani OPS"
-        if let lookup = PlayerNameMatcher.parseSingleStatLookup(trimmed) {
+        // Only use local when an explicit season in 2016-2025 is specified
+        if let lookup = PlayerNameMatcher.parseSingleStatLookup(trimmed),
+           lookup.seasonExplicit, PlayerCardService.isLocalSeason(lookup.season) {
             let isPitching = PlayerCardService.isPitcher(name: lookup.name) || PlayerNameMatcher.isPitchingStat(lookup.stat)
-            let statPill = lookup.stat.pillName
-
-            // No year specified — inactive players with full career in local DB get career stats
-            if !lookup.seasonExplicit && !PlayerCardService.isActivePlayer(name: lookup.name)
-                && !PlayerCardService.playerNeedsBackendForCareer(name: lookup.name) {
-                // Inactive player, career fully in local DB → career stats
-                let response: String?
-                if isPitching {
-                    response = PlayerCardService.buildPitchingCareerLookup(name: lookup.name, stat: lookup.stat)
-                } else {
-                    response = PlayerCardService.buildCareerLookup(name: lookup.name, stat: lookup.stat)
-                }
-                if var response {
-                    if let bestYear = PlayerCardService.bestSeasonYear(name: lookup.name, isPitcher: isPitching) {
-                        response += "\n[SUGGEST]\(lookup.name) \(statPill) in \(bestYear)[/SUGGEST]"
-                    }
-                    messages.append(Message(role: .user, content: trimmed))
-                    messages.append(Message(role: .assistant, content: response))
-                    addToConversationHistory(question: trimmed, answer: response)
-                    lastResultContext = ResultContext(type: .statLookup, playerNames: [lookup.name], stat: lookup.stat, season: nil, originalQuery: trimmed)
-                    AnalyticsService.trackQuery(text: trimmed, type: .localCareer)
-                    return
-                }
-            }
-
-            // Active player or explicit season — show season stats (only if season is in local DB)
             let response: String?
-            if !PlayerCardService.isLocalSeason(lookup.season) {
-                response = nil  // current season → backend has fresh data
-            } else if isPitching {
+            if isPitching {
                 response = PlayerCardService.buildPitchingSingleStatLookup(name: lookup.name, stat: lookup.stat, season: lookup.season)
             } else {
                 response = PlayerCardService.buildSingleStatLookup(name: lookup.name, stat: lookup.stat, season: lookup.season)
             }
-            if var response {
-                // Active player with no explicit season → add career suggestion pill
-                if !lookup.seasonExplicit {
-                    response += "\n[SUGGEST]\(lookup.name) career \(statPill)[/SUGGEST]"
-                }
+            if let response {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)
@@ -317,25 +250,9 @@ final class AppState: SearchHistoryTracking {
             }
         }
 
-        // Intercept career lookup queries — "Judge career stats", "Judge career home runs"
-        // Only local if player's full career is within local DB range (2016-2025) and they're inactive
-        if let career = PlayerNameMatcher.parseCareerLookup(trimmed),
-           !PlayerCardService.isActivePlayer(name: career.name),
-           !PlayerCardService.playerNeedsBackendForCareer(name: career.name) {
-            let response: String?
-            if PlayerCardService.isPitcher(name: career.name) {
-                response = PlayerCardService.buildPitchingCareerLookup(name: career.name, stat: career.stat)
-            } else {
-                response = PlayerCardService.buildCareerLookup(name: career.name, stat: career.stat)
-            }
-            if let response {
-                messages.append(Message(role: .user, content: trimmed))
-                messages.append(Message(role: .assistant, content: response))
-                addToConversationHistory(question: trimmed, answer: response)
-                AnalyticsService.trackQuery(text: trimmed, type: .localCareer)
-                return
-            }
-        }
+        // Career lookup queries — "Judge career stats", "Judge career home runs"
+        // Always go to backend — career may include current season data (2026)
+        // (falls through to backend query pipeline below)
 
         // Intercept platoon splits queries — "Judge vs lefties", "Soto splits"
         // Must run BEFORE season lookup to avoid "Judge vs lefties last season" matching as a season query
@@ -790,41 +707,17 @@ final class AppState: SearchHistoryTracking {
 
         // Catch-all: any query with a recognizable player name + stat keyword.
         // Runs after all specific parsers — catches unusual phrasings that slipped through.
-        if let catchAll = PlayerNameMatcher.parseCatchAllPlayerStat(trimmed) {
+        // Only use local when an explicit season in 2016-2025 is specified
+        if let catchAll = PlayerNameMatcher.parseCatchAllPlayerStat(trimmed),
+           catchAll.seasonExplicit, PlayerCardService.isLocalSeason(catchAll.season) {
             let isPitching = PlayerCardService.isPitcher(name: catchAll.name) || PlayerNameMatcher.isPitchingStat(catchAll.stat)
-            let statPill = catchAll.stat.pillName
-
-            // Explicit career or (no year + inactive player) → career stats
-            if catchAll.isCareer || (!catchAll.seasonExplicit && !PlayerCardService.isActivePlayer(name: catchAll.name)) {
-                let response: String?
-                if isPitching {
-                    response = PlayerCardService.buildPitchingCareerLookup(name: catchAll.name, stat: catchAll.stat)
-                } else {
-                    response = PlayerCardService.buildCareerLookup(name: catchAll.name, stat: catchAll.stat)
-                }
-                if var response {
-                    if !catchAll.isCareer, let bestYear = PlayerCardService.bestSeasonYear(name: catchAll.name, isPitcher: isPitching) {
-                        response += "\n[SUGGEST]\(catchAll.name) \(statPill) in \(bestYear)[/SUGGEST]"
-                    }
-                    messages.append(Message(role: .user, content: trimmed))
-                    messages.append(Message(role: .assistant, content: response))
-                    addToConversationHistory(question: trimmed, answer: response)
-                    AnalyticsService.trackQuery(text: trimmed, type: .localCatchAll)
-                    return
-                }
-            }
-
-            // Active player or explicit season → season stats
             let response: String?
             if isPitching {
                 response = PlayerCardService.buildPitchingSingleStatLookup(name: catchAll.name, stat: catchAll.stat, season: catchAll.season)
             } else {
                 response = PlayerCardService.buildSingleStatLookup(name: catchAll.name, stat: catchAll.stat, season: catchAll.season)
             }
-            if var response {
-                if !catchAll.seasonExplicit {
-                    response += "\n[SUGGEST]\(catchAll.name) career \(statPill)[/SUGGEST]"
-                }
+            if let response {
                 messages.append(Message(role: .user, content: trimmed))
                 messages.append(Message(role: .assistant, content: response))
                 addToConversationHistory(question: trimmed, answer: response)

@@ -457,15 +457,15 @@ enum PlayerCardService {
         let playerIsPitcher = isPitcher(name: name)
         let playerIsTwoWay = !playerIsPitcher && isTwoWayPlayer(name: name)
 
-        // Fetch batting stats (all synchronous SQL)
-        let seasons = fetchAllSeasons(name: name)
-
-        // If local DB has no seasons (historical player), try backend
-        if seasons.isEmpty {
-            if let card = await fetchFromBackend(name: name) {
-                return card
-            }
+        // Always try the backend first — it has cron-refreshed current season data.
+        // The bundled DB is a release-time snapshot and may be missing 2026+ data.
+        // Fall back to local only if the backend request fails.
+        if let card = await fetchFromBackend(name: name) {
+            return card
         }
+
+        // Backend unavailable — fall back to local bundled DB
+        let seasons = fetchAllSeasons(name: name)
 
         // Career totals: use backend if player's career extends before local DB range
         let career: StatGridParser.StatGrid?
