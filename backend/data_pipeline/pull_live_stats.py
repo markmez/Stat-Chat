@@ -1369,6 +1369,21 @@ def main():
         # Compute platoon splits from play-by-play
         compute_platoon_splits(conn, args.season)
 
+        # Update prominence columns for iOS disambiguation
+        print("\nUpdating player prominence columns...")
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE players SET
+                career_games = COALESCE((SELECT SUM(s.games) FROM season_batting_stats s WHERE s.player_id = players.player_id), 0) +
+                               COALESCE((SELECT SUM(sp.games) FROM season_pitching_stats sp WHERE sp.player_id = players.player_id), 0),
+                last_season = MAX(
+                    COALESCE((SELECT MAX(s.season) FROM season_batting_stats s WHERE s.player_id = players.player_id), 0),
+                    COALESCE((SELECT MAX(sp.season) FROM season_pitching_stats sp WHERE sp.player_id = players.player_id), 0)
+                )
+        """)
+        conn.commit()
+        print(f"  Updated {cursor.rowcount} players")
+
         record_last_update(conn, args.season)
         conn.close()
 

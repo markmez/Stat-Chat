@@ -732,20 +732,19 @@ enum PlayerCardService {
     /// Format a split grid value based on its header type.
     private static func formatSplitValue(_ value: String, header: String) -> String {
         guard value != "--" else { return value }
+        // IP is pre-formatted from ip_outs (e.g. "69.2" = 69⅔ innings) — pass through
+        if header == "IP" { return value }
         guard let num = Double(value) else { return value }
         if rateHeaders.contains(header) {
             // Rate stat: 3 decimal places, strip leading zero
             return formatRate(String(format: "%.3f", num))
         } else if decimalHeaders.contains(header) {
-            // Decimal stat (ERA, WHIP, etc.): keep as-is but clean trailing zeros
+            // Decimal stat (ERA, WHIP, etc.): keep appropriate precision
             if header == "ERA" || header == "WHIP" || header == "K_BB" {
                 return String(format: "%.2f", num)
             } else {
                 return String(format: "%.1f", num)
             }
-        } else if header == "IP" {
-            // IP is special — keep one decimal
-            return String(format: "%.1f", num)
         } else {
             // Counting stat: integer display
             return "\(Int(num))"

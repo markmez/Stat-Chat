@@ -772,7 +772,7 @@ def _fetch_current_form(conn, name, season):
                 _safe_str(row[11], 0), _safe_str(row[12], 0),
                 _safe_str(row[13]), _safe_str(row[14]),
                 _safe_str(row[15]), _safe_str(row[16])]
-        grid = SplitGrid(headers=headers, rows=[SplitRow(label="Current Form", values=vals)])
+        grid = SplitGrid(headers=headers, rows=[SplitRow(label="", values=vals)])
 
         # Counting values for form period
         counting = {
@@ -1022,7 +1022,7 @@ def _fetch_pitching_current_form(conn, name, season):
         vals = [_safe_str(num_games, 0), ip, _safe_str(row[6], 0), _safe_str(row[7], 0),
                 _safe_str(row[8], 0), _safe_str(row[9], 0), _safe_str(row[10], 0),
                 _safe_str(row[11], 2), _safe_str(row[12], 2), _safe_str(row[13], 1)]
-        grid = SplitGrid(headers=headers, rows=[SplitRow(label="Current Form", values=vals)])
+        grid = SplitGrid(headers=headers, rows=[SplitRow(label="", values=vals)])
 
         counting = {
             "G": num_games, "IP_OUTS": ip_outs, "H": _safe_int(row[6]),

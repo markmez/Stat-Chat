@@ -811,77 +811,18 @@ struct PlayerCardView: View {
         let formattedDate = PlayerCardService.formatDateShort(formStartDate)
 
         return AnyView(VStack(alignment: .leading, spacing: 8) {
-            Text("Current Hot Streak")
+            Text("Hot Streak")
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 20)
 
             VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 4) {
-                        Text("Since \(formattedDate) (\(formNumGames) games)")
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-
-                        if pitchingFormSliderGameNumber != nil {
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.15)) {
-                                    pitchingFormSliderGameNumber = nil
-                                }
-                            } label: {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "arrow.counterclockwise")
-                                        .font(.system(size: 12, weight: .semibold))
-                                    Text("Reset")
-                                        .font(.system(.caption2, design: .rounded, weight: .medium))
-                                }
-                                .foregroundStyle(deepBlue.opacity(0.7))
-                            }
-                            .buttonStyle(.plain)
-                            .transition(.opacity)
-                        }
-                    }
-                    .padding(.horizontal, 14)
-
-                    ZStack {
-                        let sliderMax = Double(max(form.totalSeasonGames, 2))
-                        Slider(
-                            value: Binding<Double>(
-                                get: { form.totalSeasonGames < 2 ? sliderMax : Double(numGamesShown) },
-                                set: { newValue in
-                                    pitchingFormSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
-                                }
-                            ),
-                            in: 1...sliderMax,
-                            step: 1
-                        )
-                        .tint(deepBlue)
-                        .disabled(form.totalSeasonGames < 2)
-
-                        if pitchingFormSliderGameNumber != nil {
-                            GeometryReader { geo in
-                                let range = Double(max(form.totalSeasonGames, 2)) - 1
-                                let pct = range > 0 ? (Double(form.numGames) - 1) / range : 0
-                                let trackWidth = geo.size.width - 28
-                                let xPos = 14 + trackWidth * pct
-
-                                Rectangle()
-                                    .fill(deepBlue.opacity(0.5))
-                                    .frame(width: 2, height: 14)
-                                    .position(x: xPos, y: geo.size.height / 2)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 14)
+                HStack(spacing: 4) {
+                    Text("Since \(formattedDate) (\(formNumGames) games)")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
                 }
-                .onAppear {
-                    if pitchingGameLogs == nil {
-                        pitchingGameLogs = PlayerCardService.fetchPitchingGameLogsForSeason(
-                            name: playerName, season: season.year
-                        )
-                    }
-                }
+                .padding(.horizontal, 14)
 
                 StatGridView(grid: formGrid, suppressBackground: true)
 
@@ -1238,79 +1179,18 @@ struct PlayerCardView: View {
             : [.pace]
 
         return AnyView(VStack(alignment: .leading, spacing: 8) {
-            Text("Current Hot Streak")
+            Text("Hot Streak")
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 20)
 
             VStack(alignment: .leading, spacing: 12) {
-                // Subtitle + slider
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 4) {
-                        Text("Since \(formattedDate) (\(formNumGames) games)")
-                            .font(.system(.subheadline, design: .rounded))
-                            .foregroundStyle(.secondary)
-
-                        if formSliderGameNumber != nil {
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.15)) {
-                                    formSliderGameNumber = nil
-                                }
-                            } label: {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "arrow.counterclockwise")
-                                        .font(.system(size: 12, weight: .semibold))
-                                    Text("Reset")
-                                        .font(.system(.caption2, design: .rounded, weight: .medium))
-                                }
-                                .foregroundStyle(deepBlue.opacity(0.7))
-                            }
-                            .buttonStyle(.plain)
-                            .transition(.opacity)
-                        }
-                    }
-                    .padding(.horizontal, 14)
-
-                    ZStack {
-                        let sliderMax = Double(max(form.totalSeasonGames, 2))
-                        Slider(
-                            value: Binding<Double>(
-                                get: { form.totalSeasonGames < 2 ? sliderMax : Double(numGamesShown) },
-                                set: { newValue in
-                                    formSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
-                                }
-                            ),
-                            in: 1...sliderMax,
-                            step: 1
-                        )
-                        .tint(deepBlue)
-                        .disabled(form.totalSeasonGames < 2)
-
-                        // Tick mark at detected position — only visible when slider has moved away
-                        if formSliderGameNumber != nil {
-                            GeometryReader { geo in
-                                let range = Double(max(form.totalSeasonGames, 2)) - 1
-                                let pct = range > 0 ? (Double(form.numGames) - 1) / range : 0
-                                let trackWidth = geo.size.width - 28
-                                let xPos = 14 + trackWidth * pct
-
-                                Rectangle()
-                                    .fill(deepBlue.opacity(0.5))
-                                    .frame(width: 2, height: 14)
-                                    .position(x: xPos, y: geo.size.height / 2)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 14)
+                HStack(spacing: 4) {
+                    Text("Since \(formattedDate) (\(formNumGames) games)")
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.secondary)
                 }
-                .onAppear {
-                    if gameLogs == nil {
-                        gameLogs = PlayerCardService.fetchGameLogsForSeason(
-                            name: playerName, season: season.year
-                        )
-                    }
-                }
+                .padding(.horizontal, 14)
 
                 StatGridView(grid: formGrid, suppressBackground: true)
 
