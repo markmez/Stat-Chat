@@ -507,7 +507,7 @@ def _fetch_pitching_career_home_away_splits(conn: sqlite3.Connection, name: str)
         """
         SELECT phas.split,
                SUM(phas.games), SUM(phas.games_started),
-               CAST(SUM(phas.ip_outs) / 3 AS TEXT) || '.' || CAST(SUM(phas.ip_outs) %% 3 AS TEXT),
+               CAST(SUM(phas.ip_outs) / 3 AS TEXT) || '.' || CAST(SUM(phas.ip_outs) % 3 AS TEXT),
                SUM(phas.hits), SUM(phas.earned_runs), SUM(phas.home_runs),
                SUM(phas.walks), SUM(phas.strikeouts),
                ROUND(9.0 * CAST(SUM(phas.earned_runs) AS REAL) / NULLIF(SUM(phas.ip_outs) / 3.0, 0), 2),

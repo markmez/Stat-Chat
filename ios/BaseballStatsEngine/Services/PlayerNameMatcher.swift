@@ -1951,6 +1951,7 @@ enum PlayerNameMatcher {
     /// Sort player names by prominence: current players first, then by career games descending.
     /// Returns (sortedNames, dominantIndex?) — dominantIndex is set when one player is clearly
     /// more relevant (e.g., only current player, or vastly more career games).
+    /// Uses career_games and last_season columns from the players table (no stats tables needed).
     static func sortByProminence(_ names: [String]) -> (sorted: [String], dominantIndex: Int?) {
         guard names.count > 1 else { return (names, names.count == 1 ? 0 : nil) }
 
@@ -1962,23 +1963,12 @@ enum PlayerNameMatcher {
             let sanitized = name.replacingOccurrences(of: "'", with: "''")
             var lastSeason = 0
             var totalGames = 0
-            // Batting
             if let result = try? db.execute(sql: """
-                SELECT COALESCE(MAX(s.season), 0), COALESCE(SUM(s.games), 0)
-                FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id
-                WHERE p.name = '\(sanitized)'
+                SELECT COALESCE(last_season, 0), COALESCE(career_games, 0)
+                FROM players WHERE name = '\(sanitized)'
                 """), let row = result.rows.first {
-                lastSeason = max(lastSeason, Int(row[0]) ?? 0)
-                totalGames += Int(row[1]) ?? 0
-            }
-            // Pitching
-            if let result = try? db.execute(sql: """
-                SELECT COALESCE(MAX(sp.season), 0), COALESCE(SUM(sp.games), 0)
-                FROM season_pitching_stats sp JOIN players p ON sp.player_id = p.player_id
-                WHERE p.name = '\(sanitized)'
-                """), let row = result.rows.first {
-                lastSeason = max(lastSeason, Int(row[0]) ?? 0)
-                totalGames += Int(row[1]) ?? 0
+                lastSeason = Int(row[0]) ?? 0
+                totalGames = Int(row[1]) ?? 0
             }
             infos.append((name, lastSeason, totalGames))
         }

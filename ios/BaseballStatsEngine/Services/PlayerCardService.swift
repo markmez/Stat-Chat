@@ -229,22 +229,10 @@ enum PlayerCardService {
     static func isActivePlayer(name: String) -> Bool {
         let currentYear = Calendar.current.component(.year, from: Date())
         let sql = """
-            SELECT MAX(s.season) FROM season_batting_stats s
-            JOIN players p ON s.player_id = p.player_id
-            WHERE p.name = '\(sanitize(name))'
+            SELECT COALESCE(last_season, 0) FROM players
+            WHERE name = '\(sanitize(name))'
             """
         if let result = try? db.execute(sql: sql),
-           let row = result.rows.first,
-           let year = Int(row[0]),
-           year >= currentYear - 1 {
-            return true
-        }
-        let pitchSql = """
-            SELECT MAX(sp.season) FROM season_pitching_stats sp
-            JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name = '\(sanitize(name))'
-            """
-        if let result = try? db.execute(sql: pitchSql),
            let row = result.rows.first,
            let year = Int(row[0]),
            year >= currentYear - 1 {
@@ -262,56 +250,23 @@ enum PlayerCardService {
     /// Find a player's most recent season year (batting or pitching).
     static func mostRecentSeason(name: String) -> Int? {
         let sql = """
-            SELECT MAX(s.season) FROM season_batting_stats s
-            JOIN players p ON s.player_id = p.player_id
-            WHERE p.name = '\(sanitize(name))'
+            SELECT last_season FROM players
+            WHERE name = '\(sanitize(name))' AND last_season > 0
             """
         if let result = try? db.execute(sql: sql),
            let row = result.rows.first,
-           let year = Int(row[0]) {
-            return year
-        }
-        let pitchSql = """
-            SELECT MAX(sp.season) FROM season_pitching_stats sp
-            JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name = '\(sanitize(name))'
-            """
-        if let result = try? db.execute(sql: pitchSql),
-           let row = result.rows.first,
-           let year = Int(row[0]) {
+           let year = Int(row[0]),
+           year > 0 {
             return year
         }
         return nil
     }
 
     /// Find a player's best season year by OPS (batters) or ERA (pitchers).
+    /// With backend-only architecture, we don't have season stats locally.
+    /// Returns most recent season as a reasonable fallback.
     static func bestSeasonYear(name: String, isPitcher: Bool) -> Int? {
-        if isPitcher {
-            let sql = """
-                SELECT sp.season FROM season_pitching_stats sp
-                JOIN players p ON sp.player_id = p.player_id
-                WHERE p.name = '\(sanitize(name))' AND sp.innings_pitched >= 50
-                ORDER BY sp.era ASC LIMIT 1
-                """
-            if let result = try? db.execute(sql: sql),
-               let row = result.rows.first,
-               let year = Int(row[0]) {
-                return year
-            }
-        } else {
-            let sql = """
-                SELECT s.season FROM season_batting_stats s
-                JOIN players p ON s.player_id = p.player_id
-                WHERE p.name = '\(sanitize(name))' AND s.at_bats >= 100
-                ORDER BY s.ops DESC LIMIT 1
-                """
-            if let result = try? db.execute(sql: sql),
-               let row = result.rows.first,
-               let year = Int(row[0]) {
-                return year
-            }
-        }
-        return nil
+        return mostRecentSeason(name: name)
     }
 
     // MARK: - Universal season resolution
@@ -655,7 +610,7 @@ enum PlayerCardService {
                 "\(s.CG)", "\(s.QS)", s.IP, "\(s.H)", "\(s.R)", "\(s.ER)",
                 "\(s.HR)", "\(s.BB)", "\(s.IBB)", "\(s.SO)", "\(s.HBP)", "\(s.WP)",
                 "\(s.BK)", "\(s.BF)", "\(s.SH)", "\(s.SF)", "\(s.SB_allowed)", "\(s.CS_allowed)",
-                s.ERA, s.WHIP, s.K9, s.BB9, s.K_BB, s.H9, s.HR9, s.BAA, s.ERA_plus
+                s.ERA, s.WHIP, s.K9, s.BB9, s.K_BB, s.H9, s.HR9, formatRate(s.BAA), s.ERA_plus
             ]
             let displayValues = filterPitchingForDisplay(values)
             let grid = StatGridParser.StatGrid(
@@ -755,11 +710,46 @@ enum PlayerCardService {
     }
 
     /// Convert a backend SplitGridData to StatGridParser.StatGrid.
+    /// Rate stat headers — values should be .XXX format (no leading zero unless >= 1.000)
+    private static let rateHeaders: Set<String> = [
+        "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP", "BAA", "FLD%"
+    ]
+    /// Stats that should stay as decimal (not integers, not rate-formatted)
+    private static let decimalHeaders: Set<String> = [
+        "ERA", "WHIP", "K/9", "BB/9", "K_BB", "H/9", "HR/9", "K9", "BB9", "H9", "HR9"
+    ]
+
     private static func convertSplitGrid(_ grid: BackendService.SplitGridData) -> StatGridParser.StatGrid {
         let rows = grid.rows.map { row in
-            StatGridParser.StatGrid.Row(label: row.label, values: row.values)
+            let formatted = zip(grid.headers, row.values).map { header, value in
+                formatSplitValue(value, header: header)
+            }
+            return StatGridParser.StatGrid.Row(label: row.label, values: formatted)
         }
         return StatGridParser.StatGrid(headers: grid.headers, rows: rows)
+    }
+
+    /// Format a split grid value based on its header type.
+    private static func formatSplitValue(_ value: String, header: String) -> String {
+        guard value != "--" else { return value }
+        guard let num = Double(value) else { return value }
+        if rateHeaders.contains(header) {
+            // Rate stat: 3 decimal places, strip leading zero
+            return formatRate(String(format: "%.3f", num))
+        } else if decimalHeaders.contains(header) {
+            // Decimal stat (ERA, WHIP, etc.): keep as-is but clean trailing zeros
+            if header == "ERA" || header == "WHIP" || header == "K_BB" {
+                return String(format: "%.2f", num)
+            } else {
+                return String(format: "%.1f", num)
+            }
+        } else if header == "IP" {
+            // IP is special — keep one decimal
+            return String(format: "%.1f", num)
+        } else {
+            // Counting stat: integer display
+            return "\(Int(num))"
+        }
     }
 
     /// Build career totals grid from an array of SeasonData (for backend-sourced players).
