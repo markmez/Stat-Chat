@@ -4,7 +4,7 @@
 - **Location**: `/Users/markmezrich/Documents/claude/BaseballStatsEngine/`
 - **Design doc**: `/Users/markmezrich/Documents/claude/baseball design doc.pdf`
 - **What it is**: iOS app (Swift/SwiftUI) that answers natural language baseball questions using real data. Claude translates questions to SQL, SQLite provides ground truth.
-- **Current phase**: iOS app + backend deployed with live data. MySportsFeeds DETAILS tier integration live (season stats + game logs + play-by-play platoon splits), cron refresh every 4 hours. Career splits implemented.
+- **Current phase**: iOS app + backend deployed with live data. **Backend-only architecture (2026-03-18)** — all stats queries route to backend, iOS bundled DB stripped to players table only (~1.6MB). Backend interceptor handles 26 query types structurally at zero Claude cost. MSF DETAILS tier, cron refresh every 4 hours.
 
 ### Data Pipeline (Retrosheet-native)
 - `data_pipeline/pull_stats.py` — pulls ALL data from Retrosheet: season stats (batting + pitching), game-level logs, platoon splits (Chadwick Bureau), home/away splits, fielding stats, and player bio data. **2016-2025 data loaded (10 years)** — 3,782 players, 14,173 batting season stats, 8,233 pitching season stats, 661,313 batting game logs, 195,734 pitching game logs, 15,379 platoon splits, 16,391 pitching platoon splits, 27,558 home/away splits, 22,303 fielding stats.
@@ -44,14 +44,15 @@
 - **Location**: `ios/`
 - **Xcode project**: Generated via XcodeGen (`project.yml`), iOS 17.0+, Swift 6, zero dependencies
 - **Architecture**: SwiftUI + @Observable + @MainActor for strict concurrency
-- **Key files**: `AppState.swift` (state + local interception), `QueryEngine.swift` (orchestrator + local routing/stat explanations/name extraction), `AnthropicService.swift` (Claude API with SSE streaming, prompt caching, Haiku routing), `DatabaseService.swift` (SQLite C API), `PromptStore.swift` (all prompts), `KeychainHelper.swift` (API key storage), `StatDefinitions.swift` (local stat definitions for zero-cost explanations)
-- **Views**: `HomeView` (search + animated sample queries), `ResultsView` (results + follow-up), `ResultCard` (user/assistant/error styling), `APIKeySetupView` (first-launch + settings), `AnimatedPlaceholder`, `LoadingIndicator`
+- **Key files**: `AppState.swift` (routing — stat defs + disambiguation only, everything else → backend), `BackendService.swift` (Railway API, SSE streaming), `DatabaseService.swift` (SQLite C API — players table only), `PlayerNameMatcher.swift` (query parsing against local players table), `PlayerCardService.swift` (backend-first player cards), `StatDefinitions.swift` (local stat definitions for zero-cost explanations)
+- **Views**: `HomeView` (search + animated sample queries), `ResultsView` (results + follow-up), `ResultCard` (user/assistant/error styling), `AnimatedPlaceholder`, `LoadingIndicator`
 - **Streaming**: SSE parsing via `URLSession.shared.bytes(for:)`, typewriter effect via callback-based `onChunk` pattern
-- **Database**: 220MB `baseball_stats.db` bundled in Resources (read-only, 1898-2026 including spring training). `localMinYear = 2016`, `localMaxYear = 2026` in `PlayerCardService.swift`. `playerNeedsBackendForCareer()` uses strict `<` — only pre-2016 players hit backend.
+- **Database**: **~1.6MB** `baseball_stats.db` bundled in Resources — `players` table only (24,110 rows) for name matching/disambiguation. All stats tables removed (2026-03-18).
 - **Stat grid**: 21 stats (G through BABIP, PA and SF excluded for compact 3-row display). Career rows show "--" for OPS+ (multi-season weighting not implemented).
 - **Player card bio**: Dynamic age computed from birthdate (updates on player's birthday). Header shows handedness (Bats R / Throws R). About section shows birth date.
-- **Query routing**: `simple_lookup`, `streak_finder`, `current_form`, `stat_explanation` — local `classifyLocally()` handles obvious patterns first, then Claude Haiku classifies the rest. `AppState` intercepts ~25% of queries locally before `QueryEngine`.
+- **Query routing (backend-only, 2026-03-18)**: AppState handles only: (1) paywall check, (2) stat definitions (hardcoded, free), (3) player disambiguation (players table). Everything else → backend streaming path. Backend `interceptor.py` handles 26 query types structurally at zero Claude cost. All local stats intercepts removed (~600 lines).
 - **ResultsView layout**: Follow-up input hidden during loading, appears inline below short results or pinned to bottom for long results
+- **Dead code note**: `resolveContextualFollowUp`, `resolveReferentialFollowUp`, `extractPlayerNamesFromResponse`, `lastResultContext` in AppState are dead code (referenced local stats tables that no longer exist). `PlayerCardService` build* functions also dead code (no longer called from AppState). SuggestionEngine dynamic queries return empty (stats tables gone), falls back to 50 curated defaults.
 
 ### Player name matching & common-word collisions
 Two separate code paths for player name resolution, each with different intent:
@@ -179,12 +180,12 @@ We download Retrosheet season ZIPs that contain 7 CSV files. We now use **battin
 - ~~`throw` (L/R) — throw hand~~ DONE (stored as `throws` in players table)
 - `first_g`, `last_g` — career date range. Could enable "active in year X" queries.
 
-### Database size & bundling strategy
-Current DB (1898-2026): **220 MB** bundled in-app — full historical data + 2026 spring training. All three copies must stay in sync: project root `baseball_stats.db`, iOS bundle `ios/.../Resources/baseball_stats.db`, and S3 `baseball_stats_full.db`. Backend Docker image also bakes in the DB at `/app/seed_db/`.
-
-**Strategy: full DB everywhere + live refresh.** 220 MB compresses to ~110-120 MB in IPA, under iOS 200 MB cellular limit. Current-season data refreshed on backend every 4 hours via cron. Bundled DB updated with each app release.
-
-**Important:** When updating the bundled DB, always copy the rebuilt `baseball_stats.db` from the project root into `ios/BaseballStatsEngine/Resources/baseball_stats.db`. They are separate files — the pipeline writes to the project root, but the app bundles from Resources.
+### Database strategy (backend-only, 2026-03-18)
+- **iOS bundled DB**: ~1.6MB — `players` table only (24,110 rows). All stats tables stripped. Used for name matching/disambiguation only.
+- **Backend DB**: ~240MB on Railway volume at `/data/baseball_stats_full.db`. Full historical data 1898-2026, ~26 tables. Cron-refreshed every 4 hours.
+- **Project root DB**: `baseball_stats.db` (~240MB) — the full DB used for pipeline work and S3 uploads.
+- **S3 DB**: `s3://stat-chat/baseball_stats_full.db` — staging area for transferring large DBs to Railway when `railway up` times out.
+- **DB update procedure**: Update project root DB → upload to S3 (`aws s3 cp baseball_stats.db s3://stat-chat/baseball_stats_full.db`) → trigger backend re-download (`POST /admin/redownload-db` with `Authorization: Bearer {ADMIN_KEY}`)
 
 **DANGER: Do NOT re-run `pull_stats.py` (Retrosheet pipeline) without precaution.** It rebuilds `baseball_stats.db` from scratch with only 2016-2025 Retrosheet data, wiping all historical (pre-2016) and live (2026) data. If you need to rerun it, back up `baseball_stats.db` first and merge the results. `pull_live_stats.py` (MSF) is safe — it only inserts/updates current-season rows.
 
@@ -242,11 +243,11 @@ Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The ma
 - **Pipeline flow**: season batting → league averages + OPS+ → season pitching → pitching averages + ERA+ → daily game logs → home/away splits (from game logs) → platoon splits (from play-by-play) → streak detection (all 8 passes filtered by season) → record freshness timestamp
 - **Play-by-play derived splits (2025-2026)**: Pitch type splits (4-Seam, Sinker, Slider, etc.), count splits (all 12 ball-strike counts), RISP splits (runners in scoring position vs non-RISP) — all derived from MSF play-by-play `atBat` data. Tables: `pitch_type_batting_splits`, `pitch_type_pitching_splits`, `count_batting_splits`, `count_pitching_splits`, `risp_batting_splits`, `risp_pitching_splits`. Player card tabs: "By Pitch", "By Count", "RISP".
 
-### iOS backend integration
+### iOS backend integration (backend-only, 2026-03-18)
 - `BackendService.swift`: POST /query (SSE streaming), GET /player-card (structured JSON with career splits), 10s timeout on player card requests
 - `deviceId` (UUID in UserDefaults) for metering
-- All local intercepts unchanged — comparisons, leaderboards, season lookups, splits hit local DB
-- Backend used for: Claude-routed queries, pre-2016 player cards, career data for cross-boundary players
+- **ALL stats queries → backend**. No local intercepts for stats. Backend `interceptor.py` handles 26 query types structurally (comparisons, leaderboards, streaks, splits, etc.) at zero Claude cost.
+- Local DB used ONLY for: player name matching/disambiguation in `PlayerNameMatcher`
 - **Git tag** `ios-direct-anthropic-stable` — rollback point to direct Anthropic API
 
 ### Priority roadmap (in order)

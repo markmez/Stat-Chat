@@ -116,6 +116,48 @@ class SplitGrid(BaseModel):
     rows: List[SplitRow]
 
 
+class SeasonSplits(BaseModel):
+    year: int
+    platoon: Optional[SplitGrid] = None
+    home_away: Optional[SplitGrid] = None
+    risp: Optional[SplitGrid] = None
+    pitch_type: Optional[List[SplitGrid]] = None  # array of single-row grids
+    count: Optional[List[SplitGrid]] = None  # array of single-row grids
+    streaks: Optional[SplitGrid] = None
+    fielding: Optional[SplitGrid] = None
+
+
+class CurrentForm(BaseModel):
+    form_start_date: str
+    form_start_game_number: int
+    total_season_games: int
+    num_games: int
+    stats: SplitGrid  # reuse SplitGrid for the stat grid
+    counting_values: dict
+    season_counting_values: dict
+
+
+class PitchingCurrentForm(BaseModel):
+    form_start_date: str
+    form_start_game_number: int
+    total_season_games: int
+    num_games: int
+    role: str
+    stats: SplitGrid
+    counting_values: dict
+    season_counting_values: dict
+
+
+class PitchingSeasonSplits(BaseModel):
+    year: int
+    platoon: Optional[SplitGrid] = None
+    home_away: Optional[SplitGrid] = None
+    risp: Optional[SplitGrid] = None
+    pitch_type: Optional[List[SplitGrid]] = None
+    count: Optional[List[SplitGrid]] = None
+    streaks: Optional[SplitGrid] = None
+
+
 class PlayerCardResponse(BaseModel):
     player_info: Optional[PlayerInfo] = None
     batting_seasons: List[BattingSeason] = []
@@ -126,6 +168,10 @@ class PlayerCardResponse(BaseModel):
     career_home_away_splits: Optional[SplitGrid] = None
     pitching_career_platoon_splits: Optional[SplitGrid] = None
     pitching_career_home_away_splits: Optional[SplitGrid] = None
+    season_splits: List[SeasonSplits] = []
+    pitching_season_splits: List[PitchingSeasonSplits] = []
+    current_form: Optional[dict] = None
+    pitching_current_form: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +537,521 @@ def _fetch_pitching_career_home_away_splits(conn: sqlite3.Connection, name: str)
 
 
 # ---------------------------------------------------------------------------
+# Per-season split helpers
+# ---------------------------------------------------------------------------
+
+def _fetch_season_platoon_splits(conn, name, season):
+    """Fetch per-season batting platoon splits."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT ps.split, ps.at_bats, ps.hits, ps.doubles, ps.triples, ps.home_runs,
+                   ps.rbi, ps.walks, ps.strikeouts,
+                   ps.batting_avg, ps.obp, ps.slg, ps.ops, ps.iso, ps.babip
+            FROM platoon_splits ps
+            JOIN players p ON ps.player_id = p.player_id
+            WHERE p.name = ? AND ps.season = ?
+            ORDER BY ps.split
+        """, (_sanitize(name), season))
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+        grid_rows = []
+        for r in rows[:2]:
+            label = "vs LHP" if r[0] == "vs_LHP" else "vs RHP"
+            vals = [_safe_str(v) for v in r[1:]]
+            grid_rows.append(SplitRow(label=label, values=vals))
+        return SplitGrid(headers=headers, rows=grid_rows) if grid_rows else None
+    except Exception:
+        return None
+
+
+def _fetch_season_home_away_splits(conn, name, season):
+    """Fetch per-season batting home/away splits."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT has.split, has.games, has.at_bats, has.runs, has.hits,
+                   has.doubles, has.triples, has.home_runs, has.rbi,
+                   has.walks, has.strikeouts,
+                   has.batting_avg, has.obp, has.slg, has.ops, has.iso, has.babip
+            FROM home_away_splits has
+            JOIN players p ON has.player_id = p.player_id
+            WHERE p.name = ? AND has.season = ?
+            ORDER BY has.split DESC
+        """, (_sanitize(name), season))
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        headers = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+        grid_rows = []
+        for r in rows[:2]:
+            label = "Home" if r[0] == "home" else "Away"
+            vals = [_safe_str(v) for v in r[1:]]
+            grid_rows.append(SplitRow(label=label, values=vals))
+        return SplitGrid(headers=headers, rows=grid_rows) if grid_rows else None
+    except Exception:
+        return None
+
+
+def _fetch_season_risp_splits(conn, name, season):
+    """Fetch per-season batting RISP splits."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT rs.split, rs.at_bats, rs.hits, rs.doubles, rs.triples, rs.home_runs,
+                   rs.rbi, rs.walks, rs.strikeouts,
+                   rs.batting_avg, rs.obp, rs.slg, rs.ops, rs.iso, rs.babip
+            FROM risp_batting_splits rs
+            JOIN players p ON rs.player_id = p.player_id
+            WHERE p.name = ? AND rs.season = ?
+            ORDER BY rs.split DESC
+        """, (_sanitize(name), season))
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+        grid_rows = []
+        for r in rows[:2]:
+            label = "RISP" if r[0] == "RISP" else "Non-RISP"
+            vals = [_safe_str(v) for v in r[1:]]
+            grid_rows.append(SplitRow(label=label, values=vals))
+        return SplitGrid(headers=headers, rows=grid_rows) if grid_rows else None
+    except Exception:
+        return None
+
+
+def _fetch_season_pitch_type_batting(conn, name, season):
+    """Fetch per-season batting pitch type splits. Returns list of single-row SplitGrids."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT pts.pitch_type, pts.at_bats, pts.hits, pts.doubles, pts.triples,
+                   pts.home_runs, pts.rbi, pts.walks, pts.strikeouts,
+                   pts.batting_avg, pts.obp, pts.slg, pts.ops
+            FROM pitch_type_batting_splits pts
+            JOIN players p ON pts.player_id = p.player_id
+            WHERE p.name = ? AND pts.season = ?
+            ORDER BY pts.at_bats DESC
+        """, (_sanitize(name), season))
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        grids = []
+        for r in rows:
+            label = r[0]
+            vals = [_safe_str(v) for v in r[1:]]
+            grids.append(SplitGrid(headers=headers, rows=[SplitRow(label=label, values=vals)]))
+        return grids if grids else None
+    except Exception:
+        return None
+
+
+def _fetch_season_count_batting(conn, name, season):
+    """Fetch per-season batting count splits. Returns list of single-row SplitGrids."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT cs.count_state, cs.at_bats, cs.hits, cs.doubles, cs.triples,
+                   cs.home_runs, cs.rbi, cs.walks, cs.strikeouts,
+                   cs.batting_avg, cs.obp, cs.slg, cs.ops
+            FROM count_batting_splits cs
+            JOIN players p ON cs.player_id = p.player_id
+            WHERE p.name = ? AND cs.season = ?
+            ORDER BY cs.count_state
+        """, (_sanitize(name), season))
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        grids = []
+        for r in rows:
+            label = r[0]
+            vals = [_safe_str(v) for v in r[1:]]
+            grids.append(SplitGrid(headers=headers, rows=[SplitRow(label=label, values=vals)]))
+        return grids if grids else None
+    except Exception:
+        return None
+
+
+def _fetch_season_streaks(conn, name, season, performance="hot"):
+    """Fetch per-season batting streaks with 3-tier fallback."""
+    try:
+        order_dir = "ASC" if performance == "cold" else "DESC"
+        tables = ["streaks", "streaks_sensitive", "streaks_sliding"]
+        rows = None
+        for table in tables:
+            cur = conn.cursor()
+            cur.execute(f"""
+                SELECT st.start_date, st.end_date, st.num_games,
+                       st.at_bats, st.hits, st.walks, st.strikeouts,
+                       st.batting_avg, st.obp, st.slg, st.ops, st.home_runs
+                FROM {table} st
+                JOIN players p ON st.player_id = p.player_id
+                WHERE p.name = ? AND st.season = ? AND st.performance = ?
+                ORDER BY st.ops {order_dir}
+            """, (_sanitize(name), season, performance))
+            rows = cur.fetchall()
+            if rows:
+                break
+        if not rows:
+            return None
+        headers = ["G", "AB", "H", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "HR"]
+        grid_rows = []
+        for r in rows[:4]:
+            start = r[0] or ""
+            end = r[1] or ""
+            label = f"{start} – {end}"
+            vals = [_safe_str(r[2], 0), _safe_str(r[3], 0), _safe_str(r[4], 0),
+                    _safe_str(r[5], 0), _safe_str(r[6], 0),
+                    _safe_str(r[7]), _safe_str(r[8]), _safe_str(r[9]), _safe_str(r[10]),
+                    _safe_str(r[11], 0)]
+            grid_rows.append(SplitRow(label=label, values=vals))
+        return SplitGrid(headers=headers, rows=grid_rows) if grid_rows else None
+    except Exception:
+        return None
+
+
+def _fetch_season_fielding(conn, name, season):
+    """Fetch per-season fielding stats."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT sfs.position, sfs.putouts, sfs.assists, sfs.errors, sfs.double_plays,
+                   sfs.passed_balls, sfs.fielding_pct
+            FROM season_fielding_stats sfs
+            JOIN players p ON sfs.player_id = p.player_id
+            WHERE p.name = ? AND sfs.season = ? AND sfs.games > 0
+            ORDER BY sfs.games DESC
+        """, (_sanitize(name), season))
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        has_pb = any((r[5] or 0) > 0 for r in rows)
+        headers = ["PO", "A", "E", "DP"]
+        if has_pb:
+            headers.append("PB")
+        headers.append("FLD%")
+        grid_rows = []
+        for r in rows:
+            vals = [_safe_str(r[1], 0), _safe_str(r[2], 0), _safe_str(r[3], 0), _safe_str(r[4], 0)]
+            if has_pb:
+                vals.append(_safe_str(r[5], 0))
+            vals.append(_safe_str(r[6]))
+            grid_rows.append(SplitRow(label=r[0] or "?", values=vals))
+        return SplitGrid(headers=headers, rows=grid_rows) if grid_rows else None
+    except Exception:
+        return None
+
+
+def _fetch_current_form(conn, name, season):
+    """Fetch batting current form for a season."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT cf.form_start_date, cf.form_start_game_number, cf.total_season_games, cf.num_games,
+                   cf.at_bats, cf.hits, cf.doubles, cf.triples, cf.home_runs,
+                   cf.runs, cf.rbi, cf.walks, cf.strikeouts,
+                   cf.batting_avg, cf.obp, cf.slg, cf.ops,
+                   cf.season_at_bats, cf.season_hits, cf.season_doubles, cf.season_triples,
+                   cf.season_home_runs, cf.season_runs, cf.season_rbi,
+                   cf.season_walks, cf.season_strikeouts
+            FROM current_form cf
+            JOIN players p ON cf.player_id = p.player_id
+            WHERE p.name = ? AND cf.season = ?
+        """, (_sanitize(name), season))
+        row = cur.fetchone()
+        if not row:
+            return None
+        num_games = _safe_int(row[3])
+        headers = ["G", "AB", "R", "H", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        vals = [_safe_str(num_games, 0), _safe_str(row[4], 0), _safe_str(row[9], 0),
+                _safe_str(row[5], 0), _safe_str(row[8], 0), _safe_str(row[10], 0),
+                _safe_str(row[11], 0), _safe_str(row[12], 0),
+                _safe_str(row[13]), _safe_str(row[14]),
+                _safe_str(row[15]), _safe_str(row[16])]
+        grid = SplitGrid(headers=headers, rows=[SplitRow(label="Current Form", values=vals)])
+
+        # Counting values for form period
+        counting = {
+            "G": num_games, "AB": _safe_int(row[4]), "H": _safe_int(row[5]),
+            "2B": _safe_int(row[6]), "3B": _safe_int(row[7]), "HR": _safe_int(row[8]),
+            "R": _safe_int(row[9]), "RBI": _safe_int(row[10]),
+            "BB": _safe_int(row[11]), "SO": _safe_int(row[12]),
+        }
+
+        # Season counting values (stored directly in the current_form table)
+        season_counting = {
+            "AB": _safe_int(row[17]), "H": _safe_int(row[18]),
+            "2B": _safe_int(row[19]), "3B": _safe_int(row[20]),
+            "HR": _safe_int(row[21]), "R": _safe_int(row[22]),
+            "RBI": _safe_int(row[23]), "BB": _safe_int(row[24]),
+            "SO": _safe_int(row[25]),
+        }
+
+        return {
+            "form_start_date": row[0] or "",
+            "form_start_game_number": _safe_int(row[1]),
+            "total_season_games": _safe_int(row[2]),
+            "num_games": num_games,
+            "stats": grid.model_dump(),
+            "counting_values": counting,
+            "season_counting_values": season_counting,
+        }
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Pitching per-season split helpers
+# ---------------------------------------------------------------------------
+
+def _fetch_pitching_season_platoon(conn, name, season):
+    """Fetch per-season pitching platoon splits."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT pps.split, pps.at_bats, pps.hits, pps.doubles, pps.triples, pps.home_runs,
+                   pps.walks, pps.strikeouts,
+                   ROUND(CAST(pps.hits AS REAL) / NULLIF(pps.at_bats, 0), 3),
+                   ROUND(CAST(pps.hits + pps.walks + COALESCE(pps.hit_by_pitch, 0) AS REAL) /
+                         NULLIF(pps.at_bats + pps.walks + COALESCE(pps.hit_by_pitch, 0) + COALESCE(pps.sacrifice_flies, 0), 0), 3),
+                   ROUND(CAST(pps.hits - pps.doubles - pps.triples - pps.home_runs +
+                              2 * pps.doubles + 3 * pps.triples + 4 * pps.home_runs AS REAL) /
+                         NULLIF(pps.at_bats, 0), 3)
+            FROM pitching_platoon_splits pps
+            JOIN players p ON pps.player_id = p.player_id
+            WHERE p.name = ? AND pps.season = ?
+            ORDER BY pps.split
+        """, (_sanitize(name), season))
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        grid_rows = []
+        for r in rows[:2]:
+            label = "vs LHB" if r[0] == "vs_LHB" else "vs RHB"
+            vals = [_safe_str(v) for v in r[1:8]]
+            avg = float(r[8]) if r[8] else 0
+            obp = float(r[9]) if r[9] else 0
+            slg = float(r[10]) if r[10] else 0
+            vals.extend([_safe_str(avg), _safe_str(obp), _safe_str(slg), f"{obp + slg:.3f}"])
+            grid_rows.append(SplitRow(label=label, values=vals))
+        return SplitGrid(headers=headers, rows=grid_rows) if grid_rows else None
+    except Exception:
+        return None
+
+
+def _fetch_pitching_season_home_away(conn, name, season):
+    """Fetch per-season pitching home/away splits."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT phas.split, phas.games, phas.games_started,
+                   CAST(phas.ip_outs / 3 AS TEXT) || '.' || CAST(phas.ip_outs % 3 AS TEXT),
+                   phas.hits, phas.earned_runs, phas.home_runs, phas.walks, phas.strikeouts,
+                   ROUND(9.0 * CAST(phas.earned_runs AS REAL) / NULLIF(phas.ip_outs / 3.0, 0), 2),
+                   ROUND(CAST(phas.walks + phas.hits AS REAL) / NULLIF(phas.ip_outs / 3.0, 0), 2),
+                   ROUND(9.0 * CAST(phas.strikeouts AS REAL) / NULLIF(phas.ip_outs / 3.0, 0), 1),
+                   ROUND(9.0 * CAST(phas.walks AS REAL) / NULLIF(phas.ip_outs / 3.0, 0), 1),
+                   ROUND(CAST(phas.hits AS REAL) / NULLIF(phas.at_bats, 0), 3)
+            FROM pitching_home_away_splits phas
+            JOIN players p ON phas.player_id = p.player_id
+            WHERE p.name = ? AND phas.season = ?
+            ORDER BY phas.split DESC
+        """, (_sanitize(name), season))
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        headers = ["G", "GS", "IP", "H", "ER", "HR", "BB", "SO", "ERA", "WHIP", "K/9", "BB/9", "BAA"]
+        grid_rows = []
+        for r in rows[:2]:
+            label = "Home" if r[0] == "home" else "Away"
+            vals = [_safe_str(v) for v in r[1:]]
+            grid_rows.append(SplitRow(label=label, values=vals))
+        return SplitGrid(headers=headers, rows=grid_rows) if grid_rows else None
+    except Exception:
+        return None
+
+
+def _fetch_pitching_season_risp(conn, name, season):
+    """Fetch per-season pitching RISP splits."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT rs.split, rs.at_bats, rs.hits, rs.doubles, rs.triples, rs.home_runs,
+                   rs.walks, rs.strikeouts,
+                   rs.batting_avg_against, rs.obp_against, rs.slg_against, rs.ops_against
+            FROM risp_pitching_splits rs
+            JOIN players p ON rs.player_id = p.player_id
+            WHERE p.name = ? AND rs.season = ?
+            ORDER BY rs.split DESC
+        """, (_sanitize(name), season))
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        grid_rows = []
+        for r in rows[:2]:
+            label = "RISP" if r[0] == "RISP" else "Non-RISP"
+            vals = [_safe_str(v) for v in r[1:]]
+            grid_rows.append(SplitRow(label=label, values=vals))
+        return SplitGrid(headers=headers, rows=grid_rows) if grid_rows else None
+    except Exception:
+        return None
+
+
+def _fetch_pitching_season_pitch_type(conn, name, season):
+    """Fetch per-season pitching pitch type splits. Returns list of single-row SplitGrids."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT pts.pitch_type, pts.at_bats, pts.hits, pts.doubles, pts.triples,
+                   pts.home_runs, pts.walks, pts.strikeouts,
+                   pts.batting_avg_against, pts.obp_against, pts.slg_against, pts.ops_against
+            FROM pitch_type_pitching_splits pts
+            JOIN players p ON pts.player_id = p.player_id
+            WHERE p.name = ? AND pts.season = ?
+            ORDER BY pts.at_bats DESC
+        """, (_sanitize(name), season))
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        grids = []
+        for r in rows:
+            label = r[0]
+            vals = [_safe_str(v) for v in r[1:]]
+            grids.append(SplitGrid(headers=headers, rows=[SplitRow(label=label, values=vals)]))
+        return grids if grids else None
+    except Exception:
+        return None
+
+
+def _fetch_pitching_season_count(conn, name, season):
+    """Fetch per-season pitching count splits. Returns list of single-row SplitGrids."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT cs.count_state, cs.at_bats, cs.hits, cs.doubles, cs.triples,
+                   cs.home_runs, cs.walks, cs.strikeouts,
+                   cs.batting_avg_against, cs.obp_against, cs.slg_against, cs.ops_against
+            FROM count_pitching_splits cs
+            JOIN players p ON cs.player_id = p.player_id
+            WHERE p.name = ? AND cs.season = ?
+            ORDER BY cs.count_state
+        """, (_sanitize(name), season))
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+        grids = []
+        for r in rows:
+            label = r[0]
+            vals = [_safe_str(v) for v in r[1:]]
+            grids.append(SplitGrid(headers=headers, rows=[SplitRow(label=label, values=vals)]))
+        return grids if grids else None
+    except Exception:
+        return None
+
+
+def _fetch_pitching_season_streaks(conn, name, season, performance="hot"):
+    """Fetch per-season pitching streaks with 3-tier fallback."""
+    try:
+        order_dir = "ASC" if performance == "cold" else "DESC"
+        tables = ["pitching_streaks", "pitching_streaks_sensitive", "pitching_streaks_sliding"]
+        rows = None
+        for table in tables:
+            cur = conn.cursor()
+            cur.execute(f"""
+                SELECT st.start_date, st.end_date, st.num_games,
+                       st.ip_outs, st.hits, st.earned_runs, st.walks, st.strikeouts,
+                       st.era, st.whip, st.k_per_9, st.home_runs
+                FROM {table} st
+                JOIN players p ON st.player_id = p.player_id
+                WHERE p.name = ? AND st.season = ? AND st.performance = ?
+                ORDER BY st.era {order_dir}
+            """, (_sanitize(name), season, performance))
+            rows = cur.fetchall()
+            if rows:
+                break
+        if not rows:
+            return None
+        headers = ["G", "IP", "H", "ER", "BB", "SO", "ERA", "WHIP", "K/9", "HR"]
+        grid_rows = []
+        for r in rows[:4]:
+            start = r[0] or ""
+            end = r[1] or ""
+            label = f"{start} – {end}"
+            ip_outs = _safe_int(r[3])
+            ip = f"{ip_outs // 3}.{ip_outs % 3}"
+            vals = [_safe_str(r[2], 0), ip, _safe_str(r[4], 0), _safe_str(r[5], 0),
+                    _safe_str(r[6], 0), _safe_str(r[7], 0),
+                    _safe_str(r[8], 2), _safe_str(r[9], 2), _safe_str(r[10], 1),
+                    _safe_str(r[11], 0)]
+            grid_rows.append(SplitRow(label=label, values=vals))
+        return SplitGrid(headers=headers, rows=grid_rows) if grid_rows else None
+    except Exception:
+        return None
+
+
+def _fetch_pitching_current_form(conn, name, season):
+    """Fetch pitching current form for a season."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT pcf.form_start_date, pcf.form_start_game_number, pcf.total_season_games, pcf.num_games,
+                   pcf.role, pcf.ip_outs, pcf.hits, pcf.earned_runs,
+                   pcf.walks, pcf.strikeouts, pcf.home_runs,
+                   pcf.era, pcf.whip, pcf.k_per_9,
+                   pcf.season_ip_outs, pcf.season_hits, pcf.season_earned_runs,
+                   pcf.season_home_runs, pcf.season_walks, pcf.season_strikeouts
+            FROM pitching_current_form pcf
+            JOIN players p ON pcf.player_id = p.player_id
+            WHERE p.name = ? AND pcf.season = ?
+        """, (_sanitize(name), season))
+        row = cur.fetchone()
+        if not row:
+            return None
+        num_games = _safe_int(row[3])
+        ip_outs = _safe_int(row[5])
+        ip = f"{ip_outs // 3}.{ip_outs % 3}"
+        headers = ["G", "IP", "H", "ER", "BB", "SO", "HR", "ERA", "WHIP", "K/9"]
+        vals = [_safe_str(num_games, 0), ip, _safe_str(row[6], 0), _safe_str(row[7], 0),
+                _safe_str(row[8], 0), _safe_str(row[9], 0), _safe_str(row[10], 0),
+                _safe_str(row[11], 2), _safe_str(row[12], 2), _safe_str(row[13], 1)]
+        grid = SplitGrid(headers=headers, rows=[SplitRow(label="Current Form", values=vals)])
+
+        counting = {
+            "G": num_games, "IP_OUTS": ip_outs, "H": _safe_int(row[6]),
+            "ER": _safe_int(row[7]), "BB": _safe_int(row[8]),
+            "SO": _safe_int(row[9]), "HR": _safe_int(row[10]),
+        }
+
+        # Season counting from the current_form table itself
+        season_counting = {
+            "IP_OUTS": _safe_int(row[14]), "H": _safe_int(row[15]),
+            "ER": _safe_int(row[16]), "HR": _safe_int(row[17]),
+            "BB": _safe_int(row[18]), "SO": _safe_int(row[19]),
+        }
+
+        return {
+            "form_start_date": row[0] or "",
+            "form_start_game_number": _safe_int(row[1]),
+            "total_season_games": _safe_int(row[2]),
+            "num_games": _safe_int(row[3]),
+            "role": row[4] or "SP",
+            "stats": grid.model_dump(),
+            "counting_values": counting,
+            "season_counting_values": season_counting,
+        }
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
 
@@ -509,6 +1070,46 @@ async def player_card(name: str = Query(..., description="Player name to look up
         pitching_career_platoon = _fetch_pitching_career_platoon_splits(conn, name) if (pitcher or two_way) else None
         pitching_career_home_away = _fetch_pitching_career_home_away_splits(conn, name) if (pitcher or two_way) else None
 
+        # Per-season splits for batting
+        season_splits = []
+        for bs in batting:
+            yr = bs.year
+            ss = SeasonSplits(
+                year=yr,
+                platoon=_fetch_season_platoon_splits(conn, name, yr),
+                home_away=_fetch_season_home_away_splits(conn, name, yr),
+                risp=_fetch_season_risp_splits(conn, name, yr),
+                pitch_type=_fetch_season_pitch_type_batting(conn, name, yr),
+                count=_fetch_season_count_batting(conn, name, yr),
+                streaks=_fetch_season_streaks(conn, name, yr),
+                fielding=_fetch_season_fielding(conn, name, yr),
+            )
+            season_splits.append(ss)
+
+        # Current form for most recent batting season
+        current_form = None
+        if batting:
+            current_form = _fetch_current_form(conn, name, batting[0].year)
+
+        # Per-season splits for pitching
+        pitching_season_splits = []
+        pitching_current_form = None
+        if pitcher or two_way:
+            for ps in pitching:
+                yr = ps.year
+                pss = PitchingSeasonSplits(
+                    year=yr,
+                    platoon=_fetch_pitching_season_platoon(conn, name, yr),
+                    home_away=_fetch_pitching_season_home_away(conn, name, yr),
+                    risp=_fetch_pitching_season_risp(conn, name, yr),
+                    pitch_type=_fetch_pitching_season_pitch_type(conn, name, yr),
+                    count=_fetch_pitching_season_count(conn, name, yr),
+                    streaks=_fetch_pitching_season_streaks(conn, name, yr),
+                )
+                pitching_season_splits.append(pss)
+            if pitching:
+                pitching_current_form = _fetch_pitching_current_form(conn, name, pitching[0].year)
+
         return PlayerCardResponse(
             player_info=info,
             batting_seasons=batting,
@@ -519,6 +1120,10 @@ async def player_card(name: str = Query(..., description="Player name to look up
             career_home_away_splits=career_home_away,
             pitching_career_platoon_splits=pitching_career_platoon,
             pitching_career_home_away_splits=pitching_career_home_away,
+            season_splits=season_splits,
+            pitching_season_splits=pitching_season_splits,
+            current_form=current_form,
+            pitching_current_form=pitching_current_form,
         )
     finally:
         conn.close()

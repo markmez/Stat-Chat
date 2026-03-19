@@ -571,8 +571,31 @@ enum PlayerCardService {
         let displayName = info?.name ?? name
         let infoTeam = info?.team ?? ""
 
+        // Build per-season splits lookup by year
+        var battingSplitsByYear: [Int: BackendService.SeasonSplitsData] = [:]
+        for ss in data.season_splits ?? [] {
+            battingSplitsByYear[ss.year] = ss
+        }
+        var pitchingSplitsByYear: [Int: BackendService.PitchingSeasonSplitsData] = [:]
+        for pss in data.pitching_season_splits ?? [] {
+            pitchingSplitsByYear[pss.year] = pss
+        }
+
+        // Convert current form
+        let battingCurrentForm: CurrentFormData? = data.current_form.map { cf in
+            CurrentFormData(
+                formStartDate: cf.form_start_date,
+                formStartGameNumber: cf.form_start_game_number,
+                totalSeasonGames: cf.total_season_games,
+                numGames: cf.num_games,
+                stats: convertSplitGrid(cf.stats),
+                countingValues: cf.counting_values,
+                seasonCountingValues: cf.season_counting_values
+            )
+        }
+
         // Convert backend batting seasons to local SeasonData
-        let seasons = data.batting_seasons.map { s in
+        let seasons = data.batting_seasons.enumerated().map { (index, s) in
             let values = [
                 "\(s.G)", "\(s.AB)", "\(s.R)", "\(s.H)", "\(s.doubles)", "\(s.triples)",
                 "\(s.HR)", "\(s.RBI)", "\(s.SB)", "\(s.CS)", "\(s.BB)", "\(s.IBB)",
@@ -588,16 +611,45 @@ enum PlayerCardService {
                 "RBI": Double(s.RBI), "SB": Double(s.SB), "CS": Double(s.CS),
                 "BB": Double(s.BB), "IBB": Double(s.IBB), "SO": Double(s.SO), "HBP": Double(s.HBP),
             ]
+
+            // Look up per-season splits from backend
+            let ss = battingSplitsByYear[s.year]
+            let platoon = ss?.platoon.map { convertSplitGrid($0) }
+            let homeAway = ss?.home_away.map { convertSplitGrid($0) }
+            let risp = ss?.risp.map { convertSplitGrid($0) }
+            let streakGrid = ss?.streaks.map { convertSplitGrid($0) }
+            let fieldingGrid = ss?.fielding.map { convertSplitGrid($0) }
+            let pitchTypeGrids: [StatGridParser.StatGrid]? = ss?.pitch_type?.map { convertSplitGrid($0) }
+            let countGrids: [StatGridParser.StatGrid]? = ss?.count?.map { convertSplitGrid($0) }
+
+            // Current form only for most recent season (index 0)
+            let seasonCurrentForm: CurrentFormData? = index == 0 ? battingCurrentForm : nil
+
             return SeasonData(
                 year: s.year, team: s.team, age: s.age, games: s.G, teamGames: 162,
                 stats: grid, countingValues: counting,
-                platoonSplits: nil, homeAwaySplits: nil, rispSplits: nil, streaks: nil,
-                fieldingStats: nil, pitchTypeSplits: nil, countSplits: nil, currentForm: nil
+                platoonSplits: platoon, homeAwaySplits: homeAway, rispSplits: risp,
+                streaks: streakGrid, fieldingStats: fieldingGrid,
+                pitchTypeSplits: pitchTypeGrids, countSplits: countGrids, currentForm: seasonCurrentForm
+            )
+        }
+
+        // Convert pitching current form
+        let pitchCurrentForm: PitchingCurrentFormData? = data.pitching_current_form.map { pcf in
+            PitchingCurrentFormData(
+                formStartDate: pcf.form_start_date,
+                formStartGameNumber: pcf.form_start_game_number,
+                totalSeasonGames: pcf.total_season_games,
+                numGames: pcf.num_games,
+                role: pcf.role,
+                stats: convertSplitGrid(pcf.stats),
+                countingValues: pcf.counting_values,
+                seasonCountingValues: pcf.season_counting_values
             )
         }
 
         // Convert backend pitching seasons
-        let pitchingSeasons: [PitchingSeasonData]? = data.pitching_seasons.isEmpty ? nil : data.pitching_seasons.map { s in
+        let pitchingSeasons: [PitchingSeasonData]? = data.pitching_seasons.isEmpty ? nil : data.pitching_seasons.enumerated().map { (index, s) in
             let values = [
                 "\(s.W)", "\(s.L)", "\(s.SV)", "\(s.G)", "\(s.GS)", "\(s.GF)",
                 "\(s.CG)", "\(s.QS)", s.IP, "\(s.H)", "\(s.R)", "\(s.ER)",
@@ -616,11 +668,24 @@ enum PlayerCardService {
                 "BB": Double(s.BB), "H": Double(s.H), "ER": Double(s.ER),
                 "HR": Double(s.HR), "IP": Double(s.IP) ?? 0,
             ]
+
+            // Look up per-season pitching splits from backend
+            let pss = pitchingSplitsByYear[s.year]
+            let platoon = pss?.platoon.map { convertSplitGrid($0) }
+            let homeAway = pss?.home_away.map { convertSplitGrid($0) }
+            let risp = pss?.risp.map { convertSplitGrid($0) }
+            let streakGrid = pss?.streaks.map { convertSplitGrid($0) }
+            let pitchTypeGrids: [StatGridParser.StatGrid]? = pss?.pitch_type?.map { convertSplitGrid($0) }
+            let countGrids: [StatGridParser.StatGrid]? = pss?.count?.map { convertSplitGrid($0) }
+
+            let seasonPitchCurrentForm: PitchingCurrentFormData? = index == 0 ? pitchCurrentForm : nil
+
             return PitchingSeasonData(
                 year: s.year, team: s.team, games: s.G, gamesStarted: s.GS,
                 teamGames: 162, stats: grid, countingValues: counting,
-                platoonSplits: nil, homeAwaySplits: nil, rispSplits: nil, streaks: nil,
-                pitchTypeSplits: nil, countSplits: nil, currentForm: nil
+                platoonSplits: platoon, homeAwaySplits: homeAway, rispSplits: risp,
+                streaks: streakGrid, pitchTypeSplits: pitchTypeGrids, countSplits: countGrids,
+                currentForm: seasonPitchCurrentForm
             )
         }
 
@@ -660,6 +725,10 @@ enum PlayerCardService {
         let pitchingCareerPlatoon = data.pitching_career_platoon_splits.map { convertSplitGrid($0) }
         let pitchingCareerHomeAway = data.pitching_career_home_away_splits.map { convertSplitGrid($0) }
 
+        // Top-level platoon + streaks from most recent season
+        let recentPlatoon = seasons.first?.platoonSplits
+        let recentStreaks = seasons.first?.streaks
+
         return PlayerCard(
             name: displayName,
             team: headerTeam,
@@ -673,8 +742,8 @@ enum PlayerCardService {
             careerTotals: career,
             careerPlatoonSplits: careerPlatoon,
             careerHomeAwaySplits: careerHomeAway,
-            platoonSplits: nil,
-            streaks: nil,
+            platoonSplits: recentPlatoon,
+            streaks: recentStreaks,
             bio: bio,
             isPitcher: data.is_pitcher,
             isTwoWay: data.is_two_way,

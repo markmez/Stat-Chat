@@ -113,6 +113,48 @@ final class BackendService: Sendable {
         let rows: [SplitRowData]
     }
 
+    struct SeasonSplitsData: Decodable, Sendable {
+        let year: Int
+        let platoon: SplitGridData?
+        let home_away: SplitGridData?
+        let risp: SplitGridData?
+        let pitch_type: [SplitGridData]?
+        let count: [SplitGridData]?
+        let streaks: SplitGridData?
+        let fielding: SplitGridData?
+    }
+
+    struct PitchingSeasonSplitsData: Decodable, Sendable {
+        let year: Int
+        let platoon: SplitGridData?
+        let home_away: SplitGridData?
+        let risp: SplitGridData?
+        let pitch_type: [SplitGridData]?
+        let count: [SplitGridData]?
+        let streaks: SplitGridData?
+    }
+
+    struct CurrentFormData: Decodable, Sendable {
+        let form_start_date: String
+        let form_start_game_number: Int
+        let total_season_games: Int
+        let num_games: Int
+        let stats: SplitGridData
+        let counting_values: [String: Double]
+        let season_counting_values: [String: Double]
+    }
+
+    struct PitchingCurrentFormData: Decodable, Sendable {
+        let form_start_date: String
+        let form_start_game_number: Int
+        let total_season_games: Int
+        let num_games: Int
+        let role: String
+        let stats: SplitGridData
+        let counting_values: [String: Double]
+        let season_counting_values: [String: Double]
+    }
+
     struct PlayerCardData: Decodable, Sendable {
         let player_info: PlayerInfoData?
         let batting_seasons: [BattingSeasonData]
@@ -123,6 +165,10 @@ final class BackendService: Sendable {
         let career_home_away_splits: SplitGridData?
         let pitching_career_platoon_splits: SplitGridData?
         let pitching_career_home_away_splits: SplitGridData?
+        let season_splits: [SeasonSplitsData]?
+        let pitching_season_splits: [PitchingSeasonSplitsData]?
+        let current_form: CurrentFormData?
+        let pitching_current_form: PitchingCurrentFormData?
     }
 
     struct PlayerInfoData: Decodable, Sendable {
@@ -158,7 +204,7 @@ final class BackendService: Sendable {
         let url = components.url!
 
         var request = URLRequest(url: url)
-        request.timeoutInterval = 10  // Don't hang if backend is down
+        request.timeoutInterval = 15  // Longer timeout — endpoint now returns per-season splits
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             let body = String(data: data, encoding: .utf8) ?? "Unknown error"
