@@ -817,12 +817,72 @@ struct PlayerCardView: View {
                 .padding(.horizontal, 20)
 
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 4) {
-                    Text("Since \(formattedDate) (\(formNumGames) games)")
-                        .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(.secondary)
+                // Subtitle + slider
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 4) {
+                        Text("Since \(formattedDate) (\(formNumGames) games)")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+
+                        if pitchingFormSliderGameNumber != nil {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    pitchingFormSliderGameNumber = nil
+                                }
+                            } label: {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "arrow.counterclockwise")
+                                        .font(.system(size: 12, weight: .semibold))
+                                    Text("Reset")
+                                        .font(.system(.caption2, design: .rounded, weight: .medium))
+                                }
+                                .foregroundStyle(deepBlue.opacity(0.7))
+                            }
+                            .buttonStyle(.plain)
+                            .transition(.opacity)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+
+                    if pitchingGameLogs != nil {
+                        ZStack {
+                            let sliderMax = Double(max(form.totalSeasonGames, 2))
+                            Slider(
+                                value: Binding<Double>(
+                                    get: { form.totalSeasonGames < 2 ? sliderMax : Double(numGamesShown) },
+                                    set: { newValue in
+                                        pitchingFormSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
+                                    }
+                                ),
+                                in: 1...sliderMax,
+                                step: 1
+                            )
+                            .tint(deepBlue)
+                            .disabled(form.totalSeasonGames < 2)
+
+                            if pitchingFormSliderGameNumber != nil {
+                                GeometryReader { geo in
+                                    let range = Double(max(form.totalSeasonGames, 2)) - 1
+                                    let pct = range > 0 ? (Double(form.numGames) - 1) / range : 0
+                                    let trackWidth = geo.size.width - 28
+                                    let xPos = 14 + trackWidth * pct
+
+                                    Rectangle()
+                                        .fill(deepBlue.opacity(0.5))
+                                        .frame(width: 2, height: 14)
+                                        .position(x: xPos, y: geo.size.height / 2)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                    }
                 }
-                .padding(.horizontal, 14)
+                .task {
+                    if pitchingGameLogs == nil {
+                        await loadPitchingGameLogs(name: playerName, season: season.year)
+                    }
+                }
 
                 StatGridView(grid: formGrid, suppressBackground: true)
 
@@ -911,6 +971,42 @@ struct PlayerCardView: View {
         }
 
         return (form.stats, form.numGames, form.formStartDate)
+    }
+
+    // MARK: - Backend game log loading
+
+    private func loadBattingGameLogs(name: String, season: Int) async {
+        do {
+            let backend = BackendService()
+            let data = try await backend.fetchBattingGameLogs(name: name, season: season)
+            gameLogs = data.map { g in
+                GameLog(
+                    date: g.date, atBats: g.at_bats, hits: g.hits,
+                    doubles: g.doubles, triples: g.triples, homeRuns: g.home_runs,
+                    runs: g.runs, rbi: g.rbi, walks: g.walks,
+                    strikeouts: g.strikeouts, plateAppearances: g.plate_appearances
+                )
+            }
+        } catch {
+            // Silently fail — slider just won't appear
+        }
+    }
+
+    private func loadPitchingGameLogs(name: String, season: Int) async {
+        do {
+            let backend = BackendService()
+            let data = try await backend.fetchPitchingGameLogs(name: name, season: season)
+            pitchingGameLogs = data.map { g in
+                PitchingGameLog(
+                    date: g.date, ipOuts: g.ip_outs, hits: g.hits,
+                    earnedRuns: g.earned_runs, walks: g.walks,
+                    strikeouts: g.strikeouts, homeRuns: g.home_runs,
+                    isStart: g.is_start
+                )
+            }
+        } catch {
+            // Silently fail — slider just won't appear
+        }
     }
 
     private func buildPitchingFormProjection(
@@ -1185,12 +1281,73 @@ struct PlayerCardView: View {
                 .padding(.horizontal, 20)
 
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 4) {
-                    Text("Since \(formattedDate) (\(formNumGames) games)")
-                        .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(.secondary)
+                // Subtitle + slider
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 4) {
+                        Text("Since \(formattedDate) (\(formNumGames) games)")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.secondary)
+
+                        if formSliderGameNumber != nil {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    formSliderGameNumber = nil
+                                }
+                            } label: {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "arrow.counterclockwise")
+                                        .font(.system(size: 12, weight: .semibold))
+                                    Text("Reset")
+                                        .font(.system(.caption2, design: .rounded, weight: .medium))
+                                }
+                                .foregroundStyle(deepBlue.opacity(0.7))
+                            }
+                            .buttonStyle(.plain)
+                            .transition(.opacity)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+
+                    if gameLogs != nil {
+                        ZStack {
+                            let sliderMax = Double(max(form.totalSeasonGames, 2))
+                            Slider(
+                                value: Binding<Double>(
+                                    get: { form.totalSeasonGames < 2 ? sliderMax : Double(numGamesShown) },
+                                    set: { newValue in
+                                        formSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
+                                    }
+                                ),
+                                in: 1...sliderMax,
+                                step: 1
+                            )
+                            .tint(deepBlue)
+                            .disabled(form.totalSeasonGames < 2)
+
+                            // Tick mark at detected position
+                            if formSliderGameNumber != nil {
+                                GeometryReader { geo in
+                                    let range = Double(max(form.totalSeasonGames, 2)) - 1
+                                    let pct = range > 0 ? (Double(form.numGames) - 1) / range : 0
+                                    let trackWidth = geo.size.width - 28
+                                    let xPos = 14 + trackWidth * pct
+
+                                    Rectangle()
+                                        .fill(deepBlue.opacity(0.5))
+                                        .frame(width: 2, height: 14)
+                                        .position(x: xPos, y: geo.size.height / 2)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                    }
                 }
-                .padding(.horizontal, 14)
+                .task {
+                    if gameLogs == nil {
+                        await loadBattingGameLogs(name: playerName, season: season.year)
+                    }
+                }
 
                 StatGridView(grid: formGrid, suppressBackground: true)
 

@@ -213,6 +213,63 @@ final class BackendService: Sendable {
         return try JSONDecoder().decode(PlayerCardData.self, from: data)
     }
 
+    // MARK: - Game logs (for current form slider)
+
+    struct GameLogData: Decodable, Sendable {
+        let date: String
+        let at_bats: Int
+        let hits: Int
+        let doubles: Int
+        let triples: Int
+        let home_runs: Int
+        let runs: Int
+        let rbi: Int
+        let walks: Int
+        let strikeouts: Int
+        let plate_appearances: Int
+    }
+
+    struct PitchingGameLogData: Decodable, Sendable {
+        let date: String
+        let ip_outs: Int
+        let hits: Int
+        let earned_runs: Int
+        let walks: Int
+        let strikeouts: Int
+        let home_runs: Int
+        let is_start: Bool
+    }
+
+    /// Fetch batting game logs for a player-season (for slider recomputation).
+    func fetchBattingGameLogs(name: String, season: Int) async throws -> [GameLogData] {
+        var components = URLComponents(url: baseURL.appendingPathComponent("player-card/game-logs"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "name", value: name),
+            URLQueryItem(name: "season", value: "\(season)"),
+            URLQueryItem(name: "type", value: "batting"),
+        ]
+        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw ServiceError.httpError(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+        return try JSONDecoder().decode([GameLogData].self, from: data)
+    }
+
+    /// Fetch pitching game logs for a player-season (for slider recomputation).
+    func fetchPitchingGameLogs(name: String, season: Int) async throws -> [PitchingGameLogData] {
+        var components = URLComponents(url: baseURL.appendingPathComponent("player-card/game-logs"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "name", value: name),
+            URLQueryItem(name: "season", value: "\(season)"),
+            URLQueryItem(name: "type", value: "pitching"),
+        ]
+        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw ServiceError.httpError(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+        return try JSONDecoder().decode([PitchingGameLogData].self, from: data)
+    }
+
     // MARK: - Stats endpoints (leaderboards, thresholds, milestones)
 
     struct LeaderboardRow: Decodable, Sendable {

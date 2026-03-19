@@ -1052,6 +1052,81 @@ def _fetch_pitching_current_form(conn, name, season):
 
 
 # ---------------------------------------------------------------------------
+# Game logs (for current form slider recomputation)
+# ---------------------------------------------------------------------------
+
+class GameLogEntry(BaseModel):
+    date: str
+    at_bats: int
+    hits: int
+    doubles: int
+    triples: int
+    home_runs: int
+    runs: int
+    rbi: int
+    walks: int
+    strikeouts: int
+    plate_appearances: int
+
+
+class PitchingGameLogEntry(BaseModel):
+    date: str
+    ip_outs: int
+    hits: int
+    earned_runs: int
+    walks: int
+    strikeouts: int
+    home_runs: int
+    is_start: bool
+
+
+def _fetch_batting_game_logs(conn, name, season):
+    """Fetch batting game logs for a player-season."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT g.date, g.at_bats, g.hits, g.doubles, g.triples, g.home_runs,
+                   g.runs, g.rbi, g.walks, g.strikeouts, g.plate_appearances
+            FROM game_batting_logs g
+            JOIN players p ON g.player_id = p.player_id
+            WHERE p.name = ? AND g.season = ?
+            ORDER BY g.date ASC
+        """, (_sanitize(name), season))
+        rows = cur.fetchall()
+        return [GameLogEntry(
+            date=r[0] or "", at_bats=_safe_int(r[1]), hits=_safe_int(r[2]),
+            doubles=_safe_int(r[3]), triples=_safe_int(r[4]), home_runs=_safe_int(r[5]),
+            runs=_safe_int(r[6]), rbi=_safe_int(r[7]), walks=_safe_int(r[8]),
+            strikeouts=_safe_int(r[9]), plate_appearances=_safe_int(r[10])
+        ) for r in rows]
+    except Exception:
+        return []
+
+
+def _fetch_pitching_game_logs(conn, name, season):
+    """Fetch pitching game logs for a player-season."""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT g.date, g.ip_outs, g.hits, g.earned_runs,
+                   g.walks, g.strikeouts, g.home_runs, g.is_start
+            FROM game_pitching_logs g
+            JOIN players p ON g.player_id = p.player_id
+            WHERE p.name = ? AND g.season = ?
+            ORDER BY g.date ASC
+        """, (_sanitize(name), season))
+        rows = cur.fetchall()
+        return [PitchingGameLogEntry(
+            date=r[0] or "", ip_outs=_safe_int(r[1]), hits=_safe_int(r[2]),
+            earned_runs=_safe_int(r[3]), walks=_safe_int(r[4]),
+            strikeouts=_safe_int(r[5]), home_runs=_safe_int(r[6]),
+            is_start=bool(r[7]) if r[7] is not None else False
+        ) for r in rows]
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
 # Endpoint
 # ---------------------------------------------------------------------------
 
@@ -1125,5 +1200,23 @@ async def player_card(name: str = Query(..., description="Player name to look up
             current_form=current_form,
             pitching_current_form=pitching_current_form,
         )
+    finally:
+        conn.close()
+
+
+@router.get("/player-card/game-logs")
+async def player_game_logs(
+    name: str = Query(..., description="Player name"),
+    season: int = Query(..., description="Season year"),
+    type: str = Query("batting", description="'batting' or 'pitching'"),
+):
+    """Fetch game logs for current form slider recomputation."""
+    conn = _get_conn()
+    try:
+        if type == "pitching":
+            logs = _fetch_pitching_game_logs(conn, name, season)
+        else:
+            logs = _fetch_batting_game_logs(conn, name, season)
+        return [log.model_dump() for log in logs]
     finally:
         conn.close()
