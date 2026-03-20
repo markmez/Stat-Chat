@@ -956,6 +956,17 @@ def parse_single_stat_lookup(input_str: str) -> Optional[dict]:
     """Detect queries like 'Judge home runs'. Returns dict with name, stat, season."""
     lower = input_str.strip().lower()
 
+    # Exclude cross-season queries (handled by parse_season_count)
+    cross_season_patterns = [
+        "how many seasons", "how many times", "how many years",
+        "how often", r"has.*ever", r"did.*ever", "in how many",
+        "throughout his career", "over his career", r"across.*seasons",
+        "each season", "every season", "per season",
+    ]
+    for pat in cross_season_patterns:
+        if re.search(pat, lower):
+            return None
+
     # Exclude leaderboard patterns
     leaderboard_words = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest", "lowest",
                          "who led", "who leads", "who hit the most", "who had the most", "leading"]
