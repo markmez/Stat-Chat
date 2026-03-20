@@ -275,7 +275,7 @@ struct ResultsView: View {
         case .team(let code):
             selectedTeamCode = code
         case .question(let query):
-            appState.sendQuestion(query, followUpContext: initialQuestion)
+            appState.sendQuestion(query, isFollowUp: true)
         }
     }
 }

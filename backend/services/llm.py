@@ -20,6 +20,7 @@ from prompts import (
     ANSWER_GENERATION_PROMPT,
     STREAK_ANSWER_PROMPT,
     STAT_EXPLANATION_PROMPT,
+    FOLLOWUP_CLASSIFY_PROMPT,
 )
 
 ROUTING_MODEL = os.getenv("ROUTING_MODEL", "claude-haiku-4-5-20251001")
@@ -111,6 +112,39 @@ class LLMService:
         The prompt already contains the original question, results, and follow-up.
         """
         msgs = [{"role": "user", "content": prompt}]
+        async with self.client.messages.stream(
+            model=MAIN_MODEL,
+            max_tokens=1024,
+            system=_cached_system(ANSWER_GENERATION_PROMPT),
+            extra_headers={"anthropic-beta": _CACHE_BETA},
+            messages=msgs,
+        ) as stream:
+            async for text in stream.text_stream:
+                yield text
+
+    async def classify_followup(self, question: str, history: list[dict]) -> dict:
+        """Classify a follow-up as 'data' or 'analytical' and rewrite data queries."""
+        msgs = _build_messages(question, history)
+        response = await self.client.messages.create(
+            model=ROUTING_MODEL,
+            max_tokens=256,
+            system=FOLLOWUP_CLASSIFY_PROMPT,
+            messages=msgs,
+        )
+        text = response.content[0].text.strip()
+        try:
+            result = json.loads(text)
+            if result.get("type") == "data" and result.get("rewritten"):
+                return result
+            elif result.get("type") == "analytical":
+                return {"type": "analytical"}
+            return {"type": "data", "rewritten": question}
+        except (json.JSONDecodeError, AttributeError):
+            return {"type": "data", "rewritten": question}
+
+    async def stream_analytical(self, question: str, history: list[dict]):
+        """Stream a response for an analytical follow-up using conversation context."""
+        msgs = _build_messages(question, history)
         async with self.client.messages.stream(
             model=MAIN_MODEL,
             max_tokens=1024,

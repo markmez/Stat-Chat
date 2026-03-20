@@ -32,7 +32,6 @@ final class BackendService: Sendable {
         question: String,
         deviceId: String,
         history: [(String, String)],
-        contextual: Bool = false,
         onChunk: @escaping @MainActor @Sendable (String) -> Void
     ) async throws -> QueryResult {
         let url = baseURL.appendingPathComponent("query")
@@ -46,14 +45,11 @@ final class BackendService: Sendable {
              ["role": "assistant", "content": a]]
         }
 
-        var body: [String: Any] = [
+        let body: [String: Any] = [
             "question": question,
             "device_id": deviceId,
             "history": historyPayload,
         ]
-        if contextual {
-            body["contextual"] = true
-        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (bytes, response) = try await URLSession.shared.bytes(for: request)

@@ -58,20 +58,6 @@ final class AppState: SearchHistoryTracking {
     private var conversationHistory: [(String, String)] = []
     private let maxHistory = 5
 
-    /// Context from the last locally-resolved result, enabling follow-up queries.
-    private var lastResultContext: ResultContext?
-
-    /// Structured metadata about the last result for follow-up resolution.
-    struct ResultContext {
-        enum ResultType { case leaderboard, comparison, statLookup, seasonLookup, platoonSplits, homeAwaySplits, rispSplits, pitchTypeSplits, countSplits }
-        let type: ResultType
-        let playerNames: [String]
-        let stat: PlayerNameMatcher.StatInfo?
-        let season: Int?
-        var league: String? = nil
-        let originalQuery: String
-    }
-
     /// The actual calendar year (e.g. 2026).
     private var currentSeasonYear: Int {
         Calendar.current.component(.year, from: Date())
@@ -100,7 +86,7 @@ final class AppState: SearchHistoryTracking {
         PlayerNameMatcher.load()
     }
 
-    func sendQuestion(_ question: String, followUpContext: String? = nil) {
+    func sendQuestion(_ question: String, isFollowUp: Bool = false) {
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -115,9 +101,9 @@ final class AppState: SearchHistoryTracking {
 
         incrementQueryCount()
 
-        // For follow-ups, store with context prefix if the question looks contextual
-        if let context = followUpContext, looksContextual(trimmed) {
-            addToSearchHistory("\(context) → \(trimmed)")
+        // For follow-ups, store with context prefix
+        if isFollowUp, let lastUserMsg = messages.last(where: { $0.role == .user }) {
+            addToSearchHistory("\(lastUserMsg.content) → \(trimmed)")
         } else {
             addToSearchHistory(trimmed)
         }
@@ -219,20 +205,16 @@ final class AppState: SearchHistoryTracking {
         // Start smooth display timer — reveals buffered text at a steady rate
         startStreamingTimer()
 
-        // For contextual follow-ups that couldn't be resolved locally,
-        // build a self-contained prompt so Claude has full context.
-        let isContextual = looksContextual(trimmed) && !conversationHistory.isEmpty
-        let questionForBackend = isContextual ? buildContextualPrompt(for: trimmed) : trimmed
-        // When context is baked into the question, don't also send history (avoids duplication)
-        let historyForBackend = isContextual ? [(String, String)]() : conversationHistory
+        // Only send conversation history for follow-ups from ResultsView.
+        // HomeView queries are standalone — stale history would confuse the backend.
+        let historyForBackend = isFollowUp ? conversationHistory : [(String, String)]()
 
         currentQueryTask = Task {
             do {
                 let result = try await backendService.ask(
-                    question: questionForBackend,
+                    question: trimmed,
                     deviceId: Self.deviceId,
-                    history: historyForBackend,
-                    contextual: isContextual
+                    history: historyForBackend
                 ) { [self] chunk in
                     guard !Task.isCancelled, streamingIndex < messages.count else { return }
                     streamingBuffer += chunk
@@ -592,407 +574,5 @@ final class AppState: SearchHistoryTracking {
         PlayerCardService.isPitcher(name: name)
     }
 
-    // MARK: - Contextual Follow-Up Resolution
-
-    /// Build a self-contained prompt for Claude when a contextual follow-up can't be resolved locally.
-    /// Includes the original question, the visible results, and the follow-up question.
-    private func buildContextualPrompt(for followUp: String) -> String {
-        // Find the most recent Q&A pair from visible messages
-        var lastQuestion: String?
-        var lastAnswer: String?
-        for message in messages.reversed() {
-            if lastAnswer == nil && message.role == .assistant && !message.content.isEmpty {
-                // Strip markup tags from the answer to get what the user actually saw
-                lastAnswer = message.content
-                    .replacingOccurrences(of: "\\[STATGRID\\]|\\[/STATGRID\\]|\\[LEADERBOARD\\]|\\[/LEADERBOARD\\]|\\[TIP\\].*?\\[/TIP\\]|\\[SUGGEST\\].*?\\[/SUGGEST\\]|\\[SEEALSO\\].*?\\[/SEEALSO\\]|\\[DIDYOUMEAN\\].*?\\[/DIDYOUMEAN\\]", with: "", options: .regularExpression)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-            } else if lastAnswer != nil && lastQuestion == nil && message.role == .user {
-                lastQuestion = message.content
-                break
-            }
-        }
-
-        guard let question = lastQuestion, let answer = lastAnswer else {
-            return followUp
-        }
-
-        // Truncate the answer if it's very long — keep the structure but don't blow up the prompt
-        let truncatedAnswer = answer.count > 2000 ? String(answer.prefix(2000)) + "\n..." : answer
-
-        return """
-            The user asked: "\(question)"
-
-            The results shown were:
-            \(truncatedAnswer)
-
-            The user now asks: "\(followUp)"
-
-            Answer the follow-up question based on the context above. If it's a question about methodology \
-            (like "how was this calculated?"), explain using your knowledge of baseball statistics. \
-            If it's asking to modify the previous query (like "across all of MLB" or "just the NL"), \
-            re-run the query with the requested change.
-            """
-    }
-
-    /// Phrases that unambiguously reference a previous result set.
-    private static let referentialPhrases = [
-        "of these", "of those", "of them",
-        "among these", "among those", "among them",
-        "from that list", "from the list", "from those",
-        "in that group", "which one", "which ones",
-        "between them", "out of these", "out of those",
-        "of the above", "listed above", "players above",
-        "same players", "same guys", "those players", "those guys",
-    ]
-
-    /// Attempts to resolve a follow-up query using context from the previous result.
-    /// Handles: referential phrases + stat, bare "sort by X", bare year re-run, bare stat after leaderboard.
-    private func resolveContextualFollowUp(_ question: String) -> String? {
-        let lower = question.lowercased()
-
-        // Pattern 1: Referential phrases — "who of these had the highest BABIP?"
-        // These explicitly reference a previous result, so always check them.
-        let isReferential = Self.referentialPhrases.contains(where: { lower.contains($0) })
-        if isReferential {
-            if let result = resolveReferentialFollowUp(question) { return result }
-        }
-
-        // Remaining patterns only apply to contextual fragments, not standalone queries.
-        // "career doubles leaders" or "Top 5 in walks last season" are self-contained.
-        guard looksContextual(question) else { return nil }
-
-        // Remaining patterns require stored context from a previous result
-        guard let ctx = lastResultContext else { return nil }
-
-        // Pattern 2: "sort by ERA" / "rank by BABIP" / "order by OPS" — re-sort same players by different stat
-        let sortPrefixes = ["sort by ", "rank by ", "order by ", "now sort by ", "now rank by "]
-        if let prefix = sortPrefixes.first(where: { lower.hasPrefix($0) }) {
-            let statPart = String(lower.dropFirst(prefix.count))
-            if let stat = PlayerNameMatcher.matchStat(statPart), ctx.playerNames.count >= 2 {
-                let isPitching = PlayerNameMatcher.isPitchingStat(stat)
-                if let result = PlayerCardService.buildPlayerSubsetLeaderboard(
-                    playerNames: ctx.playerNames, stat: stat, season: ctx.season, isPitching: isPitching
-                ) {
-                    lastResultContext = ResultContext(type: ctx.type, playerNames: ctx.playerNames, stat: stat, season: ctx.season, originalQuery: question)
-                    return result
-                }
-            }
-        }
-
-        // Pattern 3: "and in 2024?" / "in 2023?" / "2024?" — re-run with different season
-        // Must be a short query that's essentially just a year
-        if let year = PlayerNameMatcher.detectSeason(question), lower.count < 20 {
-            // No player name in query → it's a contextual year change
-            if PlayerNameMatcher.matchPlayer(question) == nil {
-                if ctx.type == .leaderboard, let stat = ctx.stat {
-                    let isPitching = PlayerNameMatcher.isPitchingStat(stat)
-                    let interpretation = "\(year) \(stat.displayName) leaders"
-                    if ctx.playerNames.count >= 2 {
-                        if let result = PlayerCardService.buildPlayerSubsetLeaderboard(
-                            playerNames: ctx.playerNames, stat: stat, season: year, isPitching: isPitching
-                        ) {
-                            lastResultContext = ResultContext(type: .leaderboard, playerNames: ctx.playerNames, stat: stat, season: year, originalQuery: question)
-                            return "[DIDYOUMEAN]\(interpretation)[/DIDYOUMEAN]\n" + result
-                        }
-                    } else {
-                        let response: String
-                        if isPitching {
-                            response = PlayerCardService.buildPitchingLeaderboard(stat: stat, scope: .season(year), limit: 10, league: nil)
-                        } else {
-                            response = PlayerCardService.buildLeaderboard(stat: stat, scope: .season(year), limit: 10, league: nil)
-                        }
-                        lastResultContext = ResultContext(
-                            type: .leaderboard,
-                            playerNames: extractPlayerNamesFromResponse(response),
-                            stat: stat, season: year, originalQuery: question
-                        )
-                        return "[DIDYOUMEAN]\(interpretation)[/DIDYOUMEAN]\n" + response
-                    }
-                } else if ctx.type == .statLookup, let stat = ctx.stat, let player = ctx.playerNames.first {
-                    let isPitching = PlayerCardService.isPitcher(name: player) || PlayerNameMatcher.isPitchingStat(stat)
-                    let interpretation = "\(player) \(stat.displayName) in \(year)"
-                    let response: String?
-                    if isPitching {
-                        response = PlayerCardService.buildPitchingSingleStatLookup(name: player, stat: stat, season: year)
-                    } else {
-                        response = PlayerCardService.buildSingleStatLookup(name: player, stat: stat, season: year)
-                    }
-                    if let response {
-                        lastResultContext = ResultContext(type: .statLookup, playerNames: [player], stat: stat, season: year, originalQuery: question)
-                        return "[DIDYOUMEAN]\(interpretation)[/DIDYOUMEAN]\n" + response
-                    }
-                } else if ctx.type == .seasonLookup, let player = ctx.playerNames.first {
-                    let isPitching = PlayerCardService.isPitcher(name: player)
-                    let interpretation = "\(player) in \(year)"
-                    let response: String?
-                    if isPitching {
-                        response = PlayerCardService.buildPitchingSeasonSummary(name: player, season: year)
-                    } else {
-                        response = PlayerCardService.buildSeasonSummary(name: player, season: year)
-                    }
-                    if let response {
-                        lastResultContext = ResultContext(type: .seasonLookup, playerNames: [player], stat: nil, season: year, originalQuery: question)
-                        return "[DIDYOUMEAN]\(interpretation)[/DIDYOUMEAN]\n" + response
-                    }
-                } else if ctx.type == .comparison, ctx.playerNames.count == 2 {
-                    let p1 = ctx.playerNames[0], p2 = ctx.playerNames[1]
-                    let isPitching = PlayerCardService.isPitcher(name: p1) && PlayerCardService.isPitcher(name: p2)
-                    let interpretation = "\(p1) vs \(p2) in \(year)"
-                    let response: String
-                    if isPitching {
-                        response = PlayerCardService.buildPitchingComparison(player1: p1, player2: p2, season: year)
-                    } else {
-                        response = PlayerCardService.buildComparison(player1: p1, player2: p2, season: year)
-                    }
-                    lastResultContext = ResultContext(type: .comparison, playerNames: ctx.playerNames, stat: nil, season: year, originalQuery: question)
-                    return "[DIDYOUMEAN]\(interpretation)[/DIDYOUMEAN]\n" + response
-                }
-            }
-        }
-
-        // Pattern 4: League switching — "across all of MLB", "in the NL", "for the AL"
-        if ctx.type == .leaderboard, let stat = ctx.stat {
-            let leaguePhrases: [(phrase: String, league: String?)] = [
-                ("across all of mlb", nil), ("all of mlb", nil), ("across mlb", nil),
-                ("for mlb", nil), ("in mlb", nil), ("mlb-wide", nil), ("both leagues", nil),
-                ("in the al", "AL"), ("for the al", "AL"), ("al only", "AL"),
-                ("in the nl", "NL"), ("for the nl", "NL"), ("nl only", "NL"),
-                ("american league", "AL"), ("national league", "NL"),
-            ]
-            if let match = leaguePhrases.first(where: { lower.contains($0.phrase) }) {
-                let newLeague = match.league
-                let isPitching = PlayerNameMatcher.isPitchingStat(stat)
-                let scope: PlayerNameMatcher.LeaderboardScope
-                if let s = ctx.season { scope = .season(s) } else { scope = .career }
-                let response: String
-                if isPitching {
-                    response = PlayerCardService.buildPitchingLeaderboard(stat: stat, scope: scope, limit: 10, league: newLeague)
-                } else {
-                    response = PlayerCardService.buildLeaderboard(stat: stat, scope: scope, limit: 10, league: newLeague)
-                }
-                let leagueLabel = newLeague ?? "MLB"
-                let seasonLabel = ctx.season.map { "\($0) " } ?? "Career "
-                let interpretation = "\(seasonLabel)\(stat.displayName) leaders (\(leagueLabel))"
-                lastResultContext = ResultContext(
-                    type: .leaderboard,
-                    playerNames: extractPlayerNamesFromResponse(response),
-                    stat: stat, season: ctx.season, league: newLeague, originalQuery: question
-                )
-                return "[DIDYOUMEAN]\(interpretation)[/DIDYOUMEAN]\n" + response
-            }
-        }
-
-        // Pattern 5: "what about BABIP?" / bare stat name — same players, different stat
-        // Only when there's no player name and the query is short enough to be contextual
-        if lower.count < 30, ctx.playerNames.count >= 2 {
-            // Strip "what about" / "how about" / "and" prefix
-            let stripped = lower
-                .replacingOccurrences(of: "^(what about |how about |and |now |their )", with: "", options: .regularExpression)
-                .replacingOccurrences(of: "\\?$", with: "", options: .regularExpression)
-                .trimmingCharacters(in: .whitespaces)
-
-            if let stat = PlayerNameMatcher.matchStat(stripped),
-               PlayerNameMatcher.matchPlayer(question) == nil {
-                let isPitching = PlayerNameMatcher.isPitchingStat(stat)
-                let result = PlayerCardService.buildPlayerSubsetLeaderboard(
-                    playerNames: ctx.playerNames, stat: stat, season: ctx.season, isPitching: isPitching
-                )
-                if let result {
-                    let seasonLabel = ctx.season.map { "\($0) " } ?? ""
-                    let interpretation = "\(seasonLabel)\(stat.displayName) for same players"
-                    lastResultContext = ResultContext(type: ctx.type, playerNames: ctx.playerNames, stat: stat, season: ctx.season, originalQuery: question)
-                    return "[DIDYOUMEAN]\(interpretation)[/DIDYOUMEAN]\n" + result
-                }
-            }
-        }
-
-        // Pattern 5: "what about [player]?" — substitute player in same query type
-        if lower.count < 40, let ctx = lastResultContext {
-            let stripped = lower
-                .replacingOccurrences(of: "^(what about |how about |and |now |show me |show )", with: "", options: .regularExpression)
-                .replacingOccurrences(of: "\\?$", with: "", options: .regularExpression)
-                .trimmingCharacters(in: .whitespaces)
-
-            if let newPlayer = PlayerNameMatcher.findPlayerInText(stripped) ?? PlayerNameMatcher.matchPlayer(stripped) {
-                let season = ctx.season ?? PlayerNameMatcher.currentCalendarYear
-                switch ctx.type {
-                case .statLookup:
-                    if let stat = ctx.stat {
-                        let isPitching = PlayerCardService.isPitcher(name: newPlayer) || PlayerNameMatcher.isPitchingStat(stat)
-                        let response: String?
-                        if isPitching {
-                            response = PlayerCardService.buildPitchingSingleStatLookup(name: newPlayer, stat: stat, season: season)
-                        } else {
-                            response = PlayerCardService.buildSingleStatLookup(name: newPlayer, stat: stat, season: season)
-                        }
-                        if let response {
-                            lastResultContext = ResultContext(type: .statLookup, playerNames: [newPlayer], stat: stat, season: season, originalQuery: question)
-                            return response
-                        }
-                    }
-                case .leaderboard:
-                    if let stat = ctx.stat {
-                        let isPitching = PlayerCardService.isPitcher(name: newPlayer) || PlayerNameMatcher.isPitchingStat(stat)
-                        let response: String?
-                        if isPitching {
-                            response = PlayerCardService.buildPitchingSingleStatLookup(name: newPlayer, stat: stat, season: season)
-                        } else {
-                            response = PlayerCardService.buildSingleStatLookup(name: newPlayer, stat: stat, season: season)
-                        }
-                        if let response {
-                            lastResultContext = ResultContext(type: .statLookup, playerNames: [newPlayer], stat: stat, season: season, originalQuery: question)
-                            return response
-                        }
-                    }
-                case .seasonLookup:
-                    let isPitching = PlayerCardService.isPitcher(name: newPlayer)
-                    let response: String?
-                    if isPitching {
-                        response = PlayerCardService.buildPitchingSeasonSummary(name: newPlayer, season: season)
-                    } else {
-                        response = PlayerCardService.buildSeasonSummary(name: newPlayer, season: season)
-                    }
-                    if let response {
-                        lastResultContext = ResultContext(type: .seasonLookup, playerNames: [newPlayer], stat: nil, season: season, originalQuery: question)
-                        return response
-                    }
-                default:
-                    break
-                }
-            }
-        }
-
-        return nil
-    }
-
-    /// Resolves follow-ups with explicit referential phrases ("who of these had the highest BABIP?").
-    private func resolveReferentialFollowUp(_ question: String) -> String? {
-        // Find the last assistant message with content
-        guard let lastAssistant = messages.last(where: { $0.role == .assistant && !$0.content.isEmpty }) else {
-            return nil
-        }
-
-        // Extract player names from the previous result
-        let playerNames = extractPlayerNamesFromResponse(lastAssistant.content)
-        guard playerNames.count >= 2 else { return nil }
-
-        // Detect what stat the user is asking about
-        guard let stat = PlayerNameMatcher.matchStat(question) else { return nil }
-
-        // Detect season context from previous result or question
-        let season = detectSeasonFromContext(previousContent: lastAssistant.content, followUp: question)
-
-        // Query that stat for just those players
-        let isPitching = PlayerNameMatcher.isPitchingStat(stat)
-        let result = PlayerCardService.buildPlayerSubsetLeaderboard(
-            playerNames: playerNames, stat: stat, season: season, isPitching: isPitching
-        )
-        if let result {
-            // Save context so further follow-ups work
-            lastResultContext = ResultContext(type: .leaderboard, playerNames: playerNames, stat: stat, season: season, originalQuery: question)
-        }
-        return result
-    }
-
-    /// Extracts player names from a response string containing ROW lines (leaderboard or statgrid format).
-    private func extractPlayerNamesFromResponse(_ content: String) -> [String] {
-        var names: [String] = []
-        var seen = Set<String>()
-
-        for line in content.components(separatedBy: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("ROW ") || trimmed.hasPrefix("ROW:") else { continue }
-
-            let nameCandidate: String
-
-            if trimmed.hasPrefix("ROW:") {
-                // Statgrid/comparison format: "ROW: Aaron Judge, .893, 54, ..."
-                // or with year: "ROW: Aaron Judge (2024), .893, 54, ..."
-                let afterColon = trimmed.dropFirst(4).trimmingCharacters(in: .whitespaces)
-                // Name is everything before the first comma
-                if let commaIdx = afterColon.firstIndex(of: ",") {
-                    nameCandidate = String(afterColon[afterColon.startIndex..<commaIdx]).trimmingCharacters(in: .whitespaces)
-                } else {
-                    nameCandidate = afterColon
-                }
-            } else {
-                // Leaderboard format: "ROW 1. Aaron Judge: .893"
-                let afterRow = trimmed.dropFirst(4)
-                guard let dotIdx = afterRow.firstIndex(of: ".") else { continue }
-                let afterDot = afterRow[afterRow.index(after: dotIdx)...].trimmingCharacters(in: .whitespaces)
-                if let colonIdx = afterDot.firstIndex(of: ":") {
-                    nameCandidate = String(afterDot[afterDot.startIndex..<colonIdx]).trimmingCharacters(in: .whitespaces)
-                } else if let commaIdx = afterDot.firstIndex(of: ",") {
-                    nameCandidate = String(afterDot[afterDot.startIndex..<commaIdx]).trimmingCharacters(in: .whitespaces)
-                } else {
-                    nameCandidate = String(afterDot)
-                }
-            }
-
-            // Strip parenthetical suffix like "(NYY)" or "(2024)"
-            let cleanName: String
-            if let parenIdx = nameCandidate.firstIndex(of: "(") {
-                cleanName = String(nameCandidate[nameCandidate.startIndex..<parenIdx]).trimmingCharacters(in: .whitespaces)
-            } else {
-                cleanName = nameCandidate
-            }
-
-            if !cleanName.isEmpty && !seen.contains(cleanName.lowercased()) {
-                names.append(cleanName)
-                seen.insert(cleanName.lowercased())
-            }
-        }
-
-        return names
-    }
-
-    /// Detects which season the previous result was about.
-    private func detectSeasonFromContext(previousContent: String, followUp: String) -> Int? {
-        // Check follow-up first for explicit year
-        if let year = PlayerNameMatcher.detectSeason(followUp) { return year }
-
-        // Check previous content for year in title (e.g., "2025 OPS Leaders")
-        let yearPattern = /\b(20\d{2}|19\d{2})\b/
-        if let match = previousContent.firstMatch(of: yearPattern) {
-            return Int(match.1)
-        }
-
-        return nil
-    }
-
-    private func looksContextual(_ question: String) -> Bool {
-        let lower = question.lowercased()
-        let words = lower.split(separator: " ")
-
-        // Long questions are likely self-contained
-        if words.count >= 8 { return false }
-
-        // Contains a recognized player name → standalone
-        for i in 0..<words.count {
-            if !PlayerNameMatcher.commonWordLastNames.contains(String(words[i])),
-               PlayerNameMatcher.matchPlayer(String(words[i])) != nil { return false }
-            if i + 1 < words.count {
-                let pair = "\(words[i]) \(words[i + 1])"
-                if PlayerNameMatcher.matchPlayer(pair) != nil { return false }
-            }
-        }
-
-        // Starts with standalone question patterns — these form complete queries
-        let standaloneStarters = ["who ", "how many ", "top ", "list ", "compare ", "rank ",
-                                  "highest ", "lowest ", "most ", "fewest ", "best ", "worst ",
-                                  "what is ", "what are ", "what was ", "what were ",
-                                  "show ", "give me "]
-        for starter in standaloneStarters {
-            if lower.hasPrefix(starter) { return false }
-        }
-
-        // Contains "leaders" → likely a standalone leaderboard query ("career doubles leaders")
-        if lower.contains("leaders") || lower.contains("leaderboard") { return false }
-
-        // Contains explicit comparison signal → standalone
-        let compSignals = [" vs ", " vs. ", " versus ", " compared to "]
-        if compSignals.contains(where: { lower.contains($0) }) { return false }
-
-        return true
-    }
 }
+

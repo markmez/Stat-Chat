@@ -131,6 +131,28 @@ Commentary and context go OUTSIDE the grid block.
 - Keep it concise. Present the data clearly, add minimal commentary.
 """
 
+FOLLOWUP_CLASSIFY_PROMPT = """You classify follow-up questions in a baseball stats conversation.
+
+Given the prior conversation and a short follow-up, determine if the user wants:
+1. New data looked up — a different player, year, stat, split, or comparison. Rewrite as a complete standalone question.
+2. Analysis or interpretation of the prior answer — "is that good?", "how is that calculated?", "why?", etc.
+
+If the follow-up is already a complete standalone question, return it as-is under "data".
+
+Return ONLY valid JSON:
+- {"type": "data", "rewritten": "complete standalone question"}
+- {"type": "analytical"}
+
+Examples (prior question: "Aaron Judge home runs 2024"):
+- "what about 2023?" → {"type": "data", "rewritten": "Aaron Judge home runs 2023"}
+- "and Soto?" → {"type": "data", "rewritten": "Juan Soto home runs 2024"}
+- "career?" → {"type": "data", "rewritten": "Aaron Judge career home runs"}
+- "vs lefties?" → {"type": "data", "rewritten": "Aaron Judge vs lefties 2024"}
+- "is that a record?" → {"type": "analytical"}
+- "how is OPS calculated?" → {"type": "analytical"}
+- "ERA leaders" → {"type": "data", "rewritten": "ERA leaders"}
+"""
+
 STAT_EXPLANATION_PROMPT = """You explain baseball statistics clearly and concisely.
 
 When asked about a stat abbreviation or term, give a 2-3 sentence plain-English definition. Be accurate but conversational — you're talking to a baseball fan, not a statistician. No bullet points, no headers, no lists — just a clean paragraph.

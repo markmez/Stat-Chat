@@ -91,6 +91,47 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         increment_count(device_id)
         return
 
+    # 2a. Follow-up rewrite — if history is present and question is short,
+    # use Haiku to classify as data (rewrite) or analytical (reason about prior answer).
+    if history and len(question.split()) < 10:
+        logger.info("followup_classify question=%r", question)
+        try:
+            classification = await llm.classify_followup(question, history)
+        except Exception as e:
+            logger.warning("followup_classify_error error=%s", e)
+            classification = {"type": "data", "rewritten": question}
+
+        if classification["type"] == "data":
+            rewritten = classification.get("rewritten", question)
+            if rewritten != question:
+                logger.info("followup_rewritten original=%r rewritten=%r", question, rewritten)
+                # Try interceptor with the rewritten question
+                try:
+                    intercepted = try_intercept(rewritten)
+                except Exception as e:
+                    logger.warning("intercept_rewrite_error error=%s", e)
+                    intercepted = None
+                if intercepted is not None:
+                    logger.info("followup_intercepted rewritten=%r", rewritten)
+                    yield event({"type": "text", "text": intercepted})
+                    yield event({"type": "done", "intercepted": True})
+                    increment_count(device_id)
+                    return
+            # Use rewritten question for the rest of the pipeline
+            question = rewritten
+
+        elif classification["type"] == "analytical":
+            logger.info("followup_analytical question=%r", question)
+            try:
+                async for chunk in llm.stream_analytical(question, history):
+                    yield event({"type": "text", "text": chunk})
+            except Exception as e:
+                yield event({"type": "error", "message": str(e)})
+                return
+            yield event({"type": "done"})
+            increment_count(device_id)
+            return
+
     # 3. Route the question (falls through to Claude)
     logger.info("query_to_claude question=%r", question)
     try:
