@@ -251,6 +251,12 @@ Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The ma
 - Local DB used ONLY for: player name matching/disambiguation in `PlayerNameMatcher`
 - **Git tag** `ios-direct-anthropic-stable` — rollback point to direct Anthropic API
 
+### Force-update banner
+- **S3 config**: `https://stat-chat.s3.us-east-2.amazonaws.com/app_config.json` — contains `{ "min_version": "1.0.0" }`. Dormant by default.
+- **To trigger**: Edit `app_config.json` in project root, set `min_version` to the version users need, then `aws s3 cp app_config.json s3://stat-chat/app_config.json --content-type application/json`. Users on older versions see a full-screen banner on next launch.
+- **To deactivate**: Set `min_version` back to the current shipping version and re-upload.
+- **Behavior**: Checked on every app launch (5s timeout, silent failure). Banner is dismissable per session ("Not now"). "Update" button opens App Store (URL placeholder — update `appStoreURL` in `UpdateBannerView.swift` once app ID is available).
+
 ### Priority roadmap (in order)
 1. ~~**Historical data (pre-2016) via backend**~~ DONE — full 1898-2026 DB, 220 MB
 2. ~~**In-season live data feed**~~ DONE — MySportsFeeds DETAILS tier, cron every 4 hours, incl. play-by-play platoon splits

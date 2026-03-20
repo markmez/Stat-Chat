@@ -2165,19 +2165,23 @@ struct PlayerCardView: View {
         let h9 = ip > 0 ? 9.0 * Double(h) / ip : 0
         let hr9 = ip > 0 ? 9.0 * Double(hr) / ip : 0
         let baaDenom = bf - bb - hbp - sh - sf
-        let baa = baaDenom > 0 ? Double(h) / Double(baaDenom) : 0
+        let baa: Double? = baaDenom > 0 ? Double(h) / Double(baaDenom) : nil
 
-        let headers = ["W", "L", "SV", "G", "GS", "CG", "QS", "IP", "H", "R", "ER",
+        // QS: only show if all seasons have data (MSF 2026+ doesn't provide QS)
+        let hasCompleteQS = seasons.allSatisfy { ($0.countingValues["QS"] ?? 0) > 0 || ($0.countingValues["GS"] ?? 0) == 0 }
+
+        let headers = ["G", "W", "L", "SV", "GS", "CG", "QS", "IP", "H", "R", "ER",
                         "HR", "BB", "SO", "HBP", "WP", "BK",
                         "ERA", "WHIP", "K/9", "BB/9", "H/9", "HR/9", "BAA", "ERA+"]
         let values = [
-            "\(w)", "\(l)", "\(sv)", "\(g)", "\(gs)",
-            "\(cg)", "\(qs)", ipDisplay, "\(h)", "\(r)", "\(er)",
+            "\(g)", "\(w)", "\(l)", "\(sv)", "\(gs)",
+            "\(cg)", hasCompleteQS ? "\(qs)" : "--", ipDisplay, "\(h)", "\(r)", "\(er)",
             "\(hr)", "\(bb)", "\(so)", "\(hbp)", "\(wp)",
             "\(bk)",
             String(format: "%.2f", era), String(format: "%.2f", whip),
             String(format: "%.1f", k9), String(format: "%.1f", bb9),
-            String(format: "%.1f", h9), String(format: "%.1f", hr9), formatRate(baa), "--",
+            String(format: "%.1f", h9), String(format: "%.1f", hr9),
+            baa.map { formatRate($0) } ?? "--", "--",
         ]
         return StatGridParser.StatGrid(
             headers: headers,

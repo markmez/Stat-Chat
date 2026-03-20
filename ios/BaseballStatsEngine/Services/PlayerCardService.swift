@@ -372,9 +372,9 @@ enum PlayerCardService {
         return true
     }
 
-    // All pitching stats in conventional order (full set for SQL column mapping)
+    // All pitching stats — G first for career display, then conventional order
     private static let pitchingAllHeaders = [
-        "W", "L", "SV", "G", "GS", "GF", "CG", "QS", "IP", "H", "R", "ER", "HR", "BB", "IBB",
+        "G", "W", "L", "SV", "GS", "GF", "CG", "QS", "IP", "H", "R", "ER", "HR", "BB", "IBB",
         "SO", "HBP", "WP", "BK", "BF", "SH", "SF", "SB", "CS",
         "ERA", "WHIP", "K/9", "BB/9", "K/BB", "H/9", "HR/9", "BAA", "ERA+"
     ]
@@ -606,7 +606,7 @@ enum PlayerCardService {
         // Convert backend pitching seasons
         let pitchingSeasons: [PitchingSeasonData]? = data.pitching_seasons.isEmpty ? nil : data.pitching_seasons.enumerated().map { (index, s) in
             let values = [
-                "\(s.W)", "\(s.L)", "\(s.SV)", "\(s.G)", "\(s.GS)", "\(s.GF)",
+                "\(s.G)", "\(s.W)", "\(s.L)", "\(s.SV)", "\(s.GS)", "\(s.GF)",
                 "\(s.CG)", "\(s.QS)", s.IP, "\(s.H)", "\(s.R)", "\(s.ER)",
                 "\(s.HR)", "\(s.BB)", "\(s.IBB)", "\(s.SO)", "\(s.HBP)", "\(s.WP)",
                 "\(s.BK)", "\(s.BF)", "\(s.SH)", "\(s.SF)", "\(s.SB_allowed)", "\(s.CS_allowed)",
@@ -619,9 +619,15 @@ enum PlayerCardService {
             )
             let counting: [String: Double] = [
                 "W": Double(s.W), "L": Double(s.L), "SV": Double(s.SV),
-                "G": Double(s.G), "GS": Double(s.GS), "SO": Double(s.SO),
-                "BB": Double(s.BB), "H": Double(s.H), "ER": Double(s.ER),
-                "HR": Double(s.HR), "IP": Double(s.IP) ?? 0,
+                "G": Double(s.G), "GS": Double(s.GS), "GF": Double(s.GF),
+                "CG": Double(s.CG), "QS": Double(s.QS),
+                "SO": Double(s.SO), "BB": Double(s.BB), "IBB": Double(s.IBB),
+                "H": Double(s.H), "R": Double(s.R), "ER": Double(s.ER),
+                "HR": Double(s.HR), "HBP": Double(s.HBP), "WP": Double(s.WP),
+                "BK": Double(s.BK), "BF": Double(s.BF),
+                "SH": Double(s.SH), "SF": Double(s.SF),
+                "SB": Double(s.SB_allowed), "CS": Double(s.CS_allowed),
+                "IP": Double(s.IP) ?? 0,
             ]
 
             // Look up per-season pitching splits from backend
@@ -800,33 +806,31 @@ enum PlayerCardService {
     /// Build pitching career totals from an array of PitchingSeasonData.
     private static func buildPitchingCareerTotals(from seasons: [PitchingSeasonData]) -> StatGridParser.StatGrid? {
         guard seasons.count > 1 else { return nil }
-        var w = 0, l = 0, sv = 0, g = 0, gs = 0, cg = 0, qs = 0
-        var h = 0, r = 0, er = 0, hr = 0, bb = 0, so = 0, hbp = 0, wp = 0, bk = 0, bf = 0
-        let ibb = 0, sh = 0, sf = 0, sbA = 0, csA = 0, gf = 0
-        var totalIPOuts = 0.0  // approximate from IP string
+        // Accumulate all counting stats from per-season data
+        let keys = ["W", "L", "SV", "G", "GS", "GF", "CG", "QS",
+                     "H", "R", "ER", "HR", "BB", "IBB", "SO", "HBP", "WP", "BK",
+                     "BF", "SH", "SF", "SB", "CS"]
+        var totals: [String: Int] = [:]
+        for key in keys { totals[key] = 0 }
+        var totalIPOuts = 0.0
 
         for s in seasons {
-            w += Int(s.countingValues["W"] ?? 0)
-            l += Int(s.countingValues["L"] ?? 0)
-            sv += Int(s.countingValues["SV"] ?? 0)
-            g += s.games
-            gs += s.gamesStarted
-            so += Int(s.countingValues["SO"] ?? 0)
-            bb += Int(s.countingValues["BB"] ?? 0)
-            h += Int(s.countingValues["H"] ?? 0)
-            er += Int(s.countingValues["ER"] ?? 0)
-            hr += Int(s.countingValues["HR"] ?? 0)
-            // Parse IP string (e.g. "201.1") to outs
+            for key in keys {
+                totals[key, default: 0] += Int(s.countingValues[key] ?? 0)
+            }
             if let ipVal = s.countingValues["IP"] {
                 let whole = Int(ipVal)
                 let frac = ipVal - Double(whole)
-                // IP is formatted as X.Y where Y is thirds
                 totalIPOuts += Double(whole * 3) + (frac * 10).rounded()
             }
         }
 
         let ip = totalIPOuts / 3.0
         let ipDisplay = "\(Int(totalIPOuts) / 3).\(Int(totalIPOuts) % 3)"
+        let h = totals["H"]!, bb = totals["BB"]!, er = totals["ER"]!
+        let so = totals["SO"]!, hr = totals["HR"]!, bf = totals["BF"]!
+        let hbp = totals["HBP"]!, sh = totals["SH"]!, sf = totals["SF"]!
+
         let era = ip > 0 ? 9.0 * Double(er) / ip : 0
         let whip = ip > 0 ? Double(bb + h) / ip : 0
         let k9 = ip > 0 ? 9.0 * Double(so) / ip : 0
@@ -834,17 +838,27 @@ enum PlayerCardService {
         let kbb = bb > 0 ? Double(so) / Double(bb) : 0
         let h9 = ip > 0 ? 9.0 * Double(h) / ip : 0
         let hr9 = ip > 0 ? 9.0 * Double(hr) / ip : 0
-        let baa = 0.0  // BF not tracked in counting values; can't compute BAA for career
+
+        // BAA = H / (BF - BB - HBP - SH - SF)
+        let baaDenom = bf - bb - hbp - sh - sf
+        let baa = baaDenom > 0 ? Double(h) / Double(baaDenom) : nil
+
+        // QS: only show if all seasons have data (MSF 2026+ doesn't provide QS)
+        let hasCompleteQS = seasons.allSatisfy { ($0.countingValues["QS"] ?? 0) > 0 || ($0.countingValues["GS"] ?? 0) == 0 }
 
         let values = [
-            "\(w)", "\(l)", "\(sv)", "\(g)", "\(gs)", "\(gf)",
-            "\(cg)", "\(qs)", ipDisplay, "\(h)", "\(r)", "\(er)",
-            "\(hr)", "\(bb)", "\(ibb)", "\(so)", "\(hbp)", "\(wp)",
-            "\(bk)", "\(bf)", "\(sh)", "\(sf)", "\(sbA)", "\(csA)",
+            "\(totals["G"]!)", "\(totals["W"]!)", "\(totals["L"]!)", "\(totals["SV"]!)",
+            "\(totals["GS"]!)", "\(totals["GF"]!)",
+            "\(totals["CG"]!)", hasCompleteQS ? "\(totals["QS"]!)" : "--",
+            ipDisplay, "\(h)", "\(totals["R"]!)", "\(er)",
+            "\(hr)", "\(bb)", "\(totals["IBB"]!)", "\(so)", "\(hbp)", "\(totals["WP"]!)",
+            "\(totals["BK"]!)", "\(bf)", "\(sh)", "\(sf)", "\(totals["SB"]!)", "\(totals["CS"]!)",
             String(format: "%.2f", era), String(format: "%.2f", whip),
             String(format: "%.1f", k9), String(format: "%.1f", bb9),
             String(format: "%.2f", kbb), String(format: "%.1f", h9),
-            String(format: "%.1f", hr9), formatRate(String(format: "%.3f", baa)), "--",
+            String(format: "%.1f", hr9),
+            baa.map { formatRate(String(format: "%.3f", $0)) } ?? "--",
+            "--",
         ]
         let displayValues = filterPitchingForDisplay(values)
         return StatGridParser.StatGrid(
