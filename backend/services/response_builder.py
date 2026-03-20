@@ -1680,6 +1680,104 @@ def build_platoon_leaderboard(stat_info, hand: str, is_pitching: bool = False,
 
 
 # ===================================================================
+# 15c. build_multi_threshold
+# ===================================================================
+
+def build_multi_threshold(filters: list, season: int,
+                          is_pitching: bool = False,
+                          league: Optional[str] = None) -> Optional[str]:
+    """Build a multi-stat threshold: '.300 AVG with 30+ HR', '200 K and sub-3.00 ERA'."""
+    conn = _get_db()
+    try:
+        table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+        prefix = "sp" if is_pitching else "s"
+        league_filter = f" AND {_league_team_clause(league, prefix)}" if league else ""
+        league_label = f" ({league})" if league else ""
+
+        # Verify all columns exist
+        cur = conn.cursor()
+        cur.execute(f"PRAGMA table_info({table})")
+        valid_cols = {r[1] for r in cur.fetchall()}
+        for f in filters:
+            if f["stat"].db_column not in valid_cols:
+                return None
+
+        # Build WHERE clauses
+        where_parts = [f"{prefix}.season = ?"]
+        params = [season]
+        for f in filters:
+            where_parts.append(f"{prefix}.{f['stat'].db_column} {f['comparison']} ?")
+            params.append(f["threshold"])
+
+        # PA/IP minimum for rate stats
+        has_rate = any(f["stat"].is_rate for f in filters)
+        if has_rate:
+            if is_pitching:
+                where_parts.append(f"{prefix}.ip_outs >= 486")
+            else:
+                cur.execute(f"SELECT MAX(games) FROM {table} WHERE season = ?", (season,))
+                r = cur.fetchone()
+                max_games = int(r[0]) if r and r[0] else 162
+                pa_min = 400 if max_games >= 140 else 200
+                where_parts.append(f"{prefix}.plate_appearances >= {pa_min}")
+
+        # Select all filter stat columns
+        select_cols = ", ".join(f"{prefix}.{f['stat'].db_column}" for f in filters)
+        where_clause = " AND ".join(where_parts)
+
+        # Sort by first stat
+        first_stat = filters[0]["stat"]
+        order = "ASC" if first_stat.db_column in ("earned_run_avg", "whip") else "DESC"
+
+        cur.execute(
+            f"SELECT p.name, {select_cols} "
+            f"FROM {table} {prefix} "
+            f"JOIN players p ON {prefix}.player_id = p.player_id "
+            f"WHERE {where_clause}{league_filter} "
+            f"ORDER BY {prefix}.{first_stat.db_column} {order} LIMIT 50",
+            tuple(params),
+        )
+        rows = cur.fetchall()
+
+        # Build title
+        title_parts = []
+        for f in filters:
+            t = _format_rate(str(f["threshold"])) if f["stat"].is_rate else str(int(f["threshold"]))
+            op = "+" if f["comparison"] == ">=" else "-"
+            if f["stat"].is_rate and f["comparison"] == ">=":
+                title_parts.append(f"{t}+ {f['stat'].display_abbrev}")
+            elif f["comparison"] == "<=":
+                title_parts.append(f"Sub-{t} {f['stat'].display_abbrev}")
+            else:
+                title_parts.append(f"{t}+ {f['stat'].display_abbrev}")
+        who = "Pitchers" if is_pitching else "Players"
+        title = f"{who} with {' and '.join(title_parts)} in {season}{league_label}"
+
+        if not rows:
+            return f"No {who.lower()} matched {' and '.join(title_parts)} in {season}{league_label}."
+
+        header_abbrevs = [f["stat"].display_abbrev for f in filters]
+        parts = [f"**{title}**\n"]
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: " + ", ".join(header_abbrevs))
+        for i, row in enumerate(rows):
+            vals = []
+            for j, f in enumerate(filters):
+                v = row[1 + j]
+                vals.append(_format_rate(str(v)) if f["stat"].is_rate else str(v))
+            parts.append(f"ROW {i+1}. {row[0]}: {', '.join(vals)}")
+        parts.append("[/LEADERBOARD]")
+
+        count = len(rows)
+        parts.append(f"\n{count} player{'s' if count != 1 else ''} matched.")
+
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
+# ===================================================================
 # 16. build_home_away_splits
 # ===================================================================
 

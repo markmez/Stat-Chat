@@ -9,6 +9,8 @@ through to Claude for truly unpredictable queries.
 This mirrors the iOS AppState.sendQuestion() intercept chain exactly.
 """
 
+from datetime import date
+
 from services import name_matcher as nm
 from services import response_builder as rb
 from services.stat_definitions import lookup as stat_def_lookup
@@ -224,6 +226,15 @@ def try_intercept(question: str):
                 threshold["stat"], threshold["threshold"],
                 threshold["comparison"], is_pitching,
                 threshold.get("league"))
+        if response:
+            return response
+
+    # 17b. Multi-threshold — ".300 AVG with 30+ HR", "200 K and sub-3.00 ERA"
+    multi = nm.parse_multi_threshold(trimmed)
+    if multi:
+        season = multi["season"] or date.today().year
+        response = rb.build_multi_threshold(
+            multi["filters"], season, multi["is_pitching"], multi.get("league"))
         if response:
             return response
 

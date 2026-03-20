@@ -1521,7 +1521,11 @@ def parse_threshold(input_str: str) -> Optional[dict]:
 
     stat = match_stat(lower)
     if not stat:
-        return None
+        # "batted .300" / "hit over .300" — infer batting average from verb + decimal
+        if re.search(r'(?:batted|hit|batting|hitting)\s+(?:over\s+|above\s+|at least\s+)?\.?\d', lower):
+            stat = stat_alias_map.get("batting average") or stat_alias_map.get("avg")
+        if not stat:
+            return None
 
     threshold = _extract_threshold(lower)
     if threshold is None:
@@ -1686,6 +1690,75 @@ def parse_superlative(input_str: str) -> Optional[dict]:
 
     return {
         "stat": stat, "threshold": threshold, "superlative": superlative,
+        "league": league_result[0] if league_result else None,
+    }
+
+
+def parse_multi_threshold(input_str: str) -> Optional[dict]:
+    """Detect compound threshold queries like '.300 with 30 HR' or '200 K and sub-3.00 ERA'.
+    Returns dict with filters (list of {stat, threshold, comparison}), season, is_pitching."""
+    lower = input_str.strip().lower()
+    league_result = detect_league(lower)
+    if league_result:
+        lower = league_result[1]
+
+    if _has_player_name(lower):
+        return None
+
+    # Split on all separators to get individual conditions
+    # e.g. "pitchers with 200+ K and sub-3.00 ERA" → ["pitchers", "200+ K", "sub-3.00 ERA"]
+    separators = [" with ", " and ", " while ", " plus "]
+    if not any(s in lower for s in separators):
+        return None
+
+    # Replace all separators with a common delimiter, then split
+    temp = lower
+    for s in separators:
+        temp = temp.replace(s, " |SEP| ")
+    parts = [p.strip() for p in temp.split("|SEP|") if p.strip()]
+    if len(parts) < 2:
+        return None
+
+    under_patterns = ["under ", "fewer than ", "less than ", "below ",
+                      "sub-", "sub ", "no more than ", "or fewer", "or less"]
+
+    filters = []
+    for part in parts:
+        part = part.strip()
+
+        # Determine comparison direction
+        comparison = ">="
+        for up in under_patterns:
+            if up in part:
+                comparison = "<="
+                break
+
+        stat = match_stat(part)
+        if not stat:
+            # "batted .300" / "hit over .300" — infer batting average
+            if re.search(r'(?:batted|hit|batting|hitting)\s+(?:over\s+|above\s+|at least\s+)?\.?\d', part):
+                stat = stat_alias_map.get("batting average") or stat_alias_map.get("avg")
+            if not stat:
+                continue
+
+        threshold = _extract_threshold(part)
+        if threshold is None:
+            continue
+
+        filters.append({"stat": stat, "threshold": threshold, "comparison": comparison})
+
+    if len(filters) < 2:
+        return None
+
+    # Detect pitching context
+    pitching_stats = {"earned_run_avg", "wins", "losses", "saves", "whip",
+                      "k_per_9", "bb_per_9", "innings_pitched", "quality_starts",
+                      "complete_games", "batting_avg_against"}
+    is_pitching = "pitcher" in lower or any(f["stat"].db_column in pitching_stats for f in filters)
+
+    season = detect_season(lower)
+    return {
+        "filters": filters, "season": season, "is_pitching": is_pitching,
         "league": league_result[0] if league_result else None,
     }
 

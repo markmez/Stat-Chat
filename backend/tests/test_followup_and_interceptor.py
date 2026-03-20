@@ -497,15 +497,25 @@ class TestInterceptorFalsePositives:
         r = try_intercept("what makes him a hall of famer?")
         assert r is None, "False positive: interceptor matched a player named Hall"
 
-    def test_compound_threshold_not_intercepted(self):
-        """Multi-stat threshold queries should fall through to Claude SQL."""
+    def test_compound_threshold_batting_intercepted(self):
+        """Multi-stat threshold queries should be intercepted by parse_multi_threshold."""
         r = try_intercept("show me players who hit over .300 with 30 homers in 2024")
-        assert r is None, "Compound threshold should not be intercepted"
+        assert r is not None, "Compound threshold should be intercepted"
+        assert "[LEADERBOARD]" in r
+        assert "AVG" in r and "HR" in r
 
-    def test_compound_threshold_pitching(self):
-        """Pitching compound thresholds should fall through too."""
+    def test_compound_threshold_pitching_intercepted(self):
+        """Pitching compound thresholds should be intercepted."""
         r = try_intercept("pitchers with 200+ strikeouts and sub-3.00 ERA in 2024")
-        assert r is None
+        assert r is not None, "Pitching compound threshold should be intercepted"
+        assert "[LEADERBOARD]" in r
+        assert "SO" in r and "ERA" in r
+
+    def test_single_threshold_batting_avg_intercepted(self):
+        """'who batted .300' should be intercepted via batting avg inference."""
+        r = try_intercept("who batted .300 in 2024")
+        assert r is not None, "'who batted .300' should be intercepted"
+        assert "AVG" in r
 
     def test_platoon_leaderboard_intercepted_correctly(self):
         """Platoon leaderboard should be intercepted with correct split data."""

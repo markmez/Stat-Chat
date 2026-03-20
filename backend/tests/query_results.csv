@@ -1,0 +1,50 @@
+Query,Intercepted,Response Preview
+Aaron Judge home runs,YES,**Aaron Judge** hit **2** home runs in 2026. (New York Yankees)
+Aaron Judge 2024 stats,YES,"**Aaron Judge** — 2024 Season (New York Yankees)  |  ROW: 158, 559, 122, 180, 36, 1, 58, 144, 10, 0, 133, 20, 171, 9, .322, .458, .701, 1.159, 222, .379, .367"
+Aaron Judge career home runs,YES,**Aaron Judge** has hit **370** career home runs. (New York Yankees)
+Shohei Ohtani batting average 2024,YES,**Shohei Ohtani** posted a **.310 AVG** in 2024. (Los Angeles Dodgers)
+how many strikeouts did Gerrit Cole have in 2024,YES,**Gerrit Cole** struck out **99** batters in 2024. (New York Yankees)
+Judge vs Soto,YES,"2026 Season:  |  ROW: Aaron Judge, 5, 11, 5, 3, 0, 0, 2, 4, 0, 0, 3, 0, 1, 1, .273, .467, .818, 1.285, 230, .545, .125"
+Compare Aaron Judge and Juan Soto in 2024,YES,"2024 Season:  |  ROW: Aaron Judge, 158, 559, 122, 180, 36, 1, 58, 144, 10, 0, 133, 20, 171, 9, .322, .458, .701, 1.159, 222, .379, .367"
+Ohtani vs Judge career,YES,"**Shohei Ohtani** — 2026 Season (Los Angeles Dodgers)  |  ROW: 1, 3, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, .333, .333, .333, .667, 76, .000, .500"
+home run leaders 2024,YES,**2024 Home Runs Leaders**  |  ROW 1. Aaron Judge: 58
+ERA leaders 2024,YES,**2024 ERA Leaders (Pitching)**  |  ROW 1. Paul Skenes: 1.96
+who led the league in stolen bases last year,YES,**2025 Stolen Bases Leaders**  |  ROW 1. Jose Ramirez: 44
+top 10 batting average 2024,YES,**2024 Batting Average Leaders**  |  ROW 1. Bobby Witt Jr.: .332
+career home run leaders,YES,**Career Home Runs Leaders**  |  ROW 1. Barry Bonds: 762
+most home runs against lefties in 2024,YES,**2024 Home Runs Leaders vs Left-Handed Pitchers**  |  ROW 1. Ketel Marte: 18
+most strikeouts against left-handed batters in 2024,YES,**2024 Strikeouts Leaders vs Left-Handed Batters**  |  ROW 1. Zack Wheeler: 111
+highest batting average vs righties 2024,YES,**2024 Batting Average Leaders vs Right-Handed Pitchers**  |  ROW 1. Victor Robles: .343
+most RBI against left-handed pitchers 2024,YES,**2024 RBI Leaders vs Left-Handed Pitchers**  |  ROW 1. Ketel Marte: 45
+Judge vs lefties,YES,**Aaron Judge** — 2026 vs Left-Handed Pitchers
+Soto against right-handed pitchers,YES,**Juan Soto** — 2026 vs Right-Handed Pitchers
+who hit 40 home runs in 2024,YES,**Players with 40+ Home Runs in 2024**  |  ROW 1. Aaron Judge: 58
+who batted .300 in 2024,YES,**Players Batting Over .300 AVG in 2024**  |  ROW 1. Bobby Witt Jr.: .332
+"show me players who hit over .300 with 30 homers in 2024",YES,"**Players with .300+ AVG and 30+ HR in 2024**  |  ROW 1. Bobby Witt Jr.: .332, 32"
+"pitchers with 200+ strikeouts and sub-3.00 ERA in 2024",YES,"**Pitchers with 200+ SO and Sub-3.000 ERA in 2024**  |  ROW 1. Tarik Skubal: 228, 2.390"
+most home runs with .300 batting average in 2024,YES,"**Most Home Runs with .300+ AVG (2024)**  |  ROW 1. Aaron Judge: 58, .322"
+how many seasons has judge hit 30 home runs,YES,"Aaron Judge has had 30+ home runs in **6** of 11 career seasons: 2017, 2021, 2022, 2023, 2024, 2025.  |  ROW: 2017, 52"
+has judge ever hit a triple,YES,"Aaron Judge has recorded at least one triple in **4** of 11 career seasons: 2017, 2019, 2024, 2025.  |  ROW: 2017, 3"
+how often has judge batted .300,YES,"Aaron Judge has had .300+ batting average in **3** of 11 career seasons: 2022, 2024, 2025.  |  ROW: 2022, .311"
+how is Judge doing lately,YES,"Aaron Judge has been on fire over the last 5 games (since Feb 21):  |  ROW: 5, 11, 5, 3, 2, 4, 3, 1, .273, .400, .818, 1.218"
+Judge hot streaks 2024,YES,No hot streaks found for **Aaron Judge** in 2024.
+Judge home vs away,YES,**Aaron Judge** — 2026 Home vs Away
+Judge with runners in scoring position,YES,**Aaron Judge** — 2026 With Runners in Scoring Position
+what is OPS,YES,**OPS** — On-Base Plus Slugging -- OBP + SLG. Combines a batter's ability to get on base and hit for power. An OPS over .900 is elite.
+explain BABIP,YES,**BABIP** — Batting Average on Balls In Play -- (H - HR) / (AB - SO - HR + SF). Measures batting average excluding home runs and strikeouts.
+what about 2023?,NO (→ Claude),
+how about triples?,NO (→ Claude),
+compare them,NO (→ Claude),
+who was better?,NO (→ Claude),
+is that a good batting average?,NO (→ Claude),
+why did his stats drop in 2023?,NO (→ Claude),
+was that a record?,NO (→ Claude),
+who had the best season ever,NO (→ Claude),
+what makes him a hall of famer?,NO (→ Claude),
+show me players who walk a lot,NO (→ Claude),
+Yankees hitters 2024,YES,"**New York Yankees** — 2024 Hitters  |  ROW 1. Aaron Judge: 158, .322, 58, 144, 1.159"
+Dodgers pitching staff ERA 2024,YES,**Los Angeles Dodgers** — 2024 ERA Leaders (Pitching)  |  ROW 1. River Ryan: 1.33
+did judge hit any triples this year,YES,**Aaron Judge** had **0 3B** in 2026. (New York Yankees)
+how many home runs has ohtani hit,YES,**Shohei Ohtani** hit **0** home runs in 2026. (Los Angeles Dodgers)
+judge stolen bases,YES,**Aaron Judge** stole **0** bases in 2026. (New York Yankees)
+who has the most wins in baseball right now,YES,**2026 Wins Leaders (Pitching)**  |  ROW 1. Drew Anderson: 2
