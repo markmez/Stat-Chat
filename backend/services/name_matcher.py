@@ -1062,6 +1062,77 @@ def parse_platoon_splits(input_str: str) -> Optional[dict]:
     return {"name": name, "hand": hand, "season": season}
 
 
+def parse_platoon_leaderboard(input_str: str) -> Optional[dict]:
+    """Detect platoon leaderboard queries like 'most HR against lefties'.
+    Returns dict with stat, hand, is_pitching, season, limit."""
+    lower = input_str.strip().lower()
+    league_result = detect_league(lower)
+    if league_result:
+        lower = league_result[1]
+
+    leaderboard_triggers = ["leaders", "leader", "leaderboard", "top ", "most ", "best ",
+                            "highest", "lowest", "who led", "who leads", "who hit the most",
+                            "who had the most", "leading", "fewest"]
+    if not any(t in lower for t in leaderboard_triggers):
+        return None
+
+    # Must have a platoon qualifier
+    lhp_triggers = ["vs lefties", "against lefties", "vs left-handed", "vs lhp",
+                     "versus lefties", "facing lefties", "left-handed pitching",
+                     "against left-handed", "against lhp", "left-handed batters",
+                     "left-handed hitters"]
+    rhp_triggers = ["vs righties", "against righties", "vs right-handed", "vs rhp",
+                     "versus righties", "facing righties", "right-handed pitching",
+                     "against right-handed", "against rhp", "right-handed batters",
+                     "right-handed hitters"]
+
+    has_lhp = any(t in lower for t in lhp_triggers)
+    has_rhp = any(t in lower for t in rhp_triggers)
+    if not has_lhp and not has_rhp:
+        return None
+
+    hand = "LHP" if has_lhp else "RHP"
+
+    # Reject if there's a specific player name — that's a player split, not a leaderboard
+    if _has_player_name(lower):
+        return None
+
+    # Strip the platoon qualifier before matching the stat, so "batting average
+    # against righties" matches AVG, not BAA ("batting average against")
+    stat_text = lower
+    all_platoon_triggers = lhp_triggers + rhp_triggers
+    for trigger in sorted(all_platoon_triggers, key=len, reverse=True):
+        stat_text = stat_text.replace(trigger, " ")
+    stat = match_stat(stat_text)
+    if not stat:
+        return None
+
+    # Detect pitching context: pitching-specific stat, or "pitcher" NOT preceded
+    # by "against/vs/facing ... pitcher" (which describes the opponent, not the subject)
+    pitching_stats = {"earned_run_avg", "wins", "losses", "saves", "whip",
+                      "k_per_9", "bb_per_9", "h_per_9", "hr_per_9",
+                      "innings_pitched", "quality_starts", "complete_games",
+                      "batting_avg_against"}
+    # "against left-handed pitchers" = batters facing pitchers, NOT pitching context
+    # "against left-handed batters/hitters" = pitchers facing batters, IS pitching context
+    pitcher_is_subject = bool(re.search(r'\bpitcher', lower)) and \
+        not re.search(r'(?:against|vs\.?|versus|facing)\b.*\bpitcher', lower)
+    batter_is_opponent = bool(re.search(r'(?:against|vs\.?|versus|facing)\b.*\b(?:batter|hitter)', lower))
+    is_pitching = pitcher_is_subject or batter_is_opponent or stat.db_column in pitching_stats
+
+    limit = 50
+    m = re.search(r'top\s+(\d+)', lower)
+    if m:
+        limit = max(1, min(int(m.group(1)), 50))
+
+    season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
+    return {
+        "stat": stat, "hand": hand, "is_pitching": is_pitching,
+        "season": season, "limit": limit,
+        "league": league_result[0] if league_result else None,
+    }
+
+
 def parse_home_away_splits(input_str: str) -> Optional[dict]:
     """Detect home/away split queries. Returns dict with name, location, season."""
     lower = input_str.strip().lower()
@@ -1267,6 +1338,18 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
     if any(t in lower for t in team_aggregate_triggers):
         return None
 
+    # Reject queries with situational/platoon qualifiers — these need Claude SQL
+    # to query the correct split tables (platoon, RISP, count, etc.)
+    situational_triggers = [
+        "against left", "against right", "vs left", "vs right",
+        "left-handed", "right-handed", "lefties", "righties",
+        "with runners", "runners on", "with risp", "scoring position",
+        "bases loaded", "with men on",
+        "in the clutch", "close and late", "high leverage",
+    ]
+    if any(t in lower for t in situational_triggers):
+        return None
+
     # "closest to .400" -> batting average
     stat: Optional[StatInfo] = None
     closest_to_threshold: Optional[float] = None
@@ -1444,6 +1527,16 @@ def parse_threshold(input_str: str) -> Optional[dict]:
     if threshold is None:
         return None
 
+    # Reject compound thresholds (e.g. "hit .300 with 30 HR") — two or more
+    # non-year numbers means multiple stat filters, too complex for this parser.
+    non_year_nums = [
+        float(m.group(1))
+        for m in re.finditer(r'(\d+\.?\d*|\.\d+)\+?', lower)
+        if not (1900 <= int(float(m.group(1))) <= 2099 and "." not in m.group(1))
+    ]
+    if len(non_year_nums) > 1:
+        return None
+
     under_patterns = ["under ", "fewer than ", "less than ", "below ", "no more than ",
                       "or fewer", "or less"]
     comparison = "<=" if any(p in lower for p in under_patterns) else ">="
@@ -1525,6 +1618,12 @@ def parse_filtered_leaderboard(input_str: str) -> Optional[dict]:
     filter_part = lower[sep_idx + len(separator):]
 
     if _has_player_name(lower):
+        return None
+
+    # If the rank_part contains a threshold number, this is a compound threshold
+    # query (e.g. "players who hit .300 with 30 HR"), not a filtered leaderboard.
+    if re.search(r'(?:over|above|more than|at least)?\s*\.?\d+', rank_part) and \
+            _extract_threshold(rank_part) is not None:
         return None
 
     rank_stat = match_stat(rank_part)

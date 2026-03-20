@@ -1591,6 +1591,95 @@ def build_pitching_platoon_splits(name: str, hand: Optional[str] = None, season:
 
 
 # ===================================================================
+# 15b. build_platoon_leaderboard
+# ===================================================================
+
+def build_platoon_leaderboard(stat_info, hand: str, is_pitching: bool = False,
+                              season: int = 0, limit: int = 50,
+                              league: Optional[str] = None) -> Optional[str]:
+    """Leaderboard for a stat filtered by platoon split (vs LHP/RHP or vs LHB/RHB)."""
+    conn = _get_db()
+    try:
+        yr = season or datetime.now().year
+
+        # Map stat db_column to the correct column in the split table
+        col = stat_info.db_column
+
+        if is_pitching:
+            table = "pitching_platoon_splits"
+            alias = "pps"
+            split_value = f"vs_L{('H' if hand == 'LHP' else 'H')}B"
+            split_value = "vs_LHB" if hand == "LHP" else "vs_RHB"
+            hand_label = "vs Left-Handed Batters" if hand == "LHP" else "vs Right-Handed Batters"
+            # Pitching platoon table uses _against suffix for rate stats
+            pitching_col_map = {
+                "batting_avg": "batting_avg_against",
+                "obp": "obp_against",
+                "slg": "slg_against",
+                "ops": "ops_against",
+            }
+            col = pitching_col_map.get(col, col)
+        else:
+            table = "platoon_splits"
+            alias = "ps"
+            split_value = "vs_LHP" if hand == "LHP" else "vs_RHP"
+            hand_label = "vs Left-Handed Pitchers" if hand == "LHP" else "vs Right-Handed Pitchers"
+
+        # Verify the column exists in the split table
+        cur = conn.cursor()
+        cur.execute(f"PRAGMA table_info({table})")
+        valid_cols = {r[1] for r in cur.fetchall()}
+        if col not in valid_cols:
+            return None
+
+        # PA minimum for rate stats
+        pa_filter = ""
+        if stat_info.is_rate:
+            pa_filter = f" AND {alias}.plate_appearances >= 100"
+
+        league_filter = ""
+        league_label = ""
+        if league:
+            league_filter = f" AND {_league_team_clause(league, 'p')}"
+            league_label = f" ({league})"
+
+        # Sort direction: lower is better for batting_avg_against, obp_against, etc.
+        lower_is_better = col in ("batting_avg_against", "obp_against", "slg_against",
+                                   "ops_against", "earned_run_avg", "whip")
+        order = "ASC" if lower_is_better else "DESC"
+
+        cur.execute(
+            f"SELECT p.name, {alias}.{col} "
+            f"FROM {table} {alias} "
+            f"JOIN players p ON {alias}.player_id = p.player_id "
+            f"WHERE {alias}.season = ? AND {alias}.split = ?{pa_filter}{league_filter} "
+            f"AND {alias}.{col} IS NOT NULL "
+            f"ORDER BY {alias}.{col} {order} LIMIT ?",
+            (yr, split_value, limit),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return f"No {stat_info.display_name} {hand_label.lower()} leaders found for {yr}."
+
+        abbrev = stat_info.display_abbrev
+        title = f"**{yr} {stat_info.display_name} Leaders {hand_label}{league_label}**\n"
+        parts = [title]
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+        parts.append("[LEADERBOARD]")
+        parts.append(f"HEADER: {abbrev}")
+        for i, row in enumerate(rows):
+            val = _format_rate(str(row[1])) if stat_info.is_rate else str(row[1])
+            parts.append(f"ROW {i+1}. {row[0]}: {val}")
+        parts.append("[/LEADERBOARD]")
+        if stat_info.is_rate:
+            parts.append("\n_Min. 100 PA._")
+
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
+# ===================================================================
 # 16. build_home_away_splits
 # ===================================================================
 

@@ -276,6 +276,16 @@ def try_intercept(question: str):
         if response:
             return response
 
+    # 23b. Platoon leaderboard — "most HR vs lefties", "highest AVG against righties"
+    platoon_board = nm.parse_platoon_leaderboard(trimmed)
+    if platoon_board:
+        response = rb.build_platoon_leaderboard(
+            platoon_board["stat"], platoon_board["hand"],
+            platoon_board["is_pitching"], platoon_board["season"],
+            platoon_board.get("limit", 50), platoon_board.get("league"))
+        if response:
+            return response
+
     # 24. Leaderboard — "HR leaders", "top 5 OPS", "career HR leaders"
     board = nm.parse_leaderboard(trimmed)
     if board:
