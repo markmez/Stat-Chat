@@ -51,11 +51,11 @@
       "abbrev": "H", "name": "Hits", "is_rate": false
     },
     "doubles": {
-      "aliases": ["doubles", "2b"],
+      "aliases": ["doubles", "double", "2b"],
       "abbrev": "2B", "name": "Doubles", "is_rate": false
     },
     "triples": {
-      "aliases": ["triples", "3b"],
+      "aliases": ["triples", "triple", "3b"],
       "abbrev": "3B", "name": "Triples", "is_rate": false
     },
     "games": {

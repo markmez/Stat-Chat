@@ -3505,3 +3505,99 @@ def build_team_ranking(stat_info: StatInfo, season: int) -> Optional[str]:
         return "\n".join(parts)
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Season count — "how many seasons has Judge hit a triple?"
+# ---------------------------------------------------------------------------
+
+def build_season_count(name: str, db_column: str, stat_abbrev: str,
+                       stat_name: str, threshold, is_rate: bool,
+                       is_pitching: bool) -> Optional[str]:
+    """Count seasons where a player reached a stat threshold."""
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+        comp = ">=" if not is_rate else ">="
+        rows = conn.execute(
+            f"""
+            SELECT s.season, s.{db_column}
+            FROM {table} s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name = ? AND s.{db_column} {comp} ?
+            ORDER BY s.season
+            """,
+            (name, threshold),
+        ).fetchall()
+
+        total_seasons = conn.execute(
+            f"""
+            SELECT COUNT(DISTINCT s.season)
+            FROM {table} s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name = ?
+            """,
+            (name,),
+        ).fetchone()[0]
+
+        # Singularize stat name for "at least one" phrasing
+        singular_name = stat_name.lower()
+        if singular_name.endswith("s") and singular_name not in ("walks", "saves", "losses"):
+            singular_name = singular_name[:-1]  # "triples" → "triple", "home runs" → "home run"
+
+        if not rows:
+            if threshold == 1:
+                return f"{name} has never recorded a {singular_name} in any season in our database."
+            else:
+                fmt = _format_threshold_value(threshold, stat_abbrev)
+                return f"{name} has never had {fmt} {stat_name.lower()} in a season."
+
+        count = len(rows)
+        seasons_list = [str(r[0]) for r in rows]
+
+        # Format the answer
+        if threshold == 1:
+            desc = f"recorded at least one {singular_name}"
+        else:
+            fmt = _format_threshold_value(threshold, stat_abbrev)
+            desc = f"had {fmt}+ {stat_name.lower()}"
+
+        parts = [f"{name} has {desc} in **{count}** of {total_seasons} career seasons"]
+        if count <= 10:
+            parts[0] += f": {', '.join(seasons_list)}."
+        else:
+            parts[0] += "."
+
+        # Show the values per season in a compact grid if reasonable count
+        if 2 <= count <= 20:
+            parts.append("")
+            parts.append("[STATGRID]")
+            parts.append(f"HEADER: {stat_abbrev}")
+            for season, val in rows:
+                formatted = _format_stat_value(val, stat_abbrev)
+                parts.append(f"ROW: {season}, {formatted}")
+            parts.append("[/STATGRID]")
+
+        parts.append(f"\n[SUGGEST]{name} career[/SUGGEST]")
+
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
+def _format_threshold_value(threshold, stat_abbrev: str) -> str:
+    """Format a threshold value for display."""
+    if isinstance(threshold, float) and threshold != int(threshold):
+        return f"{threshold:.3f}".lstrip("0") if stat_abbrev in _RATE_STATS else f"{threshold}"
+    return str(int(threshold))
+
+
+def _format_stat_value(val, stat_abbrev: str) -> str:
+    """Format a single stat value for display."""
+    if stat_abbrev in _RATE_STATS:
+        return f"{val:.3f}".lstrip("0") if isinstance(val, float) else str(val)
+    if stat_abbrev in _TWO_DEC_STATS:
+        return f"{val:.2f}" if isinstance(val, float) else str(val)
+    if stat_abbrev in _ONE_DEC_STATS:
+        return f"{val:.1f}" if isinstance(val, float) else str(val)
+    return str(int(val)) if isinstance(val, (int, float)) else str(val)

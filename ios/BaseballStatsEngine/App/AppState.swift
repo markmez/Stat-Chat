@@ -270,11 +270,6 @@ final class AppState: SearchHistoryTracking {
                         messages[streamingIndex] = Message(role: .assistant, content: existing + "\n\n" + didYouMean)
                     }
                 }
-                // Pre-compute player/team links so ResultCard doesn't re-scan 24K+ names on every render
-                if streamingIndex < messages.count {
-                    let raw = messages[streamingIndex].content
-                    messages[streamingIndex].processedContent = PlayerNameMatcher.addTeamLinks(to: PlayerNameMatcher.addLinks(to: raw))
-                }
                 isLoading = false
                 currentStreamingText = ""
             } catch {

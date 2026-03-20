@@ -879,6 +879,17 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
     """Detect season lookup queries. Returns dict with name, season."""
     lower = input_str.strip().lower()
 
+    # Reject cross-season analytical questions — these should fall through to Claude
+    cross_season_patterns = [
+        "how many seasons", "how many times", "how many years",
+        "how often", "has.*ever", "did.*ever", "in how many",
+        "throughout his career", "over his career", "across.*seasons",
+        "each season", "every season", "per season",
+    ]
+    for pat in cross_season_patterns:
+        if re.search(pat, lower):
+            return None
+
     current_year = _get_db_max_season()
 
     target_season: Optional[int] = None
@@ -905,6 +916,40 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
         target_season = current_year
 
     return {"name": name, "season": target_season}
+
+
+def parse_season_count(input_str: str) -> Optional[dict]:
+    """Detect 'how many seasons has X hit a triple' / 'how often has X hit 30 HR'.
+    Returns dict with name, stat (db column), threshold (minimum value, default 1)."""
+    lower = input_str.strip().lower()
+
+    # Must contain a cross-season counting phrase
+    if not re.search(r'how many (seasons?|times?|years?)|how often|in how many|has.*ever|did.*ever', lower):
+        return None
+
+    name = find_player_in_text(lower)
+    if not name:
+        return None
+
+    stat_info = match_stat(lower)
+    if not stat_info:
+        # Infer batting average from verb forms like "batted .300", "hit .300"
+        if re.search(r'(?:batted|hit|batting)\s+\.?\d', lower):
+            stat_info = match_stat("batting average")
+        if not stat_info:
+            return None
+
+    # Check for an explicit threshold — "hit 30 home runs", "batted .300", "stolen 40 bases"
+    threshold = 1
+    # Try number anywhere near context: "hit 30", "batted .300", "stolen 40"
+    m = re.search(r'(?:hit|batted|stolen|had|threw|pitched|struck out|walked|over|above)\s+(\.?\d+\.?\d*)', lower)
+    if m:
+        threshold = float(m.group(1))
+        if threshold == int(threshold):
+            threshold = int(threshold)
+
+    return {"name": name, "stat": stat_info.db_column, "stat_abbrev": stat_info.display_abbrev,
+            "stat_name": stat_info.display_name, "threshold": threshold, "is_rate": stat_info.is_rate}
 
 
 def parse_single_stat_lookup(input_str: str) -> Optional[dict]:

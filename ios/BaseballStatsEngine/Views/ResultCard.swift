@@ -108,8 +108,8 @@ struct ResultCard: View {
         case .text(let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                // Use pre-computed links (cached after streaming completes) to avoid scanning 24K+ names per render
-                let displayText = isStreaming ? trimmed : (message.processedContent ?? trimmed)
+                // addLinks/addTeamLinks are internally cached — safe to call on every render
+                let displayText = isStreaming ? trimmed : PlayerNameMatcher.addTeamLinks(to: PlayerNameMatcher.addLinks(to: trimmed))
                 Text(LocalizedStringKey(displayText))
                     .font(.system(.body, design: .rounded))
                     .foregroundStyle(.primary.opacity(0.85))

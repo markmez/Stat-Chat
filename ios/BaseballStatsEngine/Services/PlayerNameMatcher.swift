@@ -2041,7 +2041,15 @@ enum PlayerNameMatcher {
         return prev[n]
     }
 
+    /// Cache for addLinks results — avoids re-scanning 24K+ names on every SwiftUI re-render
+    private static let linkCacheLock = NSLock()
+    private nonisolated(unsafe) static var linkCache: [String: String] = [:]
+
     static func addLinks(to text: String) -> String {
+        linkCacheLock.lock()
+        if let cached = linkCache[text] { linkCacheLock.unlock(); return cached }
+        linkCacheLock.unlock()
+
         guard !sortedNames.isEmpty else { return text }
         // If text already contains statchat:// links, skip to avoid corrupting existing markdown
         if text.contains("statchat://") { return text }
@@ -2061,12 +2069,22 @@ enum PlayerNameMatcher {
                 )
             }
         }
+        linkCacheLock.lock()
+        linkCache[text] = result
+        linkCacheLock.unlock()
         return result
     }
+
+    /// Cache for addTeamLinks results
+    private static let teamLinkCacheLock = NSLock()
+    private nonisolated(unsafe) static var teamLinkCache: [String: String] = [:]
 
     /// Wrap team full names with `statchat://team/CODE` markdown links.
     /// Apply AFTER `addLinks(to:)` so player links are already in place.
     static func addTeamLinks(to text: String) -> String {
+        teamLinkCacheLock.lock()
+        if let cached = teamLinkCache[text] { teamLinkCacheLock.unlock(); return cached }
+        teamLinkCacheLock.unlock()
         // All 30 team full names sorted longest first (avoid partial matches)
         let teamNames: [(name: String, code: String)] = [
             ("Arizona Diamondbacks", "ARI"), ("Atlanta Braves", "ATL"),
@@ -2101,6 +2119,9 @@ enum PlayerNameMatcher {
                 )
             }
         }
+        teamLinkCacheLock.lock()
+        teamLinkCache[text] = result
+        teamLinkCacheLock.unlock()
         return result
     }
 }

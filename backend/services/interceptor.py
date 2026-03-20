@@ -69,7 +69,18 @@ def try_intercept(question: str):
         if response:
             return response
 
-    # 5. Single stat lookup — "Judge home runs", "Ohtani ERA"
+    # 5. Season count — "how many seasons has Judge hit a triple?"
+    season_count = nm.parse_season_count(trimmed)
+    if season_count:
+        is_pitching = nm.is_pitching_stat(season_count["stat"])
+        response = rb.build_season_count(
+            season_count["name"], season_count["stat"],
+            season_count["stat_abbrev"], season_count["stat_name"],
+            season_count["threshold"], season_count["is_rate"], is_pitching)
+        if response:
+            return response
+
+    # 6. Single stat lookup — "Judge home runs", "Ohtani ERA"
     stat_lookup = nm.parse_single_stat_lookup(trimmed)
     if stat_lookup:
         name, stat, season = stat_lookup["name"], stat_lookup["stat"], stat_lookup["season"]
@@ -155,7 +166,7 @@ def try_intercept(question: str):
         if response:
             return response
 
-    # 13. Season lookup — "How did Judge do last season?", just "Aaron Judge"
+    # 14. Season lookup — "How did Judge do last season?", just "Aaron Judge"
     season_lookup = nm.parse_season_lookup(trimmed)
     if season_lookup:
         name, season = season_lookup["name"], season_lookup["season"]
