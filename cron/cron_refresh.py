@@ -22,8 +22,14 @@ def refresh():
             timeout=600,
         )
         print(f"Status: {resp.status_code}")
-        print(resp.json())
+        body = resp.json()
+        print(body)
         if resp.status_code != 200:
+            ping_healthcheck("/fail")
+            sys.exit(1)
+        # Backend returns 200 even when the pipeline errors — check body too
+        if body.get("status") == "error":
+            print("Pipeline reported error — marking as failure.")
             ping_healthcheck("/fail")
             sys.exit(1)
         ping_healthcheck()
