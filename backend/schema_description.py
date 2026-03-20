@@ -1,6 +1,11 @@
 """Plain-English schema description for Claude's system prompt."""
 
-SCHEMA_DESCRIPTION = """
+from datetime import date as _date
+
+_THIS_YEAR = _date.today().year
+_LAST_YEAR = _THIS_YEAR - 1
+
+SCHEMA_DESCRIPTION = f"""
 You have access to a SQLite database with MLB batting statistics.
 
 Data sources: Retrosheet (retrosheet.org) for season stats, game logs, and platoon splits.
@@ -362,5 +367,5 @@ Current form for each pitcher-season — the tail slice with the lowest ERA (opt
 - Pitching counting stats: "strikeouts" in pitching context = K (pitcher's strikeouts), different from batter strikeouts
 - innings_pitched is a TEXT display field (e.g., "134.0"). For arithmetic, use ip_outs (integer, divide by 3 for IP as decimal)
 - Some historical stats (IBB, SF, HBP) may be NULL or 0 for very old seasons (pre-1955)
-- If the user says "last year" or "last season", assume 2024. If they say "this year" or "this season", assume 2025.
+- If the user says "last year" or "last season", assume {_LAST_YEAR}. If they say "this year" or "this season", assume {_THIS_YEAR}.
 """

@@ -237,7 +237,7 @@ def _get_db_max_season() -> int:
             return int(row[0])
     except Exception:
         pass
-    return 2025
+    return date.today().year
 
 
 # ---------------------------------------------------------------------------
