@@ -24,6 +24,8 @@ final class BackendService: Sendable {
     struct QueryResult: Sendable {
         let text: String
         let intercepted: Bool
+        /// For follow-up queries: the standalone rewritten query from Haiku (if the backend rewrote it).
+        let rewrittenQuery: String?
     }
 
     /// Stream an answer from the backend. Calls `onChunk` for each text token.
@@ -64,6 +66,7 @@ final class BackendService: Sendable {
 
         var fullText = ""
         var wasIntercepted = false
+        var rewrittenQuery: String?
 
         for try await line in bytes.lines {
             guard line.hasPrefix("data: ") else { continue }
@@ -81,6 +84,7 @@ final class BackendService: Sendable {
                 }
             case "done":
                 wasIntercepted = event["intercepted"] as? Bool ?? false
+                rewrittenQuery = event["rewritten_query"] as? String
             case "error":
                 let message = event["message"] as? String ?? "Unknown server error"
                 throw ServiceError.serverError(message)
@@ -93,7 +97,7 @@ final class BackendService: Sendable {
             }
         }
 
-        return QueryResult(text: fullText, intercepted: wasIntercepted)
+        return QueryResult(text: fullText, intercepted: wasIntercepted, rewrittenQuery: rewrittenQuery)
     }
 
     // MARK: - Player Card

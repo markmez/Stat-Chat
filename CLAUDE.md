@@ -4,7 +4,7 @@
 - **Location**: `/Users/markmezrich/Documents/claude/BaseballStatsEngine/`
 - **Design doc**: `/Users/markmezrich/Documents/claude/baseball design doc.pdf`
 - **What it is**: iOS app (Swift/SwiftUI) that answers natural language baseball questions using real data. Claude translates questions to SQL, SQLite provides ground truth.
-- **Current phase**: iOS app + backend deployed with live data. **Backend-only architecture (2026-03-18)** — all stats queries route to backend, iOS bundled DB stripped to players table only (~1.6MB). Backend interceptor handles 26 query types structurally at zero Claude cost. MSF DETAILS tier, cron refresh every 4 hours.
+- **Current phase**: iOS app + backend deployed with live data. **Backend-only architecture (2026-03-18)** — all stats queries route to backend, iOS bundled DB stripped to players table only (~1.6MB). Backend interceptor handles 29 query types structurally at zero Claude cost. MSF DETAILS tier, cron refresh every 4 hours.
 
 ### Data Pipeline (Retrosheet-native)
 - `data_pipeline/pull_stats.py` — pulls ALL data from Retrosheet: season stats (batting + pitching), game-level logs, platoon splits (Chadwick Bureau), home/away splits, fielding stats, and player bio data. **2016-2025 data loaded (10 years)** — 3,782 players, 14,173 batting season stats, 8,233 pitching season stats, 661,313 batting game logs, 195,734 pitching game logs, 15,379 platoon splits, 16,391 pitching platoon splits, 27,558 home/away splits, 22,303 fielding stats.
@@ -50,7 +50,9 @@
 - **Database**: **~1.6MB** `baseball_stats.db` bundled in Resources — `players` table only (24,110 rows) for name matching/disambiguation. All stats tables removed (2026-03-18).
 - **Stat grid**: 21 stats (G through BABIP, PA and SF excluded for compact 3-row display). Career rows show "--" for OPS+ (multi-season weighting not implemented).
 - **Player card bio**: Dynamic age computed from birthdate (updates on player's birthday). Header shows handedness (Bats R / Throws R). About section shows birth date.
-- **Query routing (backend-only, 2026-03-18)**: AppState handles only: (1) paywall check, (2) stat definitions (hardcoded, free), (3) player disambiguation (players table). Everything else → backend streaming path. Backend `interceptor.py` handles 26 query types structurally at zero Claude cost. All local stats intercepts removed (~600 lines).
+- **Query routing (backend-only, 2026-03-18)**: AppState handles only: (1) paywall check, (2) stat definitions (hardcoded, free), (3) player disambiguation (players table). Everything else → backend streaming path. Backend `interceptor.py` handles 29 query types structurally at zero Claude cost. All local stats intercepts removed (~600 lines).
+- **Backend interceptor query types (29)**: comparison, streak history, current form, slash line, season count, single stat, career lookup, platoon splits, home/away splits, RISP splits, pitch type splits, count splits, month stats, season lookup, milestone, superlative, filtered leaderboard, threshold, multi-threshold, composite threshold, triple crown, consecutive streak, team ranking, team total, team stats, platoon leaderboard, leaderboard, stat definition, catch-all player stat.
+- **Key interceptor techniques**: Multi-threshold splits on ALL separators (with/and/while/plus) via common delimiter. Batting avg inference for "batted/hit .300" queries. Platoon leaderboard context detection: "against pitchers" = batting, "against batters" = pitching. Situational triggers excluded from generic leaderboard parser. Dynamic year references via `date.today().year`.
 - **ResultsView layout**: Follow-up input hidden during loading, appears inline below short results or pinned to bottom for long results
 - **Dead code note**: `resolveContextualFollowUp`, `resolveReferentialFollowUp`, `extractPlayerNamesFromResponse`, `lastResultContext` in AppState are dead code (referenced local stats tables that no longer exist). `PlayerCardService` build* functions also dead code (no longer called from AppState). SuggestionEngine dynamic queries return empty (stats tables gone), falls back to 50 curated defaults.
 
@@ -247,7 +249,7 @@ Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The ma
 ### iOS backend integration (backend-only, 2026-03-18)
 - `BackendService.swift`: POST /query (SSE streaming), GET /player-card (structured JSON with career splits), 10s timeout on player card requests
 - `deviceId` (UUID in UserDefaults) for metering
-- **ALL stats queries → backend**. No local intercepts for stats. Backend `interceptor.py` handles 26 query types structurally (comparisons, leaderboards, streaks, splits, etc.) at zero Claude cost.
+- **ALL stats queries → backend**. No local intercepts for stats. Backend `interceptor.py` handles 29 query types structurally (comparisons, leaderboards, streaks, splits, thresholds, multi-threshold, platoon leaderboards, etc.) at zero Claude cost.
 - Local DB used ONLY for: player name matching/disambiguation in `PlayerNameMatcher`
 - **Git tag** `ios-direct-anthropic-stable` — rollback point to direct Anthropic API
 

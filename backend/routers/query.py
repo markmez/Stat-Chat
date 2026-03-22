@@ -93,6 +93,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
 
     # 2a. Follow-up rewrite — if history is present and question is short,
     # use Haiku to classify as data (rewrite) or analytical (reason about prior answer).
+    rewritten_query: str | None = None
     if history and len(question.split()) < 10:
         logger.info("followup_classify question=%r", question)
         try:
@@ -104,6 +105,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         if classification["type"] == "data":
             rewritten = classification.get("rewritten", question)
             if rewritten != question:
+                rewritten_query = rewritten
                 logger.info("followup_rewritten original=%r rewritten=%r", question, rewritten)
                 # Try interceptor with the rewritten question
                 try:
@@ -114,7 +116,10 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 if intercepted is not None:
                     logger.info("followup_intercepted rewritten=%r", rewritten)
                     yield event({"type": "text", "text": intercepted})
-                    yield event({"type": "done", "intercepted": True})
+                    done_event = {"type": "done", "intercepted": True}
+                    if rewritten_query:
+                        done_event["rewritten_query"] = rewritten_query
+                    yield event(done_event)
                     increment_count(device_id)
                     return
             # Use rewritten question for the rest of the pipeline
@@ -128,6 +133,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             except Exception as e:
                 yield event({"type": "error", "message": str(e)})
                 return
+            # Analytical follow-ups don't get rewritten queries in history
             yield event({"type": "done"})
             increment_count(device_id)
             return
@@ -194,5 +200,8 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         yield event({"type": "error", "message": str(e)})
         return
 
-    yield event({"type": "done"})
+    done_event: dict = {"type": "done"}
+    if rewritten_query:
+        done_event["rewritten_query"] = rewritten_query
+    yield event(done_event)
     increment_count(device_id)

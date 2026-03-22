@@ -101,10 +101,10 @@ final class AppState: SearchHistoryTracking {
 
         incrementQueryCount()
 
-        // For follow-ups, store with context prefix
-        if isFollowUp, let lastUserMsg = messages.last(where: { $0.role == .user }) {
-            addToSearchHistory("\(lastUserMsg.content) → \(trimmed)")
-        } else {
+        // Non-follow-up queries get added to history immediately.
+        // Follow-ups are deferred until after the backend response, so we can use
+        // the Haiku-rewritten standalone query (if available) instead of the raw follow-up text.
+        if !isFollowUp {
             addToSearchHistory(trimmed)
         }
 
@@ -236,6 +236,11 @@ final class AppState: SearchHistoryTracking {
                     currentStreamingText = streamingBuffer
                 }
                 addToConversationHistory(question: trimmed, answer: result.text)
+                // For follow-ups, save the rewritten standalone query to history
+                // so replaying from history works without needing the original conversation context
+                if isFollowUp {
+                    addToSearchHistory(result.rewrittenQuery ?? trimmed)
+                }
                 // Append contextual SUGGEST pills based on query content
                 if streamingIndex < messages.count {
                     let pills = buildFallbackPills(for: trimmed)
