@@ -23,7 +23,7 @@
       "abbrev": "OPS+", "name": "OPS+", "is_rate": true
     },
     "stolen_bases": {
-      "aliases": ["stolen bases", "steals", "sb", "stolen base", "bags", "steal", "stole"],
+      "aliases": ["stolen bases", "steals", "sb", "sbs", "stolen base", "bags", "steal", "stole"],
       "abbrev": "SB", "name": "Stolen Bases", "is_rate": false
     },
     "strikeouts": {

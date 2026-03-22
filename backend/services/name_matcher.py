@@ -1608,6 +1608,15 @@ def parse_milestone(input_str: str) -> Optional[dict]:
     if threshold is None:
         return None
 
+    # Reject compound queries (e.g. "has anyone hit 300 with 30 sbs")
+    non_year_nums = [
+        float(m.group(1))
+        for m in re.finditer(r'(\d+\.?\d*|\.\d+)\+?', lower)
+        if not (1900 <= int(float(m.group(1))) <= 2099 and "." not in m.group(1))
+    ]
+    if len(non_year_nums) > 1:
+        return None
+
     since = detect_season(lower, default_to_most_recent=False)
     return {
         "stat": stat, "threshold": threshold, "since": since,
