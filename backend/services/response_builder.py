@@ -1734,7 +1734,7 @@ def build_multi_threshold(filters: list, season: int,
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
             f"WHERE {where_clause}{league_filter} "
-            f"ORDER BY {prefix}.{first_stat.db_column} {order} LIMIT 50",
+            f"ORDER BY {prefix}.{first_stat.db_column} {order}",
             tuple(params),
         )
         rows = cur.fetchall()
@@ -1743,7 +1743,6 @@ def build_multi_threshold(filters: list, season: int,
         title_parts = []
         for f in filters:
             t = _format_rate(str(f["threshold"])) if f["stat"].is_rate else str(int(f["threshold"]))
-            op = "+" if f["comparison"] == ">=" else "-"
             if f["stat"].is_rate and f["comparison"] == ">=":
                 title_parts.append(f"{t}+ {f['stat'].display_abbrev}")
             elif f["comparison"] == "<=":
@@ -1820,7 +1819,7 @@ def build_all_time_multi_threshold(filters: list,
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
             f"WHERE {where_clause}{league_filter} "
-            f"ORDER BY {prefix}.{first_stat.db_column} {order} LIMIT 50",
+            f"ORDER BY {prefix}.{first_stat.db_column} {order}",
             tuple(params),
         )
         rows = cur.fetchall()
@@ -2877,7 +2876,7 @@ def build_threshold(stat_info: StatInfo, threshold: float, comparison: str,
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
             f"WHERE {prefix}.season = ? AND {prefix}.{stat_info.db_column} {comparison} ?{qual_filter}{league_filter} "
-            f"ORDER BY {prefix}.{stat_info.db_column} DESC LIMIT 50",
+            f"ORDER BY {prefix}.{stat_info.db_column} DESC",
             (season, threshold),
         )
         rows = cur.fetchall()
