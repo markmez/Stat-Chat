@@ -6,15 +6,30 @@ struct LeaderboardView: View {
     var onTeamTap: ((String) -> Void)? = nil
 
     @State private var visibleCount = 25
+    @State private var sortColumn: Int?
+    @State private var sortAscending = false
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
 
+    /// Whether this leaderboard has multiple stat columns (sortable)
+    private var isSortable: Bool { grid.headers.count >= 2 }
+
+    /// Rows sorted by the active column, or original order if no sort active
+    private var sortedRows: [StatGridParser.StatGrid.Row] {
+        guard let col = sortColumn else { return grid.rows }
+        return grid.rows.sorted { a, b in
+            let aVal = col < a.values.count ? numericValue(a.values[col]) : -.infinity
+            let bVal = col < b.values.count ? numericValue(b.values[col]) : -.infinity
+            return sortAscending ? aVal < bVal : aVal > bVal
+        }
+    }
+
     private var visibleRows: ArraySlice<StatGridParser.StatGrid.Row> {
-        grid.rows.prefix(visibleCount)
+        sortedRows.prefix(visibleCount)
     }
 
     private var hasMore: Bool {
-        grid.rows.count > visibleCount
+        sortedRows.count > visibleCount
     }
 
     /// Fixed name column width — 98% of player names are ≤17 chars.
@@ -37,15 +52,41 @@ struct LeaderboardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Column headers — stat abbreviation(s) aligned with values
+            // Column headers
             HStack(spacing: 0) {
                 Spacer().frame(width: rankWidth + rankNameGap + nameWidth + nameStatGap)
                 ForEach(Array(grid.headers.enumerated()), id: \.offset) { idx, header in
-                    Text(header)
-                        .font(.system(.caption2, design: .monospaced, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(minWidth: statColumnWidth, alignment: .leading)
-                        .padding(.leading, idx > 0 ? valueGap : 0)
+                    if isSortable {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                if sortColumn == idx {
+                                    sortAscending.toggle()
+                                } else {
+                                    sortColumn = idx
+                                    sortAscending = false
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 2) {
+                                Text(header)
+                                if sortColumn == idx {
+                                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                                        .font(.system(size: 8, weight: .bold))
+                                }
+                            }
+                            .font(.system(.caption2, design: .monospaced, weight: .semibold))
+                            .foregroundStyle(sortColumn == idx ? deepBlue : deepBlue.opacity(0.7))
+                            .frame(minWidth: statColumnWidth, alignment: .leading)
+                            .padding(.leading, idx > 0 ? valueGap : 0)
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Text(header)
+                            .font(.system(.caption2, design: .monospaced, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: statColumnWidth, alignment: .leading)
+                            .padding(.leading, idx > 0 ? valueGap : 0)
+                    }
                 }
             }
             .padding(.horizontal, 12)
@@ -61,11 +102,13 @@ struct LeaderboardView: View {
                         .padding(.leading, 12)
                 }
 
-                let (rank, playerName) = parseLabel(row.label)
+                let reRanked = sortColumn != nil
+                let (_, playerName) = parseLabel(row.label)
+                let displayRank = reRanked ? "\(index + 1)." : parseLabel(row.label).rank
 
                 HStack(spacing: 0) {
                     // Rank
-                    Text(rank)
+                    Text(displayRank)
                         .font(.system(.callout, design: .monospaced, weight: .medium))
                         .foregroundStyle(.secondary)
                         .frame(width: rankWidth, alignment: .trailing)
@@ -125,10 +168,10 @@ struct LeaderboardView: View {
 
             // Show more button
             if hasMore {
-                let remaining = grid.rows.count - visibleCount
+                let remaining = sortedRows.count - visibleCount
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
-                        visibleCount = min(visibleCount + 25, grid.rows.count)
+                        visibleCount = min(visibleCount + 25, sortedRows.count)
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -163,5 +206,16 @@ struct LeaderboardView: View {
             return (rank, name)
         }
         return ("", label)
+    }
+
+    /// Parse a display value into a sortable number.
+    /// Handles: "58", ".322", "1.96", "2024", "--", etc.
+    private func numericValue(_ str: String) -> Double {
+        let cleaned = str.trimmingCharacters(in: .whitespaces)
+        if cleaned == "--" || cleaned.isEmpty { return -.infinity }
+        // Rate stats displayed without leading zero: ".322" → 0.322
+        if cleaned.hasPrefix("."), let val = Double("0" + cleaned) { return val }
+        if let val = Double(cleaned) { return val }
+        return -.infinity
     }
 }
