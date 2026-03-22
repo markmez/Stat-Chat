@@ -8,6 +8,7 @@ struct LeaderboardView: View {
     @State private var visibleCount = 25
     @State private var sortColumn: Int?
     @State private var sortAscending = false
+    @State private var initialized = false
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
 
@@ -102,9 +103,8 @@ struct LeaderboardView: View {
                         .padding(.leading, 12)
                 }
 
-                let reRanked = sortColumn != nil
                 let (_, playerName) = parseLabel(row.label)
-                let displayRank = reRanked ? "\(index + 1)." : parseLabel(row.label).rank
+                let displayRank = sortColumn != nil ? "\(index + 1)." : parseLabel(row.label).rank
 
                 HStack(spacing: 0) {
                     // Rank
@@ -149,11 +149,11 @@ struct LeaderboardView: View {
                             .padding(.leading, rankNameGap)
                     }
 
-                    // Stat values
+                    // Stat values — all primary color
                     ForEach(Array(row.values.enumerated()), id: \.offset) { idx, val in
                         Text(val)
                             .font(.system(.callout, design: .monospaced, weight: .medium))
-                            .foregroundStyle(idx == 0 ? .primary : .secondary)
+                            .foregroundStyle(.primary)
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
                             .frame(minWidth: statColumnWidth, alignment: .leading)
@@ -168,14 +168,15 @@ struct LeaderboardView: View {
 
             // Show more button
             if hasMore {
-                let remaining = sortedRows.count - visibleCount
+                let totalRemaining = sortedRows.count - visibleCount
+                let nextBatch = min(25, totalRemaining)
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         visibleCount = min(visibleCount + 25, sortedRows.count)
                     }
                 } label: {
                     HStack(spacing: 4) {
-                        Text("Show \(remaining) more")
+                        Text("Show \(nextBatch) more of \(totalRemaining) remaining")
                             .font(.system(.caption, design: .rounded, weight: .medium))
                         Image(systemName: "chevron.down")
                             .font(.system(size: 9, weight: .semibold))
@@ -196,6 +197,13 @@ struct LeaderboardView: View {
                 .shadow(color: Color(red: 0.1, green: 0.25, blue: 0.7).opacity(0.10), radius: 10, y: 3)
                 .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
         )
+        .onAppear {
+            if !initialized && isSortable {
+                sortColumn = 0
+                sortAscending = false
+                initialized = true
+            }
+        }
     }
 
     /// Parse "1. Aaron Judge" into ("1.", "Aaron Judge")

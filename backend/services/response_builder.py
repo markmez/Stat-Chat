@@ -1755,8 +1755,11 @@ def build_multi_threshold(filters: list, season: int,
         if not rows:
             return f"No {who.lower()} matched {' and '.join(title_parts)} in {season}{league_label}."
 
+        count = len(rows)
+        who_lower = "pitcher" if is_pitching else "player"
         header_abbrevs = [f["stat"].display_abbrev for f in filters]
-        parts = [f"**{title}**\n"]
+        parts = [f"**{title}**"]
+        parts.append(f"{count} {who_lower}{'s' if count != 1 else ''} matched.\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
         parts.append("HEADER: " + ", ".join(header_abbrevs))
@@ -1767,9 +1770,6 @@ def build_multi_threshold(filters: list, season: int,
                 vals.append(_format_rate(str(v)) if f["stat"].is_rate else str(v))
             parts.append(f"ROW {i+1}. {row[0]}: {', '.join(vals)}")
         parts.append("[/LEADERBOARD]")
-
-        count = len(rows)
-        parts.append(f"\n{count} player{'s' if count != 1 else ''} matched.")
 
         return "\n".join(parts)
     finally:
@@ -1840,8 +1840,10 @@ def build_all_time_multi_threshold(filters: list,
         if not rows:
             return f"No {who.lower()} have matched {' and '.join(title_parts)} in a season."
 
+        count = len(rows)
         header_abbrevs = [f["stat"].display_abbrev for f in filters]
-        parts = [f"**{title}**\n"]
+        parts = [f"**{title}**"]
+        parts.append(f"{count} season{'s' if count != 1 else ''} matched.\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
         parts.append("HEADER: Year, " + ", ".join(header_abbrevs))
@@ -1854,9 +1856,6 @@ def build_all_time_multi_threshold(filters: list,
             year = row[1 + n_filters]
             parts.append(f"ROW {i+1}. {row[0]}: {year}, {', '.join(vals)}")
         parts.append("[/LEADERBOARD]")
-
-        count = len(rows)
-        parts.append(f"\n{count} season{'s' if count != 1 else ''} matched.")
 
         # Suggestion pills for this season and last season
         filter_desc = " and ".join(title_parts)
@@ -2896,7 +2895,10 @@ def build_threshold(stat_info: StatInfo, threshold: float, comparison: str,
         else:
             title = f"Players with {threshold_display} or Fewer {stat_info.display_name} in {season}{league_label}"
 
-        parts = [f"**{title}**\n"]
+        count = len(rows)
+        who = "pitcher" if is_pitching else "player"
+        parts = [f"**{title}**"]
+        parts.append(f"{count} {who}{'s' if count != 1 else ''} matched.\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
         parts.append(f"HEADER: {stat_info.display_abbrev}")
@@ -2904,11 +2906,8 @@ def build_threshold(stat_info: StatInfo, threshold: float, comparison: str,
             val = _format_rate(str(row[1])) if stat_info.is_rate else str(row[1])
             parts.append(f"ROW {i+1}. {row[0]}: {val}")
         parts.append("[/LEADERBOARD]")
-
-        count = len(rows)
-        parts.append(f"\n{count} player{'s' if count != 1 else ''} matched.")
         if pa_note:
-            parts.append(f"_{pa_note}_")
+            parts.append(f"\n_{pa_note}_")
 
         stat_name = stat_info.pill_name
         parts.append(f"\n[SUGGEST]{season} {stat_name} leaders[/SUGGEST]")
@@ -2968,7 +2967,9 @@ def build_all_time_threshold(stat_info: StatInfo, threshold: float, comparison: 
         else:
             title = f"{who} with {threshold_display} or Fewer {stat_info.display_name} (All-Time){league_label}"
 
-        parts = [f"**{title}**\n"]
+        count = len(rows)
+        parts = [f"**{title}**"]
+        parts.append(f"{count} season{'s' if count != 1 else ''} matched.\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
         parts.append(f"HEADER: Year, {stat_info.display_abbrev}")
@@ -2976,9 +2977,6 @@ def build_all_time_threshold(stat_info: StatInfo, threshold: float, comparison: 
             val = _format_rate(str(row[1])) if stat_info.is_rate else str(row[1])
             parts.append(f"ROW {i+1}. {row[0]}: {row[2]}, {val}")
         parts.append("[/LEADERBOARD]")
-
-        count = len(rows)
-        parts.append(f"\n{count} season{'s' if count != 1 else ''} matched.")
 
         stat_name = stat_info.pill_name
         parts.append(f"\n[SUGGEST]{threshold_display}+ {stat_name} this season[/SUGGEST]")
