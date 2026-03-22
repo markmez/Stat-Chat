@@ -1777,6 +1777,99 @@ def build_multi_threshold(filters: list, season: int,
         conn.close()
 
 
+def build_all_time_multi_threshold(filters: list,
+                                   is_pitching: bool = False,
+                                   league: Optional[str] = None) -> Optional[str]:
+    """All-time multi-stat threshold: '.300 with 30 HR' (no season specified)."""
+    conn = _get_db()
+    try:
+        table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+        prefix = "sp" if is_pitching else "s"
+        league_filter = f" AND {_league_team_clause(league, prefix)}" if league else ""
+        league_label = f" ({league})" if league else ""
+
+        cur = conn.cursor()
+        cur.execute(f"PRAGMA table_info({table})")
+        valid_cols = {r[1] for r in cur.fetchall()}
+        for f in filters:
+            if f["stat"].db_column not in valid_cols:
+                return None
+
+        where_parts = []
+        params = []
+        for f in filters:
+            where_parts.append(f"{prefix}.{f['stat'].db_column} {f['comparison']} ?")
+            params.append(f["threshold"])
+
+        # PA/IP minimum for rate stats
+        has_rate = any(f["stat"].is_rate for f in filters)
+        if has_rate:
+            if is_pitching:
+                where_parts.append(f"{prefix}.ip_outs >= 486")
+            else:
+                where_parts.append(f"{prefix}.plate_appearances >= 400")
+
+        select_cols = ", ".join(f"{prefix}.{f['stat'].db_column}" for f in filters)
+        where_clause = " AND ".join(where_parts)
+
+        first_stat = filters[0]["stat"]
+        order = "ASC" if first_stat.db_column in ("earned_run_avg", "whip") else "DESC"
+
+        cur.execute(
+            f"SELECT p.name, {select_cols}, {prefix}.season "
+            f"FROM {table} {prefix} "
+            f"JOIN players p ON {prefix}.player_id = p.player_id "
+            f"WHERE {where_clause}{league_filter} "
+            f"ORDER BY {prefix}.{first_stat.db_column} {order} LIMIT 50",
+            tuple(params),
+        )
+        rows = cur.fetchall()
+
+        # Build title
+        title_parts = []
+        for f in filters:
+            t = _format_rate(str(f["threshold"])) if f["stat"].is_rate else str(int(f["threshold"]))
+            if f["stat"].is_rate and f["comparison"] == ">=":
+                title_parts.append(f"{t}+ {f['stat'].display_abbrev}")
+            elif f["comparison"] == "<=":
+                title_parts.append(f"Sub-{t} {f['stat'].display_abbrev}")
+            else:
+                title_parts.append(f"{t}+ {f['stat'].display_abbrev}")
+        who = "Pitchers" if is_pitching else "Players"
+        title = f"{who} with {' and '.join(title_parts)} (All-Time){league_label}"
+
+        if not rows:
+            return f"No {who.lower()} have matched {' and '.join(title_parts)} in a season."
+
+        header_abbrevs = [f["stat"].display_abbrev for f in filters]
+        parts = [f"**{title}**\n"]
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: Year, " + ", ".join(header_abbrevs))
+        n_filters = len(filters)
+        for i, row in enumerate(rows):
+            vals = []
+            for j, f in enumerate(filters):
+                v = row[1 + j]
+                vals.append(_format_rate(str(v)) if f["stat"].is_rate else str(v))
+            year = row[1 + n_filters]
+            parts.append(f"ROW {i+1}. {row[0]}: {year}, {', '.join(vals)}")
+        parts.append("[/LEADERBOARD]")
+
+        count = len(rows)
+        parts.append(f"\n{count} season{'s' if count != 1 else ''} matched.")
+
+        # Suggestion pills for this season and last season
+        filter_desc = " and ".join(title_parts)
+        current_year = datetime.now().year
+        parts.append(f"\n[SUGGEST]{filter_desc} in {current_year}[/SUGGEST]")
+        parts.append(f"[SUGGEST]{filter_desc} in {current_year - 1}[/SUGGEST]")
+
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
 # ===================================================================
 # 16. build_home_away_splits
 # ===================================================================
@@ -2404,7 +2497,13 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
             parts.append("[/LEADERBOARD]")
             if pa_min:
                 parts.append(f"\n_Min. {pa_min} PA._")
-            parts.append(f"\n[SUGGEST]all-time single season {stat_name} leaders[/SUGGEST]")
+            # Adjacent season pills for easy navigation
+            current_year = datetime.now().year
+            if yr != current_year:
+                parts.append(f"\n[SUGGEST]{current_year} {stat_name} leaders[/SUGGEST]")
+            if yr > 1898:
+                parts.append(f"[SUGGEST]{yr - 1} {stat_name} leaders[/SUGGEST]")
+            parts.append(f"[SUGGEST]all-time single season {stat_name} leaders[/SUGGEST]")
             parts.append(f"[SUGGEST]career {stat_name} leaders[/SUGGEST]")
             if league:
                 other = "NL" if league == "AL" else "AL"
@@ -2608,7 +2707,13 @@ def build_pitching_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
             parts.append("[/LEADERBOARD]")
             if ip_note:
                 parts.append(f"\n_{ip_note}_")
-            parts.append(f"\n[SUGGEST]career {stat_name} leaders[/SUGGEST]")
+            # Adjacent season pills for easy navigation
+            current_year = datetime.now().year
+            if yr != current_year:
+                parts.append(f"\n[SUGGEST]{current_year} {stat_name} leaders[/SUGGEST]")
+            if yr > 1898:
+                parts.append(f"[SUGGEST]{yr - 1} {stat_name} leaders[/SUGGEST]")
+            parts.append(f"[SUGGEST]career {stat_name} leaders[/SUGGEST]")
             if league:
                 other = "NL" if league == "AL" else "AL"
                 parts.append(f"[SUGGEST]{yr} {stat_name} leaders ({other})[/SUGGEST]")

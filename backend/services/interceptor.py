@@ -232,9 +232,13 @@ def try_intercept(question: str):
     # 17b. Multi-threshold — ".300 AVG with 30+ HR", "200 K and sub-3.00 ERA"
     multi = nm.parse_multi_threshold(trimmed)
     if multi:
-        season = multi["season"] or date.today().year
-        response = rb.build_multi_threshold(
-            multi["filters"], season, multi["is_pitching"], multi.get("league"))
+        season = multi["season"]
+        if season:
+            response = rb.build_multi_threshold(
+                multi["filters"], season, multi["is_pitching"], multi.get("league"))
+        else:
+            response = rb.build_all_time_multi_threshold(
+                multi["filters"], multi["is_pitching"], multi.get("league"))
         if response:
             return response
 

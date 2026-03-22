@@ -1433,7 +1433,15 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
     elif "all time" in lower or "all-time" in lower or "single season" in lower:
         scope = "all_time"
     else:
-        season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
+        # Check for explicit season first
+        season = detect_season(lower, default_to_most_recent=False)
+        if season is None:
+            # Past tense ("who led", "who had the most") → last completed season
+            past_tense = any(p in lower for p in ["who led", "who had", "who hit the most"])
+            if past_tense:
+                season = _current_calendar_year() - 1
+            else:
+                season = _current_calendar_year()
         scope = f"season_{season}"
 
     return {
@@ -1488,7 +1496,13 @@ def parse_stat_definition(input_str: str) -> Optional[dict]:
 
 
 def _extract_threshold(text: str, skip_years: bool = True) -> Optional[float]:
-    """Extract a numeric threshold from text, skipping 4-digit years."""
+    """Extract a numeric threshold from text, skipping 4-digit years.
+
+    Normalizes whole-number batting averages: "hitting 300" → 0.300.
+    Numbers 200-400 are treated as batting averages (÷1000) when the
+    text contains a batting-average verb (hit, batted, batting, hitting).
+    """
+    _avg_verb = re.search(r'(?:batted|hit|batting|hitting|bat)\b', text) is not None
     for m in re.finditer(r'(\d+\.?\d*|\.\d+)\+?', text):
         num_str = m.group(1)
         try:
@@ -1499,6 +1513,9 @@ def _extract_threshold(text: str, skip_years: bool = True) -> Optional[float]:
             int_num = int(num)
             if 1900 <= int_num <= 2099 and "." not in num_str:
                 continue
+        # "hitting 300" → .300  (whole-number batting avg shorthand)
+        if _avg_verb and 200 <= num <= 400 and "." not in num_str:
+            return num / 1000
         return num
     return None
 
@@ -1521,8 +1538,9 @@ def parse_threshold(input_str: str) -> Optional[dict]:
 
     stat = match_stat(lower)
     if not stat:
-        # "batted .300" / "hit over .300" — infer batting average from verb + decimal
-        if re.search(r'(?:batted|hit|batting|hitting)\s+(?:over\s+|above\s+|at least\s+)?\.?\d', lower):
+        # "batted .300" / "hit over .300" / "hitting 300" — infer batting average
+        if re.search(r'(?:batted|hit|batting|hitting)\s+(?:over\s+|above\s+|at least\s+)?\.?\d', lower) or \
+           re.search(r'(?:batted|hit|batting|hitting)\s+(?:over\s+|above\s+|at least\s+)?\d{3}\b', lower):
             stat = stat_alias_map.get("batting average") or stat_alias_map.get("avg")
         if not stat:
             return None
@@ -1735,8 +1753,9 @@ def parse_multi_threshold(input_str: str) -> Optional[dict]:
 
         stat = match_stat(part)
         if not stat:
-            # "batted .300" / "hit over .300" — infer batting average
-            if re.search(r'(?:batted|hit|batting|hitting)\s+(?:over\s+|above\s+|at least\s+)?\.?\d', part):
+            # "batted .300" / "hit over .300" / "hitting 300" — infer batting average
+            if re.search(r'(?:batted|hit|batting|hitting)\s+(?:over\s+|above\s+|at least\s+)?\.?\d', part) or \
+               re.search(r'(?:batted|hit|batting|hitting)\s+(?:over\s+|above\s+|at least\s+)?\d{3}\b', part):
                 stat = stat_alias_map.get("batting average") or stat_alias_map.get("avg")
             if not stat:
                 continue

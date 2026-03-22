@@ -560,3 +560,46 @@ class TestInterceptorFalsePositives:
         """Player-specific platoon splits should still be intercepted."""
         r = try_intercept("Judge vs lefties")
         assert r is not None
+
+    def test_hitting_300_normalized_to_avg(self):
+        """'hitting 300' should be normalized to .300 batting average."""
+        r = try_intercept("players who hit 300 with at least 30 homers")
+        assert r is not None
+        assert ".300" in r or "AVG" in r
+        assert "All-Time" in r
+
+    def test_threshold_no_year_defaults_all_time(self):
+        """Threshold without year should default to all-time."""
+        r = try_intercept("who batted .300")
+        assert r is not None
+        assert "All-Time" in r
+
+    def test_multi_threshold_no_year_defaults_all_time(self):
+        """Multi-threshold without year should default to all-time."""
+        r = try_intercept("pitchers with 200+ strikeouts and sub-3.00 ERA")
+        assert r is not None
+        assert "All-Time" in r
+
+    def test_leaderboard_past_tense_last_season(self):
+        """'who led' should default to last completed season, not current."""
+        r = try_intercept("who led the league in home runs")
+        assert r is not None
+        from datetime import date
+        last_year = date.today().year - 1
+        assert str(last_year) in r
+
+    def test_leaderboard_present_tense_current_season(self):
+        """'HR leaders' should default to current season."""
+        r = try_intercept("HR leaders")
+        assert r is not None
+        from datetime import date
+        assert str(date.today().year) in r
+
+    def test_leaderboard_adjacent_season_pills(self):
+        """Leaderboard for non-current year should have adjacent season pills."""
+        r = try_intercept("who led the league in home runs")
+        assert r is not None
+        from datetime import date
+        current_year = date.today().year
+        assert f"{current_year} home runs leaders" in r
+        assert f"{current_year - 2} home runs leaders" in r
