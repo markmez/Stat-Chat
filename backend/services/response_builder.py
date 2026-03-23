@@ -4076,15 +4076,10 @@ def build_matchup(batter_name: str, pitcher_name: str,
         parts = []
         parts.append(f"**{batter_display} vs. {pitcher_display}** \u2014 {resolved_season} Matchup Preview")
 
-        # Aggregate slash line — pitch-mix projection if available, else platoon split
+        # Aggregate slash line — only shown when pitch-mix projection is available
         if projection:
             avg, obp, slg, ops = projection
-            parts.append(f"**Projected: {_format_rate(avg)}/{_format_rate(obp)}/{_format_rate(slg)} ({_format_rate(ops)} OPS)**\n")
-        elif platoon_line:
-            pl = platoon_line
-            if pl['avg'] is not None and pl['obp'] is not None and pl['slg'] is not None:
-                pl_ops = pl['ops'] if pl['ops'] is not None else ((pl['obp'] or 0) + (pl['slg'] or 0))
-                parts.append(f"**vs {pl['hand']}: {_format_rate(pl['avg'])}/{_format_rate(pl['obp'])}/{_format_rate(pl['slg'])} ({_format_rate(pl_ops)} OPS)**\n")
+            parts.append(f"**Projected: {_format_rate(avg)}/{_format_rate(obp)}/{_format_rate(slg)} ({_format_rate(ops)} OPS)**")
         parts.append("")
 
         # Platoon
