@@ -4070,16 +4070,21 @@ def build_matchup(batter_name: str, pitcher_name: str,
             pass  # head_to_head table may not exist yet
 
         # --- Build output ---
-        if not projection and not platoon_line and not h2h:
+        if not projection and not platoon_line and not batter_form and not h2h:
             return None  # No useful data
 
         parts = []
         parts.append(f"**{batter_display} vs. {pitcher_display}** \u2014 {resolved_season} Matchup Preview")
 
-        # Projected slash line
+        # Aggregate slash line — pitch-mix projection if available, else platoon split
         if projection:
             avg, obp, slg, ops = projection
             parts.append(f"**Projected: {_format_rate(avg)}/{_format_rate(obp)}/{_format_rate(slg)} ({_format_rate(ops)} OPS)**\n")
+        elif platoon_line:
+            pl = platoon_line
+            if pl['avg'] is not None and pl['obp'] is not None and pl['slg'] is not None:
+                pl_ops = pl['ops'] if pl['ops'] is not None else ((pl['obp'] or 0) + (pl['slg'] or 0))
+                parts.append(f"**vs {pl['hand']}: {_format_rate(pl['avg'])}/{_format_rate(pl['obp'])}/{_format_rate(pl['slg'])} ({_format_rate(pl_ops)} OPS)**\n")
         parts.append("")
 
         # Platoon
@@ -4105,9 +4110,9 @@ def build_matchup(batter_name: str, pitcher_name: str,
                             f"{_format_rate(slg)}, {_format_rate(ops)}")
             parts.append("[/LEADERBOARD]\n")
 
-        # Current form
+        # Recent streak
         if batter_form or pitcher_form:
-            parts.append("**Current Form**")
+            parts.append("**Recent Streak**")
             if batter_form:
                 bf = batter_form
                 parts.append("[STATGRID]")
