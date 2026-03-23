@@ -1759,7 +1759,7 @@ def build_multi_threshold(filters: list, season: int,
         who_lower = "pitcher" if is_pitching else "player"
         header_abbrevs = [f["stat"].display_abbrev for f in filters]
         parts = [f"**{title}**"]
-        parts.append(f"{count} {who_lower}{'s' if count != 1 else ''} matched.\n")
+        parts.append(f"{count} matched.\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
         parts.append("HEADER: " + ", ".join(header_abbrevs))
@@ -1778,7 +1778,8 @@ def build_multi_threshold(filters: list, season: int,
 
 def build_all_time_multi_threshold(filters: list,
                                    is_pitching: bool = False,
-                                   league: Optional[str] = None) -> Optional[str]:
+                                   league: Optional[str] = None,
+                                   since_year: Optional[int] = None) -> Optional[str]:
     """All-time multi-stat threshold: '.300 with 30 HR' (no season specified)."""
     conn = _get_db()
     try:
@@ -1799,6 +1800,10 @@ def build_all_time_multi_threshold(filters: list,
         for f in filters:
             where_parts.append(f"{prefix}.{f['stat'].db_column} {f['comparison']} ?")
             params.append(f["threshold"])
+
+        if since_year:
+            where_parts.append(f"{prefix}.season >= ?")
+            params.append(since_year)
 
         # PA/IP minimum for rate stats
         has_rate = any(f["stat"].is_rate for f in filters)
@@ -1835,15 +1840,17 @@ def build_all_time_multi_threshold(filters: list,
             else:
                 title_parts.append(f"{t}+ {f['stat'].display_abbrev}")
         who = "Pitchers" if is_pitching else "Players"
-        title = f"{who} with {' and '.join(title_parts)} (All-Time){league_label}"
+        scope_label = f"Since {since_year}" if since_year else "All-Time"
+        title = f"{who} with {' and '.join(title_parts)} ({scope_label}){league_label}"
 
         if not rows:
-            return f"No {who.lower()} have matched {' and '.join(title_parts)} in a season."
+            scope_msg = f"since {since_year}" if since_year else "in a season"
+            return f"No {who.lower()} have matched {' and '.join(title_parts)} {scope_msg}."
 
         count = len(rows)
         header_abbrevs = [f["stat"].display_abbrev for f in filters]
         parts = [f"**{title}**"]
-        parts.append(f"{count} season{'s' if count != 1 else ''} matched.\n")
+        parts.append(f"{count} matched.\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
         parts.append("HEADER: Year, " + ", ".join(header_abbrevs))
@@ -1857,11 +1864,13 @@ def build_all_time_multi_threshold(filters: list,
             parts.append(f"ROW {i+1}. {row[0]}: {year}, {', '.join(vals)}")
         parts.append("[/LEADERBOARD]")
 
-        # Suggestion pills for this season and last season
+        # Suggestion pills
         filter_desc = " and ".join(title_parts)
         current_year = datetime.now().year
         parts.append(f"\n[SUGGEST]{filter_desc} in {current_year}[/SUGGEST]")
         parts.append(f"[SUGGEST]{filter_desc} in {current_year - 1}[/SUGGEST]")
+        if not since_year:
+            parts.append(f"[SUGGEST]{filter_desc} this century[/SUGGEST]")
 
         return "\n".join(parts)
     finally:
@@ -2896,9 +2905,8 @@ def build_threshold(stat_info: StatInfo, threshold: float, comparison: str,
             title = f"Players with {threshold_display} or Fewer {stat_info.display_name} in {season}{league_label}"
 
         count = len(rows)
-        who = "pitcher" if is_pitching else "player"
         parts = [f"**{title}**"]
-        parts.append(f"{count} {who}{'s' if count != 1 else ''} matched.\n")
+        parts.append(f"{count} matched.\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
         parts.append(f"HEADER: {stat_info.display_abbrev}")
@@ -2931,7 +2939,8 @@ def build_threshold(stat_info: StatInfo, threshold: float, comparison: str,
 
 def build_all_time_threshold(stat_info: StatInfo, threshold: float, comparison: str,
                              is_pitching: bool = False,
-                             league: Optional[str] = None) -> Optional[str]:
+                             league: Optional[str] = None,
+                             since_year: Optional[int] = None) -> Optional[str]:
     """All-time threshold: 'who hit 50 home runs?' (no season specified)."""
     conn = _get_db()
     try:
@@ -2941,12 +2950,14 @@ def build_all_time_threshold(stat_info: StatInfo, threshold: float, comparison: 
         league_filter = f" AND {_league_team_clause(league, prefix)}" if league else ""
         league_label = f" ({league})" if league else ""
 
+        since_filter = f" AND {prefix}.season >= {since_year}" if since_year else ""
+
         cur = conn.cursor()
         cur.execute(
             f"SELECT p.name, {prefix}.{stat_info.db_column}, {prefix}.season "
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
-            f"WHERE {prefix}.{stat_info.db_column} {comparison} ?{bad_era}{league_filter} "
+            f"WHERE {prefix}.{stat_info.db_column} {comparison} ?{bad_era}{league_filter}{since_filter} "
             f"ORDER BY {prefix}.{stat_info.db_column} DESC",
             (threshold,),
         )
@@ -2955,21 +2966,23 @@ def build_all_time_threshold(stat_info: StatInfo, threshold: float, comparison: 
             threshold_str = _format_rate(str(threshold)) if stat_info.is_rate else str(int(threshold))
             op = "at least" if comparison == ">=" else "no more than"
             who = "pitchers" if is_pitching else "players"
-            return f"No {who} have had {op} {threshold_str} {stat_info.display_abbrev} in a season."
+            scope_msg = f"since {since_year}" if since_year else "in a season"
+            return f"No {who} have had {op} {threshold_str} {stat_info.display_abbrev} {scope_msg}."
 
         threshold_display = _format_rate(str(threshold)) if stat_info.is_rate else str(int(threshold))
         who = "Pitchers" if is_pitching else "Players"
+        scope_label = f"Since {since_year}" if since_year else "All-Time"
         if comparison == ">=":
             if stat_info.is_rate:
-                title = f"{who} with {threshold_display}+ {stat_info.display_abbrev} (All-Time){league_label}"
+                title = f"{who} with {threshold_display}+ {stat_info.display_abbrev} ({scope_label}){league_label}"
             else:
-                title = f"{who} with {threshold_display}+ {stat_info.display_name} (All-Time){league_label}"
+                title = f"{who} with {threshold_display}+ {stat_info.display_name} ({scope_label}){league_label}"
         else:
-            title = f"{who} with {threshold_display} or Fewer {stat_info.display_name} (All-Time){league_label}"
+            title = f"{who} with {threshold_display} or Fewer {stat_info.display_name} ({scope_label}){league_label}"
 
         count = len(rows)
         parts = [f"**{title}**"]
-        parts.append(f"{count} season{'s' if count != 1 else ''} matched.\n")
+        parts.append(f"{count} matched.\n")
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
         parts.append(f"HEADER: Year, {stat_info.display_abbrev}")

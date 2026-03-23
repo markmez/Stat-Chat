@@ -612,6 +612,25 @@ def detect_season(input_str: str, default_to_most_recent: bool = False) -> Optio
     return None
 
 
+def _detect_since_year(lower: str) -> Optional[int]:
+    """Detect 'since YYYY', 'this century', 'last decade', 'last N years' patterns.
+    Returns the starting year, or None if no range qualifier found."""
+    current_year = _current_calendar_year()
+    if "this century" in lower or "21st century" in lower:
+        return 2000
+    if "last decade" in lower or "past decade" in lower:
+        return current_year - 10
+    m = re.search(r'since\s+(\d{4})', lower)
+    if m:
+        return int(m.group(1))
+    m = re.search(r'(?:last|past)\s+(\d+)\s+years?', lower)
+    if m:
+        n = int(m.group(1))
+        if 1 < n <= 100:
+            return current_year - n
+    return None
+
+
 def detect_league(input_str: str) -> Optional[tuple[Optional[str], str]]:
     """Detect AL/NL league filter. Returns (league, cleaned_text) or None."""
     lower = input_str.lower()
@@ -1563,10 +1582,16 @@ def parse_threshold(input_str: str) -> Optional[dict]:
                       "or fewer", "or less"]
     comparison = "<=" if any(p in lower for p in under_patterns) else ">="
 
-    season = detect_season(lower)
+    # Detect since_year BEFORE detect_season so "since 2000" isn't treated as season=2000
+    since_year = _detect_since_year(lower)
+
+    # Only look for a specific season if no since_year was found
+    season = detect_season(lower) if since_year is None else None
+
     return {
         "stat": stat, "threshold": threshold, "comparison": comparison,
         "season": season, "league": league_result[0] if league_result else None,
+        "since_year": since_year,
     }
 
 
@@ -1784,10 +1809,14 @@ def parse_multi_threshold(input_str: str) -> Optional[dict]:
                       "complete_games", "batting_avg_against"}
     is_pitching = "pitcher" in lower or any(f["stat"].db_column in pitching_stats for f in filters)
 
-    season = detect_season(lower)
+    # Detect since_year BEFORE detect_season so "since 2000" isn't treated as season=2000
+    since_year = _detect_since_year(lower)
+    season = detect_season(lower) if since_year is None else None
+
     return {
         "filters": filters, "season": season, "is_pitching": is_pitching,
         "league": league_result[0] if league_result else None,
+        "since_year": since_year,
     }
 
 

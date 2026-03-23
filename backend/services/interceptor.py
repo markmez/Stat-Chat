@@ -225,7 +225,8 @@ def try_intercept(question: str):
             response = rb.build_all_time_threshold(
                 threshold["stat"], threshold["threshold"],
                 threshold["comparison"], is_pitching,
-                threshold.get("league"))
+                threshold.get("league"),
+                since_year=threshold.get("since_year"))
         if response:
             return response
 
@@ -238,7 +239,8 @@ def try_intercept(question: str):
                 multi["filters"], season, multi["is_pitching"], multi.get("league"))
         else:
             response = rb.build_all_time_multi_threshold(
-                multi["filters"], multi["is_pitching"], multi.get("league"))
+                multi["filters"], multi["is_pitching"], multi.get("league"),
+                since_year=multi.get("since_year"))
         if response:
             return response
 
