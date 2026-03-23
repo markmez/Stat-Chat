@@ -9,11 +9,14 @@ through to Claude for truly unpredictable queries.
 This mirrors the iOS AppState.sendQuestion() intercept chain exactly.
 """
 
+import logging
 from datetime import date
 
 from services import name_matcher as nm
 from services import response_builder as rb
 from services.stat_definitions import lookup as stat_def_lookup
+
+logger = logging.getLogger("statchat.interceptor")
 
 
 def try_intercept(question: str):
@@ -26,7 +29,35 @@ def try_intercept(question: str):
     if not trimmed:
         return None
 
-    # 0. Matchup — "Judge vs Verlander" (batter vs pitcher)
+    # 0a. Tonight preview — "how will Judge do tonight" (auto-resolve probable pitcher)
+    tonight = nm.parse_tonight_preview(trimmed)
+    if tonight:
+        try:
+            from services.daily_games import get_player_team, get_opponent_starter, has_game_today
+            player_name = tonight["name"]
+            team = get_player_team(player_name)
+            if team:
+                result = get_opponent_starter(team)
+                if result:
+                    pitcher_name, _ = result
+                    # Match pitcher name against our DB
+                    matched_pitcher = nm.match_player(pitcher_name)
+                    if matched_pitcher:
+                        response = rb.build_matchup(player_name, matched_pitcher)
+                        if response:
+                            return response
+                    else:
+                        logger.info("tonight_pitcher_not_found pitcher=%r", pitcher_name)
+                else:
+                    # Check if the team has a game at all today
+                    if has_game_today(team):
+                        return f"Probable starters haven't been announced yet for tonight's game. Try again closer to game time, or ask about a specific matchup like \"{player_name} vs [pitcher name]\"."
+                    else:
+                        return f"{player_name}'s team doesn't appear to have a game scheduled today. Try asking about a specific matchup like \"{player_name} vs [pitcher name]\"."
+        except Exception as e:
+            logger.warning("tonight_preview_error error=%s", e)
+
+    # 0b. Matchup — "Judge vs Verlander" (batter vs pitcher)
     matchup = nm.parse_matchup(trimmed)
     if matchup:
         response = rb.build_matchup(

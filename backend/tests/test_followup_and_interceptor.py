@@ -568,6 +568,53 @@ class TestInterceptorFalsePositives:
         assert ".300" in r or "AVG" in r
         assert "All-Time" in r
 
+
+class TestTonightPreviewParser:
+    """Tests for parse_tonight_preview — 'how will Judge do tonight' patterns."""
+
+    def test_basic_tonight(self):
+        from services.name_matcher import parse_tonight_preview
+        r = parse_tonight_preview("how will Judge do tonight")
+        assert r is not None
+        assert r["name"] == "Aaron Judge"
+
+    def test_basic_today(self):
+        from services.name_matcher import parse_tonight_preview
+        r = parse_tonight_preview("how should Soto do today?")
+        assert r is not None
+        assert r["name"] == "Juan Soto"
+
+    def test_just_name_tonight(self):
+        from services.name_matcher import parse_tonight_preview
+        r = parse_tonight_preview("Judge tonight")
+        assert r is not None
+        assert r["name"] == "Aaron Judge"
+
+    def test_no_tonight_signal(self):
+        from services.name_matcher import parse_tonight_preview
+        r = parse_tonight_preview("how will Judge do")
+        assert r is None
+
+    def test_matchup_not_captured(self):
+        """If both batter and pitcher are named, this is a matchup, not tonight preview."""
+        from services.name_matcher import parse_tonight_preview
+        r = parse_tonight_preview("how will Judge do against Cole tonight")
+        # Should return None because Cole is also a recognized player name
+        # (falls through to parse_matchup which handles this)
+        assert r is None
+
+    def test_full_name_tonight(self):
+        from services.name_matcher import parse_tonight_preview
+        r = parse_tonight_preview("Aaron Judge tonight")
+        assert r is not None
+        assert r["name"] == "Aaron Judge"
+
+    def test_this_game(self):
+        from services.name_matcher import parse_tonight_preview
+        r = parse_tonight_preview("how should Ohtani do this game")
+        assert r is not None
+        assert "Ohtani" in r["name"]
+
     def test_threshold_no_year_defaults_all_time(self):
         """Threshold without year should default to all-time."""
         r = try_intercept("who batted .300")

@@ -165,3 +165,19 @@ async def data_freshness():
         return {"last_updated": None, "season": None}
     except Exception:
         return {"last_updated": None, "season": None}
+
+
+@router.get("/todays-games")
+async def todays_games(authorization: str | None = Header(None)):
+    """Debug endpoint: show today's games and probable pitchers from MSF."""
+    verify_admin(authorization)
+    try:
+        from services.daily_games import get_todays_games
+        parsed = get_todays_games()
+        return {
+            "date": date.today().isoformat(),
+            "game_count": len(parsed),
+            "games": parsed,
+        }
+    except Exception as e:
+        return {"error": str(e)}

@@ -745,6 +745,51 @@ def _has_player_name(lower: str) -> bool:
 # Parser functions
 # ---------------------------------------------------------------------------
 
+
+def parse_tonight_preview(input_str: str) -> Optional[dict]:
+    """Detect 'how will Judge do tonight' style queries (player + tonight/today, no pitcher).
+
+    Returns {"name": player_name} or None.
+    Does NOT fire if a second player (pitcher) is also mentioned — that's a matchup query.
+    """
+    lower = input_str.strip().lower()
+    # Must contain a tonight/today signal
+    if not any(w in lower for w in ["tonight", "today", "this evening", "this game"]):
+        return None
+    # Strip preambles
+    for prefix in ["how will ", "how should ", "how would ", "how does ", "how do ",
+                    "what will ", "preview ", "what should i expect from "]:
+        if lower.startswith(prefix):
+            lower = lower[len(prefix):]
+            break
+    lower = re.sub(r'\bdo\b\s*', '', lower).strip()
+    # Strip trailing time context
+    for suffix in [" do tonight", " do today", " tonight", " today",
+                   " this evening", " this game"]:
+        if lower.endswith(suffix):
+            lower = lower[:-len(suffix)]
+    lower = lower.strip("?.! ")
+    if not lower:
+        return None
+    # Match a player name
+    name = find_player_in_text(lower)
+    if not name:
+        name = match_player(lower)
+    if not name:
+        return None
+    # Reject if a pitcher is also mentioned (that's parse_matchup's job)
+    # Strip both the full resolved name and the parts of the original text that matched
+    remaining = lower
+    for part in name.lower().split():
+        remaining = re.sub(r'\b' + re.escape(part) + r'\b', '', remaining)
+    remaining = remaining.strip()
+    if remaining:
+        second = find_player_in_text(remaining)
+        if second and second != name:
+            return None
+    return {"name": name}
+
+
 def parse_matchup(input_str: str) -> Optional[dict]:
     """Detect batter-vs-pitcher matchup queries like 'Judge vs Verlander'.
     Returns dict with batter, pitcher, season, or None if not a matchup."""
