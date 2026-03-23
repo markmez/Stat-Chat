@@ -3903,3 +3903,258 @@ def _format_stat_value(val, stat_abbrev: str) -> str:
     if stat_abbrev in _ONE_DEC_STATS:
         return f"{val:.1f}" if isinstance(val, float) else str(val)
     return str(int(val)) if isinstance(val, (int, float)) else str(val)
+
+
+# ===================================================================
+# 30. build_matchup — batter vs pitcher matchup preview
+# ===================================================================
+
+def build_matchup(batter_name: str, pitcher_name: str,
+                  season: Optional[int] = None) -> Optional[str]:
+    """Matchup preview: batter vs pitcher with pitch-mix-weighted projection."""
+    conn = _get_db()
+    try:
+        batter_display, _ = _get_player_info(conn, batter_name)
+        pitcher_display, _ = _get_player_info(conn, pitcher_name)
+        cur = conn.cursor()
+
+        # Resolve season — find the most recent where both have data
+        if season:
+            resolved_season = season
+        else:
+            cur.execute(
+                "SELECT MAX(s.season) FROM season_batting_stats s "
+                "JOIN players p ON s.player_id = p.player_id WHERE p.name = ?",
+                (_sanitize(batter_name),),
+            )
+            r = cur.fetchone()
+            resolved_season = r[0] if r and r[0] else _current_year()
+
+        # --- Pitcher's throwing hand ---
+        cur.execute("SELECT throws FROM players WHERE name = ?", (_sanitize(pitcher_name),))
+        r = cur.fetchone()
+        pitcher_hand = r[0] if r and r[0] else None
+
+        # --- Section 1 & 3: Pitcher's pitch mix + batter's pitch-type splits ---
+        # Get pitcher pitch mix from pitching pitch-type splits (PA distribution)
+        cur.execute(
+            "SELECT pts.pitch_type, pts.plate_appearances "
+            "FROM pitch_type_pitching_splits pts "
+            "JOIN players p ON pts.player_id = p.player_id "
+            "WHERE p.name = ? AND pts.season = ? "
+            "ORDER BY pts.plate_appearances DESC",
+            (_sanitize(pitcher_name), resolved_season),
+        )
+        pitcher_mix_rows = cur.fetchall()
+
+        # Get batter's pitch-type batting splits
+        cur.execute(
+            "SELECT pts.pitch_type, pts.plate_appearances, "
+            "pts.batting_avg, pts.obp, pts.slg, pts.ops "
+            "FROM pitch_type_batting_splits pts "
+            "JOIN players p ON pts.player_id = p.player_id "
+            "WHERE p.name = ? AND pts.season = ?",
+            (_sanitize(batter_name), resolved_season),
+        )
+        batter_pitch_rows = cur.fetchall()
+        batter_by_pitch = {row[0]: row for row in batter_pitch_rows}
+
+        # Compute pitch-mix-weighted projection
+        total_pitcher_pa = sum(r[1] for r in pitcher_mix_rows) if pitcher_mix_rows else 0
+        projection = None
+        mix_table_rows = []
+
+        if total_pitcher_pa > 0 and batter_by_pitch:
+            weighted_avg = 0.0
+            weighted_obp = 0.0
+            weighted_slg = 0.0
+            total_weight = 0.0
+
+            for pitch_type, pitcher_pa in pitcher_mix_rows:
+                mix_pct = pitcher_pa / total_pitcher_pa
+                batter_row = batter_by_pitch.get(pitch_type)
+                if not batter_row or batter_row[1] < 10:  # Min 10 PA
+                    continue
+
+                b_pa, b_avg, b_obp, b_slg, b_ops = batter_row[1], batter_row[2], batter_row[3], batter_row[4], batter_row[5]
+                if b_avg is None or b_obp is None or b_slg is None:
+                    continue
+
+                weighted_avg += mix_pct * b_avg
+                weighted_obp += mix_pct * b_obp
+                weighted_slg += mix_pct * b_slg
+                total_weight += mix_pct
+
+                # Only show pitch types that are >= 5% of the pitcher's mix in the table
+                if mix_pct >= 0.05:
+                    mix_table_rows.append((
+                        pitch_type, round(mix_pct * 100), b_pa,
+                        b_avg, b_obp, b_slg, b_ops or (b_obp + b_slg),
+                    ))
+
+            if total_weight > 0.5:  # Need at least 50% of mix covered
+                # Renormalize
+                proj_avg = weighted_avg / total_weight
+                proj_obp = weighted_obp / total_weight
+                proj_slg = weighted_slg / total_weight
+                proj_ops = proj_obp + proj_slg
+                projection = (proj_avg, proj_obp, proj_slg, proj_ops)
+
+        # --- Section 2: Platoon split ---
+        platoon_line = None
+        if pitcher_hand:
+            split_key = "vs_LHP" if pitcher_hand == "L" else "vs_RHP"
+            cur.execute(
+                "SELECT ps.plate_appearances, ps.at_bats, ps.hits, "
+                "ps.home_runs, ps.walks, ps.strikeouts, "
+                "ps.batting_avg, ps.obp, ps.slg, ps.ops "
+                "FROM platoon_splits ps "
+                "JOIN players p ON ps.player_id = p.player_id "
+                "WHERE p.name = ? AND ps.season = ? AND ps.split = ?",
+                (_sanitize(batter_name), resolved_season, split_key),
+            )
+            pr = cur.fetchone()
+            if pr:
+                platoon_line = {
+                    "hand": "LHP" if pitcher_hand == "L" else "RHP",
+                    "pa": pr[0], "ab": pr[1], "h": pr[2], "hr": pr[3],
+                    "bb": pr[4], "so": pr[5],
+                    "avg": pr[6], "obp": pr[7], "slg": pr[8], "ops": pr[9],
+                }
+
+        # --- Section 4: Current form ---
+        batter_form = None
+        cur.execute(
+            "SELECT cf.num_games, cf.at_bats, cf.hits, cf.home_runs, "
+            "cf.runs, cf.rbi, cf.walks, cf.strikeouts, "
+            "cf.batting_avg, cf.obp, cf.slg, cf.ops "
+            "FROM current_form cf "
+            "JOIN players p ON cf.player_id = p.player_id "
+            "WHERE p.name = ? AND cf.season = ?",
+            (_sanitize(batter_name), resolved_season),
+        )
+        bf = cur.fetchone()
+        if bf:
+            batter_form = bf
+
+        pitcher_form = None
+        cur.execute(
+            "SELECT pcf.num_games, pcf.innings_pitched, pcf.era, "
+            "pcf.whip, pcf.k_per_9, pcf.bb_per_9 "
+            "FROM pitching_current_form pcf "
+            "JOIN players p ON pcf.player_id = p.player_id "
+            "WHERE p.name = ? AND pcf.season = ?",
+            (_sanitize(pitcher_name), resolved_season),
+        )
+        pf = cur.fetchone()
+        if pf:
+            pitcher_form = pf
+
+        # --- Section 5: H2H ---
+        h2h = None
+        try:
+            cur.execute(
+                "SELECT h.plate_appearances, h.at_bats, h.hits, "
+                "h.home_runs, h.walks, h.strikeouts, "
+                "h.batting_avg, h.obp, h.slg, h.ops "
+                "FROM head_to_head h "
+                "JOIN players pb ON h.batter_id = pb.player_id "
+                "JOIN players pp ON h.pitcher_id = pp.player_id "
+                "WHERE pb.name = ? AND pp.name = ? AND h.season = ?",
+                (_sanitize(batter_name), _sanitize(pitcher_name), resolved_season),
+            )
+            hr = cur.fetchone()
+            if hr and hr[0] and hr[0] > 0:
+                h2h = hr
+        except sqlite3.OperationalError:
+            pass  # head_to_head table may not exist yet
+
+        # --- Build output ---
+        if not projection and not platoon_line and not h2h:
+            return None  # No useful data
+
+        parts = []
+        parts.append(f"**{batter_display} vs. {pitcher_display}** \u2014 {resolved_season} Matchup Preview")
+
+        # Projected slash line
+        if projection:
+            avg, obp, slg, ops = projection
+            parts.append(f"**Projected: {_format_rate(avg)}/{_format_rate(obp)}/{_format_rate(slg)} ({_format_rate(ops)} OPS)**\n")
+        parts.append("")
+
+        # Platoon
+        if platoon_line:
+            pl = platoon_line
+            parts.append(f"**vs {pl['hand']} This Season**")
+            parts.append("[STATGRID]")
+            parts.append("HEADER: PA, H, HR, BB, SO, AVG, OBP, SLG, OPS")
+            parts.append(f"ROW vs {pl['hand']}: {pl['pa']}, {pl['h']}, {pl['hr']}, "
+                        f"{pl['bb']}, {pl['so']}, "
+                        f"{_format_rate(pl['avg'])}, {_format_rate(pl['obp'])}, "
+                        f"{_format_rate(pl['slg'])}, {_format_rate(pl['ops'])}")
+            parts.append("[/STATGRID]\n")
+
+        # Pitch mix projection table
+        if mix_table_rows:
+            parts.append(f"**Pitch Mix Projection**")
+            parts.append("[LEADERBOARD]")
+            parts.append("HEADER: Mix%, PA, AVG, OBP, SLG, OPS")
+            for i, (pt, pct, pa, avg, obp, slg, ops) in enumerate(mix_table_rows):
+                parts.append(f"ROW {i+1}. {pt}: {pct}%, {pa}, "
+                            f"{_format_rate(avg)}, {_format_rate(obp)}, "
+                            f"{_format_rate(slg)}, {_format_rate(ops)}")
+            parts.append("[/LEADERBOARD]\n")
+
+        # Current form
+        if batter_form or pitcher_form:
+            parts.append("**Current Form**")
+            if batter_form:
+                bf = batter_form
+                parts.append("[STATGRID]")
+                parts.append("HEADER: G, AB, H, HR, RBI, BB, SO, AVG, OBP, SLG, OPS")
+                parts.append(f"ROW {batter_display} (last {bf[0]}G): "
+                            f"{bf[1]}, {bf[2]}, {bf[3]}, {bf[5]}, {bf[6]}, {bf[7]}, "
+                            f"{_format_rate(bf[8])}, {_format_rate(bf[9])}, "
+                            f"{_format_rate(bf[10])}, {_format_rate(bf[11])}")
+                parts.append("[/STATGRID]")
+            if pitcher_form:
+                pf = pitcher_form
+                parts.append("[STATGRID]")
+                parts.append("HEADER: G, IP, ERA, WHIP, K/9, BB/9")
+                ip_str = _format_pitching_rate(pf[1], 1) if pf[1] else "0"
+                parts.append(f"ROW {pitcher_display} (last {pf[0]}G): "
+                            f"{ip_str}, {_format_pitching_rate(pf[2])}, "
+                            f"{_format_pitching_rate(pf[3])}, "
+                            f"{_format_pitching_rate(pf[4], 1)}, "
+                            f"{_format_pitching_rate(pf[5], 1)}")
+                parts.append("[/STATGRID]")
+            parts.append("")
+
+        # H2H
+        if h2h:
+            pa = h2h[0]
+            caveat = " \u2014 small sample" if pa < 50 else ""
+            parts.append(f"**Head-to-Head ({resolved_season}, {pa} PA{caveat})**")
+            parts.append("[STATGRID]")
+            parts.append("HEADER: PA, AB, H, HR, BB, SO, AVG, OBP, SLG, OPS")
+            parts.append(f"ROW H2H: {h2h[0]}, {h2h[1]}, {h2h[2]}, {h2h[3]}, "
+                        f"{h2h[4]}, {h2h[5]}, "
+                        f"{_format_rate(h2h[6])}, {_format_rate(h2h[7])}, "
+                        f"{_format_rate(h2h[8])}, {_format_rate(h2h[9])}")
+            parts.append("[/STATGRID]")
+            if pa < 50:
+                parts.append("[TIP]Small sample \u2014 use pitch mix projection for better signal.[/TIP]")
+            parts.append("")
+
+        # Suggestion pills
+        parts.append(f"[SUGGEST]{batter_display} {resolved_season}[/SUGGEST]")
+        parts.append(f"[SUGGEST]{pitcher_display} {resolved_season}[/SUGGEST]")
+        parts.append(f"[SUGGEST]{batter_display} by pitch type[/SUGGEST]")
+
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
+def _current_year() -> int:
+    return datetime.now().year

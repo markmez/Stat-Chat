@@ -720,6 +720,7 @@ def compute_platoon_splits(conn, season_str):
     pitch_count_splits = {}   # (msf_pitcher_id, pitcher_name, count_str) → stats
     bat_risp_splits = {}      # (msf_batter_id, batter_name, "RISP"/"Non-RISP") → stats
     pitch_risp_splits = {}    # (msf_pitcher_id, pitcher_name, "RISP"/"Non-RISP") → stats
+    h2h_splits = {}           # (msf_batter_id, batter_name, msf_pitcher_id, pitcher_name) → stats
 
     def empty_bat_stats():
         return {"pa": 0, "ab": 0, "h": 0, "2b": 0, "3b": 0, "hr": 0,
@@ -868,13 +869,20 @@ def compute_platoon_splits(conn, season_str):
                     pitch_risp_splits[pr_key] = empty_bat_stats()
                 accumulate(pitch_risp_splits[pr_key], result)
 
+                # --- Head-to-head (batter vs specific pitcher) ---
+                h2h_key = (batter_id, batter_name, pitcher_id, pitcher_name)
+                if h2h_key not in h2h_splits:
+                    h2h_splits[h2h_key] = empty_bat_stats()
+                accumulate(h2h_splits[h2h_key], result)
+
                 break  # Only process one batterUp per at-bat
 
         if (i + 1) % 50 == 0:
             print(f"    Processed {i + 1}/{len(games)} games...")
 
     print(f"    Processed all {len(games)} games: {len(batting_splits)} platoon, "
-          f"{len(bat_pitch_type)} pitch type, {len(bat_count_splits)} count, {len(bat_risp_splits)} RISP splits")
+          f"{len(bat_pitch_type)} pitch type, {len(bat_count_splits)} count, "
+          f"{len(bat_risp_splits)} RISP, {len(h2h_splits)} H2H splits")
 
     # --- Insert into tables ---
     cursor = conn.cursor()
@@ -945,7 +953,21 @@ def compute_platoon_splits(conn, season_str):
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS head_to_head (
+            batter_id TEXT NOT NULL, pitcher_id TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            plate_appearances INTEGER, at_bats INTEGER, hits INTEGER,
+            doubles INTEGER, triples INTEGER, home_runs INTEGER,
+            rbi INTEGER, walks INTEGER, strikeouts INTEGER,
+            hit_by_pitch INTEGER, sacrifice_flies INTEGER,
+            batting_avg REAL, obp REAL, slg REAL, ops REAL,
+            UNIQUE(batter_id, pitcher_id, season)
+        )
+    """)
+
     # Clear existing data for this season
+    cursor.execute("DELETE FROM head_to_head WHERE season = ?", (season_year,))
     cursor.execute("DELETE FROM platoon_splits WHERE season = ?", (season_year,))
     cursor.execute("DELETE FROM pitching_platoon_splits WHERE season = ?", (season_year,))
     cursor.execute("DELETE FROM pitch_type_batting_splits WHERE season = ?", (season_year,))
@@ -1140,11 +1162,32 @@ def compute_platoon_splits(conn, season_str):
               avg_against, obp_against, slg_against, ops_against))
         risp_pitch_count += 1
 
+    # --- Insert H2H splits ---
+    h2h_count = 0
+    for (msf_bat_id, bat_name, msf_pit_id, pit_name), stats in h2h_splits.items():
+        bat_pid = resolve_player(bat_name)
+        pit_pid = resolve_player(pit_name)
+        if not bat_pid or not pit_pid:
+            continue
+        h, ab, bb, hbp, sf = stats["h"], stats["ab"], stats["bb"], stats["hbp"], stats["sf"]
+        doubles, triples, hr, so = stats["2b"], stats["3b"], stats["hr"], stats["so"]
+        pa_calc, avg, obp, slg, ops, iso, babip = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so)
+        cursor.execute("""
+            INSERT OR REPLACE INTO head_to_head
+            (batter_id, pitcher_id, season, plate_appearances, at_bats,
+             hits, doubles, triples, home_runs, rbi, walks, strikeouts,
+             hit_by_pitch, sacrifice_flies, batting_avg, obp, slg, ops)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (bat_pid, pit_pid, season_year, pa_calc, ab, h, doubles, triples, hr, stats["rbi"], bb, so,
+              hbp, sf, avg, obp, slg, ops))
+        h2h_count += 1
+
     conn.commit()
     print(f"    Platoon: {bat_count} batting + {pitch_count} pitching")
     print(f"    Pitch type: {pt_bat_count} batting + {pt_pitch_count} pitching")
     print(f"    Count: {ct_bat_count} batting + {ct_pitch_count} pitching")
     print(f"    RISP: {risp_bat_count} batting + {risp_pitch_count} pitching")
+    print(f"    H2H: {h2h_count} matchups")
     return bat_count, pitch_count
 
 

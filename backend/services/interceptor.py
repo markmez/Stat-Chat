@@ -26,6 +26,14 @@ def try_intercept(question: str):
     if not trimmed:
         return None
 
+    # 0. Matchup — "Judge vs Verlander" (batter vs pitcher)
+    matchup = nm.parse_matchup(trimmed)
+    if matchup:
+        response = rb.build_matchup(
+            matchup["batter"], matchup["pitcher"], matchup.get("season"))
+        if response:
+            return response
+
     # 1. Comparison — "Judge vs Soto", "Compare Lindor and Witt"
     comp = nm.parse_comparison(trimmed)
     if comp:

@@ -745,6 +745,87 @@ def _has_player_name(lower: str) -> bool:
 # Parser functions
 # ---------------------------------------------------------------------------
 
+def parse_matchup(input_str: str) -> Optional[dict]:
+    """Detect batter-vs-pitcher matchup queries like 'Judge vs Verlander'.
+    Returns dict with batter, pitcher, season, or None if not a matchup."""
+    season = detect_season(input_str)
+    cleaned = input_str.strip().lower()
+
+    # Strip year tokens
+    if season is not None:
+        cleaned = re.sub(r'\b(189[89]|19\d{2}|20[0-2]\d)\b', '', cleaned).strip()
+        for phrase in ["this year", "this season", "current season", "last year", "last season",
+                       "previous season", "prior season", "two years ago", "2 years ago",
+                       "three years ago", "3 years ago"]:
+            cleaned = cleaned.replace(phrase, "")
+        cleaned = cleaned.strip()
+
+    # Strip preambles like "how will X do against Y", "how should X do against Y"
+    for prefix in ["how will ", "how should ", "how would ", "how does ", "how do ",
+                    "what will ", "preview "]:
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):]
+            break
+    # "judge do against cole" → "judge against cole"
+    cleaned = re.sub(r'\bdo\b\s*', '', cleaned).strip()
+    # Strip trailing context
+    for suffix in [" do tonight", " do today", " tonight", " today",
+                   " this game", " do this game"]:
+        if cleaned.endswith(suffix):
+            cleaned = cleaned[:-len(suffix)]
+    cleaned = cleaned.strip("?.!")
+
+    # Try splitting on matchup-style delimiters
+    # Strong matchup signals — allow alt-name pitcher resolution
+    strong_delimiters = [" against ", " facing ", " matchup with ", " matchup against ", " matchup "]
+    # Weak delimiters — only match if primary names have a clear batter/pitcher split
+    weak_delimiters = [" versus ", " vs. ", " vs "]
+    all_delimiters = strong_delimiters + weak_delimiters
+    for delimiter in all_delimiters:
+        if delimiter not in cleaned:
+            continue
+        idx = cleaned.index(delimiter)
+        part1 = cleaned[:idx].strip()
+        part2 = cleaned[idx + len(delimiter):].strip()
+
+        if not part1 or not part2:
+            continue
+        m1 = match_player_with_prominence(part1)
+        m2 = match_player_with_prominence(part2)
+        if m1 and m2 and m1[0] != m2[0]:
+            name1, alts1 = m1[0], m1[1]
+            name2, alts2 = m2[0], m2[1]
+            pitcher1 = is_pitcher(name1)
+            pitcher2 = is_pitcher(name2)
+            # Exactly one pitcher and one batter
+            if pitcher1 and not pitcher2:
+                return {"batter": name2, "pitcher": name1, "season": season}
+            elif pitcher2 and not pitcher1:
+                return {"batter": name1, "pitcher": name2, "season": season}
+            # Only check alternatives for strong matchup delimiters
+            # ("facing", "against") — not for "vs" which is ambiguous
+            if delimiter in strong_delimiters:
+                # Both batters — check if an alternative is a pitcher
+                if not pitcher1 and not pitcher2:
+                    for alt in alts1:
+                        if is_pitcher(alt):
+                            return {"batter": name2, "pitcher": alt, "season": season}
+                    for alt in alts2:
+                        if is_pitcher(alt):
+                            return {"batter": name1, "pitcher": alt, "season": season}
+                # Both pitchers — check alts for a batter
+                if pitcher1 and pitcher2:
+                    for alt in alts1:
+                        if not is_pitcher(alt):
+                            return {"batter": alt, "pitcher": name2, "season": season}
+                    for alt in alts2:
+                        if not is_pitcher(alt):
+                            return {"batter": alt, "pitcher": name1, "season": season}
+            return None
+
+    return None
+
+
 def parse_comparison(input_str: str) -> Optional[dict]:
     """Detect comparison queries. Returns dict with name1, name2, season, alternatives."""
     season = detect_season(input_str)
