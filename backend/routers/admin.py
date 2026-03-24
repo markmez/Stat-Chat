@@ -48,7 +48,7 @@ async def refresh_live_data(
 
     cmd = [sys.executable, PIPELINE_SCRIPT, "--season", season, "--db", DB_PATH]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         return {
             "status": "ok" if result.returncode == 0 else "error",
             "season": season,
@@ -56,7 +56,7 @@ async def refresh_live_data(
             "stderr": result.stderr[-1000:] if result.stderr else "",
         }
     except subprocess.TimeoutExpired:
-        raise HTTPException(504, "Refresh timed out (10 min limit)")
+        raise HTTPException(504, "Refresh timed out (30 min limit)")
     except Exception as e:
         raise HTTPException(500, str(e))
 

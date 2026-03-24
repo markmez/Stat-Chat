@@ -19,7 +19,7 @@ def refresh():
         resp = requests.post(
             f"{BASE_URL}/admin/refresh",
             headers={"Authorization": f"Bearer {ADMIN_KEY}"},
-            timeout=600,
+            timeout=1800,
         )
         print(f"Status: {resp.status_code}")
         body = resp.json()
@@ -37,7 +37,7 @@ def refresh():
         print("WARNING: Backend unreachable — skipping this refresh cycle.")
         ping_healthcheck("/fail")
     except requests.exceptions.Timeout:
-        print("WARNING: Refresh timed out (600s limit) — will retry next cycle.")
+        print("WARNING: Refresh timed out (30 min limit) — will retry next cycle.")
         ping_healthcheck("/fail")
     except Exception as e:
         print(f"ERROR: {e}")
