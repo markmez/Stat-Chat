@@ -1,0 +1,8 @@
+# StatChat data refresh — every 4 hours during baseball season
+# 6 AM, 10 AM, 2 PM, 6 PM, 10 PM ET (11, 15, 19, 23, 3 UTC)
+# Runs the pipeline directly (no HTTP roundtrip like Railway cron)
+
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+0 11,15,19,23,3 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
