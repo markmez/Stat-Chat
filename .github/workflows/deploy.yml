@@ -1,0 +1,27 @@
+  name: Deploy Backend                                                                                               
+   
+  on:                                                                                                                
+    push:                                                                                                          
+      branches: [main]
+      paths:
+        - 'backend/**'
+        - 'schema_description.py'
+        - 'deploy/**'
+
+  jobs:
+    deploy:
+      runs-on: ubuntu-latest
+      steps:                                                                                                         
+        - name: Deploy to Lightsail
+          uses: appleboy/ssh-action@v1                                                                               
+          with:                                                                                                    
+            host: 3.223.208.21
+            username: ubuntu
+            key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+            script: |                                                                                                
+              cd /opt/statchat/repo
+              sudo -u statchat git pull                                                                              
+              sudo -u statchat /opt/statchat/venv/bin/pip install -q -r backend/requirements.txt                   
+              sudo systemctl restart statchat
+              sleep 2                                                                                                
+              curl -sf http://127.0.0.1:8000/health || exit 1
