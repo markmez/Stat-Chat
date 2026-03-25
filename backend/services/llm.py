@@ -17,6 +17,7 @@ import anthropic
 from prompts import (
     ROUTING_PROMPT,
     SQL_GENERATION_PROMPT,
+    HAIKU_SQL_PROMPT,
     ANSWER_GENERATION_PROMPT,
     STREAK_ANSWER_PROMPT,
     STAT_EXPLANATION_PROMPT,
@@ -75,6 +76,21 @@ class LLMService:
         )
         sql = response.content[0].text.strip()
         # Strip markdown code fences and Python-style comments
+        sql = re.sub(r"^```(?:sql)?\s*", "", sql)
+        sql = re.sub(r"\s*```$", "", sql)
+        sql = re.sub(r"#[^\n]*", "", sql)
+        return sql.strip()
+
+    async def generate_sql_haiku(self, question: str) -> str:
+        """Generate SQL using Haiku (cheap fallback before Sonnet)."""
+        response = await self.client.messages.create(
+            model=ROUTING_MODEL,
+            max_tokens=1024,
+            system=_cached_system(HAIKU_SQL_PROMPT),
+            extra_headers={"anthropic-beta": _CACHE_BETA},
+            messages=[{"role": "user", "content": question}],
+        )
+        sql = response.content[0].text.strip()
         sql = re.sub(r"^```(?:sql)?\s*", "", sql)
         sql = re.sub(r"\s*```$", "", sql)
         sql = re.sub(r"#[^\n]*", "", sql)

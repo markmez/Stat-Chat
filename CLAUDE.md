@@ -107,12 +107,25 @@ At scale (500K queries/mo), Claude API costs dominate (~$7,500-9,000/mo unoptimi
 
 **Total estimated savings**: ~$7,900-8,000/mo at 500K queries → reduced to ~$3,000-3,500/mo.
 
+### Haiku SQL Fallback (VALIDATED, not yet built)
+Major unlock: when the 29-parser interceptor misses a query, have Haiku generate SQL directly from the schema instead of routing to Sonnet. Tested 14/15 correct — including complex queries like year-over-year comparisons, cross-table joins, and consecutive-season analysis.
+
+**Current flow**: interceptor miss → Sonnet SQL gen (~$0.02/query)
+**New flow**: interceptor miss → Haiku SQL gen (~$0.002/query) → Sonnet only if Haiku fails
+
+- **Test script**: `backend/tests/test_haiku_sql.py` — sends questions to Haiku with schema, runs generated SQL against DB
+- **Prorated PA minimums**: `(days_elapsed / total_season_days) * 400` for current-season rate stat queries. Full-season = 400 PA. No arbitrary "partial" bucket.
+- **Active player definition**: has a row in season stats for current or previous year
+- **Retry on error**: if Haiku SQL fails, send error back to Haiku for one retry before escalating to Sonnet
+- **Additional savings**: ~$1,800/mo at 500K queries (assumes 20% interceptor miss rate)
+- **Status**: Concept validated, needs implementation + extensive QA. See [full plan](file:///Users/markmezrich/.claude/projects/-Users-markmezrich/memory/project-haiku-sql-fallback.md).
+
 ### Key technical notes
 - Claude Sonnet sometimes wraps SQL in markdown code fences — `SQLSanitizer.swift` strips them with regex
 - Using Claude Sonnet (`claude-sonnet-4-5-20250929`) for SQL generation, answer generation, streak/form description
 - Using Claude Haiku (`claude-haiku-4-5-20251001`) for query routing only
 - Conversation history (last 5 Q&A pairs) for follow-up questions
-- PA minimums for rate stat leaderboards: >=400 full season, >=200 partial
+- PA minimums for rate stat leaderboards: >=400 full season, prorated for current season (400 × fraction of season elapsed)
 - `hasAPIKey` must be a stored property (not computed) for SwiftUI reactivity
 - `INFOPLIST_KEY_UILaunchScreen_Generation: YES` required in project.yml to avoid iPhone 7 layout
 
