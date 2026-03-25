@@ -99,7 +99,7 @@ async def refresh_schedule():
         "current_phase": current_phase,
         "season": f"{year}-{current_phase}",
         "schedule": schedule,
-        "note": "Cron jobs configured in Railway. Use POST /admin/refresh to trigger manually.",
+        "note": "Cron jobs configured on Lightsail. Use POST /admin/refresh to trigger manually.",
     }
 
 
