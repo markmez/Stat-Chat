@@ -1416,17 +1416,23 @@ def main():
         # Update prominence columns for iOS disambiguation
         print("\nUpdating player prominence columns...")
         cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE players SET
-                career_games = COALESCE((SELECT SUM(s.games) FROM season_batting_stats s WHERE s.player_id = players.player_id), 0) +
-                               COALESCE((SELECT SUM(sp.games) FROM season_pitching_stats sp WHERE sp.player_id = players.player_id), 0),
-                last_season = MAX(
-                    COALESCE((SELECT MAX(s.season) FROM season_batting_stats s WHERE s.player_id = players.player_id), 0),
-                    COALESCE((SELECT MAX(sp.season) FROM season_pitching_stats sp WHERE sp.player_id = players.player_id), 0)
-                )
-        """)
-        conn.commit()
-        print(f"  Updated {cursor.rowcount} players")
+        try:
+            cursor.execute("""
+                UPDATE players SET
+                    career_games = COALESCE((SELECT SUM(s.games) FROM season_batting_stats s WHERE s.player_id = players.player_id), 0) +
+                                   COALESCE((SELECT SUM(sp.games) FROM season_pitching_stats sp WHERE sp.player_id = players.player_id), 0),
+                    last_season = MAX(
+                        COALESCE((SELECT MAX(s.season) FROM season_batting_stats s WHERE s.player_id = players.player_id), 0),
+                        COALESCE((SELECT MAX(sp.season) FROM season_pitching_stats sp WHERE sp.player_id = players.player_id), 0)
+                    )
+            """)
+            conn.commit()
+            print(f"  Updated {cursor.rowcount} players")
+        except sqlite3.OperationalError as e:
+            if "no such column" in str(e):
+                print(f"  Skipping prominence update (columns not in deployed DB): {e}")
+            else:
+                raise
 
         record_last_update(conn, args.season)
         conn.close()

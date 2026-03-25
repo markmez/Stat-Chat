@@ -35,23 +35,16 @@ async def refresh_live_data(
     """Trigger a live data refresh from MySportsFeeds."""
     verify_admin(authorization)
 
-    # Auto-detect season if not provided
-    if season is None:
-        year = date.today().year
-        month = date.today().month
-        if month < 3 or (month == 3 and date.today().day < 25):
-            season = f"{year}-preseason"
-        elif month >= 10:
-            season = f"{year}-playoff"
-        else:
-            season = f"{year}-regular"
-
-    cmd = [sys.executable, PIPELINE_SCRIPT, "--season", season, "--db", DB_PATH]
+    # Let the pipeline auto-detect season if not explicitly provided.
+    # The pipeline has smart Opening Day detection (probes MSF for regular season data).
+    cmd = [sys.executable, PIPELINE_SCRIPT, "--db", DB_PATH]
+    if season is not None:
+        cmd.extend(["--season", season])
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         return {
             "status": "ok" if result.returncode == 0 else "error",
-            "season": season,
+            "season": season or "auto-detected",
             "stdout": result.stdout[-2000:] if result.stdout else "",
             "stderr": result.stderr[-1000:] if result.stderr else "",
         }
