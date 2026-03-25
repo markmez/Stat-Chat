@@ -1,7 +1,7 @@
 import Foundation
 
 final class BackendService: Sendable {
-    private let baseURL = URL(string: "https://stat-chat-production.up.railway.app")!
+    private let baseURL = URL(string: "https://api.secondsignalapps.com")!
 
     enum ServiceError: LocalizedError {
         case httpError(Int, String)

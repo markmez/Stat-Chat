@@ -3,7 +3,7 @@ import os
 import sys
 import requests
 
-BASE_URL = os.getenv("BACKEND_URL", "https://stat-chat-production.up.railway.app")
+BASE_URL = os.getenv("BACKEND_URL", "https://api.secondsignalapps.com")
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 
 def refresh():
