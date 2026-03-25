@@ -1405,6 +1405,7 @@ if __name__ == "__main__":
         print(f"Processing season {season_filter} only")
 
     conn = sqlite3.connect(args.db)
+    conn.execute("PRAGMA journal_mode=WAL")
 
     # Batting streaks
     detect_all_streaks(conn, season_filter)

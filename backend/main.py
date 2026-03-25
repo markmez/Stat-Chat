@@ -12,6 +12,7 @@ Or from project root:
 import logging
 import os
 import shutil
+import sqlite3
 import sys
 import urllib.request
 from contextlib import asynccontextmanager
@@ -73,9 +74,21 @@ def ensure_db():
     print(f"Database downloaded ({os.path.getsize(DB_PATH) // 1_000_000} MB)")
 
 
+def enable_wal_mode():
+    """Enable WAL journal mode so readers aren't blocked during pipeline writes."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.close()
+        print("SQLite WAL mode enabled")
+    except Exception as e:
+        print(f"Warning: could not enable WAL mode: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_db()
+    enable_wal_mode()
     init_metering_db()
     yield
 

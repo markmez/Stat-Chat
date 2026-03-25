@@ -1394,6 +1394,7 @@ def main():
 
     print(f"Pulling live stats for {args.season} into {args.db}")
     conn = sqlite3.connect(args.db)
+    conn.execute("PRAGMA journal_mode=WAL")
 
     try:
         t0 = time.time()
