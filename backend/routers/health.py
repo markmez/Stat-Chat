@@ -19,4 +19,4 @@ async def health():
         conn.close()
     except Exception as e:
         return {"status": "degraded", "reason": str(e)}
-    return {"status": "ok"}
+    return {"status": "ok", "version": "1.1.0"}
