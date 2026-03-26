@@ -41,12 +41,12 @@ struct PaywallView: View {
                             .offset(x: 16, y: 16)
                     }
 
-                    Text("You've used all 5 free\nquestions this week")
+                    Text("You've used all 5 free\nsearches this week")
                         .font(.system(size: 22, weight: .bold, design: .rounded))
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.primary)
 
-                    Text("Upgrade for unlimited questions")
+                    Text("Upgrade for unlimited searches")
                         .font(.system(.subheadline, design: .rounded))
                         .foregroundStyle(.secondary)
                 }
