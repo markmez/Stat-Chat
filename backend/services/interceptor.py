@@ -254,18 +254,20 @@ def try_intercept(question: str):
     threshold = nm.parse_threshold(trimmed)
     if threshold:
         is_pitching = nm.is_pitching_stat(threshold["stat"])
+        rookie = threshold.get("rookie", False)
         season = threshold.get("season")
         if season:
             response = rb.build_threshold(
                 threshold["stat"], threshold["threshold"],
                 threshold["comparison"], season,
-                threshold.get("league"), is_pitching)
+                threshold.get("league"), is_pitching, rookie=rookie)
         else:
             response = rb.build_all_time_threshold(
                 threshold["stat"], threshold["threshold"],
                 threshold["comparison"], is_pitching,
                 threshold.get("league"),
-                since_year=threshold.get("since_year"))
+                since_year=threshold.get("since_year"),
+                rookie=rookie)
         if response:
             return response
 
@@ -273,13 +275,15 @@ def try_intercept(question: str):
     multi = nm.parse_multi_threshold(trimmed)
     if multi:
         season = multi["season"]
+        rookie = multi.get("rookie", False)
         if season:
             response = rb.build_multi_threshold(
-                multi["filters"], season, multi["is_pitching"], multi.get("league"))
+                multi["filters"], season, multi["is_pitching"], multi.get("league"),
+                rookie=rookie)
         else:
             response = rb.build_all_time_multi_threshold(
                 multi["filters"], multi["is_pitching"], multi.get("league"),
-                since_year=multi.get("since_year"))
+                since_year=multi.get("since_year"), rookie=rookie)
         if response:
             return response
 
@@ -348,12 +352,14 @@ def try_intercept(question: str):
         lower = trimmed.lower()
         pitching_context = any(w in lower for w in ["pitched", "pitching", "pitcher", "pitchers"])
         is_pitching = nm.is_pitching_stat(board["stat"]) or pitching_context
+        rookie = board.get("rookie", False)
         if is_pitching:
             response = rb.build_pitching_leaderboard(
                 board["stat"], board["scope"], board.get("limit", 10), board.get("league"))
         else:
             response = rb.build_leaderboard(
-                board["stat"], board["scope"], board.get("limit", 10), board.get("league"))
+                board["stat"], board["scope"], board.get("limit", 10), board.get("league"),
+                rookie=rookie)
         if response:
             return response
 

@@ -158,6 +158,24 @@ def _league_team_clause(league: str, alias: str) -> str:
     return f"{alias}.team IN ({teams})"
 
 
+def _rookie_filter(prefix: str, is_pitching: bool = False) -> str:
+    """Return SQL filter clause for rookies.
+
+    A rookie in season X has no prior season with 130+ AB (batting) or
+    150+ ip_outs (pitching).
+    """
+    return (
+        f" AND NOT EXISTS ("
+        f"SELECT 1 FROM season_batting_stats s2 "
+        f"WHERE s2.player_id = {prefix}.player_id AND s2.season < {prefix}.season "
+        f"AND s2.at_bats >= 130) "
+        f"AND NOT EXISTS ("
+        f"SELECT 1 FROM season_pitching_stats sp2 "
+        f"WHERE sp2.player_id = {prefix}.player_id AND sp2.season < {prefix}.season "
+        f"AND sp2.ip_outs >= 150)"
+    )
+
+
 def _format_date(date_string: str) -> str:
     """Convert '2024-06-12' to 'Jun 12'."""
     parts = date_string.split("-")
@@ -1685,7 +1703,8 @@ def build_platoon_leaderboard(stat_info, hand: str, is_pitching: bool = False,
 
 def build_multi_threshold(filters: list, season: int,
                           is_pitching: bool = False,
-                          league: Optional[str] = None) -> Optional[str]:
+                          league: Optional[str] = None,
+                          rookie: bool = False) -> Optional[str]:
     """Build a multi-stat threshold: '.300 AVG with 30+ HR', '200 K and sub-3.00 ERA'."""
     conn = _get_db()
     try:
@@ -1693,6 +1712,7 @@ def build_multi_threshold(filters: list, season: int,
         prefix = "sp" if is_pitching else "s"
         league_filter = f" AND {_league_team_clause(league, prefix)}" if league else ""
         league_label = f" ({league})" if league else ""
+        rookie_clause = _rookie_filter(prefix, is_pitching) if rookie else ""
 
         # Verify all columns exist
         cur = conn.cursor()
@@ -1733,7 +1753,7 @@ def build_multi_threshold(filters: list, season: int,
             f"SELECT p.name, {select_cols} "
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
-            f"WHERE {where_clause}{league_filter} "
+            f"WHERE {where_clause}{league_filter}{rookie_clause} "
             f"ORDER BY {prefix}.{first_stat.db_column} {order}",
             tuple(params),
         )
@@ -1749,7 +1769,7 @@ def build_multi_threshold(filters: list, season: int,
                 title_parts.append(f"Sub-{t} {f['stat'].display_abbrev}")
             else:
                 title_parts.append(f"{t}+ {f['stat'].display_abbrev}")
-        who = "Pitchers" if is_pitching else "Players"
+        who = "Rookie Pitchers" if is_pitching and rookie else "Rookies" if rookie else "Pitchers" if is_pitching else "Players"
         title = f"{who} with {' and '.join(title_parts)} in {season}{league_label}"
 
         if not rows:
@@ -1779,7 +1799,8 @@ def build_multi_threshold(filters: list, season: int,
 def build_all_time_multi_threshold(filters: list,
                                    is_pitching: bool = False,
                                    league: Optional[str] = None,
-                                   since_year: Optional[int] = None) -> Optional[str]:
+                                   since_year: Optional[int] = None,
+                                   rookie: bool = False) -> Optional[str]:
     """All-time multi-stat threshold: '.300 with 30 HR' (no season specified)."""
     conn = _get_db()
     try:
@@ -1787,6 +1808,7 @@ def build_all_time_multi_threshold(filters: list,
         prefix = "sp" if is_pitching else "s"
         league_filter = f" AND {_league_team_clause(league, prefix)}" if league else ""
         league_label = f" ({league})" if league else ""
+        rookie_clause = _rookie_filter(prefix, is_pitching) if rookie else ""
 
         cur = conn.cursor()
         cur.execute(f"PRAGMA table_info({table})")
@@ -1823,7 +1845,7 @@ def build_all_time_multi_threshold(filters: list,
             f"SELECT p.name, {select_cols}, {prefix}.season "
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
-            f"WHERE {where_clause}{league_filter} "
+            f"WHERE {where_clause}{league_filter}{rookie_clause} "
             f"ORDER BY {prefix}.{first_stat.db_column} {order}",
             tuple(params),
         )
@@ -1839,7 +1861,7 @@ def build_all_time_multi_threshold(filters: list,
                 title_parts.append(f"Sub-{t} {f['stat'].display_abbrev}")
             else:
                 title_parts.append(f"{t}+ {f['stat'].display_abbrev}")
-        who = "Pitchers" if is_pitching else "Players"
+        who = "Rookie Pitchers" if is_pitching and rookie else "Rookies" if rookie else "Pitchers" if is_pitching else "Players"
         scope_label = f"Since {since_year}" if since_year else "All-Time"
         title = f"{who} with {' and '.join(title_parts)} ({scope_label}){league_label}"
 
@@ -2438,7 +2460,8 @@ def build_month_stats(name: str, month: int, season: int) -> Optional[str]:
 def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
                       league: Optional[str] = None,
                       season: Optional[int] = None,
-                      since_year: Optional[int] = None) -> Optional[str]:
+                      since_year: Optional[int] = None,
+                      rookie: bool = False) -> Optional[str]:
     """
     Build a batting leaderboard.
 
@@ -2467,6 +2490,8 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
     try:
         league_filter = f" AND {_league_team_clause(league, 's')}" if league else ""
         league_label = f" ({league})" if league else ""
+        rookie_clause = _rookie_filter("s") if rookie else ""
+        rookie_label = "Rookie " if rookie else ""
         stat_name = stat_info.pill_name
 
         if scope == "season":
@@ -2486,15 +2511,15 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
                 f"SELECT p.name, s.{stat_info.db_column} "
                 f"FROM season_batting_stats s "
                 f"JOIN players p ON s.player_id = p.player_id "
-                f"WHERE s.season = ?{pa_filter}{league_filter} "
+                f"WHERE s.season = ?{pa_filter}{league_filter}{rookie_clause} "
                 f"ORDER BY s.{stat_info.db_column} DESC LIMIT ?",
                 (yr, limit),
             )
             rows = cur.fetchall()
             if not rows:
-                return f"No {stat_info.display_name} leaders found for {yr}{league_label}."
+                return f"No {rookie_label.lower()}{stat_info.display_name} leaders found for {yr}{league_label}."
 
-            parts = [f"**{yr} {stat_info.display_name} Leaders{league_label}**\n"]
+            parts = [f"**{yr} {rookie_label}{stat_info.display_name} Leaders{league_label}**\n"]
             parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
             parts.append("[LEADERBOARD]")
             parts.append(f"HEADER: {stat_info.display_abbrev}")
@@ -2522,9 +2547,15 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
             return "\n".join(parts)
 
         elif scope == "allTimeSingleSeason":
-            pa_filter = f" WHERE s.plate_appearances >= 400{league_filter}" if stat_info.is_rate else (
-                f" WHERE {league_filter[5:]}" if league_filter else ""
-            )
+            # Build WHERE clause from parts
+            conditions = []
+            if stat_info.is_rate:
+                conditions.append("s.plate_appearances >= 400")
+            if league_filter:
+                conditions.append(league_filter[5:])  # strip leading " AND "
+            if rookie:
+                conditions.append(rookie_clause[5:])  # strip leading " AND "
+            pa_filter = f" WHERE {' AND '.join(conditions)}" if conditions else ""
             cur = conn.cursor()
             cur.execute(
                 f"SELECT p.name, s.{stat_info.db_column}, s.season "
@@ -2536,9 +2567,9 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
             )
             rows = cur.fetchall()
             if not rows:
-                return f"No all-time {stat_info.display_name} leaders found{league_label}."
+                return f"No all-time {rookie_label.lower()}{stat_info.display_name} leaders found{league_label}."
 
-            parts = [f"**All-Time Single Season {stat_info.display_name} Leaders{league_label}**\n"]
+            parts = [f"**All-Time Single Season {rookie_label}{stat_info.display_name} Leaders{league_label}**\n"]
             parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
             parts.append("[LEADERBOARD]")
             parts.append(f"HEADER: {stat_info.display_abbrev}, Year")
@@ -2566,15 +2597,15 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
                 f"SELECT p.name, s.{stat_info.db_column}, s.season "
                 f"FROM season_batting_stats s "
                 f"JOIN players p ON s.player_id = p.player_id "
-                f"WHERE s.season >= ?{pa_filter}{league_filter} "
+                f"WHERE s.season >= ?{pa_filter}{league_filter}{rookie_clause} "
                 f"ORDER BY s.{stat_info.db_column} DESC LIMIT ?",
                 (sy, limit),
             )
             rows = cur.fetchall()
             if not rows:
-                return f"No {stat_info.display_name} leaders found since {sy}{league_label}."
+                return f"No {rookie_label.lower()}{stat_info.display_name} leaders found since {sy}{league_label}."
 
-            parts = [f"**{stat_info.display_name} Leaders Since {sy}{league_label}**\n"]
+            parts = [f"**{rookie_label}{stat_info.display_name} Leaders Since {sy}{league_label}**\n"]
             parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
             parts.append("[LEADERBOARD]")
             parts.append(f"HEADER: {stat_info.display_abbrev}, Year")
@@ -2854,7 +2885,7 @@ def build_pitching_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
 
 def build_threshold(stat_info: StatInfo, threshold: float, comparison: str,
                     season: int, league: Optional[str] = None,
-                    is_pitching: bool = False) -> Optional[str]:
+                    is_pitching: bool = False, rookie: bool = False) -> Optional[str]:
     """Build a threshold leaderboard: 'who hit 40 HR?' or 'pitchers with ERA under 3.00'."""
     conn = _get_db()
     try:
@@ -2862,6 +2893,7 @@ def build_threshold(stat_info: StatInfo, threshold: float, comparison: str,
         prefix = "sp" if is_pitching else "s"
         league_filter = f" AND {_league_team_clause(league, prefix)}" if league else ""
         league_label = f" ({league})" if league else ""
+        rookie_clause = _rookie_filter(prefix, is_pitching) if rookie else ""
 
         # PA/IP minimum for rate stats
         pa_note = None
@@ -2883,7 +2915,7 @@ def build_threshold(stat_info: StatInfo, threshold: float, comparison: str,
             f"SELECT p.name, {prefix}.{stat_info.db_column} "
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
-            f"WHERE {prefix}.season = ? AND {prefix}.{stat_info.db_column} {comparison} ?{qual_filter}{league_filter} "
+            f"WHERE {prefix}.season = ? AND {prefix}.{stat_info.db_column} {comparison} ?{qual_filter}{league_filter}{rookie_clause} "
             f"ORDER BY {prefix}.{stat_info.db_column} DESC",
             (season, threshold),
         )
@@ -2891,18 +2923,19 @@ def build_threshold(stat_info: StatInfo, threshold: float, comparison: str,
         if not rows:
             threshold_str = _format_rate(str(threshold)) if stat_info.is_rate else str(int(threshold))
             op = "at least" if comparison == ">=" else "no more than"
-            who = "pitchers" if is_pitching else "players"
+            who = "rookie pitchers" if is_pitching and rookie else "rookies" if rookie else "pitchers" if is_pitching else "players"
             return f"No {who} had {op} {threshold_str} {stat_info.display_abbrev} in {season}{league_label}."
 
         threshold_display = _format_rate(str(threshold)) if stat_info.is_rate else str(int(threshold))
+        who = "Rookies" if rookie else "Players"
 
         if comparison == ">=":
             if stat_info.is_rate:
-                title = f"Players Batting Over {threshold_display} {stat_info.display_abbrev} in {season}{league_label}"
+                title = f"{who} Batting Over {threshold_display} {stat_info.display_abbrev} in {season}{league_label}"
             else:
-                title = f"Players with {threshold_display}+ {stat_info.display_name} in {season}{league_label}"
+                title = f"{who} with {threshold_display}+ {stat_info.display_name} in {season}{league_label}"
         else:
-            title = f"Players with {threshold_display} or Fewer {stat_info.display_name} in {season}{league_label}"
+            title = f"{who} with {threshold_display} or Fewer {stat_info.display_name} in {season}{league_label}"
 
         count = len(rows)
         parts = [f"**{title}**"]
@@ -2940,7 +2973,8 @@ def build_threshold(stat_info: StatInfo, threshold: float, comparison: str,
 def build_all_time_threshold(stat_info: StatInfo, threshold: float, comparison: str,
                              is_pitching: bool = False,
                              league: Optional[str] = None,
-                             since_year: Optional[int] = None) -> Optional[str]:
+                             since_year: Optional[int] = None,
+                             rookie: bool = False) -> Optional[str]:
     """All-time threshold: 'who hit 50 home runs?' (no season specified)."""
     conn = _get_db()
     try:
@@ -2949,15 +2983,24 @@ def build_all_time_threshold(stat_info: StatInfo, threshold: float, comparison: 
         bad_era = _era_data_filter(prefix, stat_info) if is_pitching else ""
         league_filter = f" AND {_league_team_clause(league, prefix)}" if league else ""
         league_label = f" ({league})" if league else ""
+        rookie_clause = _rookie_filter(prefix, is_pitching) if rookie else ""
 
         since_filter = f" AND {prefix}.season >= {since_year}" if since_year else ""
+
+        # PA/IP minimum for rate stats
+        qual_filter = ""
+        if stat_info.is_rate:
+            if is_pitching:
+                qual_filter = f" AND {prefix}.ip_outs >= 486"
+            else:
+                qual_filter = f" AND {prefix}.plate_appearances >= 400"
 
         cur = conn.cursor()
         cur.execute(
             f"SELECT p.name, {prefix}.{stat_info.db_column}, {prefix}.season "
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
-            f"WHERE {prefix}.{stat_info.db_column} {comparison} ?{bad_era}{league_filter}{since_filter} "
+            f"WHERE {prefix}.{stat_info.db_column} {comparison} ?{bad_era}{qual_filter}{league_filter}{since_filter}{rookie_clause} "
             f"ORDER BY {prefix}.{stat_info.db_column} DESC",
             (threshold,),
         )
@@ -2965,12 +3008,12 @@ def build_all_time_threshold(stat_info: StatInfo, threshold: float, comparison: 
         if not rows:
             threshold_str = _format_rate(str(threshold)) if stat_info.is_rate else str(int(threshold))
             op = "at least" if comparison == ">=" else "no more than"
-            who = "pitchers" if is_pitching else "players"
+            who = "rookie pitchers" if is_pitching and rookie else "rookies" if rookie else "pitchers" if is_pitching else "players"
             scope_msg = f"since {since_year}" if since_year else "in a season"
             return f"No {who} have had {op} {threshold_str} {stat_info.display_abbrev} {scope_msg}."
 
         threshold_display = _format_rate(str(threshold)) if stat_info.is_rate else str(int(threshold))
-        who = "Pitchers" if is_pitching else "Players"
+        who = "Rookie Pitchers" if is_pitching and rookie else "Rookies" if rookie else "Pitchers" if is_pitching else "Players"
         scope_label = f"Since {since_year}" if since_year else "All-Time"
         if comparison == ">=":
             if stat_info.is_rate:

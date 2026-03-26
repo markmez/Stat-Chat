@@ -631,6 +631,12 @@ def _detect_since_year(lower: str) -> Optional[int]:
     return None
 
 
+def _detect_rookie(lower: str) -> bool:
+    """Detect if the query is asking about rookies."""
+    rookie_triggers = ["rookie", "rookies", "first year", "first-year"]
+    return any(t in lower for t in rookie_triggers)
+
+
 def detect_league(input_str: str) -> Optional[tuple[Optional[str], str]]:
     """Detect AL/NL league filter. Returns (league, cleaned_text) or None."""
     lower = input_str.lower()
@@ -1589,9 +1595,12 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
                 season = _current_calendar_year()
         scope = f"season_{season}"
 
+    rookie = _detect_rookie(lower)
+
     return {
         "stat": stat, "scope": scope, "limit": limit,
         "league": league_result[0] if league_result else None,
+        "rookie": rookie,
     }
 
 
@@ -1640,13 +1649,19 @@ def parse_stat_definition(input_str: str) -> Optional[dict]:
     return None
 
 
-def _extract_threshold(text: str, skip_years: bool = True) -> Optional[float]:
+def _extract_threshold(text: str, skip_years: bool = True,
+                       stat: Optional['StatInfo'] = None) -> Optional[float]:
     """Extract a numeric threshold from text, skipping 4-digit years.
 
-    Normalizes whole-number batting averages: "hitting 300" → 0.300.
-    Numbers 200-400 are treated as batting averages (÷1000) when the
-    text contains a batting-average verb (hit, batted, batting, hitting).
+    Normalizes whole-number values for rate stats stored on a 0-1 scale:
+    - "800 OPS" → .800, "350 OBP" → .350, "500 SLG" → .500
+    - Only applies to AVG, OBP, SLG, OPS, ISO, BABIP, BAA (not ERA, K/9, OPS+, ERA+)
+    - Also handles batting-average verb shorthand: "hitting 300" → .300
     """
+    # Stats stored on a 0-1 scale where 3-digit whole numbers mean ÷1000
+    _sub_one_stats = {"batting_avg", "obp", "slg", "ops", "iso", "babip",
+                      "batting_avg_against"}
+
     _avg_verb = re.search(r'(?:batted|hit|batting|hitting|bat)\b', text) is not None
     for m in re.finditer(r'(\d+\.?\d*|\.\d+)\+?', text):
         num_str = m.group(1)
@@ -1660,6 +1675,10 @@ def _extract_threshold(text: str, skip_years: bool = True) -> Optional[float]:
                 continue
         # "hitting 300" → .300  (whole-number batting avg shorthand)
         if _avg_verb and 200 <= num <= 400 and "." not in num_str:
+            return num / 1000
+        # "800 OPS", "350 OBP", etc. → divide by 1000 for sub-1 rate stats
+        if (stat and stat.db_column in _sub_one_stats
+                and 100 <= num <= 999 and "." not in num_str):
             return num / 1000
         return num
     return None
@@ -1690,7 +1709,7 @@ def parse_threshold(input_str: str) -> Optional[dict]:
         if not stat:
             return None
 
-    threshold = _extract_threshold(lower)
+    threshold = _extract_threshold(lower, stat=stat)
     if threshold is None:
         return None
 
@@ -1708,6 +1727,9 @@ def parse_threshold(input_str: str) -> Optional[dict]:
                       "or fewer", "or less"]
     comparison = "<=" if any(p in lower for p in under_patterns) else ">="
 
+    # Detect rookie filter
+    rookie = _detect_rookie(lower)
+
     # Detect since_year BEFORE detect_season so "since 2000" isn't treated as season=2000
     since_year = _detect_since_year(lower)
 
@@ -1717,7 +1739,7 @@ def parse_threshold(input_str: str) -> Optional[dict]:
     return {
         "stat": stat, "threshold": threshold, "comparison": comparison,
         "season": season, "league": league_result[0] if league_result else None,
-        "since_year": since_year,
+        "since_year": since_year, "rookie": rookie,
     }
 
 
@@ -1920,7 +1942,7 @@ def parse_multi_threshold(input_str: str) -> Optional[dict]:
             if not stat:
                 continue
 
-        threshold = _extract_threshold(part)
+        threshold = _extract_threshold(part, stat=stat)
         if threshold is None:
             continue
 
@@ -1935,6 +1957,9 @@ def parse_multi_threshold(input_str: str) -> Optional[dict]:
                       "complete_games", "batting_avg_against"}
     is_pitching = "pitcher" in lower or any(f["stat"].db_column in pitching_stats for f in filters)
 
+    # Detect rookie filter
+    rookie = _detect_rookie(lower)
+
     # Detect since_year BEFORE detect_season so "since 2000" isn't treated as season=2000
     since_year = _detect_since_year(lower)
     season = detect_season(lower) if since_year is None else None
@@ -1942,7 +1967,7 @@ def parse_multi_threshold(input_str: str) -> Optional[dict]:
     return {
         "filters": filters, "season": season, "is_pitching": is_pitching,
         "league": league_result[0] if league_result else None,
-        "since_year": since_year,
+        "since_year": since_year, "rookie": rookie,
     }
 
 
