@@ -267,7 +267,7 @@ final class AppState: SearchHistoryTracking {
                 guard streamingIndex < messages.count else { return }
 
                 // Quota exceeded from backend — show paywall instead of error
-                if case ServiceError.quotaExceeded = error {
+                if case BackendService.ServiceError.quotaExceeded = error {
                     messages.remove(at: streamingIndex)
                     AnalyticsService.trackPaywallHit(queryCount: weeklyQueryCount)
                     pendingPaywallQuery = trimmed
