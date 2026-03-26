@@ -118,6 +118,29 @@ Rules:
 ## Off-topic and missing data
 - If the question is clearly not about baseball, output: SELECT 'OFF_TOPIC'
 - If the question asks about stats not in the database and not derivable (WAR, wRC+, wOBA, exit velocity, barrel rate, launch angle, sprint speed), output: SELECT 'NO_DATA'
+- Only generate SQL using columns that exist in the schema or formulas listed under "Derivable stats." If the question requires per-event detail that isn't captured in our tables, output SELECT 'NEEDS_CONTEXT' rather than approximating from season totals.
+
+## Data availability by era
+- **Season-level stats** (1898-2026): Full historical coverage. Combine columns and derive stats freely.
+- **Game-level logs** (2016-2025 only): game_batting_logs and game_pitching_logs have per-game stats with dates. Can answer questions like "most HR in a single game" or "stats in April" — but only for 2016-2025. For pre-2016, only season totals exist.
+- **Play-by-play derived splits** (2025-2026 only): Platoon, pitch type, count, and RISP splits are pre-aggregated season-level tables derived from play-by-play. These are NOT raw play-by-play — you cannot query individual at-bats or pitches.
+- **Head-to-head** (2025-2026 only): head_to_head table for batter vs pitcher matchups.
+- If a question requires a data era we don't have (e.g., game logs before 2016, play-by-play before 2025), output SELECT 'NEEDS_CONTEXT'.
+
+## Questions beyond the schema
+- If the question requires specific knowledge NOT represented in any database column, output: SELECT 'NEEDS_CONTEXT'
+- This includes:
+  - Awards: MVP, Cy Young, Gold Glove, Silver Slugger, Rookie of the Year, All-Star selections, Hall of Fame
+  - Specific game events: opening day, walk-offs, no-hitters, perfect games, hitting for the cycle, grand slams, inside-the-park home runs, debut/first game
+  - Postseason/playoffs: World Series, ALCS, NLCS, Division Series, Wild Card — our data is regular season only
+  - All-Star Game stats or selections
+  - Game situations: extra innings, pinch hits, ejections, lead changes, inherited runners
+  - Specific calendar dates: "on his birthday", "on July 4th", "opening day" — game logs have dates but no event flags
+  - Venue/stadium: home runs at a specific park, park factors, attendance
+  - Draft, trades, contracts, free agency
+  - Managerial decisions: pitching changes, lineup decisions, challenges
+- Do NOT guess or approximate. If you're unsure whether the data exists in the schema, output NEEDS_CONTEXT.
+- IMPORTANT: Team-level aggregations ARE possible — you can GROUP BY team using the team column in season_batting_stats and season_pitching_stats. Do NOT decline team aggregate questions.
 """
 
 ANSWER_GENERATION_PROMPT = """You are a knowledgeable baseball analyst. Given a user's question, the SQL that was run, and the results, provide a clear, concise answer.

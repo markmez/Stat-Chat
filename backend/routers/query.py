@@ -183,7 +183,7 @@ async def _try_haiku_sql(question: str):
         logger.warning("haiku_sql_gen_error error=%s", e)
         return None
 
-    if not sql or "OFF_TOPIC" in sql or "NO_DATA" in sql:
+    if not sql or "OFF_TOPIC" in sql or "NO_DATA" in sql or "NEEDS_CONTEXT" in sql:
         return None
 
     # First attempt
@@ -198,7 +198,7 @@ async def _try_haiku_sql(question: str):
         try:
             retry_prompt = f"Previous SQL failed with error: {e}\n\nOriginal question: {question}\n\nFix the SQL query."
             sql = await llm.generate_sql_haiku(retry_prompt)
-            if not sql or "OFF_TOPIC" in sql or "NO_DATA" in sql:
+            if not sql or "OFF_TOPIC" in sql or "NO_DATA" in sql or "NEEDS_CONTEXT" in sql:
                 return None
             result_text, is_streak = await loop.run_in_executor(
                 None, runner.execute_and_format, sql
