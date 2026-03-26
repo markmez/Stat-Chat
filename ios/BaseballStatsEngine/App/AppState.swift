@@ -92,7 +92,7 @@ final class AppState: SearchHistoryTracking {
 
         // Paywall gate — check before consuming the query
         resetWeeklyCountIfNeeded()
-        if weeklyQueryCount >= 5 && !StoreKitService.shared.isSubscribed && !StoreKitService.shared.products.isEmpty {
+        if weeklyQueryCount >= 5 && !StoreKitService.shared.isSubscribed {
             AnalyticsService.trackPaywallHit(queryCount: weeklyQueryCount)
             pendingPaywallQuery = trimmed
             showPaywall = true
@@ -265,6 +265,16 @@ final class AppState: SearchHistoryTracking {
                 isLoading = false
                 currentStreamingText = ""
                 guard streamingIndex < messages.count else { return }
+
+                // Quota exceeded from backend — show paywall instead of error
+                if case ServiceError.quotaExceeded = error {
+                    messages.remove(at: streamingIndex)
+                    AnalyticsService.trackPaywallHit(queryCount: weeklyQueryCount)
+                    pendingPaywallQuery = trimmed
+                    showPaywall = true
+                    return
+                }
+
                 let pills = buildFallbackPills(for: trimmed)
                 let friendly = Self.friendlyErrorMessage(error)
                 let errorContent = pills.isEmpty
