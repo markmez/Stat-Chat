@@ -581,7 +581,7 @@ enum PlayerCardService {
             let seasonCurrentForm: CurrentFormData? = index == 0 ? battingCurrentForm : nil
 
             return SeasonData(
-                year: s.year, team: s.team, age: s.age, games: s.G, teamGames: 162,
+                year: s.year, team: s.team, age: s.age, games: s.G, teamGames: s.team_games ?? 162,
                 stats: grid, countingValues: counting,
                 platoonSplits: platoon, homeAwaySplits: homeAway, rispSplits: risp,
                 streaks: streakGrid, fieldingStats: fieldingGrid,
@@ -643,7 +643,7 @@ enum PlayerCardService {
 
             return PitchingSeasonData(
                 year: s.year, team: s.team, games: s.G, gamesStarted: s.GS,
-                teamGames: 162, stats: grid, countingValues: counting,
+                teamGames: s.team_games ?? 162, stats: grid, countingValues: counting,
                 platoonSplits: platoon, homeAwaySplits: homeAway, rispSplits: risp,
                 streaks: streakGrid, pitchTypeSplits: pitchTypeGrids, countSplits: countGrids,
                 currentForm: seasonPitchCurrentForm

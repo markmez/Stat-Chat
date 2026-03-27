@@ -46,6 +46,7 @@ class BattingSeason(BaseModel):
     team: str
     age: int
     G: int
+    team_games: int = 162
     AB: int
     R: int
     H: int
@@ -71,6 +72,7 @@ class BattingSeason(BaseModel):
 class PitchingSeason(BaseModel):
     year: int
     team: str
+    team_games: int = 162
     W: int
     L: int
     SV: int
@@ -217,6 +219,17 @@ def _safe_str(val, decimals: int = 3) -> str:
         return str(val) if val else "--"
 
 
+def _team_games(conn: sqlite3.Connection, team: str, season: int) -> int:
+    """Get max games played by any player on this team in this season."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT MAX(games) FROM season_batting_stats WHERE team = ? AND season = ?",
+        (team, season),
+    )
+    r = cur.fetchone()
+    return int(r[0]) if r and r[0] else 162
+
+
 def _fetch_batting_seasons(conn: sqlite3.Connection, name: str) -> List[BattingSeason]:
     cur = conn.cursor()
     cur.execute(
@@ -237,11 +250,15 @@ def _fetch_batting_seasons(conn: sqlite3.Connection, name: str) -> List[BattingS
     rows = cur.fetchall()
     seasons = []
     for r in rows:
+        year = _safe_int(r[0])
+        team = r[1] or ""
+        tg = _team_games(conn, team, year)
         seasons.append(BattingSeason(
-            year=_safe_int(r[0]),
-            team=r[1] or "",
+            year=year,
+            team=team,
             age=_safe_int(r[2]),
             G=_safe_int(r[3]),
+            team_games=tg,
             AB=_safe_int(r[4]),
             R=_safe_int(r[5]),
             H=_safe_int(r[6]),
@@ -291,9 +308,13 @@ def _fetch_pitching_seasons(conn: sqlite3.Connection, name: str) -> List[Pitchin
     rows = cur.fetchall()
     seasons = []
     for r in rows:
+        year = _safe_int(r[0])
+        team = r[1] or ""
+        tg = _team_games(conn, team, year)
         seasons.append(PitchingSeason(
-            year=_safe_int(r[0]),
-            team=r[1] or "",
+            year=year,
+            team=team,
+            team_games=tg,
             W=_safe_int(r[2]),
             L=_safe_int(r[3]),
             SV=_safe_int(r[4]),

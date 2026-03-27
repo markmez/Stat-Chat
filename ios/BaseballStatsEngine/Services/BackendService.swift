@@ -184,6 +184,7 @@ final class BackendService: Sendable {
         let year: Int
         let team: String
         let age: Int
+        let team_games: Int?
         let G, AB, R, H, doubles, triples, HR, RBI, SB, CS, BB, IBB, SO, HBP: Int
         let AVG, OBP, SLG, OPS, OPS_plus, ISO, BABIP: String
     }
@@ -191,6 +192,7 @@ final class BackendService: Sendable {
     struct PitchingSeasonData: Decodable, Sendable {
         let year: Int
         let team: String
+        let team_games: Int?
         let W, L, SV, G, GS, GF, CG, QS: Int
         let IP: String
         let H, R, ER, HR, BB, IBB, SO, HBP, WP, BK, BF, SH, SF, SB_allowed, CS_allowed: Int
