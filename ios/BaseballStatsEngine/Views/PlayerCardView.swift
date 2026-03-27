@@ -1539,6 +1539,10 @@ struct PlayerCardView: View {
 
     private func projectedStatsSection(season: SeasonData) -> some View {
         let projected = buildProjectedGrid(season: season)
+        let hasMissedGames = season.games < season.teamGames
+        let availableModes: [ProjectionMode] = hasMissedGames
+            ? ProjectionMode.allCases
+            : [.fullSeason]
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
@@ -1546,9 +1550,10 @@ struct PlayerCardView: View {
                     .font(.system(.headline, design: .rounded, weight: .semibold))
                     .foregroundStyle(.primary)
 
-                // Tab toggle
+                // Tab toggle — only show if player has missed games
+                if availableModes.count > 1 {
                 HStack(spacing: 0) {
-                    ForEach(ProjectionMode.allCases, id: \.self) { mode in
+                    ForEach(availableModes, id: \.self) { mode in
                         Button {
                             withAnimation(.easeInOut(duration: 0.15)) {
                                 projectionMode = mode
@@ -1567,6 +1572,7 @@ struct PlayerCardView: View {
                                 .foregroundStyle(projectionMode == mode ? deepBlue : .secondary)
                         }
                     }
+                }
                 }
             }
             .padding(.horizontal, 20)
@@ -1643,9 +1649,15 @@ struct PlayerCardView: View {
         .buttonStyle(.plain)
 
         if showSeasonProjection {
+            let hasMissedGames = season.games < season.teamGames
+            let availableModes: [ProjectionMode] = hasMissedGames
+                ? ProjectionMode.allCases
+                : [.fullSeason]
+
             VStack(alignment: .leading, spacing: 6) {
+                if availableModes.count > 1 {
                 HStack(spacing: 0) {
-                    ForEach(ProjectionMode.allCases, id: \.self) { mode in
+                    ForEach(availableModes, id: \.self) { mode in
                         Button {
                             withAnimation(.easeInOut(duration: 0.15)) {
                                 projectionMode = mode
@@ -1666,6 +1678,7 @@ struct PlayerCardView: View {
                     }
                 }
                 .padding(.horizontal, 14)
+                }
 
                 let projected = buildProjectedGrid(season: season)
                 StatGridView(grid: projected, suppressBackground: true)
