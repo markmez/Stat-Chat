@@ -392,7 +392,14 @@ def _lookup_last_threshold_year(name: str, stat: StatInfo, threshold: float) -> 
 # ---------------------------------------------------------------------------
 
 def _sort_by_prominence(names: list[str]) -> tuple[list[str], Optional[int]]:
-    """Sort player names by prominence. Returns (sorted_names, dominant_index)."""
+    """Sort player names by prominence. Returns (sorted_names, dominant_index).
+
+    Prominence score weights starters and closers over middle relievers:
+    - Batting games count as-is
+    - Pitching game starts × 5 (starters are more prominent)
+    - Saves × 3 (closers are more prominent than middle relievers)
+    - Remaining pitching appearances × 1
+    """
     if len(names) <= 1:
         return (names, 0 if names else None)
 
@@ -405,7 +412,8 @@ def _sort_by_prominence(names: list[str]) -> tuple[list[str], Optional[int]]:
         for name in names:
             sanitized = name.replace("'", "''")
             last_season = 0
-            total_games = 0
+            score = 0
+            # Batting contribution
             cur.execute(f"""
                 SELECT COALESCE(MAX(s.season), 0), COALESCE(SUM(s.games), 0)
                 FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id
@@ -414,22 +422,31 @@ def _sort_by_prominence(names: list[str]) -> tuple[list[str], Optional[int]]:
             row = cur.fetchone()
             if row:
                 last_season = max(last_season, int(row[0]))
-                total_games += int(row[1])
+                score += int(row[1])
+            # Pitching contribution — weight starts and saves
             cur.execute(f"""
-                SELECT COALESCE(MAX(sp.season), 0), COALESCE(SUM(sp.games), 0)
+                SELECT COALESCE(MAX(sp.season), 0),
+                       COALESCE(SUM(sp.games), 0),
+                       COALESCE(SUM(sp.games_started), 0),
+                       COALESCE(SUM(sp.saves), 0)
                 FROM season_pitching_stats sp JOIN players p ON sp.player_id = p.player_id
                 WHERE p.name = '{sanitized}'
             """)
             row = cur.fetchone()
             if row:
                 last_season = max(last_season, int(row[0]))
-                total_games += int(row[1])
-            infos.append((name, last_season, total_games))
+                p_games = int(row[1])
+                p_starts = int(row[2])
+                p_saves = int(row[3])
+                # Starts × 5, saves × 3, remaining appearances × 1
+                relief_appearances = max(0, p_games - p_starts)
+                score += p_starts * 5 + p_saves * 3 + relief_appearances
+            infos.append((name, last_season, score))
         conn.close()
     except Exception:
         return (names, None)
 
-    # Sort: current players first, then by total games descending
+    # Sort: current players first, then by prominence score descending
     sorted_infos = sorted(infos, key=lambda x: (x[1] >= current_year - 1, x[2]), reverse=True)
 
     current_players = [i for i in sorted_infos if i[1] >= current_year - 1]
