@@ -231,5 +231,6 @@
     "lance mccullers": ["Lance McCullers Jr.", "Lance McCullers"]
   },
   "al_teams": ["ANA", "ATH", "BAL", "BOS", "CHA", "CLE", "DET", "HOU", "KCA", "MIN", "NYA", "SEA", "TBA", "TEX", "TOR"],
-  "nl_teams": ["ARI", "ATL", "CHN", "CIN", "COL", "LAN", "MIA", "MIL", "NYN", "PHI", "PIT", "SDN", "SFN", "SLN", "WAS"]
+  "nl_teams": ["ARI", "ATL", "CHN", "CIN", "COL", "LAN", "MIA", "MIL", "NYN", "PHI", "PIT", "SDN", "SFN", "SLN", "WAS"],
+  "fame_list": []
 }

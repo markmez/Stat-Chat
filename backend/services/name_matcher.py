@@ -82,6 +82,9 @@ nickname_aliases: dict[str, str] = _config["nickname_aliases"]
 
 disambig_sr_jr_map: dict[str, list[str]] = _config["disambig_sr_jr_map"]
 
+# Fame list — all-time greats who should auto-resolve when their last name is searched
+fame_list: set[str] = set(_config.get("fame_list", []))
+
 
 # ---------------------------------------------------------------------------
 # Team alias map (all 30 MLB teams)
@@ -581,16 +584,36 @@ def match_player(text: str) -> Optional[str]:
 
 def match_player_with_prominence(text: str) -> Optional[tuple[str, list[str]]]:
     """Match a player name with prominence-based disambiguation.
-    Returns (matched_name, alternatives) or None."""
+
+    Fame list takes priority: if exactly one candidate is on the fame list,
+    auto-resolve to them (others become "see also"). If multiple fame list
+    candidates match, disambiguate among all candidates with fame-listed
+    ones first. Falls back to standard prominence sorting.
+
+    Returns (matched_name, alternatives) or None.
+    """
     matched = match_player(text)
     if matched:
         return (matched, [])
     lower = strip_diacritics(text.strip().lower())
     candidates = last_name_index.get(lower, [])
     if len(candidates) > 1:
+        # Check fame list — if exactly one candidate is famous, auto-resolve
+        famous = [c for c in candidates if c in fame_list]
+        if len(famous) == 1:
+            others = [c for c in candidates if c != famous[0]]
+            sorted_others, _ = _sort_by_prominence(others)
+            return (famous[0], sorted_others)
+
+        # Multiple famous or none — fall back to prominence sort
+        # but put fame-listed candidates first within the sort
         sorted_names_list, _ = _sort_by_prominence(candidates)
         if sorted_names_list:
-            return (sorted_names_list[0], sorted_names_list[1:])
+            # Re-sort: fame-listed first, then rest, preserving prominence order within each group
+            fame_sorted = [n for n in sorted_names_list if n in fame_list]
+            non_fame = [n for n in sorted_names_list if n not in fame_list]
+            final = fame_sorted + non_fame
+            return (final[0], final[1:])
     return None
 
 
