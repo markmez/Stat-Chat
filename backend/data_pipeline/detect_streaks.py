@@ -553,8 +553,8 @@ def detect_sliding_streaks(conn, season_filter=None):
 
 # --- Current Form detection ---
 
-CURRENT_FORM_MIN_GAMES = 3    # Minimum games for a player-season to be eligible
-CURRENT_FORM_MIN_SLICE = 3    # Minimum games in the form slice (early season)
+CURRENT_FORM_MIN_GAMES = 1    # Minimum games for a player-season to be eligible
+CURRENT_FORM_MIN_SLICE = 1    # Minimum games in the form slice (early season)
 CURRENT_FORM_FULL_SLICE = 10  # Minimum slice once past early season threshold
 CURRENT_FORM_EARLY_THRESHOLD = 14  # Below this, use MIN_SLICE; at or above, use FULL_SLICE
 CURRENT_FORM_MAX_SLICE = 60   # Maximum games to scan back
