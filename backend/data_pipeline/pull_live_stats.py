@@ -22,7 +22,7 @@ import sqlite3
 import subprocess
 import sys
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import requests
 from dotenv import load_dotenv
@@ -379,17 +379,35 @@ def pull_season_pitching(conn, season_str):
 
 
 def get_game_dates(season_str):
-    """Get all dates with games in this season."""
+    """Get all dates with games in this season (up to today).
+
+    Uses the schedule to find the season start, then generates every date
+    from start to today. This avoids a UTC/local timezone mismatch where
+    the schedule's startTime is in UTC (e.g., 2026-03-26T00:05Z for a
+    March 25 EDT game) but the gamelogs endpoint uses local dates.
+    """
     data = msf_get(f"{season_str}/games.json")
     if not data:
         return []
+    # Find earliest game date, converting UTC to Eastern (subtract a day
+    # for games starting between midnight and 6 AM UTC = evening Eastern)
     dates = set()
     for game in data.get("games", []):
         sched = game.get("schedule", {})
         start = sched.get("startTime", "")
         if start:
-            dates.add(start[:10].replace("-", ""))  # "2026-03-07T..." → "20260307"
-    return sorted(dates)
+            dt = datetime.strptime(start[:19], "%Y-%m-%dT%H:%M:%S")
+            # Games starting 00:00-05:59 UTC are evening Eastern games (previous day)
+            if dt.hour < 6:
+                dt = dt - timedelta(days=1)
+            dates.add(dt.strftime("%Y%m%d"))
+
+    if not dates:
+        return []
+
+    # Only return dates up to today (no point hitting API for future games)
+    today = datetime.now().strftime("%Y%m%d")
+    return sorted(d for d in dates if d <= today)
 
 
 def pull_game_logs(conn, season_str):
