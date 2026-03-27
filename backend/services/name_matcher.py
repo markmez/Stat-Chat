@@ -541,15 +541,23 @@ def match_player(text: str) -> Optional[str]:
 
     # Last name only — must be unambiguous
     last_name_key = strip_diacritics(lower).replace(" ", "-")
+    has_last_name_matches = False
     for key in [lower, ascii_lower, last_name_key, ascii_lower.replace(" ", "")]:
         matches = last_name_index.get(key, [])
         if len(matches) == 1:
             return matches[0]
+        if matches:
+            has_last_name_matches = True
 
-    # First name only — must be unambiguous
-    fn_matches = first_name_index.get(ascii_lower, [])
-    if len(fn_matches) == 1:
-        return fn_matches[0]
+    # First name only — but only if no last name matches exist.
+    # If there ARE last name matches (multiple), the user likely meant the
+    # last name and should go through prominence-based disambiguation instead
+    # of matching a different player by first name (e.g., "Webb" should match
+    # Logan Webb by prominence, not Webb Schultz by first name).
+    if not has_last_name_matches:
+        fn_matches = first_name_index.get(ascii_lower, [])
+        if len(fn_matches) == 1:
+            return fn_matches[0]
 
     return None
 
