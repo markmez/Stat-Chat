@@ -92,7 +92,7 @@ final class AppState: SearchHistoryTracking {
 
         // Paywall gate — check before consuming the query
         resetWeeklyCountIfNeeded()
-        if weeklyQueryCount >= 5 && !StoreKitService.shared.isSubscribed {
+        if weeklyQueryCount >= 1000 && !StoreKitService.shared.isSubscribed {
             AnalyticsService.trackPaywallHit(queryCount: weeklyQueryCount)
             pendingPaywallQuery = trimmed
             showPaywall = true
