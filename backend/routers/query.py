@@ -284,10 +284,25 @@ def _format_haiku_result(result_text: str) -> str:
 
     stat_cols = [c for c in columns if c not in label_cols]
 
+    # Strip columns where every row has the same value (no information)
+    if multi_row and len(data_rows) > 1:
+        constant_cols = set()
+        for c in stat_cols:
+            vals = set(str(row.get(c, "")) for row in data_rows)
+            if len(vals) == 1:
+                constant_cols.add(c)
+        if constant_cols:
+            stat_cols = [c for c in stat_cols if c not in constant_cols]
+
     # Remove team from stat_cols if we'll use it in the label
     use_team_in_label = "team" in stat_cols and has_name
     if use_team_in_label:
         stat_cols = [c for c in stat_cols if c != "team"]
+
+    # Limit to 4 stat columns max for display — iOS leaderboard overflows otherwise.
+    # Keep the most relevant columns (first 4, which Haiku orders by importance).
+    if multi_row and len(stat_cols) > 4:
+        stat_cols = stat_cols[:4]
 
     if not stat_cols:
         return result_text
