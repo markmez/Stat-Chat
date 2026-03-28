@@ -274,6 +274,13 @@ def _format_haiku_result(result_text: str) -> str:
     # player_id is always a label
     if "player_id" in columns:
         label_cols.add("player_id")
+    # Redundant season/year columns: season_2024, season_2025, year_2024, year etc.
+    # These just repeat year info that's already obvious from the query context.
+    import re as _re
+    for c in columns:
+        lower_c = c.lower()
+        if _re.match(r'^(?:season|year)(?:_\d{4})?$', lower_c) and c != "season":
+            label_cols.add(c)
 
     stat_cols = [c for c in columns if c not in label_cols]
 
