@@ -1550,7 +1550,8 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
     unhandled_qualifiers = [
         # Situational / platoon
         "against left", "against right", "vs left", "vs right",
-        "left-handed", "right-handed", "lefties", "righties",
+        "left-handed", "left handed", "right-handed", "right handed",
+        "lefties", "righties",
         "with runners", "runners on", "with risp", "scoring position",
         "bases loaded", "with men on",
         "in the clutch", "close and late", "high leverage",
@@ -1576,7 +1577,8 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
         # Ratio stats not in our columns
         "ratio",
         # Multi-game event counts
-        "multi-hit", "multi-homer", "multi-hr", "multi home run",
+        "multi-hit", "multi hit", "multi-homer", "multi homer",
+        "multi-hr", "multi hr", "multi home run",
         # Month-filtered leaderboards (need game logs + date filtering)
         "in january", "in february", "in march", "in april", "in may",
         "in june", "in july", "in august", "in september", "in october",
@@ -1788,7 +1790,8 @@ def parse_threshold(input_str: str) -> Optional[dict]:
         "first half", "second half", "before the break", "after the break",
         "without", "while also",
         "how many player", "how many pitcher", "how many batter",
-        "multi-hit", "multi-homer", "multi-hr",
+        "multi-hit", "multi hit", "multi-homer", "multi homer",
+        "multi-hr", "multi hr",
     ]
     if any(t in lower for t in _threshold_bail):
         return None
