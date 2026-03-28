@@ -628,6 +628,18 @@ def match_stat(input_str: str) -> Optional[StatInfo]:
         if wins_stat:
             return wins_stat
 
+    # "walked" → walks (BB)
+    if re.search(r'\bwalked\b', lower):
+        walks_stat = stat_alias_map.get("walks") or stat_alias_map.get("bb")
+        if walks_stat:
+            return walks_stat
+
+    # "K" alone → strikeouts, but only in stat contexts (after numbers or "most")
+    if re.search(r'(?:\d+\s*k\b|most k\b|fewest k\b)', lower) and "k/" not in lower:
+        k_stat = stat_alias_map.get("strikeouts") or stat_alias_map.get("ks")
+        if k_stat:
+            return k_stat
+
     for alias in _sorted_stat_aliases:
         if contains_word(alias, lower):
             return stat_alias_map[alias]
@@ -716,6 +728,20 @@ def _detect_position(lower: str) -> Optional[list[str]]:
     for keyword in sorted(_POSITION_MAP.keys(), key=len, reverse=True):
         if keyword in lower:
             return _POSITION_MAP[keyword]
+    return None
+
+
+def _detect_pitcher_role(lower: str) -> Optional[str]:
+    """Detect starter/reliever/closer filter. Returns 'starter', 'reliever', or None."""
+    starter_triggers = ["starter", "starters", "starting pitcher", "starting pitchers"]
+    reliever_triggers = ["reliever", "relievers", "relief pitcher", "relief pitchers",
+                         "closer", "closers", "bullpen", "out of the bullpen"]
+    for t in starter_triggers:
+        if t in lower:
+            return "starter"
+    for t in reliever_triggers:
+        if t in lower:
+            return "reliever"
     return None
 
 
@@ -1561,7 +1587,9 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
         lower = league_result[1]
 
     leaderboard_triggers = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest",
-                            "lowest", "who led", "who leads", "who hit the most", "who had the most",
+                            "lowest", "worst", "fewest",
+                            "who led", "who leads", "who hit the most", "who had the most",
+                            "who walked the most", "who struck out the most", "who stole the most",
                             "leading", "closest to", "come closest"]
     if not any(t in lower for t in leaderboard_triggers):
         return None
@@ -1702,10 +1730,15 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
 
     rookie = _detect_rookie(lower)
     position = _detect_position(lower)
+    pitcher_role = _detect_pitcher_role(lower)
+
+    # Detect sort direction — "worst" and "fewest" mean ascending for counting stats
+    sort_asc = any(t in lower for t in ["worst", "fewest"])
 
     return {
         "stat": stat, "scope": scope, "limit": limit,
         "league": league_result[0] if league_result else None,
+        "pitcher_role": pitcher_role, "sort_asc": sort_asc,
         "rookie": rookie, "position": position,
     }
 

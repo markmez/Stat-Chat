@@ -369,16 +369,19 @@ def try_intercept(question: str):
     if board:
         lower = trimmed.lower()
         pitching_context = any(w in lower for w in ["pitched", "pitching", "pitcher", "pitchers"])
-        is_pitching = nm.is_pitching_stat(board["stat"]) or pitching_context
+        pitcher_role = board.get("pitcher_role")
+        is_pitching = nm.is_pitching_stat(board["stat"]) or pitching_context or pitcher_role is not None
         rookie = board.get("rookie", False)
         position = board.get("position")
+        sort_asc = board.get("sort_asc", False)
         if is_pitching:
             response = rb.build_pitching_leaderboard(
-                board["stat"], board["scope"], board.get("limit", 10), board.get("league"))
+                board["stat"], board["scope"], board.get("limit", 10), board.get("league"),
+                pitcher_role=pitcher_role, sort_asc=sort_asc)
         else:
             response = rb.build_leaderboard(
                 board["stat"], board["scope"], board.get("limit", 10), board.get("league"),
-                rookie=rookie, position=position)
+                rookie=rookie, position=position, sort_asc=sort_asc)
         if response:
             return response
 

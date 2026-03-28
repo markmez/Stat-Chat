@@ -2503,7 +2503,9 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
                       season: Optional[int] = None,
                       since_year: Optional[int] = None,
                       rookie: bool = False,
-                      position: Optional[list[str]] = None) -> Optional[str]:
+                      position: Optional[list[str]] = None,
+                      pitcher_role: Optional[str] = None,
+                      sort_asc: bool = False) -> Optional[str]:
     """
     Build a batting leaderboard.
 
@@ -2537,6 +2539,9 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
         pos_clause = _position_filter(position, "s", "s.season") if position else ""
         pos_label = f"{_position_label(position)} " if position else ""
         stat_name = stat_info.pill_name
+        # Sort direction: "worst"/"fewest" → ASC for counting stats, DESC→ASC for rate
+        order = "ASC" if sort_asc else "DESC"
+        direction_label = "Fewest " if sort_asc and not stat_info.is_rate else "Worst " if sort_asc else ""
 
         if scope == "season":
             yr = season or datetime.now().year
@@ -2556,14 +2561,14 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
                 f"FROM season_batting_stats s "
                 f"JOIN players p ON s.player_id = p.player_id "
                 f"WHERE s.season = ?{pa_filter}{league_filter}{rookie_clause}{pos_clause} "
-                f"ORDER BY s.{stat_info.db_column} DESC LIMIT ?",
+                f"ORDER BY s.{stat_info.db_column} {order} LIMIT ?",
                 (yr, limit),
             )
             rows = cur.fetchall()
             if not rows:
                 return f"No {pos_label.lower()}{rookie_label.lower()}{stat_info.display_name} leaders found for {yr}{league_label}."
 
-            parts = [f"**{yr} {pos_label}{rookie_label}{stat_info.display_name} Leaders{league_label}**\n"]
+            parts = [f"**{yr} {direction_label}{pos_label}{rookie_label}{stat_info.display_name} Leaders{league_label}**\n"]
             parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
             parts.append("[LEADERBOARD]")
             parts.append(f"HEADER: {stat_info.display_abbrev}")
@@ -2729,12 +2734,15 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
 def build_pitching_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
                                league: Optional[str] = None,
                                season: Optional[int] = None,
-                               since_year: Optional[int] = None) -> Optional[str]:
+                               since_year: Optional[int] = None,
+                               pitcher_role: Optional[str] = None,
+                               sort_asc: bool = False) -> Optional[str]:
     """
     Build a pitching leaderboard.
 
     scope: "season", "allTimeSingleSeason", "allTimeSince", "career".
     Also accepts name_matcher scope strings (auto-parsed).
+    pitcher_role: "starter" or "reliever" to filter by role.
     """
     # Parse name_matcher scope strings into canonical form
     if scope.startswith("season_"):
@@ -2751,7 +2759,23 @@ def build_pitching_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
         league_filter = f" AND {_league_team_clause(league, 'sp')}" if league else ""
         league_label = f" ({league})" if league else ""
         stat_name = stat_info.pill_name
-        order_dir = "ASC" if stat_info.display_abbrev in _LOWER_IS_BETTER_PITCHING else "DESC"
+        # Pitcher role filter
+        role_clause = ""
+        role_label = ""
+        if pitcher_role == "starter":
+            role_clause = " AND sp.games_started > sp.games / 2"
+            role_label = "Starting "
+        elif pitcher_role == "reliever":
+            role_clause = " AND sp.games_started <= sp.games / 2"
+            role_label = "Relief "
+        # Sort direction — "worst" inverts, but for pitching "lower is better" stats
+        # are already ASC, so "worst ERA" would be DESC
+        natural_asc = stat_info.display_abbrev in _LOWER_IS_BETTER_PITCHING
+        if sort_asc:
+            order_dir = "DESC" if natural_asc else "ASC"  # Invert natural
+        else:
+            order_dir = "ASC" if natural_asc else "DESC"
+        direction_label = "Worst " if sort_asc else ""
 
         def _fmt(raw):
             return _format_pitching_rate(raw, 2) if stat_info.is_rate else str(raw)
@@ -2774,15 +2798,15 @@ def build_pitching_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
                 f"SELECT p.name, sp.{stat_info.db_column} "
                 f"FROM season_pitching_stats sp "
                 f"JOIN players p ON sp.player_id = p.player_id "
-                f"WHERE sp.season = ?{ip_filter}{league_filter} "
+                f"WHERE sp.season = ?{ip_filter}{league_filter}{role_clause} "
                 f"ORDER BY sp.{stat_info.db_column} {order_dir} LIMIT ?",
                 (yr, limit),
             )
             rows = cur.fetchall()
             if not rows:
-                return f"No {stat_info.display_name} leaders found for {yr}{league_label}."
+                return f"No {role_label.lower()}{stat_info.display_name} leaders found for {yr}{league_label}."
 
-            parts = [f"**{yr} {stat_info.display_name} Leaders{league_label} (Pitching)**\n"]
+            parts = [f"**{yr} {direction_label}{role_label}{stat_info.display_name} Leaders{league_label} (Pitching)**\n"]
             parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
             parts.append("[LEADERBOARD]")
             parts.append(f"HEADER: {stat_info.display_abbrev}")
