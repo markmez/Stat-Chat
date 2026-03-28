@@ -134,15 +134,32 @@ _COL_DISPLAY = {
 }
 
 
-_RATE_3_COLS = {
+_RATE_3_EXACT = {
     "batting_avg", "obp", "slg", "ops", "iso", "babip",
     "avg", "career_avg", "career_ops", "april_avg", "batting_avg_against",
     "fielding_pct", "sb_pct",
 }
-_RATE_2_COLS = {
+# Substrings that indicate a .XXX rate stat column (for Haiku aliases like ops_2024)
+_RATE_3_PATTERNS = ["avg", "obp", "slg", "ops", "iso", "babip", "baa", "fielding_pct"]
+_RATE_2_EXACT = {
     "era", "whip", "k_per_9", "bb_per_9", "hr_per_9", "k_per_bb",
     "k_bb_ratio", "career_era",
 }
+_RATE_2_PATTERNS = ["era", "whip", "k_per_9", "bb_per_9", "hr_per_9", "k_per_bb", "k_bb"]
+
+
+def _is_rate_3(col: str) -> bool:
+    lower = col.lower()
+    if lower in _RATE_3_EXACT:
+        return True
+    return any(p in lower for p in _RATE_3_PATTERNS)
+
+
+def _is_rate_2(col: str) -> bool:
+    lower = col.lower()
+    if lower in _RATE_2_EXACT:
+        return True
+    return any(p in lower for p in _RATE_2_PATTERNS)
 
 
 def _fmt_val(col: str, val) -> str:
@@ -150,13 +167,14 @@ def _fmt_val(col: str, val) -> str:
     if val is None or val == "NULL" or str(val).strip() == "":
         return "--"
     lower_col = col.lower()
-    if lower_col in _RATE_3_COLS:
+    if _is_rate_3(col):
         try:
             fv = float(val)
+            # Leading dot only when < 1 (e.g., .321), full number when >= 1 (e.g., 1.024)
             return f".{int(round(fv * 1000)):03d}" if fv < 1 else f"{fv:.3f}"
         except (ValueError, TypeError):
             return str(val)
-    if lower_col in _RATE_2_COLS:
+    if _is_rate_2(col):
         try:
             return f"{float(val):.2f}"
         except (ValueError, TypeError):
@@ -190,6 +208,7 @@ def _fmt_val(col: str, val) -> str:
 
 def _display_col_name(col: str) -> str:
     """Convert a SQL column name to a display name."""
+    import re as _re
     # Check exact match
     if col in _COL_DISPLAY:
         return _COL_DISPLAY[col]
@@ -197,6 +216,14 @@ def _display_col_name(col: str) -> str:
     lower = col.lower()
     if lower in _COL_DISPLAY:
         return _COL_DISPLAY[lower]
+    # Year-suffixed stat columns: "ops_2024" → "OPS '24", "avg_2025" → "AVG '25"
+    m = _re.match(r'^(.+?)_(\d{4})$', lower)
+    if m:
+        base, year = m.group(1), m.group(2)
+        base_display = _COL_DISPLAY.get(base, base.upper())
+        if base_display is None:
+            base_display = base.upper()
+        return f"{base_display} '{year[2:]}"
     # Clean up common SQL alias patterns: snake_case → Title Case
     cleaned = col.replace("_", " ").strip()
     # Short names (<=4 chars) → uppercase (likely abbreviations)

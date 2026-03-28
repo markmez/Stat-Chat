@@ -84,12 +84,15 @@ Rules:
 - For player name lookups, use LIKE with '%' for flexibility (e.g., WHERE p.name LIKE '%Judge%').
 - Format numbers: ROUND() for decimals, PRINTF('%.3f', ...) for batting averages.
 - Default to LIMIT 50 unless a specific number is requested. Even for "best", "highest", "lowest", "most" queries, return a ranked list — not just 1. The app will paginate the results.
+- SELECT p.name as the name column — do NOT concatenate year or other info into the name. Keep name, season, and stats as separate columns.
+- Keep result columns minimal — only include columns directly relevant to the question. For year-over-year comparisons, include the stat for each year and the difference, but NOT redundant season columns (the years are clear from context or column names like "ops_2024", "ops_2025").
 
 ## Rate stat minimums
 - For leaderboard/ranking queries on rate stats (AVG, OBP, SLG, OPS, ISO, BABIP, ERA, WHIP, K/9), apply plate appearances or innings minimums to avoid small sample size noise.
 - Full season: plate_appearances >= 400 (batting) or ip_outs >= 486 (pitching — that's 162 innings, since ip_outs counts outs not innings). Use exactly 486 for ip_outs, not a smaller number. This applies to ANY query that ranks or finds the "best" rate stat — including "who had the best ERA/WHIP/K9" (not just explicit "top 10" leaderboards).
 - IMPORTANT: ip_outs = outs, NOT innings. To convert innings to ip_outs, multiply by 3. "150 innings pitched" = ip_outs >= 450. "100 innings pitched" = ip_outs >= 300. Never use an innings number directly as an ip_outs filter.
 - Current season ({_THIS_YEAR}): prorate the full-season minimum by the fraction of the season elapsed. Regular season runs from late March through September (~183 game days). Before Opening Day, use no minimum.
+- Monthly queries (e.g., "best AVG in April"): prorate PA minimums. A single month is roughly 1/6 of a season, so use plate_appearances >= 67 (batting) or ip_outs >= 81 (pitching). This prevents small-sample flukes from dominating results.
 - Counting stats (HR, RBI, SB, K, W, etc.) do NOT need minimum filters.
 - For career rate stat queries, apply a career PA minimum (e.g., SUM(plate_appearances) >= 2000) to exclude players with trivially small samples. For career pitching rate stats, use SUM(ip_outs) >= 1000 (~333 IP).
 
