@@ -37,11 +37,8 @@ def init_metering_db() -> None:
 def check_quota(device_id: str) -> dict:
     """
     Returns {"allowed": bool, "count": int, "reset": "YYYY-MM-DD"}.
-    "reset" is the next Monday when the counter resets.
+    "reset" is 7 days from when the device's current cycle started.
     """
-    week_start = _week_start()
-    reset = _next_monday()
-
     conn = sqlite3.connect(METERING_DB_PATH)
     row = conn.execute(
         "SELECT week_start, query_count, is_paid, paid_expires_at "
@@ -50,19 +47,26 @@ def check_quota(device_id: str) -> dict:
     ).fetchone()
     conn.close()
 
+    today = date.today()
+
     if row is None:
+        reset = (today + timedelta(days=7)).isoformat()
         return {"allowed": True, "count": 0, "reset": reset}
 
     stored_week, count, is_paid, paid_expires = row
 
     # Paid subscriber — unlimited unless expired
     if is_paid:
-        if paid_expires is None or paid_expires >= date.today().isoformat():
+        if paid_expires is None or paid_expires >= today.isoformat():
+            reset = (today + timedelta(days=7)).isoformat()
             return {"allowed": True, "count": count, "reset": reset}
 
-    # New week → treat count as 0
-    if stored_week != week_start:
+    # Check if 7 days have passed since cycle start → reset
+    cycle_start = date.fromisoformat(stored_week)
+    if (today - cycle_start).days >= 7:
         count = 0
+
+    reset = (cycle_start + timedelta(days=7)).isoformat()
 
     return {
         "allowed": count < FREE_QUERIES_PER_WEEK,
@@ -72,8 +76,8 @@ def check_quota(device_id: str) -> dict:
 
 
 def increment_count(device_id: str) -> None:
-    """Increment the query count for this device, resetting if it's a new week."""
-    week_start = _week_start()
+    """Increment the query count for this device, resetting if 7 days have passed."""
+    today = date.today().isoformat()
     conn = sqlite3.connect(METERING_DB_PATH)
 
     row = conn.execute(
@@ -84,15 +88,22 @@ def increment_count(device_id: str) -> None:
     if row is None:
         conn.execute(
             "INSERT INTO device_quota (device_id, week_start, query_count) VALUES (?, ?, 1)",
-            (device_id, week_start),
+            (device_id, today),
         )
     else:
         stored_week, count = row
-        new_count = 1 if stored_week != week_start else count + 1
-        conn.execute(
-            "UPDATE device_quota SET week_start = ?, query_count = ? WHERE device_id = ?",
-            (week_start, new_count, device_id),
-        )
+        cycle_start = date.fromisoformat(stored_week)
+        if (date.today() - cycle_start).days >= 7:
+            # New cycle
+            conn.execute(
+                "UPDATE device_quota SET week_start = ?, query_count = 1 WHERE device_id = ?",
+                (today, device_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE device_quota SET query_count = ? WHERE device_id = ?",
+                (count + 1, device_id),
+            )
 
     conn.commit()
     conn.close()

@@ -419,11 +419,12 @@ final class AppState: SearchHistoryTracking {
         sendQuestion(query)
     }
 
-    /// The next Monday when free queries reset.
+    /// The date when free queries reset (7 days from first query of this cycle).
     var weeklyResetDate: Date {
-        let calendar = Calendar.current
-        let now = Date()
-        return calendar.nextDate(after: now, matching: DateComponents(weekday: 2), matchingPolicy: .nextTime) ?? now
+        if let lastReset = UserDefaults.standard.object(forKey: weekResetKey) as? Date {
+            return lastReset.addingTimeInterval(7 * 24 * 60 * 60)
+        }
+        return Date().addingTimeInterval(7 * 24 * 60 * 60)
     }
 
     /// How many free queries remain this week.
@@ -438,18 +439,17 @@ final class AppState: SearchHistoryTracking {
     }
 
     private func resetWeeklyCountIfNeeded() {
-        let calendar = Calendar.current
         let now = Date()
         if let lastReset = UserDefaults.standard.object(forKey: weekResetKey) as? Date {
-            // Reset on Monday (weekday 2)
-            let lastMonday = calendar.nextDate(after: lastReset, matching: DateComponents(weekday: 2), matchingPolicy: .nextTime, direction: .backward) ?? lastReset
-            let thisMonday = calendar.nextDate(after: now, matching: DateComponents(weekday: 2), matchingPolicy: .nextTime, direction: .backward) ?? now
-            if thisMonday > lastMonday {
+            // Reset 7 days after the cycle started
+            let resetDate = lastReset.addingTimeInterval(7 * 24 * 60 * 60)
+            if now >= resetDate {
                 UserDefaults.standard.set(0, forKey: weeklyCountKey)
                 UserDefaults.standard.set(now, forKey: weekResetKey)
                 weeklyQueryCount = 0
             }
         } else {
+            // First query ever — start the cycle
             UserDefaults.standard.set(now, forKey: weekResetKey)
         }
     }

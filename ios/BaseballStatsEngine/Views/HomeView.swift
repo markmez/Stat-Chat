@@ -64,6 +64,9 @@ struct HomeView: View {
         ZStack(alignment: .bottom) {
             Color(uiColor: .systemBackground)
                 .ignoresSafeArea()
+                .onTapGesture {
+                    isInputFocused = false
+                }
 
             // Main content
             VStack(spacing: 0) {
@@ -120,15 +123,14 @@ struct HomeView: View {
 
                     TextField("", text: $questionText, prompt:
                         Text("Search by name or ask any question")
-                            .foregroundStyle(Color(uiColor: .placeholderText)),
-                        axis: .vertical
+                            .foregroundStyle(Color(uiColor: .placeholderText))
                     )
                     .font(.system(.body, design: .rounded))
                     .foregroundStyle(.primary)
-                    .lineLimit(1...10)
                     .focused($isInputFocused)
                     .autocorrectionDisabled(true)
                     .textInputAutocapitalization(.never)
+                    .submitLabel(.search)
                     .onSubmit { submitQuestion() }
 
                     if !questionText.isEmpty {

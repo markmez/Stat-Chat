@@ -242,6 +242,7 @@ struct ResultsView: View {
                 .focused($isInputFocused)
                 .autocorrectionDisabled(true)
                 .textInputAutocapitalization(.never)
+                .submitLabel(.search)
                 .onSubmit { sendQuestion() }
 
                 if !inputText.isEmpty {
