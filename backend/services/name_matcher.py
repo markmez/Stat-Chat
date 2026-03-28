@@ -620,6 +620,14 @@ def match_player_with_prominence(text: str) -> Optional[tuple[str, list[str]]]:
 def match_stat(input_str: str) -> Optional[StatInfo]:
     """Find a stat keyword in the input string. Longest alias wins."""
     lower = input_str.lower()
+
+    # Special cases where longest-match picks the wrong stat
+    # "win/won N games" → wins (not games)
+    if re.search(r'\b(?:win|won|winning)\b', lower) and re.search(r'\bgames?\b', lower):
+        wins_stat = stat_alias_map.get("wins")
+        if wins_stat:
+            return wins_stat
+
     for alias in _sorted_stat_aliases:
         if contains_word(alias, lower):
             return stat_alias_map[alias]
@@ -1537,16 +1545,45 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
     if any(t in lower for t in team_aggregate_triggers):
         return None
 
-    # Reject queries with situational/platoon qualifiers — these need Claude SQL
-    # to query the correct split tables (platoon, RISP, count, etc.)
-    situational_triggers = [
+    # Reject queries with qualifiers the leaderboard parser can't handle.
+    # These need Haiku SQL to query the correct tables/joins.
+    unhandled_qualifiers = [
+        # Situational / platoon
         "against left", "against right", "vs left", "vs right",
         "left-handed", "right-handed", "lefties", "righties",
         "with runners", "runners on", "with risp", "scoring position",
         "bases loaded", "with men on",
         "in the clutch", "close and late", "high leverage",
+        # Per-game queries (need game logs, not season totals)
+        "in a game", "in one game", "in a single game", "per game",
+        "game log", "single game",
+        # Position filtering (need fielding table join)
+        "by a ", "as a ", "at shortstop", "at catcher", "at first base",
+        "at second base", "at third base", "at first", "at second", "at third",
+        "shortstop", "catcher", "first baseman", "second baseman", "third baseman",
+        "outfielder", "center fielder", "left fielder", "right fielder",
+        "designated hitter",
+        # Year-over-year / comparison
+        "improved", "improvement", "decline", "drop", "increase",
+        "from 20", "compared to",
+        # Date range / half season
+        "first half", "second half", "before the break", "after the break",
+        # Conditional / multi-stat filters not handled by filtered_leaderboard
+        "without", "while also", "with under ", "with fewer",
+        # Count / frequency queries
+        "how many player", "how many pitcher", "how many batter",
+        "how many times",
+        # Ratio stats not in our columns
+        "ratio",
+        # Multi-game event counts
+        "multi-hit", "multi-homer", "multi-hr", "multi home run",
+        # Month-filtered leaderboards (need game logs + date filtering)
+        "in january", "in february", "in march", "in april", "in may",
+        "in june", "in july", "in august", "in september", "in october",
+        "in jan ", "in feb ", "in mar ", "in apr ", "in jun ",
+        "in jul ", "in aug ", "in sept ", "in oct ",
     ]
-    if any(t in lower for t in situational_triggers):
+    if any(t in lower for t in unhandled_qualifiers):
         return None
 
     # "closest to .400" -> batting average
@@ -1740,6 +1777,20 @@ def parse_threshold(input_str: str) -> Optional[dict]:
         lower = league_result[1]
 
     if _has_player_name(lower):
+        return None
+
+    # Reject qualifiers we can't handle — let Haiku generate the SQL
+    _threshold_bail = [
+        "in a game", "in one game", "in a single game", "per game",
+        "by a ", "as a ", "shortstop", "catcher", "first baseman", "second baseman",
+        "third baseman", "outfielder", "designated hitter",
+        "improved", "decline", "drop", "from 20", "compared to",
+        "first half", "second half", "before the break", "after the break",
+        "without", "while also",
+        "how many player", "how many pitcher", "how many batter",
+        "multi-hit", "multi-homer", "multi-hr",
+    ]
+    if any(t in lower for t in _threshold_bail):
         return None
 
     # Reject leaderboard triggers
