@@ -693,6 +693,32 @@ def _detect_rookie(lower: str) -> bool:
     return any(t in lower for t in rookie_triggers)
 
 
+# Position keyword → fielding position code(s)
+_POSITION_MAP = {
+    "catcher": ["C"], "catchers": ["C"],
+    "first baseman": ["1B"], "first base": ["1B"], "at first": ["1B"],
+    "second baseman": ["2B"], "second base": ["2B"], "at second": ["2B"],
+    "third baseman": ["3B"], "third base": ["3B"], "at third": ["3B"],
+    "shortstop": ["SS"], "shortstops": ["SS"],
+    "left fielder": ["LF"], "left field": ["LF"],
+    "center fielder": ["CF"], "center field": ["CF"],
+    "right fielder": ["RF"], "right field": ["RF"],
+    "outfielder": ["LF", "CF", "RF"], "outfielders": ["LF", "CF", "RF"],
+    "designated hitter": ["DH"], "dh": ["DH"],
+    "pitcher": ["P"], "pitchers": ["P"],
+    "infielder": ["1B", "2B", "3B", "SS"], "infielders": ["1B", "2B", "3B", "SS"],
+}
+
+
+def _detect_position(lower: str) -> Optional[list[str]]:
+    """Detect position filter in query. Returns list of position codes or None.
+    Checks longest keywords first to avoid partial matches."""
+    for keyword in sorted(_POSITION_MAP.keys(), key=len, reverse=True):
+        if keyword in lower:
+            return _POSITION_MAP[keyword]
+    return None
+
+
 def detect_league(input_str: str) -> Optional[tuple[Optional[str], str]]:
     """Detect AL/NL league filter. Returns (league, cleaned_text) or None."""
     lower = input_str.lower()
@@ -1558,12 +1584,6 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
         # Per-game queries (need game logs, not season totals)
         "in a game", "in one game", "in a single game", "per game",
         "game log", "single game",
-        # Position filtering (need fielding table join)
-        "by a ", "as a ", "at shortstop", "at catcher", "at first base",
-        "at second base", "at third base", "at first", "at second", "at third",
-        "shortstop", "catcher", "first baseman", "second baseman", "third baseman",
-        "outfielder", "center fielder", "left fielder", "right fielder",
-        "designated hitter",
         # Year-over-year / comparison
         "improved", "improvement", "decline", "drop", "increase",
         "from 20", "compared to",
@@ -1574,8 +1594,6 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
         # Count / frequency queries
         "how many player", "how many pitcher", "how many batter",
         "how many times",
-        # Ratio stats not in our columns
-        "ratio",
         # Multi-game event counts
         "multi-hit", "multi hit", "multi-homer", "multi homer",
         "multi-hr", "multi hr", "multi home run",
@@ -1683,11 +1701,12 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
         scope = f"season_{season}"
 
     rookie = _detect_rookie(lower)
+    position = _detect_position(lower)
 
     return {
         "stat": stat, "scope": scope, "limit": limit,
         "league": league_result[0] if league_result else None,
-        "rookie": rookie,
+        "rookie": rookie, "position": position,
     }
 
 
@@ -1784,8 +1803,6 @@ def parse_threshold(input_str: str) -> Optional[dict]:
     # Reject qualifiers we can't handle — let Haiku generate the SQL
     _threshold_bail = [
         "in a game", "in one game", "in a single game", "per game",
-        "by a ", "as a ", "shortstop", "catcher", "first baseman", "second baseman",
-        "third baseman", "outfielder", "designated hitter",
         "improved", "decline", "drop", "from 20", "compared to",
         "first half", "second half", "before the break", "after the break",
         "without", "while also",
@@ -1838,10 +1855,12 @@ def parse_threshold(input_str: str) -> Optional[dict]:
     # Only look for a specific season if no since_year was found
     season = detect_season(lower) if since_year is None else None
 
+    position = _detect_position(lower)
+
     return {
         "stat": stat, "threshold": threshold, "comparison": comparison,
         "season": season, "league": league_result[0] if league_result else None,
-        "since_year": since_year, "rookie": rookie,
+        "since_year": since_year, "rookie": rookie, "position": position,
     }
 
 
@@ -1852,7 +1871,8 @@ def parse_milestone(input_str: str) -> Optional[dict]:
     if league_result:
         lower = league_result[1]
 
-    milestone_triggers = ["how many times", "how many players", "how many seasons",
+    # "how many players" is a count query (handled separately), not a milestone
+    milestone_triggers = ["how many times", "how many seasons",
                           "how often", "has anyone ever", "has anybody ever",
                           "has anyone", "has a player ever", "ever hit", "ever had",
                           "ever batted", "ever pitched", "ever thrown", "ever won"]
@@ -2190,6 +2210,66 @@ def parse_team_ranking(input_str: str) -> Optional[dict]:
 
     season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
     return {"stat": stat, "season": season}
+
+
+def parse_single_game_extreme(input_str: str) -> Optional[dict]:
+    """Detect per-game extreme queries: 'most K in one game', 'most HR in a single game'.
+    Returns dict with stat, season, is_pitching, position."""
+    lower = input_str.strip().lower()
+
+    game_triggers = ["in a game", "in one game", "in a single game"]
+    if not any(t in lower for t in game_triggers):
+        return None
+
+    leaderboard_triggers = ["most ", "best ", "highest", "record"]
+    if not any(t in lower for t in leaderboard_triggers):
+        return None
+
+    stat = match_stat(lower)
+    if not stat:
+        return None
+
+    # Detect pitching context
+    pitching_context = any(w in lower for w in ["pitched", "pitching", "pitcher", "pitchers"])
+    is_pitching = is_pitching_stat(stat) or pitching_context
+
+    season = detect_season(lower)
+    position = _detect_position(lower)
+
+    return {
+        "stat": stat, "season": season, "is_pitching": is_pitching,
+        "position": position,
+    }
+
+
+def parse_count_query(input_str: str) -> Optional[dict]:
+    """Detect count queries: 'how many players hit 30 HR in 2025'.
+    Returns dict with stat, threshold, season, is_pitching."""
+    lower = input_str.strip().lower()
+
+    count_triggers = ["how many player", "how many pitcher", "how many batter",
+                      "how many hitter"]
+    if not any(t in lower for t in count_triggers):
+        return None
+
+    stat = match_stat(lower)
+    if not stat:
+        return None
+
+    threshold = _extract_threshold(lower, stat=stat)
+    if threshold is None:
+        return None
+
+    pitching_context = any(w in lower for w in ["pitched", "pitching", "pitcher", "pitchers"])
+    is_pitching = is_pitching_stat(stat) or pitching_context
+
+    season = detect_season(lower)
+    position = _detect_position(lower)
+
+    return {
+        "stat": stat, "threshold": threshold, "season": season,
+        "is_pitching": is_pitching, "position": position,
+    }
 
 
 def parse_catch_all_player_stat(input_str: str) -> Optional[dict]:

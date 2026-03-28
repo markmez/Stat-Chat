@@ -176,6 +176,47 @@ def _rookie_filter(prefix: str, is_pitching: bool = False) -> str:
     )
 
 
+def _position_filter(positions: list[str], stats_prefix: str, season_expr: str) -> str:
+    """Return SQL filter clause for position-based queries.
+
+    Uses season_fielding_stats to find the player's primary position
+    (the position where they played the most games that season).
+    positions: list of position codes, e.g. ["SS"] or ["LF", "CF", "RF"]
+    stats_prefix: alias for the season_batting_stats/pitching table (e.g. "s")
+    season_expr: expression for the season column (e.g. "s.season" or a literal)
+    """
+    pos_list = ", ".join(f"'{p}'" for p in positions)
+    return (
+        f" AND EXISTS ("
+        f"SELECT 1 FROM season_fielding_stats sf "
+        f"WHERE sf.player_id = {stats_prefix}.player_id "
+        f"AND sf.season = {season_expr} "
+        f"AND sf.position IN ({pos_list}) "
+        f"AND sf.games = ("
+        f"SELECT MAX(sf2.games) FROM season_fielding_stats sf2 "
+        f"WHERE sf2.player_id = sf.player_id AND sf2.season = sf.season))"
+    )
+
+
+_POSITION_LABELS = {
+    "C": "Catchers", "1B": "First Basemen", "2B": "Second Basemen",
+    "3B": "Third Basemen", "SS": "Shortstops", "LF": "Left Fielders",
+    "CF": "Center Fielders", "RF": "Right Fielders", "DH": "Designated Hitters",
+    "P": "Pitchers",
+}
+
+
+def _position_label(positions: list[str]) -> str:
+    """Human-readable label for position filter."""
+    if len(positions) == 1:
+        return _POSITION_LABELS.get(positions[0], positions[0])
+    if set(positions) == {"LF", "CF", "RF"}:
+        return "Outfielders"
+    if set(positions) == {"1B", "2B", "3B", "SS"}:
+        return "Infielders"
+    return "/".join(positions)
+
+
 def _format_date(date_string: str) -> str:
     """Convert '2024-06-12' to 'Jun 12'."""
     parts = date_string.split("-")
@@ -2461,7 +2502,8 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
                       league: Optional[str] = None,
                       season: Optional[int] = None,
                       since_year: Optional[int] = None,
-                      rookie: bool = False) -> Optional[str]:
+                      rookie: bool = False,
+                      position: Optional[list[str]] = None) -> Optional[str]:
     """
     Build a batting leaderboard.
 
@@ -2492,6 +2534,8 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
         league_label = f" ({league})" if league else ""
         rookie_clause = _rookie_filter("s") if rookie else ""
         rookie_label = "Rookie " if rookie else ""
+        pos_clause = _position_filter(position, "s", "s.season") if position else ""
+        pos_label = f"{_position_label(position)} " if position else ""
         stat_name = stat_info.pill_name
 
         if scope == "season":
@@ -2511,15 +2555,15 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
                 f"SELECT p.name, s.{stat_info.db_column} "
                 f"FROM season_batting_stats s "
                 f"JOIN players p ON s.player_id = p.player_id "
-                f"WHERE s.season = ?{pa_filter}{league_filter}{rookie_clause} "
+                f"WHERE s.season = ?{pa_filter}{league_filter}{rookie_clause}{pos_clause} "
                 f"ORDER BY s.{stat_info.db_column} DESC LIMIT ?",
                 (yr, limit),
             )
             rows = cur.fetchall()
             if not rows:
-                return f"No {rookie_label.lower()}{stat_info.display_name} leaders found for {yr}{league_label}."
+                return f"No {pos_label.lower()}{rookie_label.lower()}{stat_info.display_name} leaders found for {yr}{league_label}."
 
-            parts = [f"**{yr} {rookie_label}{stat_info.display_name} Leaders{league_label}**\n"]
+            parts = [f"**{yr} {pos_label}{rookie_label}{stat_info.display_name} Leaders{league_label}**\n"]
             parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
             parts.append("[LEADERBOARD]")
             parts.append(f"HEADER: {stat_info.display_abbrev}")
@@ -2555,6 +2599,8 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
                 conditions.append(league_filter[5:])  # strip leading " AND "
             if rookie:
                 conditions.append(rookie_clause[5:])  # strip leading " AND "
+            if pos_clause:
+                conditions.append(pos_clause[5:])  # strip leading " AND "
             pa_filter = f" WHERE {' AND '.join(conditions)}" if conditions else ""
             cur = conn.cursor()
             cur.execute(
@@ -2567,9 +2613,9 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
             )
             rows = cur.fetchall()
             if not rows:
-                return f"No all-time {rookie_label.lower()}{stat_info.display_name} leaders found{league_label}."
+                return f"No all-time {pos_label.lower()}{rookie_label.lower()}{stat_info.display_name} leaders found{league_label}."
 
-            parts = [f"**All-Time Single Season {rookie_label}{stat_info.display_name} Leaders{league_label}**\n"]
+            parts = [f"**All-Time Single Season {pos_label}{rookie_label}{stat_info.display_name} Leaders{league_label}**\n"]
             parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
             parts.append("[LEADERBOARD]")
             parts.append(f"HEADER: {stat_info.display_abbrev}, Year")
@@ -2597,15 +2643,15 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
                 f"SELECT p.name, s.{stat_info.db_column}, s.season "
                 f"FROM season_batting_stats s "
                 f"JOIN players p ON s.player_id = p.player_id "
-                f"WHERE s.season >= ?{pa_filter}{league_filter}{rookie_clause} "
+                f"WHERE s.season >= ?{pa_filter}{league_filter}{rookie_clause}{pos_clause} "
                 f"ORDER BY s.{stat_info.db_column} DESC LIMIT ?",
                 (sy, limit),
             )
             rows = cur.fetchall()
             if not rows:
-                return f"No {rookie_label.lower()}{stat_info.display_name} leaders found since {sy}{league_label}."
+                return f"No {pos_label.lower()}{rookie_label.lower()}{stat_info.display_name} leaders found since {sy}{league_label}."
 
-            parts = [f"**{rookie_label}{stat_info.display_name} Leaders Since {sy}{league_label}**\n"]
+            parts = [f"**{pos_label}{rookie_label}{stat_info.display_name} Leaders Since {sy}{league_label}**\n"]
             parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
             parts.append("[LEADERBOARD]")
             parts.append(f"HEADER: {stat_info.display_abbrev}, Year")
@@ -4201,3 +4247,133 @@ def build_matchup(batter_name: str, pitcher_name: str,
 
 def _current_year() -> int:
     return datetime.now().year
+
+
+# ===================================================================
+# build_single_game_extreme
+# ===================================================================
+
+# Mapping from season stat columns to game log columns
+_GAME_LOG_BAT_COLS = {
+    "home_runs": "home_runs", "hits": "hits", "runs": "runs", "rbi": "rbi",
+    "stolen_bases": "stolen_bases", "walks": "walks", "strikeouts": "strikeouts",
+    "at_bats": "at_bats", "doubles": "doubles", "triples": "triples",
+}
+_GAME_LOG_PITCH_COLS = {
+    "strikeouts": "strikeouts", "walks": "walks", "hits": "hits",
+    "home_runs": "home_runs", "earned_runs": "earned_runs", "runs": "runs",
+    "ip_outs": "ip_outs", "innings_pitched": "ip_outs",
+}
+
+
+def build_single_game_extreme(stat_info: StatInfo, season: Optional[int],
+                              is_pitching: bool = False,
+                              position: Optional[list[str]] = None) -> Optional[str]:
+    """Build 'most K in one game' style queries from game logs."""
+    conn = _get_db()
+    try:
+        if is_pitching:
+            table = "game_pitching_logs"
+            col_map = _GAME_LOG_PITCH_COLS
+            prefix = "g"
+        else:
+            table = "game_batting_logs"
+            col_map = _GAME_LOG_BAT_COLS
+            prefix = "g"
+
+        game_col = col_map.get(stat_info.db_column)
+        if not game_col:
+            return None  # Stat not available in game logs
+
+        season_filter = f" AND {prefix}.season = ?" if season else ""
+        params = [season] if season else []
+        pos_clause = ""
+        if position and not is_pitching:
+            pos_clause = _position_filter(position, prefix, f"{prefix}.season")
+
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT p.name, {prefix}.{game_col}, {prefix}.date, {prefix}.opponent "
+            f"FROM {table} {prefix} "
+            f"JOIN players p ON {prefix}.player_id = p.player_id "
+            f"WHERE {prefix}.{game_col} IS NOT NULL{season_filter}{pos_clause} "
+            f"ORDER BY {prefix}.{game_col} DESC LIMIT 25",
+            tuple(params),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            scope = str(season) if season else "available seasons (2016-2025)"
+            return f"No game log data found for {stat_info.display_name} in {scope}."
+
+        pos_label = f"{_position_label(position)} " if position else ""
+        scope_label = str(season) if season else "2016-2025"
+        who = "Pitchers" if is_pitching else "Players"
+        title = f"Most {stat_info.display_name} in a Single Game ({scope_label})"
+        if pos_label:
+            title = f"Most {stat_info.display_name} in a Single Game by {pos_label.strip()} ({scope_label})"
+
+        parts = [f"**{title}**\n"]
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+        parts.append("[LEADERBOARD]")
+        parts.append(f"HEADER: {stat_info.display_abbrev}, Date, Opp")
+        for i, row in enumerate(rows):
+            val = str(row[1])
+            if game_col == "ip_outs":
+                try:
+                    outs = int(row[1])
+                    val = f"{outs // 3}.{outs % 3}"
+                except (ValueError, TypeError):
+                    pass
+            date_str = _format_date(row[2]) if row[2] else ""
+            opp = row[3] or ""
+            parts.append(f"ROW {i+1}. {row[0]}: {val}, {date_str}, {opp}")
+        parts.append("[/LEADERBOARD]")
+
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
+# ===================================================================
+# build_count_query
+# ===================================================================
+
+def build_count_query(stat_info: StatInfo, threshold: float, season: Optional[int],
+                      is_pitching: bool = False,
+                      position: Optional[list[str]] = None) -> Optional[str]:
+    """Build 'how many players hit 30 HR in 2025' style queries."""
+    conn = _get_db()
+    try:
+        table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+        prefix = "sp" if is_pitching else "s"
+
+        season_filter = f" AND {prefix}.season = ?" if season else ""
+        params: list = [threshold]
+        if season:
+            params.append(season)
+
+        pos_clause = ""
+        if position and not is_pitching:
+            pos_clause = _position_filter(position, prefix, f"{prefix}.season")
+
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT COUNT(DISTINCT {prefix}.player_id) "
+            f"FROM {table} {prefix} "
+            f"WHERE {prefix}.{stat_info.db_column} >= ?{season_filter}{pos_clause}",
+            tuple(params),
+        )
+        row = cur.fetchone()
+        count = int(row[0]) if row else 0
+
+        threshold_display = _format_rate(str(threshold)) if stat_info.is_rate else str(int(threshold))
+        pos_label = _position_label(position) if position else ""
+        who = "pitchers" if is_pitching else pos_label.lower() if pos_label else "players"
+        scope = str(season) if season else "all time"
+
+        if stat_info.is_rate:
+            return f"**{count}** {who} have batted {threshold_display}+ {stat_info.display_abbrev} in {scope}."
+        else:
+            return f"**{count}** {who} have had {threshold_display}+ {stat_info.display_name} in {scope}."
+    finally:
+        conn.close()

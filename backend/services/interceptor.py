@@ -250,6 +250,24 @@ def try_intercept(question: str):
         if response:
             return response
 
+    # 16b. Single-game extreme — "most K in one game", "most HR in a single game"
+    game_extreme = nm.parse_single_game_extreme(trimmed)
+    if game_extreme:
+        response = rb.build_single_game_extreme(
+            game_extreme["stat"], game_extreme.get("season"),
+            game_extreme["is_pitching"], game_extreme.get("position"))
+        if response:
+            return response
+
+    # 16c. Count query — "how many players hit 30 HR in 2025"
+    count_q = nm.parse_count_query(trimmed)
+    if count_q:
+        response = rb.build_count_query(
+            count_q["stat"], count_q["threshold"], count_q.get("season"),
+            count_q["is_pitching"], count_q.get("position"))
+        if response:
+            return response
+
     # 17. Threshold — "who hit 40 home runs?", "players batting over .300"
     threshold = nm.parse_threshold(trimmed)
     if threshold:
@@ -353,13 +371,14 @@ def try_intercept(question: str):
         pitching_context = any(w in lower for w in ["pitched", "pitching", "pitcher", "pitchers"])
         is_pitching = nm.is_pitching_stat(board["stat"]) or pitching_context
         rookie = board.get("rookie", False)
+        position = board.get("position")
         if is_pitching:
             response = rb.build_pitching_leaderboard(
                 board["stat"], board["scope"], board.get("limit", 10), board.get("league"))
         else:
             response = rb.build_leaderboard(
                 board["stat"], board["scope"], board.get("limit", 10), board.get("league"),
-                rookie=rookie)
+                rookie=rookie, position=position)
         if response:
             return response
 
