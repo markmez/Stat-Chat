@@ -38,6 +38,7 @@ _COL_DISPLAY = {
     "season": None,  # Used as row label when present
     "team": "Team",
     "age": "Age",
+    "player_age": "Age",
     "games": "G",
     "plate_appearances": "PA",
     "at_bats": "AB",
@@ -68,46 +69,147 @@ _COL_DISPLAY = {
     "saves": "SV",
     "earned_runs": "ER",
     "ip_outs": "IP",
+    "innings_pitched": "IP",
     "quality_starts": "QS",
     "era_plus": "ERA+",
     "k_per_9": "K/9",
     "bb_per_9": "BB/9",
+    "k_per_bb": "K/BB",
     "hr_per_9": "HR/9",
     "batters_faced": "BF",
     "position": "Pos",
     "bats": "Bats",
     "throws": "Throws",
     "split": "Split",
+    # Common Haiku SQL aliases
+    "date": "Date",
+    "game_date": "Date",
+    "opponent": "Opp",
+    "vishome": "H/A",
+    "career_hr": "HR",
+    "career_hits": "H",
+    "career_avg": "AVG",
+    "career_ops": "OPS",
+    "career_era": "ERA",
+    "total_games": "G",
+    "total_hr": "HR",
+    "total_hits": "H",
+    "total_sb": "SB",
+    "total_k": "SO",
+    "total_wins": "W",
+    "total_saves": "SV",
+    "k_bb_ratio": "K/BB",
+    "sb_pct": "SB%",
+    "bb_pct": "BB%",
+    "k_pct": "K%",
+    "multi_hit_games": "Multi-Hit G",
+    "multi_hr_games": "Multi-HR G",
+    "ops_improvement": "OPS Chg",
+    "ops_change": "OPS Chg",
+    "ops_diff": "OPS Diff",
+    "avg_improvement": "AVG Chg",
+    "avg_change": "AVG Chg",
+    "era_improvement": "ERA Chg",
+    "era_change": "ERA Chg",
+    "hr_diff": "HR Diff",
+    "april_avg": "Apr AVG",
+    "fielding_pct": "FPCT",
+    "errors": "E",
+    "assists": "A",
+    "putouts": "PO",
+    "games_started": "GS",
+    "complete_games": "CG",
+    "shutouts": "SHO",
+    "wild_pitches": "WP",
+    "balks": "BK",
+    "hit_batters": "HB",
+    "so": "SO",
+    "bb": "BB",
+    "h": "H",
+    "hr": "HR",
+    "g": "G",
+    "ab": "AB",
+    "r": "R",
+    "avg": "AVG",
+}
+
+
+_RATE_3_COLS = {
+    "batting_avg", "obp", "slg", "ops", "iso", "babip",
+    "avg", "career_avg", "career_ops", "april_avg", "batting_avg_against",
+    "fielding_pct", "sb_pct",
+}
+_RATE_2_COLS = {
+    "era", "whip", "k_per_9", "bb_per_9", "hr_per_9", "k_per_bb",
+    "k_bb_ratio", "career_era",
 }
 
 
 def _fmt_val(col: str, val) -> str:
     """Format a single value for display."""
-    if val is None or val == "NULL":
+    if val is None or val == "NULL" or str(val).strip() == "":
         return "--"
-    if col in ("batting_avg", "obp", "slg", "ops", "iso", "babip"):
+    lower_col = col.lower()
+    if lower_col in _RATE_3_COLS:
         try:
-            return f".{int(round(float(val) * 1000)):03d}" if float(val) < 1 else f"{float(val):.3f}"
+            fv = float(val)
+            return f".{int(round(fv * 1000)):03d}" if fv < 1 else f"{fv:.3f}"
         except (ValueError, TypeError):
             return str(val)
-    if col in ("era", "whip", "k_per_9", "bb_per_9", "hr_per_9"):
+    if lower_col in _RATE_2_COLS:
         try:
             return f"{float(val):.2f}"
         except (ValueError, TypeError):
             return str(val)
-    if col == "ip_outs":
+    if lower_col == "ip_outs":
         try:
             outs = int(val)
             return f"{outs // 3}.{outs % 3}"
         except (ValueError, TypeError):
             return str(val)
+    # Improvement/change columns — show with sign
+    if "improvement" in lower_col or "change" in lower_col or "diff" in lower_col:
+        try:
+            fv = float(val)
+            sign = "+" if fv > 0 else ""
+            # If it looks like a rate stat difference (small number)
+            if -1 < fv < 1 and fv != 0:
+                return f"{sign}{fv:.3f}"
+            return f"{sign}{int(round(fv))}" if fv == int(fv) else f"{sign}{fv:.2f}"
+        except (ValueError, TypeError):
+            return str(val)
+    # Generic: try to clean up float formatting
+    try:
+        fv = float(val)
+        if fv == int(fv) and "." not in str(val):
+            return str(int(fv))
+    except (ValueError, TypeError):
+        pass
     return str(val)
+
+
+def _display_col_name(col: str) -> str:
+    """Convert a SQL column name to a display name."""
+    # Check exact match
+    if col in _COL_DISPLAY:
+        return _COL_DISPLAY[col]
+    # Check case-insensitive
+    lower = col.lower()
+    if lower in _COL_DISPLAY:
+        return _COL_DISPLAY[lower]
+    # Clean up common SQL alias patterns: snake_case → Title Case
+    cleaned = col.replace("_", " ").strip()
+    # Short names (<=4 chars) → uppercase (likely abbreviations)
+    if len(cleaned) <= 4:
+        return cleaned.upper()
+    return cleaned.title()
 
 
 def _format_haiku_result(result_text: str) -> str:
     """
-    Convert SqlRunner pipe-delimited output into [STATGRID] format.
-    Handles single rows, multi-row leaderboards, and aggregates.
+    Convert SqlRunner pipe-delimited output into [LEADERBOARD] or [STATGRID] format.
+    Multi-row results with names → [LEADERBOARD] with rank numbers.
+    Single-row or aggregate → [STATGRID].
     """
     lines = result_text.strip().split("\n")
     if len(lines) < 3:  # header + separator + at least one data row
@@ -129,46 +231,75 @@ def _format_haiku_result(result_text: str) -> str:
     multi_row = len(data_rows) > 1
 
     # Pick stat columns (everything that's not a label)
-    stat_cols = []
-    for c in columns:
-        display = _COL_DISPLAY.get(c, c)  # Use raw name if not in mapping
-        if display is None:  # Skip label columns
-            continue
-        stat_cols.append(c)
+    label_cols = set()
+    if has_name:
+        label_cols.add("name")
+    # "season" stays as a stat column unless it's purely a label
+    # (i.e., every row is the same season → label, mixed → stat)
+    if has_season and multi_row:
+        seasons = set(row.get("season", "") for row in data_rows if row.get("season"))
+        if len(seasons) > 1:
+            pass  # Keep season as a stat column (mixed years)
+        else:
+            label_cols.add("season")
+    elif has_season and not multi_row:
+        label_cols.add("season")
+    # player_id is always a label
+    if "player_id" in columns:
+        label_cols.add("player_id")
+
+    stat_cols = [c for c in columns if c not in label_cols]
+
+    # Remove team from stat_cols if we'll use it in the label
+    use_team_in_label = "team" in stat_cols and has_name
+    if use_team_in_label:
+        stat_cols = [c for c in stat_cols if c != "team"]
 
     if not stat_cols:
         return result_text
 
     # Build header
-    header_names = [_COL_DISPLAY.get(c, c) for c in stat_cols]
+    header_names = [_display_col_name(c) for c in stat_cols]
     header = f"HEADER: {', '.join(header_names)}"
+
+    # Use [LEADERBOARD] for multi-row ranked results, [STATGRID] for single/aggregate
+    use_leaderboard = multi_row and has_name
 
     # Build rows
     row_lines = []
     for i, row in enumerate(data_rows):
         # Build label
         label_parts = []
-        if multi_row and has_name:
-            rank = f"#{i+1} " if len(data_rows) > 2 else ""
+        if has_name:
             name = row.get("name", "")
-            team = f" ({row.get('team', '')})" if "team" in row and row.get("team") and "team" not in stat_cols else ""
-            label_parts.append(f"{rank}{name}{team}")
-        elif has_name:
-            label_parts.append(row.get("name", ""))
-        if has_season and "season" not in stat_cols:
+            team = f" ({row.get('team', '')})" if use_team_in_label and row.get("team") else ""
+            label_parts.append(f"{name}{team}")
+        if "season" in label_cols and has_season:
             label_parts.append(str(row.get("season", "")))
 
         label = ", ".join(label_parts) if label_parts else ""
 
         # Build values
         vals = [_fmt_val(c, row.get(c)) for c in stat_cols]
-        if label:
+
+        if use_leaderboard:
+            row_lines.append(f"ROW {i+1}. {label}: {', '.join(vals)}")
+        elif label:
             row_lines.append(f"ROW: {label}, {', '.join(vals)}")
         else:
             row_lines.append(f"ROW: {', '.join(vals)}")
 
-    grid = f"[STATGRID]\n{header}\n" + "\n".join(row_lines) + "\n[/STATGRID]"
-    return grid
+    if use_leaderboard:
+        parts = []
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+        parts.append("[LEADERBOARD]")
+        parts.append(header)
+        parts.extend(row_lines)
+        parts.append("[/LEADERBOARD]")
+        return "\n".join(parts)
+    else:
+        grid = f"[STATGRID]\n{header}\n" + "\n".join(row_lines) + "\n[/STATGRID]"
+        return grid
 
 
 async def _try_haiku_sql(question: str):

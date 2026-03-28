@@ -83,7 +83,7 @@ Rules:
 - When joining multiple tables, ALWAYS qualify every column with its table alias (e.g., s.hits, not just hits) to avoid ambiguous column errors.
 - For player name lookups, use LIKE with '%' for flexibility (e.g., WHERE p.name LIKE '%Judge%').
 - Format numbers: ROUND() for decimals, PRINTF('%.3f', ...) for batting averages.
-- Default to LIMIT 10 unless a specific number is requested.
+- Default to LIMIT 10 unless a specific number is requested. Even for "best", "highest", "lowest", "most" queries, return the top 10 — not just 1. The user wants to see a ranked list for context.
 
 ## Rate stat minimums
 - For leaderboard/ranking queries on rate stats (AVG, OBP, SLG, OPS, ISO, BABIP, ERA, WHIP, K/9), apply plate appearances or innings minimums to avoid small sample size noise.
