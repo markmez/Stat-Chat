@@ -365,6 +365,7 @@ struct PlayerCardView: View {
                     .focused($isSearchFocused)
                     .autocorrectionDisabled(true)
                     .textInputAutocapitalization(.never)
+                    .submitLabel(.search)
                     .onSubmit { submitSearch() }
 
                     if !searchText.isEmpty {
