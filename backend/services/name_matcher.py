@@ -1714,7 +1714,9 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
         scope = f"all_time_since_{since_year}"
     elif "career" in lower:
         scope = "career"
-    elif "all time" in lower or "all-time" in lower or "single season" in lower:
+    elif ("all time" in lower or "all-time" in lower or "single season" in lower
+          or "in a season" in lower or "in a year" in lower or "ever" in lower
+          or "in history" in lower or "record" in lower):
         scope = "all_time"
     else:
         # Check for explicit season first
