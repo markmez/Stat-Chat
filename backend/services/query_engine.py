@@ -953,7 +953,7 @@ def _build_filters(plan: QueryPlan, prefix: str) -> tuple[str, list]:
 
 
 def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None) -> str:
-    """Get PA/IP minimum filter for rate stats."""
+    """Get PA/IP minimum filter for rate stats, prorated for current season."""
     stat_col = plan.stat.db_column if plan.stat else ""
     is_rate = (plan.stat and plan.stat.is_rate) or (plan.derived_stat and _DERIVED_STATS[plan.derived_stat]["is_rate"])
     if not is_rate:
@@ -965,7 +965,8 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
             cur.execute(f"SELECT MAX(games) FROM season_pitching_stats WHERE season = ?", (season,))
             r = cur.fetchone()
             max_games = int(r[0]) if r and r[0] else 162
-            ip_min = 486 if max_games >= 140 else 243
+            # Prorate: 486 ip_outs for 162 games
+            ip_min = max(1, int(486 * max_games / 162))
         else:
             ip_min = 486
         return f" AND {prefix}.ip_outs >= {ip_min}"
@@ -975,7 +976,8 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
             cur.execute(f"SELECT MAX(games) FROM season_batting_stats WHERE season = ?", (season,))
             r = cur.fetchone()
             max_games = int(r[0]) if r and r[0] else 162
-            pa_min = 400 if max_games >= 140 else 200
+            # Prorate: 400 PA for 162 games
+            pa_min = max(1, int(400 * max_games / 162))
         else:
             pa_min = 400
         return f" AND {prefix}.plate_appearances >= {pa_min}"
