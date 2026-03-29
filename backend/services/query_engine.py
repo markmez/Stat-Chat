@@ -154,7 +154,7 @@ _STOP_WORDS = {
     "played", "play", "playing",
     "scored", "allowed", "given", "gave",
     "during", "when", "where", "only",
-    "ago", "back", "since",
+    "ago", "back", "since", "sub",
     "?", "!", ".",
 }
 
@@ -213,6 +213,94 @@ class QueryPlan:
 
 
 # ---------------------------------------------------------------------------
+# Stat condition parser — finds stat + threshold from natural language
+# ---------------------------------------------------------------------------
+
+@dataclass
+class StatCondition:
+    """A single stat + threshold condition parsed from natural language."""
+    stat: Optional[StatInfo]
+    derived: Optional[str]  # key into _DERIVED_STATS
+    threshold: Optional[float]
+    comparison: str  # ">=" or "<="
+    consumed_text: str  # the text this condition consumed
+
+    @property
+    def is_rate(self) -> bool:
+        if self.stat:
+            return self.stat.is_rate
+        if self.derived:
+            return _DERIVED_STATS[self.derived]["is_rate"]
+        return False
+
+
+def _parse_stat_condition(text: str) -> Optional[StatCondition]:
+    """Parse a stat + threshold from a text segment.
+
+    Handles all natural language patterns:
+    - Direct: "30 HR", "200+ K", ".300 AVG", "3.00 ERA"
+    - Verb forms: "batted .300", "hit 300", "hitting .350"
+    - Sub pattern: "sub-3.00 ERA", "sub 2.50 WHIP"
+    - Won/stole/drove: "won 20 games", "stole 50 bases", "drove in 100 runs"
+    - Struck out: "struck out 200"
+    - Implicit: just "batted .300" → batting avg >= .300
+    """
+    lower = text.strip().lower()
+
+    # Determine comparison direction
+    under_patterns = ["under ", "fewer than ", "less than ", "below ",
+                      "sub-", "sub ", "no more than ", "or fewer", "or less"]
+    comparison = "<=" if any(p in lower for p in under_patterns) else ">="
+
+    # Check derived stats first
+    derived_triggers = {
+        "total bases": "total_bases",
+        "extra base hits": "extra_base_hits", "extra base hit": "extra_base_hits",
+        "extra-base hits": "extra_base_hits", "xbh": "extra_base_hits",
+        "stolen base percentage": "sb_percentage", "sb%": "sb_percentage",
+    }
+    for trigger, key in sorted(derived_triggers.items(), key=lambda x: len(x[0]), reverse=True):
+        if trigger in lower:
+            threshold = _extract_threshold(lower)
+            if threshold is not None:
+                return StatCondition(None, key, threshold, comparison, text)
+            return None
+
+    # Try direct stat match
+    stat = match_stat(lower)
+
+    # Batting average inference: "batted .300", "hit 300", "hitting .350"
+    if not stat:
+        if re.search(r'(?:batted|hit|batting|hitting)\s+(?:over\s+|above\s+|at least\s+)?\.?\d', lower) or \
+           re.search(r'(?:batted|hit|batting|hitting)\s+(?:over\s+|above\s+|at least\s+)?\d{3}\b', lower):
+            stat = stat_alias_map.get("batting average") or stat_alias_map.get("avg")
+
+    # "won N games" → wins (match_stat already handles this via special case)
+    # "stole N bases" / "stolen N bases" → stolen_bases
+    if not stat:
+        if re.search(r'\b(?:stole|stolen)\b', lower):
+            stat = stat_alias_map.get("stolen bases") or stat_alias_map.get("sb")
+        elif re.search(r'\bdrove\s+in\b', lower):
+            stat = stat_alias_map.get("rbi")
+        elif re.search(r'\bstruck\s+out\b', lower):
+            stat = stat_alias_map.get("strikeouts") or stat_alias_map.get("ks")
+        elif re.search(r'\bwalked\b', lower):
+            stat = stat_alias_map.get("walks") or stat_alias_map.get("bb")
+        elif re.search(r'\b(?:threw|pitched)\s+\d', lower):
+            stat = stat_alias_map.get("innings pitched") or stat_alias_map.get("ip")
+
+    if not stat:
+        return None
+
+    threshold = _extract_threshold(lower, stat=stat)
+    if threshold is None:
+        # No threshold found — this is a stat without a condition (rank stat)
+        return StatCondition(stat, None, None, ">=", text)
+
+    return StatCondition(stat, None, threshold, comparison, text)
+
+
+# ---------------------------------------------------------------------------
 # Decompose — parse the query into a QueryPlan
 # ---------------------------------------------------------------------------
 
@@ -237,25 +325,23 @@ def decompose(question: str) -> QueryPlan:
             plan.query_type = "definition"
             return plan  # Let the old stat definition parser handle it
 
-    # --- Early detection: multi-threshold ---
-    # ".300 with 30 HR", "200 K and sub-3.00 ERA" — compound conditions
-    separators = [" with ", " and ", " while ", " plus "]
-    if any(s in lower for s in separators):
-        # Count how many stat keywords are in the query
-        from .name_matcher import _sorted_stat_aliases, contains_word
-        stat_count = 0
-        for alias in _sorted_stat_aliases:
-            if contains_word(alias, lower):
-                stat_count += 1
-                if stat_count >= 2:
-                    break
-        # Also count batting avg verb patterns as a stat (.300 batted/hit)
-        if re.search(r'(?:batted|hit|batting|hitting)\s+(?:over\s+|above\s+|at least\s+)?\.?\d', lower):
-            stat_count += 1
-        # If 2+ stats with separator, this is a multi-threshold — let old parser handle
-        if stat_count >= 2:
-            plan.query_type = "multi_threshold"
-            return plan
+    # --- Multi-stat detection ---
+    # Split on separators and parse each segment for stat+threshold.
+    # This handles ".300 with 30 HR", "200 K and sub-3.00 ERA", etc.
+    _separators = [" with ", " and ", " while ", " plus "]
+    has_separator = any(s in lower for s in _separators)
+    all_conditions: list[StatCondition] = []
+
+    if has_separator:
+        temp = lower
+        for s in _separators:
+            temp = temp.replace(s, " |SEP| ")
+        segments = [p.strip() for p in temp.split("|SEP|") if p.strip()]
+
+        for seg in segments:
+            cond = _parse_stat_condition(seg)
+            if cond:
+                all_conditions.append(cond)
 
     # --- Detect league (modifies the text) ---
     league_result = detect_league(lower)
@@ -310,41 +396,97 @@ def decompose(question: str) -> QueryPlan:
         # Will be resolved after stat is known
         _add_consumed(plan, "lowest")
 
-    # --- Detect stat ---
-    # Check derived stats FIRST (longer phrases like "extra base hits" must match
-    # before match_stat grabs "hits" alone)
-    _derived_triggers = {
-        "total bases": "total_bases",
-        "extra base hits": "extra_base_hits",
-        "extra base hit": "extra_base_hits",
-        "extra-base hits": "extra_base_hits",
-        "extra-base hit": "extra_base_hits",
-        "xbh": "extra_base_hits",
-        "stolen base percentage": "sb_percentage",
-        "sb%": "sb_percentage",
-        "sb percentage": "sb_percentage",
-        "steal percentage": "sb_percentage",
-        "strikeout percentage": "k_percentage",
-        "k%": "k_percentage",
-        "walk percentage": "bb_percentage",
-        "bb%": "bb_percentage",
-    }
-    for trigger, key in sorted(_derived_triggers.items(), key=lambda x: len(x[0]), reverse=True):
-        if trigger in lower:
-            plan.derived_stat = key
-            _add_consumed(plan, trigger)
-            break
+    # --- Detect stat(s) ---
+    # If we found multiple conditions from separator splitting, use those.
+    # Otherwise, parse the whole query as a single condition.
+    if len(all_conditions) >= 2:
+        # Multiple stat+threshold pairs found.
+        # Determine which is the rank stat (no threshold or has a ranking signal)
+        # and which are filters (have thresholds).
+        rank_cond = None
+        filter_conds = []
 
-    # Then check regular stats
-    if plan.derived_stat is None:
-        plan.stat = match_stat(lower)
+        for cond in all_conditions:
+            if cond.threshold is None:
+                rank_cond = cond  # stat without threshold = rank by this
+            else:
+                filter_conds.append(cond)
+
+        if rank_cond:
+            # Filtered leaderboard: rank by one stat, filter by others
+            plan.stat = rank_cond.stat
+            plan.derived_stat = rank_cond.derived
+            for fc in filter_conds:
+                plan.extra_filters.append({
+                    "stat": fc.stat, "threshold": fc.threshold, "comparison": fc.comparison
+                })
+        else:
+            # Pure multi-threshold: all have thresholds, sort by first
+            first = filter_conds[0]
+            plan.stat = first.stat
+            plan.derived_stat = first.derived
+            plan.threshold = first.threshold
+            plan.comparison = first.comparison
+            for fc in filter_conds[1:]:
+                plan.extra_filters.append({
+                    "stat": fc.stat, "threshold": fc.threshold, "comparison": fc.comparison
+                })
+            # Multi-threshold with no ranking signal = threshold query type
+            if plan.query_type == "leaderboard":
+                plan.query_type = "threshold"
+
+        # Mark all condition text as consumed
+        for cond in all_conditions:
+            _add_consumed(plan, cond.consumed_text)
+
+        # Pitching context: check primary stat AND extra filters
+        if plan.stat and is_pitching_stat(plan.stat):
+            plan.is_pitching = True
+        elif any(is_pitching_stat(ef["stat"]) for ef in plan.extra_filters if ef.get("stat")):
+            plan.is_pitching = True
+
+    elif len(all_conditions) == 1:
+        # Single condition from a segment — use it
+        cond = all_conditions[0]
+        plan.stat = cond.stat
+        plan.derived_stat = cond.derived
+        if cond.threshold is not None:
+            plan.threshold = cond.threshold
+            plan.comparison = cond.comparison
+            if plan.query_type == "leaderboard" and plan.superlative is None:
+                plan.query_type = "threshold"
+        _add_consumed(plan, cond.consumed_text)
         if plan.stat:
             plan.is_pitching = is_pitching_stat(plan.stat)
-            # Mark stat alias words as consumed
-            for alias in sorted(stat_alias_map.keys(), key=len, reverse=True):
-                if alias in lower:
-                    _add_consumed(plan, alias)
-                    break
+
+    else:
+        # No conditions from separator splitting — parse the whole query
+        # Check derived stats FIRST (longer phrases like "extra base hits")
+        _derived_triggers = {
+            "total bases": "total_bases",
+            "extra base hits": "extra_base_hits", "extra base hit": "extra_base_hits",
+            "extra-base hits": "extra_base_hits", "extra-base hit": "extra_base_hits",
+            "xbh": "extra_base_hits",
+            "stolen base percentage": "sb_percentage", "sb%": "sb_percentage",
+            "sb percentage": "sb_percentage", "steal percentage": "sb_percentage",
+            "strikeout percentage": "k_percentage", "k%": "k_percentage",
+            "walk percentage": "bb_percentage", "bb%": "bb_percentage",
+        }
+        for trigger, key in sorted(_derived_triggers.items(), key=lambda x: len(x[0]), reverse=True):
+            if trigger in lower:
+                plan.derived_stat = key
+                _add_consumed(plan, trigger)
+                break
+
+        # Then check regular stats
+        if plan.derived_stat is None:
+            plan.stat = match_stat(lower)
+            if plan.stat:
+                plan.is_pitching = is_pitching_stat(plan.stat)
+                for alias in sorted(stat_alias_map.keys(), key=len, reverse=True):
+                    if alias in lower:
+                        _add_consumed(plan, alias)
+                        break
 
     # --- Detect scope/season ---
     since_year = _detect_since_year(lower)
@@ -441,52 +583,36 @@ def decompose(question: str) -> QueryPlan:
             plan.age_min = int(age_match.group(1))
             _add_consumed(plan, f"over older than {age_match.group(1)} years old year-old")
 
-    # --- Detect secondary stat filter BEFORE threshold ---
-    # "with under/over N STAT" = filtered leaderboard, not primary threshold
-    secondary_match = re.search(
-        r'\bwith\s+(?:under|fewer than|less than|over|more than|at least)\s+(\d+\.?\d*)\+?\s+(\w+)',
-        lower
-    )
-    if secondary_match and plan.stat:
-        sec_threshold = float(secondary_match.group(1))
-        sec_stat_text = secondary_match.group(2)
-        sec_stat = match_stat(sec_stat_text)
-        if sec_stat and sec_stat.db_column != plan.stat.db_column:
-            sec_comp = "<=" if any(w in secondary_match.group(0) for w in ["under", "fewer", "less"]) else ">="
-            plan.extra_filters.append({"stat": sec_stat, "threshold": sec_threshold, "comparison": sec_comp})
-            _add_consumed(plan, secondary_match.group(0))
-
     # --- Detect "top N" as limit, not threshold ---
     top_match = re.search(r'\btop\s+(\d+)\b', lower)
     if top_match:
         plan.limit = max(1, min(int(top_match.group(1)), 50))
         _add_consumed(plan, top_match.group(0))
 
-    # --- Detect threshold ---
-    # Strip age, secondary filter, and "top N" from text before extracting stat threshold
-    threshold_text = lower
-    if plan.age_max:
-        threshold_text = re.sub(rf'\b(?:under|younger than)\s+{plan.age_max}\b', '', threshold_text)
-    if plan.age_min:
-        threshold_text = re.sub(rf'\b(?:over|older than)\s+{plan.age_min}\b', '', threshold_text)
-    if secondary_match and plan.extra_filters:
-        threshold_text = threshold_text.replace(secondary_match.group(0), "")
-    if top_match:
-        threshold_text = threshold_text.replace(top_match.group(0), "")
+    # --- Detect threshold (only if multi-condition didn't already set it) ---
+    if plan.threshold is None and plan.stat and not plan.extra_filters:
+        threshold_text = lower
+        if plan.age_max:
+            threshold_text = re.sub(rf'\b(?:under|younger than)\s+{plan.age_max}\b', '', threshold_text)
+        if plan.age_min:
+            threshold_text = re.sub(rf'\b(?:over|older than)\s+{plan.age_min}\b', '', threshold_text)
+        if top_match:
+            threshold_text = threshold_text.replace(top_match.group(0), "")
 
-    if plan.stat:
         threshold = _extract_threshold(threshold_text, stat=plan.stat)
-    elif plan.derived_stat:
-        threshold = _extract_threshold(threshold_text)
-    else:
-        threshold = None
+        if threshold is not None:
+            plan.threshold = threshold
+            _add_consumed(plan, str(threshold))
+            if plan.query_type == "leaderboard" and plan.superlative is None:
+                plan.query_type = "threshold"
 
-    if threshold is not None:
-        plan.threshold = threshold
-        _add_consumed(plan, str(threshold))
-        # If we have a threshold but no explicit query type, it's a threshold query
-        if plan.query_type == "leaderboard" and plan.superlative is None:
-            plan.query_type = "threshold"
+    elif plan.threshold is None and plan.derived_stat and not plan.extra_filters:
+        threshold = _extract_threshold(lower)
+        if threshold is not None:
+            plan.threshold = threshold
+            _add_consumed(plan, str(threshold))
+            if plan.query_type == "leaderboard" and plan.superlative is None:
+                plan.query_type = "threshold"
 
     # Handle word-number thresholds for count queries
     if plan.threshold is None and plan.query_type == "count":
@@ -563,8 +689,13 @@ def decompose(question: str) -> QueryPlan:
             continue
         if w_clean in plan.consumed_words:
             continue
-        # Numbers that match season or threshold are consumed
+        # Numbers and number-like tokens (3.00, sub-3, 200+) are consumed
         if w_clean.isdigit():
+            continue
+        if re.match(r'^[\d.+-]+$', w_clean):
+            continue
+        # Tokens starting with "sub-" are comparison modifiers
+        if w_clean.startswith("sub-") or w_clean.startswith("sub"):
             continue
         # Short words (1-2 chars) are usually noise
         if len(w_clean) <= 2:
