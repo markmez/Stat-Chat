@@ -112,6 +112,72 @@ enum StatGridParser {
             segments.append(.text(remaining))
         }
 
+        // Post-process: detect bare HEADER:/ROW: patterns in text segments
+        // (Sonnet sometimes outputs grid format without [STATGRID] wrapper)
+        if !isStreaming {
+            segments = segments.flatMap { segment -> [Segment] in
+                guard case .text(let text) = segment else { return [segment] }
+                return splitBareGrids(text)
+            }
+        }
+
+        return segments
+    }
+
+    /// Split a text segment into text + grid segments if it contains bare HEADER:/ROW: lines.
+    private static func splitBareGrids(_ text: String) -> [Segment] {
+        let lines = text.components(separatedBy: .newlines)
+
+        // Check if there's a HEADER: line followed by ROW: lines
+        guard let headerIdx = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("HEADER:") }) else {
+            return [.text(text)]
+        }
+
+        // Check there are ROW: lines after it
+        let afterHeader = lines[(headerIdx + 1)...]
+        let hasRows = afterHeader.contains(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("ROW") })
+        guard hasRows else { return [.text(text)] }
+
+        // Split: text before HEADER, grid content, text after last ROW
+        var segments: [Segment] = []
+
+        // Text before the grid
+        let beforeLines = lines[..<headerIdx]
+        let beforeText = beforeLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !beforeText.isEmpty {
+            segments.append(.text(beforeText))
+        }
+
+        // Find the last ROW line
+        var lastRowIdx = headerIdx
+        for (i, line) in lines.enumerated() where i > headerIdx {
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("ROW") {
+                lastRowIdx = i
+            }
+        }
+
+        // Parse the grid content
+        let gridLines = lines[headerIdx...lastRowIdx]
+        let gridContent = gridLines.joined(separator: "\n")
+        if let grid = parseGrid(gridContent) {
+            // Determine if it's a leaderboard (has ranked ROW N. patterns)
+            let isLeaderboard = gridLines.contains(where: {
+                $0.trimmingCharacters(in: .whitespaces).hasPrefix("ROW ") &&
+                $0.contains(".")
+            })
+            segments.append(isLeaderboard ? .leaderboard(grid) : .statGrid(grid))
+        } else {
+            segments.append(.text(gridContent))
+        }
+
+        // Text after the grid
+        if lastRowIdx + 1 < lines.count {
+            let afterText = lines[(lastRowIdx + 1)...].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !afterText.isEmpty {
+                segments.append(.text(afterText))
+            }
+        }
+
         return segments
     }
 
