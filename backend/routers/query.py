@@ -206,8 +206,8 @@ def _fmt_val(col: str, val) -> str:
     return str(val)
 
 
-def _display_col_name(col: str) -> str:
-    """Convert a SQL column name to a display name."""
+def _display_col_name(col: str) -> Optional[str]:
+    """Convert a SQL column name to a display name. Returns None for label-only columns."""
     import re as _re
     # Check exact match
     if col in _COL_DISPLAY:
@@ -303,6 +303,9 @@ def _format_haiku_result(result_text: str) -> str:
     # Keep the most relevant columns (first 4, which Haiku orders by importance).
     if multi_row and len(stat_cols) > 4:
         stat_cols = stat_cols[:4]
+
+    # Remove columns that map to None (label-only columns that slipped through)
+    stat_cols = [c for c in stat_cols if _display_col_name(c) is not None]
 
     if not stat_cols:
         return result_text

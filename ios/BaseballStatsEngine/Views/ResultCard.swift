@@ -238,26 +238,14 @@ struct ResultCard: View {
         return result
     }
 
-    // Error
+    // Error — plain text, not alarming
     private var errorCard: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 14, weight: .medium))
-            Text(message.content)
-                .font(.system(.callout, design: .rounded))
-        }
-        .foregroundStyle(.red.opacity(0.9))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(.red.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(.red.opacity(0.15), lineWidth: 0.5)
-                )
-        )
-        .padding(.horizontal, 16)
+        Text(message.content)
+            .font(.system(.callout, design: .rounded))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .padding(.horizontal, 16)
     }
 }
 
