@@ -198,11 +198,9 @@ struct LeaderboardView: View {
                 .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
         )
         .onAppear {
-            if !initialized && isSortable {
-                sortColumn = 0
-                sortAscending = false
-                initialized = true
-            }
+            // Don't auto-sort — preserve the backend's intentional ordering.
+            // User can tap a column header to sort if desired.
+            initialized = true
         }
     }
 
