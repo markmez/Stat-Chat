@@ -3357,11 +3357,15 @@ def build_superlative(stat_info: StatInfo, threshold: float, superlative: str,
         parts = [f"**{title}**\n"]
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
-        parts.append(f"HEADER: Year, {stat_info.display_abbrev}" + (", Age" if has_age else ""))
+        if has_age:
+            # Age first (primary sort), then year, then stat
+            parts.append(f"HEADER: Age, Year, {stat_info.display_abbrev}")
+        else:
+            parts.append(f"HEADER: Year, {stat_info.display_abbrev}")
         for i, row in enumerate(rows):
             val = _format_rate(str(row[1])) if stat_info.is_rate else str(row[1])
             if has_age and len(row) > 3:
-                parts.append(f"ROW {i+1}. {row[0]}: {row[2]}, {val}, age {row[3]}")
+                parts.append(f"ROW {i+1}. {row[0]}: {row[3]}, {row[2]}, {val}")
             else:
                 parts.append(f"ROW {i+1}. {row[0]}: {row[2]}, {val}")
         parts.append("[/LEADERBOARD]")
