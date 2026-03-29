@@ -152,6 +152,10 @@ class LLMService:
             messages=msgs,
         )
         text = response.content[0].text.strip()
+        # Strip markdown code fences if present
+        text = re.sub(r'^```(?:json)?\s*', '', text)
+        text = re.sub(r'\s*```$', '', text)
+        text = text.strip()
         logger.info("followup_raw_response text=%r", text)
         try:
             result = json.loads(text)
