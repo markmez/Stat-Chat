@@ -218,125 +218,22 @@ def try_intercept(question: str):
         if response:
             return response
 
-    # 13b. Query Engine — structured decomposer for stat queries
-    # Handles leaderboards, thresholds, counts, superlatives, game-log queries,
-    # split leaderboards, team rankings, and any combination of filters.
-    # Only answers when it fully understands the query (no unexplained words).
-    from services.query_engine import decompose, execute as qe_execute
-    plan = decompose(trimmed)
-    if plan.is_valid:
-        response = qe_execute(plan)
-        if response:
-            logger.info("query_engine_handled question=%r type=%s", trimmed, plan.query_type)
-            return response
-    elif plan.unexplained_words and (plan.stat or plan.derived_stat):
-        # Query engine found a stat but couldn't fully understand the query.
-        # Skip old stat-query parsers (they'll give wrong answers too) and
-        # go straight to Haiku/Sonnet which can handle the full context.
-        logger.info("query_engine_bail question=%r unexplained=%s — skipping old parsers", trimmed, plan.unexplained_words)
-        return None
+    # --- Niche parsers (specific triggers, no false-match risk) ---
 
-    # 14. Milestone — "how many times has someone hit 50 HR?"
-    milestone = nm.parse_milestone(trimmed)
-    if milestone:
-        is_pitching = nm.is_pitching_stat(milestone["stat"])
-        response = rb.build_milestone(
-            milestone["stat"], milestone["threshold"],
-            milestone.get("since"), is_pitching, milestone.get("league"))
-        if response:
-            return response
-
-    # 15. Superlative — "youngest player to hit 40 HR"
-    sup = nm.parse_superlative(trimmed)
-    if sup:
-        is_pitching = nm.is_pitching_stat(sup["stat"])
-        response = rb.build_superlative(
-            sup["stat"], sup["threshold"], sup["superlative"],
-            is_pitching, sup.get("league"), since_year=sup.get("since_year"))
-        if response:
-            return response
-
-    # 16. Filtered leaderboard — "most HR with .300+ AVG"
-    filtered = nm.parse_filtered_leaderboard(trimmed)
-    if filtered:
-        is_pitching = nm.is_pitching_stat(filtered["rank_stat"]) or nm.is_pitching_stat(filtered["filter_stat"])
-        response = rb.build_filtered_leaderboard(
-            filtered["rank_stat"], filtered["filter_stat"],
-            filtered["threshold"], filtered["comparison"],
-            filtered.get("season"), filtered.get("limit", 10),
-            is_pitching, filtered.get("league"))
-        if response:
-            return response
-
-    # 16b. Single-game extreme — "most K in one game", "most HR in a single game"
-    game_extreme = nm.parse_single_game_extreme(trimmed)
-    if game_extreme:
-        response = rb.build_single_game_extreme(
-            game_extreme["stat"], game_extreme.get("season"),
-            game_extreme["is_pitching"], game_extreme.get("position"))
-        if response:
-            return response
-
-    # 16c. Count query — "how many players hit 30 HR in 2025"
-    count_q = nm.parse_count_query(trimmed)
-    if count_q:
-        response = rb.build_count_query(
-            count_q["stat"], count_q["threshold"], count_q.get("season"),
-            count_q["is_pitching"], count_q.get("position"))
-        if response:
-            return response
-
-    # 17. Threshold — "who hit 40 home runs?", "players batting over .300"
-    threshold = nm.parse_threshold(trimmed)
-    if threshold:
-        is_pitching = nm.is_pitching_stat(threshold["stat"])
-        rookie = threshold.get("rookie", False)
-        season = threshold.get("season")
-        if season:
-            response = rb.build_threshold(
-                threshold["stat"], threshold["threshold"],
-                threshold["comparison"], season,
-                threshold.get("league"), is_pitching, rookie=rookie)
-        else:
-            response = rb.build_all_time_threshold(
-                threshold["stat"], threshold["threshold"],
-                threshold["comparison"], is_pitching,
-                threshold.get("league"),
-                since_year=threshold.get("since_year"),
-                rookie=rookie)
-        if response:
-            return response
-
-    # 17b. Multi-threshold — ".300 AVG with 30+ HR", "200 K and sub-3.00 ERA"
-    multi = nm.parse_multi_threshold(trimmed)
-    if multi:
-        season = multi["season"]
-        rookie = multi.get("rookie", False)
-        if season:
-            response = rb.build_multi_threshold(
-                multi["filters"], season, multi["is_pitching"], multi.get("league"),
-                rookie=rookie)
-        else:
-            response = rb.build_all_time_multi_threshold(
-                multi["filters"], multi["is_pitching"], multi.get("league"),
-                since_year=multi.get("since_year"), rookie=rookie)
-        if response:
-            return response
-
-    # 18. Composite threshold — "30/30 seasons", "40/40"
+    # Composite threshold — "30/30 seasons", "40/40"
     composite = nm.parse_composite_threshold(trimmed)
     if composite:
         response = rb.build_composite_threshold(composite)
         if response:
             return response
 
-    # 19. Triple crown — "who won the triple crown?"
+    # Triple crown — "who won the triple crown?"
     if nm.parse_triple_crown(trimmed):
         response = rb.build_triple_crown()
         if response:
             return response
 
-    # 20. Consecutive streak — "longest hitting streak"
+    # Consecutive streak — "longest hitting streak"
     consec = nm.parse_consecutive_streak(trimmed)
     if consec:
         response = rb.build_consecutive_streak(
@@ -344,14 +241,7 @@ def try_intercept(question: str):
         if response:
             return response
 
-    # 21. Team ranking — "what team hit the most HR?"
-    team_ranking = nm.parse_team_ranking(trimmed)
-    if team_ranking:
-        response = rb.build_team_ranking(team_ranking["stat"], team_ranking["season"])
-        if response:
-            return response
-
-    # 22. Team total — "how many HR did the Yankees hit?"
+    # Team total — "how many HR did the Yankees hit?"
     team_total = nm.parse_team_total(trimmed)
     if team_total:
         response = rb.build_team_total(
@@ -359,7 +249,7 @@ def try_intercept(question: str):
         if response:
             return response
 
-    # 23. Team stats — "Yankees hitters", "Dodgers OPS leaders"
+    # Team stats — "Yankees hitters", "Dodgers OPS leaders"
     team_stats = nm.parse_team_stats(trimmed)
     if team_stats:
         stat = team_stats.get("stat")
@@ -372,53 +262,22 @@ def try_intercept(question: str):
         if response:
             return response
 
-    # 23b. Platoon leaderboard — "most HR vs lefties", "highest AVG against righties"
-    platoon_board = nm.parse_platoon_leaderboard(trimmed)
-    if platoon_board:
-        response = rb.build_platoon_leaderboard(
-            platoon_board["stat"], platoon_board["hand"],
-            platoon_board["is_pitching"], platoon_board["season"],
-            platoon_board.get("limit", 50), platoon_board.get("league"))
+    # --- Query Engine — the primary stat query handler ---
+    # Handles leaderboards, thresholds, counts, superlatives, game-log queries,
+    # split leaderboards, team rankings, derived stats, multi-threshold,
+    # and any combination of filters (position, bats, age, rookie, pitcher role).
+    # Only answers when it fully understands the query (no unexplained words).
+    # If it bails, go straight to Haiku/Sonnet — no old parsers.
+    from services.query_engine import decompose, execute as qe_execute
+    plan = decompose(trimmed)
+    if plan.is_valid:
+        response = qe_execute(plan)
         if response:
+            logger.info("query_engine_handled question=%r type=%s", trimmed, plan.query_type)
             return response
-
-    # 24. Leaderboard — "HR leaders", "top 5 OPS", "career HR leaders"
-    board = nm.parse_leaderboard(trimmed)
-    if board:
-        lower = trimmed.lower()
-        split_context = board.get("split_context")
-        pitching_context = any(w in lower for w in ["pitched", "pitching", "pitcher", "pitchers"])
-        pitcher_role = board.get("pitcher_role")
-        is_pitching = nm.is_pitching_stat(board["stat"]) or pitching_context or pitcher_role is not None
-        rookie = board.get("rookie", False)
-        position = board.get("position")
-        sort_asc = board.get("sort_asc", False)
-
-        # Split leaderboard — query the appropriate split table
-        if split_context is not None:
-            # Extract season from scope
-            scope = board["scope"]
-            season = None
-            if scope.startswith("season_"):
-                season = int(scope.split("_", 1)[1])
-            else:
-                season = datetime.now().year
-            response = rb.build_split_leaderboard(
-                board["stat"], split_context, season,
-                board.get("limit", 50), board.get("league"))
-            if response:
-                return response
-
-        if is_pitching:
-            response = rb.build_pitching_leaderboard(
-                board["stat"], board["scope"], board.get("limit", 10), board.get("league"),
-                pitcher_role=pitcher_role, sort_asc=sort_asc)
-        else:
-            response = rb.build_leaderboard(
-                board["stat"], board["scope"], board.get("limit", 10), board.get("league"),
-                rookie=rookie, position=position, sort_asc=sort_asc)
-        if response:
-            return response
+    elif plan.unexplained_words and (plan.stat or plan.derived_stat):
+        logger.info("query_engine_bail question=%r unexplained=%s", trimmed, plan.unexplained_words)
+        return None
 
     # 25. Stat definition — "what is OPS?", "explain BABIP"
     defn = nm.parse_stat_definition(trimmed)
