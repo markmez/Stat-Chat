@@ -266,28 +266,84 @@ def _parse_stat_condition(text: str) -> Optional[StatCondition]:
                 return StatCondition(None, key, threshold, comparison, text)
             return None
 
-    # Try direct stat match
-    stat = match_stat(lower)
+    # --- Step 1: Check for "verb + number" patterns ---
+    # These indicate the verb is describing an action, not a stat name.
+    # e.g., "hit 30 HR" → verb "hit", threshold 30, stat HR
+    # e.g., "hit sub .250" → verb "hit", threshold .250, stat batting_avg (inferred)
+    # e.g., "stole 50 bases" → verb "stole", threshold 50, stat stolen_bases
 
-    # Batting average inference: "batted .300", "hit 300", "hitting .350"
-    if not stat:
-        if re.search(r'(?:batted|hit|batting|hitting)\s+(?:over\s+|above\s+|at least\s+)?\.?\d', lower) or \
-           re.search(r'(?:batted|hit|batting|hitting)\s+(?:over\s+|above\s+|at least\s+)?\d{3}\b', lower):
-            stat = stat_alias_map.get("batting average") or stat_alias_map.get("avg")
+    stat = None
+    verb_number = re.search(
+        r'\b(hit|batted|batting|hitting|won|stole|stolen|drove\s+in|struck\s+out|walked|threw|pitched)'
+        r'\s+(?:over\s+|above\s+|at least\s+|sub[- ]?)?'
+        r'(\.?\d+\.?\d*)\+?',
+        lower
+    )
 
-    # "won N games" → wins (match_stat already handles this via special case)
-    # "stole N bases" / "stolen N bases" → stolen_bases
+    if verb_number:
+        verb = verb_number.group(1).strip()
+        number = float(verb_number.group(2))
+
+        # Some verbs have a fixed meaning regardless of what follows
+        _verb_to_stat = {
+            "won": "wins",
+            "stole": "stolen bases", "stolen": "stolen bases",
+            "drove in": "rbi",
+            "struck out": "strikeouts",
+            "walked": "walks",
+        }
+
+        if verb in _verb_to_stat:
+            # Verb has a fixed stat meaning
+            stat = stat_alias_map.get(_verb_to_stat[verb])
+        else:
+            # "hit/batted/pitched/threw" — look for a stat keyword AFTER the number
+            after_number = lower[verb_number.end():].strip()
+            stat_after = match_stat(after_number) if after_number else None
+
+            if stat_after:
+                # "hit 30 HR" → stat is HR, threshold is 30
+                stat = stat_after
+            elif verb in ("hit", "batted", "batting", "hitting"):
+                # No stat after number → infer batting average
+                # "hit .300" / "batted 300" / "hit sub .250"
+                stat = stat_alias_map.get("batting average") or stat_alias_map.get("avg")
+            elif verb in ("threw", "pitched"):
+                stat = stat_alias_map.get("innings pitched") or stat_alias_map.get("ip")
+
+        if stat:
+            threshold = _extract_threshold(lower, stat=stat)
+            if threshold is not None:
+                return StatCondition(stat, None, threshold, comparison, text)
+
+    # --- Step 2: Check for "sub + number" without a verb ---
+    # "sub-.250 AVG", "sub 3.00 ERA", "sub .250" (infer batting avg)
+    sub_match = re.search(r'\bsub[- ]?(\.?\d+\.?\d*)', lower)
+    if sub_match:
+        after_sub = lower[sub_match.end():].strip()
+        stat_after = match_stat(after_sub) if after_sub else None
+        threshold = float(sub_match.group(1))
+        if stat_after:
+            # "sub-3.00 ERA" → ERA <= 3.00
+            if stat_after.db_column in ("batting_avg", "obp", "slg", "ops", "iso", "babip") \
+                    and 100 <= threshold <= 999:
+                threshold = threshold / 1000
+            return StatCondition(stat_after, None, threshold, "<=", text)
+        else:
+            # "sub .250" / "sub 250" with no stat keyword → infer batting average
+            if threshold < 1 or (100 <= threshold <= 500):
+                if 100 <= threshold <= 500:
+                    threshold = threshold / 1000
+                avg_stat = stat_alias_map.get("batting average") or stat_alias_map.get("avg")
+                if avg_stat:
+                    return StatCondition(avg_stat, None, threshold, "<=", text)
+
+    # --- Step 3: Direct stat match (no verb pattern) ---
+    # "30 HR", "HR leaders", ".800 OPS", "200+ K"
     if not stat:
-        if re.search(r'\b(?:stole|stolen)\b', lower):
-            stat = stat_alias_map.get("stolen bases") or stat_alias_map.get("sb")
-        elif re.search(r'\bdrove\s+in\b', lower):
-            stat = stat_alias_map.get("rbi")
-        elif re.search(r'\bstruck\s+out\b', lower):
-            stat = stat_alias_map.get("strikeouts") or stat_alias_map.get("ks")
-        elif re.search(r'\bwalked\b', lower):
-            stat = stat_alias_map.get("walks") or stat_alias_map.get("bb")
-        elif re.search(r'\b(?:threw|pitched)\s+\d', lower):
-            stat = stat_alias_map.get("innings pitched") or stat_alias_map.get("ip")
+        # Strip +/- from numbers before stat matching ("200+ K" → "200 K")
+        cleaned = re.sub(r'(\d)\+', r'\1 ', lower)
+        stat = match_stat(cleaned)
 
     if not stat:
         return None
@@ -460,33 +516,46 @@ def decompose(question: str) -> QueryPlan:
             plan.is_pitching = is_pitching_stat(plan.stat)
 
     else:
-        # No conditions from separator splitting — parse the whole query
-        # Check derived stats FIRST (longer phrases like "extra base hits")
-        _derived_triggers = {
-            "total bases": "total_bases",
-            "extra base hits": "extra_base_hits", "extra base hit": "extra_base_hits",
-            "extra-base hits": "extra_base_hits", "extra-base hit": "extra_base_hits",
-            "xbh": "extra_base_hits",
-            "stolen base percentage": "sb_percentage", "sb%": "sb_percentage",
-            "sb percentage": "sb_percentage", "steal percentage": "sb_percentage",
-            "strikeout percentage": "k_percentage", "k%": "k_percentage",
-            "walk percentage": "bb_percentage", "bb%": "bb_percentage",
-        }
-        for trigger, key in sorted(_derived_triggers.items(), key=lambda x: len(x[0]), reverse=True):
-            if trigger in lower:
-                plan.derived_stat = key
-                _add_consumed(plan, trigger)
-                break
-
-        # Then check regular stats
-        if plan.derived_stat is None:
-            plan.stat = match_stat(lower)
+        # No separators — try _parse_stat_condition on the whole query first.
+        # This handles "sub .250 AVG", "batted .300", "stole 50 bases" etc.
+        whole_cond = _parse_stat_condition(lower)
+        if whole_cond and (whole_cond.stat or whole_cond.derived):
+            plan.stat = whole_cond.stat
+            plan.derived_stat = whole_cond.derived
+            if whole_cond.threshold is not None:
+                plan.threshold = whole_cond.threshold
+                plan.comparison = whole_cond.comparison
+                if plan.query_type == "leaderboard" and plan.superlative is None:
+                    plan.query_type = "threshold"
+            _add_consumed(plan, whole_cond.consumed_text)
             if plan.stat:
                 plan.is_pitching = is_pitching_stat(plan.stat)
-                for alias in sorted(stat_alias_map.keys(), key=len, reverse=True):
-                    if alias in lower:
-                        _add_consumed(plan, alias)
-                        break
+        else:
+            # Fallback: check derived stats, then regular stats
+            _derived_triggers = {
+                "total bases": "total_bases",
+                "extra base hits": "extra_base_hits", "extra base hit": "extra_base_hits",
+                "extra-base hits": "extra_base_hits", "extra-base hit": "extra_base_hits",
+                "xbh": "extra_base_hits",
+                "stolen base percentage": "sb_percentage", "sb%": "sb_percentage",
+                "sb percentage": "sb_percentage", "steal percentage": "sb_percentage",
+                "strikeout percentage": "k_percentage", "k%": "k_percentage",
+                "walk percentage": "bb_percentage", "bb%": "bb_percentage",
+            }
+            for trigger, key in sorted(_derived_triggers.items(), key=lambda x: len(x[0]), reverse=True):
+                if trigger in lower:
+                    plan.derived_stat = key
+                    _add_consumed(plan, trigger)
+                    break
+
+            if plan.derived_stat is None:
+                plan.stat = match_stat(lower)
+                if plan.stat:
+                    plan.is_pitching = is_pitching_stat(plan.stat)
+                    for alias in sorted(stat_alias_map.keys(), key=len, reverse=True):
+                        if alias in lower:
+                            _add_consumed(plan, alias)
+                            break
 
     # --- Detect scope/season ---
     since_year = _detect_since_year(lower)
