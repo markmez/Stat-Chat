@@ -4387,15 +4387,18 @@ def build_count_query(stat_info: StatInfo, threshold: float, season: Optional[in
         if position and not is_pitching:
             pos_clause = _position_filter(position, prefix, f"{prefix}.season")
 
+        # Get the count and the actual players
         cur = conn.cursor()
         cur.execute(
-            f"SELECT COUNT(DISTINCT {prefix}.player_id) "
+            f"SELECT p.name, {prefix}.{stat_info.db_column} "
             f"FROM {table} {prefix} "
-            f"WHERE {prefix}.{stat_info.db_column} >= ?{season_filter}{pos_clause}",
+            f"JOIN players p ON {prefix}.player_id = p.player_id "
+            f"WHERE {prefix}.{stat_info.db_column} >= ?{season_filter}{pos_clause} "
+            f"ORDER BY {prefix}.{stat_info.db_column} DESC",
             tuple(params),
         )
-        row = cur.fetchone()
-        count = int(row[0]) if row else 0
+        rows = cur.fetchall()
+        count = len(rows)
 
         threshold_display = _format_rate(str(threshold)) if stat_info.is_rate else str(int(threshold))
         pos_label = _position_label(position) if position else ""
@@ -4403,8 +4406,19 @@ def build_count_query(stat_info: StatInfo, threshold: float, season: Optional[in
         scope = str(season) if season else "all time"
 
         if stat_info.is_rate:
-            return f"**{count}** {who} have batted {threshold_display}+ {stat_info.display_abbrev} in {scope}."
+            summary = f"**{count}** {who} have batted {threshold_display}+ {stat_info.display_abbrev} in {scope}."
         else:
-            return f"**{count}** {who} have had {threshold_display}+ {stat_info.display_name} in {scope}."
+            summary = f"**{count}** {who} have had {threshold_display}+ {stat_info.display_name} in {scope}."
+
+        parts = [summary + "\n"]
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+        parts.append("[LEADERBOARD]")
+        parts.append(f"HEADER: {stat_info.display_abbrev}")
+        for i, row in enumerate(rows):
+            val = _format_rate(str(row[1])) if stat_info.is_rate else str(row[1])
+            parts.append(f"ROW {i+1}. {row[0]}: {val}")
+        parts.append("[/LEADERBOARD]")
+
+        return "\n".join(parts)
     finally:
         conn.close()
