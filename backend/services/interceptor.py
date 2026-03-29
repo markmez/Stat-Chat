@@ -10,7 +10,7 @@ This mirrors the iOS AppState.sendQuestion() intercept chain exactly.
 """
 
 import logging
-from datetime import date
+from datetime import date, datetime
 
 from services import name_matcher as nm
 from services import response_builder as rb
@@ -368,12 +368,29 @@ def try_intercept(question: str):
     board = nm.parse_leaderboard(trimmed)
     if board:
         lower = trimmed.lower()
+        split_context = board.get("split_context")
         pitching_context = any(w in lower for w in ["pitched", "pitching", "pitcher", "pitchers"])
         pitcher_role = board.get("pitcher_role")
         is_pitching = nm.is_pitching_stat(board["stat"]) or pitching_context or pitcher_role is not None
         rookie = board.get("rookie", False)
         position = board.get("position")
         sort_asc = board.get("sort_asc", False)
+
+        # Split leaderboard — query the appropriate split table
+        if split_context is not None:
+            # Extract season from scope
+            scope = board["scope"]
+            season = None
+            if scope.startswith("season_"):
+                season = int(scope.split("_", 1)[1])
+            else:
+                season = datetime.now().year
+            response = rb.build_split_leaderboard(
+                board["stat"], split_context, season,
+                board.get("limit", 50), board.get("league"))
+            if response:
+                return response
+
         if is_pitching:
             response = rb.build_pitching_leaderboard(
                 board["stat"], board["scope"], board.get("limit", 10), board.get("league"),

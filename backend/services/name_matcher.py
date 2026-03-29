@@ -753,6 +753,73 @@ def _detect_pitcher_role(lower: str) -> Optional[str]:
     return None
 
 
+@dataclass(frozen=True)
+class SplitContext:
+    """Describes a split-table filter for leaderboard queries."""
+    table: str           # e.g. "count_batting_splits"
+    filter_col: str      # e.g. "count_state"
+    filter_values: list  # e.g. ["0-2", "1-2", "2-2", "3-2"]
+    label: str           # e.g. "With 2 Strikes"
+    # Which words in the query this context consumed (for unexplained-word detection)
+    consumed_phrases: list
+
+
+# Map of split trigger phrases → SplitContext
+_SPLIT_CONTEXTS = {
+    # Count-based
+    "with 2 strikes": SplitContext("count_batting_splits", "count_state", ["0-2", "1-2", "2-2", "3-2"], "With 2 Strikes", ["with 2 strikes", "with two strikes"]),
+    "with two strikes": SplitContext("count_batting_splits", "count_state", ["0-2", "1-2", "2-2", "3-2"], "With 2 Strikes", ["with two strikes"]),
+    "2-strike": SplitContext("count_batting_splits", "count_state", ["0-2", "1-2", "2-2", "3-2"], "With 2 Strikes", ["2-strike", "two-strike"]),
+    "two-strike": SplitContext("count_batting_splits", "count_state", ["0-2", "1-2", "2-2", "3-2"], "With 2 Strikes", ["two-strike"]),
+    "full count": SplitContext("count_batting_splits", "count_state", ["3-2"], "Full Count", ["full count"]),
+    "0-2 count": SplitContext("count_batting_splits", "count_state", ["0-2"], "0-2 Count", ["0-2 count"]),
+    "3-2 count": SplitContext("count_batting_splits", "count_state", ["3-2"], "3-2 Count", ["3-2 count"]),
+    "3-0 count": SplitContext("count_batting_splits", "count_state", ["3-0"], "3-0 Count", ["3-0 count"]),
+    "ahead in the count": SplitContext("count_batting_splits", "count_state", ["0-0", "1-0", "2-0", "3-0", "2-1", "3-1", "3-2"], "Ahead in Count", ["ahead in the count"]),
+    "behind in the count": SplitContext("count_batting_splits", "count_state", ["0-1", "0-2", "1-2"], "Behind in Count", ["behind in the count"]),
+    # Pitch type
+    "against fastball": SplitContext("pitch_type_batting_splits", "pitch_type", ["4-Seam"], "vs Fastballs", ["against fastball", "against fastballs"]),
+    "on fastball": SplitContext("pitch_type_batting_splits", "pitch_type", ["4-Seam"], "vs Fastballs", ["on fastball", "on fastballs"]),
+    "vs fastball": SplitContext("pitch_type_batting_splits", "pitch_type", ["4-Seam"], "vs Fastballs", ["vs fastball", "vs fastballs"]),
+    "against slider": SplitContext("pitch_type_batting_splits", "pitch_type", ["Slider"], "vs Sliders", ["against slider", "against sliders"]),
+    "on slider": SplitContext("pitch_type_batting_splits", "pitch_type", ["Slider"], "vs Sliders", ["on slider", "on sliders"]),
+    "vs slider": SplitContext("pitch_type_batting_splits", "pitch_type", ["Slider"], "vs Sliders", ["vs slider", "vs sliders"]),
+    "against curve": SplitContext("pitch_type_batting_splits", "pitch_type", ["Curve"], "vs Curveballs", ["against curve", "against curveball", "against curveballs"]),
+    "on curve": SplitContext("pitch_type_batting_splits", "pitch_type", ["Curve"], "vs Curveballs", ["on curve", "on curveball"]),
+    "vs curve": SplitContext("pitch_type_batting_splits", "pitch_type", ["Curve"], "vs Curveballs", ["vs curve", "vs curveball"]),
+    "against changeup": SplitContext("pitch_type_batting_splits", "pitch_type", ["Change"], "vs Changeups", ["against changeup", "against changeups"]),
+    "on changeup": SplitContext("pitch_type_batting_splits", "pitch_type", ["Change"], "vs Changeups", ["on changeup", "on changeups"]),
+    "vs changeup": SplitContext("pitch_type_batting_splits", "pitch_type", ["Change"], "vs Changeups", ["vs changeup", "vs changeups"]),
+    "against sinker": SplitContext("pitch_type_batting_splits", "pitch_type", ["Sinker"], "vs Sinkers", ["against sinker", "against sinkers"]),
+    "against cutter": SplitContext("pitch_type_batting_splits", "pitch_type", ["Cutter"], "vs Cutters", ["against cutter", "against cutters"]),
+    # RISP
+    "with risp": SplitContext("risp_batting_splits", "split", ["RISP"], "With RISP", ["with risp"]),
+    "runners in scoring": SplitContext("risp_batting_splits", "split", ["RISP"], "With RISP", ["runners in scoring position", "runners in scoring"]),
+    "with runners on": SplitContext("risp_batting_splits", "split", ["RISP"], "With RISP", ["with runners on"]),
+    # Home/Away
+    "at home": SplitContext("home_away_splits", "split", ["home"], "At Home", ["at home"]),
+    "on the road": SplitContext("home_away_splits", "split", ["away"], "On the Road", ["on the road"]),
+    "away from home": SplitContext("home_away_splits", "split", ["away"], "On the Road", ["away from home"]),
+    # Platoon
+    "against lefties": SplitContext("platoon_splits", "split", ["vs_LHP"], "vs LHP", ["against lefties"]),
+    "against righties": SplitContext("platoon_splits", "split", ["vs_RHP"], "vs RHP", ["against righties"]),
+    "vs lefties": SplitContext("platoon_splits", "split", ["vs_LHP"], "vs LHP", ["vs lefties"]),
+    "vs righties": SplitContext("platoon_splits", "split", ["vs_RHP"], "vs RHP", ["vs righties"]),
+    "against left-handed": SplitContext("platoon_splits", "split", ["vs_LHP"], "vs LHP", ["against left-handed", "against left handed"]),
+    "against right-handed": SplitContext("platoon_splits", "split", ["vs_RHP"], "vs RHP", ["against right-handed", "against right handed"]),
+    "vs left-handed": SplitContext("platoon_splits", "split", ["vs_LHP"], "vs LHP", ["vs left-handed", "vs left handed"]),
+    "vs right-handed": SplitContext("platoon_splits", "split", ["vs_RHP"], "vs RHP", ["vs right-handed", "vs right handed"]),
+}
+
+
+def _detect_split_context(lower: str) -> Optional[SplitContext]:
+    """Detect split context in query. Checks longest phrases first."""
+    for phrase in sorted(_SPLIT_CONTEXTS.keys(), key=len, reverse=True):
+        if phrase in lower:
+            return _SPLIT_CONTEXTS[phrase]
+    return None
+
+
 def detect_league(input_str: str) -> Optional[tuple[Optional[str], str]]:
     """Detect AL/NL league filter. Returns (league, cleaned_text) or None."""
     lower = input_str.lower()
@@ -1607,16 +1674,12 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
     if any(t in lower for t in team_aggregate_triggers):
         return None
 
-    # Reject queries with qualifiers the leaderboard parser can't handle.
-    # These need Haiku SQL to query the correct tables/joins.
-    unhandled_qualifiers = [
-        # Situational / platoon
-        "against left", "against right", "vs left", "vs right",
-        "left-handed", "left handed", "right-handed", "right handed",
-        "lefties", "righties",
-        "with runners", "runners on", "with risp", "scoring position",
-        "bases loaded", "with men on",
-        "in the clutch", "close and late", "high leverage",
+    # Detect split context (count, pitch type, RISP, home/away, platoon)
+    # This is handled by the split leaderboard builder, not a bail-out.
+    split_context = _detect_split_context(lower)
+
+    # Bail on qualifiers we truly can't handle (no split table, no builder)
+    _truly_unhandled = [
         # Per-game queries (need game logs, not season totals)
         "in a game", "in one game", "in a single game", "per game",
         "game log", "single game",
@@ -1630,22 +1693,6 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
         # Count / frequency queries
         "how many player", "how many pitcher", "how many batter",
         "how many times",
-        # Count/strike situational contexts (need count_splits tables)
-        "with 2 strikes", "with two strikes", "2-strike", "two-strike",
-        "with 0 strikes", "with 1 strike", "with one strike",
-        "0-2 count", "1-2 count", "2-2 count", "3-2 count",
-        "0-0 count", "1-0 count", "2-0 count", "3-0 count",
-        "full count", "ahead in the count", "behind in the count",
-        "hitter's count", "pitcher's count",
-        # Pitch type contexts (need pitch_type_splits tables)
-        "against fastball", "against slider", "against curve", "against changeup",
-        "on fastball", "on slider", "on curve", "on changeup",
-        "vs fastball", "vs slider", "vs curve", "vs changeup",
-        # RISP / base state
-        "with risp", "runners in scoring", "with runners on",
-        "bases loaded", "with men on", "bases empty",
-        # Day/night, home/away for leaderboards (per-player splits only)
-        "day game", "night game", "at home", "on the road",
         # Multi-game event counts
         "multi-hit", "multi hit", "multi-homer", "multi homer",
         "multi-hr", "multi hr", "multi home run",
@@ -1654,8 +1701,12 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
         "in june", "in july", "in august", "in september", "in october",
         "in jan ", "in feb ", "in mar ", "in apr ", "in jun ",
         "in jul ", "in aug ", "in sept ", "in oct ",
+        # Game situations we don't have tables for
+        "in the clutch", "close and late", "high leverage",
+        "bases loaded", "bases empty",
+        "day game", "night game",
     ]
-    if any(t in lower for t in unhandled_qualifiers):
+    if any(t in lower for t in _truly_unhandled):
         return None
 
     # "closest to .400" -> batting average
@@ -1770,6 +1821,7 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
         "league": league_result[0] if league_result else None,
         "pitcher_role": pitcher_role, "sort_asc": sort_asc,
         "rookie": rookie, "position": position,
+        "split_context": split_context,
     }
 
 

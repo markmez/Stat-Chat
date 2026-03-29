@@ -4422,3 +4422,103 @@ def build_count_query(stat_info: StatInfo, threshold: float, season: Optional[in
         return "\n".join(parts)
     finally:
         conn.close()
+
+
+# ===================================================================
+# build_split_leaderboard
+# ===================================================================
+
+def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
+                            limit: int = 50, league: Optional[str] = None) -> Optional[str]:
+    """Build a leaderboard from a split table (count, pitch type, RISP, home/away, platoon)."""
+    conn = _get_db()
+    try:
+        table = split_context.table
+        filter_col = split_context.filter_col
+        filter_values = split_context.filter_values
+        label = split_context.label
+
+        placeholders = ", ".join("?" for _ in filter_values)
+        split_filter = f"AND t.{filter_col} IN ({placeholders})"
+
+        cur = conn.cursor()
+        cur.execute(f"PRAGMA table_info({table})")
+        valid_cols = {r[1] for r in cur.fetchall()}
+
+        col = stat_info.db_column
+        if col not in valid_cols:
+            return None
+
+        pa_filter = ""
+        if stat_info.is_rate:
+            pa_filter = " AND t.plate_appearances >= 20"
+
+        league_filter = ""
+        league_label = ""
+        if league:
+            league_filter = (
+                f" AND EXISTS (SELECT 1 FROM season_batting_stats sbs "
+                f"WHERE sbs.player_id = t.player_id AND sbs.season = t.season "
+                f"AND {_league_team_clause(league, 'sbs')})"
+            )
+            league_label = f" ({league})"
+
+        # For rate stats, recompute from aggregated counting stats across filter values
+        if stat_info.is_rate and col in ("batting_avg", "obp", "slg", "ops", "iso", "babip"):
+            rate_formulas = {
+                "batting_avg": "CAST(SUM(t.hits) AS REAL) / NULLIF(SUM(t.at_bats), 0)",
+                "obp": "CAST(SUM(t.hits) + SUM(t.walks) + SUM(COALESCE(t.hit_by_pitch, 0)) AS REAL) / NULLIF(SUM(t.plate_appearances), 0)",
+                "slg": ("CAST(SUM(t.hits) - SUM(t.doubles) - SUM(t.triples) - SUM(t.home_runs) "
+                        "+ 2*SUM(t.doubles) + 3*SUM(t.triples) + 4*SUM(t.home_runs) AS REAL) "
+                        "/ NULLIF(SUM(t.at_bats), 0)"),
+                "ops": ("(CAST(SUM(t.hits) + SUM(t.walks) + SUM(COALESCE(t.hit_by_pitch, 0)) AS REAL) / NULLIF(SUM(t.plate_appearances), 0)) + "
+                        "(CAST(SUM(t.hits) - SUM(t.doubles) - SUM(t.triples) - SUM(t.home_runs) "
+                        "+ 2*SUM(t.doubles) + 3*SUM(t.triples) + 4*SUM(t.home_runs) AS REAL) "
+                        "/ NULLIF(SUM(t.at_bats), 0))"),
+                "iso": ("CAST(SUM(t.doubles) + 2*SUM(t.triples) + 3*SUM(t.home_runs) AS REAL) "
+                        "/ NULLIF(SUM(t.at_bats), 0)"),
+                "babip": ("CAST(SUM(t.hits) - SUM(t.home_runs) AS REAL) / "
+                          "NULLIF(SUM(t.at_bats) - SUM(t.strikeouts) - SUM(t.home_runs) + SUM(COALESCE(t.sacrifice_flies, 0)), 0)"),
+            }
+            agg_select = rate_formulas.get(col, f"SUM(t.{col})")
+            cur.execute(
+                f"SELECT p.name, {agg_select} AS stat_val, SUM(t.plate_appearances) AS pa "
+                f"FROM {table} t "
+                f"JOIN players p ON t.player_id = p.player_id "
+                f"WHERE t.season = ? {split_filter}{pa_filter}{league_filter} "
+                f"GROUP BY t.player_id "
+                f"HAVING stat_val IS NOT NULL "
+                f"ORDER BY stat_val DESC LIMIT ?",
+                (season, *filter_values, limit),
+            )
+        else:
+            cur.execute(
+                f"SELECT p.name, SUM(t.{col}) AS stat_val "
+                f"FROM {table} t "
+                f"JOIN players p ON t.player_id = p.player_id "
+                f"WHERE t.season = ? {split_filter}{league_filter} "
+                f"GROUP BY t.player_id "
+                f"ORDER BY stat_val DESC LIMIT ?",
+                (season, *filter_values, limit),
+            )
+
+        rows = cur.fetchall()
+        if not rows:
+            return f"No {stat_info.display_name} data found {label.lower()} for {season}{league_label}."
+
+        title = f"**{season} {stat_info.display_name} Leaders {label}{league_label}**\n"
+        parts = [title]
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+        parts.append("[LEADERBOARD]")
+        parts.append(f"HEADER: {stat_info.display_abbrev}")
+        for i, row in enumerate(rows):
+            val = _format_rate(str(row[1])) if stat_info.is_rate else str(int(row[1]))
+            parts.append(f"ROW {i+1}. {row[0]}: {val}")
+        parts.append("[/LEADERBOARD]")
+
+        if stat_info.is_rate:
+            parts.append("\n_Min. 20 PA in split._")
+
+        return "\n".join(parts)
+    finally:
+        conn.close()
