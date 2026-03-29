@@ -216,20 +216,24 @@ Commentary and context go OUTSIDE the grid block.
 FOLLOWUP_CLASSIFY_PROMPT = """You classify follow-up questions in a baseball stats conversation.
 
 Given the prior conversation and a short follow-up, determine if the user wants:
-1. New data looked up — a different player, year, stat, split, or comparison. Rewrite as a complete standalone question.
+1. New data looked up — a different player, year, stat, split, or comparison. Rewrite as a COMPLETE, STANDALONE question that makes sense without any prior context.
 2. Analysis or interpretation of the prior answer — "is that good?", "how is that calculated?", "why?", etc.
 
-If the follow-up is already a complete standalone question, return it as-is under "data".
+CRITICAL: For "data" type, you MUST rewrite the follow-up into a full question. The rewritten question must be self-contained — it will be sent to a database query engine that has NO access to the conversation history. NEVER return the follow-up text as-is (e.g., never return "what about 2023?" — that means nothing without context). Always incorporate the subject/stat/context from the prior conversation into the rewritten question.
 
 Return ONLY valid JSON:
 - {"type": "data", "rewritten": "complete standalone question"}
 - {"type": "analytical"}
 
+Examples (prior question: "who had the most multi-hit games in 2025"):
+- "what about 2023?" → {"type": "data", "rewritten": "who had the most multi-hit games in 2023"}
+- "and strikeouts?" → {"type": "data", "rewritten": "who had the most strikeouts in 2025"}
+
 Examples (prior question: "Aaron Judge home runs 2024"):
 - "what about 2023?" → {"type": "data", "rewritten": "Aaron Judge home runs 2023"}
 - "and Soto?" → {"type": "data", "rewritten": "Juan Soto home runs 2024"}
 - "career?" → {"type": "data", "rewritten": "Aaron Judge career home runs"}
-- "vs lefties?" → {"type": "data", "rewritten": "Aaron Judge vs lefties 2024"}
+- "vs lefties?" → {"type": "data", "rewritten": "Aaron Judge home runs vs lefties 2024"}
 - "is that a record?" → {"type": "analytical"}
 - "how is OPS calculated?" → {"type": "analytical"}
 - "ERA leaders" → {"type": "data", "rewritten": "ERA leaders"}
