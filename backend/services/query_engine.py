@@ -151,6 +151,10 @@ _STOP_WORDS = {
     "ever", "just", "also", "over", "under", "least", "more", "most",
     "them", "their", "those", "these", "there",
     "game", "games",  # consumed by context
+    "played", "play", "playing",
+    "scored", "allowed", "given", "gave",
+    "during", "when", "where", "only",
+    "ago", "back", "since",
     "?", "!", ".",
 }
 
@@ -361,6 +365,10 @@ def decompose(question: str) -> QueryPlan:
         _add_consumed(plan, "starter starters starting reliever relievers relief closer closers bullpen")
         plan.is_pitching = True
 
+    # Bare "pitcher/pitching" context (without starter/reliever) still means pitching
+    if not plan.is_pitching and any(w in lower for w in ["pitcher", "pitchers", "pitching", "pitched"]):
+        plan.is_pitching = True
+
     plan.split_context = _detect_split_context(lower)
     if plan.split_context:
         for phrase in plan.split_context.consumed_phrases:
@@ -391,10 +399,17 @@ def decompose(question: str) -> QueryPlan:
         _add_consumed(plan, f"over older than {age_match.group(1)}")
 
     # --- Detect threshold ---
+    # Strip age numbers from text before extracting stat threshold
+    threshold_text = lower
+    if plan.age_max:
+        threshold_text = re.sub(rf'\b(?:under|younger than)\s+{plan.age_max}\b', '', threshold_text)
+    if plan.age_min:
+        threshold_text = re.sub(rf'\b(?:over|older than)\s+{plan.age_min}\b', '', threshold_text)
+
     if plan.stat:
-        threshold = _extract_threshold(lower, stat=plan.stat)
+        threshold = _extract_threshold(threshold_text, stat=plan.stat)
     elif plan.derived_stat:
-        threshold = _extract_threshold(lower)
+        threshold = _extract_threshold(threshold_text)
     else:
         threshold = None
 
@@ -417,9 +432,23 @@ def decompose(question: str) -> QueryPlan:
         if plan.threshold is None:
             plan.threshold = 1.0  # "how many players hit a HR" → threshold 1
 
-    # Under/below patterns
+    # Detect secondary filter: "with under/over N STAT" (filtered leaderboard)
+    secondary_match = re.search(
+        r'\bwith\s+(?:under|fewer than|less than|over|more than|at least)\s+(\d+\.?\d*)\+?\s+(\w+)',
+        lower
+    )
+    if secondary_match and plan.stat:
+        sec_threshold = float(secondary_match.group(1))
+        sec_stat_text = secondary_match.group(2)
+        sec_stat = match_stat(sec_stat_text)
+        if sec_stat and sec_stat.db_column != plan.stat.db_column:
+            sec_comp = "<=" if any(w in secondary_match.group(0) for w in ["under", "fewer", "less"]) else ">="
+            plan.extra_filters.append({"stat": sec_stat, "threshold": sec_threshold, "comparison": sec_comp})
+            _add_consumed(plan, secondary_match.group(0))
+
+    # Under/below patterns (for primary threshold only, if no secondary filter consumed it)
     under_patterns = ["under ", "fewer than ", "less than ", "below ", "no more than ", "or fewer", "or less"]
-    if any(p in lower for p in under_patterns):
+    if any(p in lower for p in under_patterns) and not plan.extra_filters:
         plan.comparison = "<="
         _add_consumed(plan, "under fewer than less than below no more than or fewer or less")
 
@@ -429,26 +458,27 @@ def decompose(question: str) -> QueryPlan:
         plan.query_type = "game_log_extreme"
         _add_consumed(plan, "in a game in one game in a single game single")
 
-    # Game-log counting: "most multi-hit games", "most 3-HR games", "most games with 3+ RBI"
+    # Game-log counting: "most 3-hit games", "most games with 3+ RBI", "most 10-K games"
+    # Pattern 1: "N-stat games" / "N+ stat games"
     multi_game_match = re.search(r'(\d+)[+-]?\s*(?:hit|hr|home run|homer|rbi|strikeout|k)\s*game', lower)
+    # Pattern 2: "games with N+ stat"
+    if not multi_game_match:
+        multi_game_match = re.search(r'games?\s+with\s+(\d+)\+?\s*(?:hit|hr|home run|homer|rbi|strikeout|k)', lower)
+
     if multi_game_match:
         plan.query_type = "game_log_count"
         n = int(multi_game_match.group(1))
-        # Figure out which game-log stat
-        after = lower[multi_game_match.start():]
-        if any(w in after for w in ["hit game", "hit games"]):
+        context = multi_game_match.group(0).lower()
+        if any(w in context for w in ["hit"]):
             plan.game_log_stat = "hits"
-            plan.game_log_threshold = n
-        elif any(w in after for w in ["hr game", "home run game", "homer game"]):
+        elif any(w in context for w in ["hr", "home run", "homer"]):
             plan.game_log_stat = "home_runs"
-            plan.game_log_threshold = n
-        elif any(w in after for w in ["rbi game"]):
+        elif "rbi" in context:
             plan.game_log_stat = "rbi"
-            plan.game_log_threshold = n
-        elif any(w in after for w in ["strikeout game", "k game"]):
+        elif any(w in context for w in ["strikeout", " k"]):
             plan.game_log_stat = "strikeouts"
-            plan.game_log_threshold = n
-        _add_consumed(plan, multi_game_match.group(0))
+        plan.game_log_threshold = n
+        _add_consumed(plan, multi_game_match.group(0).replace("+", ""))
 
     if "multi-hit" in lower or "multi hit" in lower:
         plan.query_type = "game_log_count"
@@ -626,6 +656,11 @@ def _build_filters(plan: QueryPlan, prefix: str) -> tuple[str, list]:
         clauses.append(f"({prefix}.season - CAST(SUBSTR(p.birthdate, 1, 4) AS INT)) > ?")
         params.append(plan.age_min)
         clauses.append("p.birthdate IS NOT NULL")
+
+    # Extra stat filters: "with under 10 HR", "with 30+ SB"
+    for ef in plan.extra_filters:
+        clauses.append(f"{prefix}.{ef['stat'].db_column} {ef['comparison']} ?")
+        params.append(ef['threshold'])
 
     return " AND ".join(clauses), params
 
