@@ -43,11 +43,11 @@
       "abbrev": "SLG", "name": "Slugging Percentage", "is_rate": true
     },
     "runs": {
-      "aliases": ["runs scored", "runs"],
+      "aliases": ["runs scored", "runs", "run"],
       "abbrev": "R", "name": "Runs", "is_rate": false
     },
     "hits": {
-      "aliases": ["hits", "h"],
+      "aliases": ["hits", "hit", "h"],
       "abbrev": "H", "name": "Hits", "is_rate": false
     },
     "doubles": {
@@ -59,7 +59,7 @@
       "abbrev": "3B", "name": "Triples", "is_rate": false
     },
     "games": {
-      "aliases": ["games played", "games"],
+      "aliases": ["games played", "games", "game"],
       "abbrev": "G", "name": "Games", "is_rate": false
     },
     "iso": {
@@ -123,15 +123,15 @@
       "abbrev": "ERA+", "name": "ERA+", "is_rate": true
     },
     "wins": {
-      "aliases": ["wins", "w"],
+      "aliases": ["wins", "win", "w"],
       "abbrev": "W", "name": "Wins", "is_rate": false
     },
     "losses": {
-      "aliases": ["losses"],
+      "aliases": ["losses", "loss"],
       "abbrev": "L", "name": "Losses", "is_rate": false
     },
     "saves": {
-      "aliases": ["saves", "sv"],
+      "aliases": ["saves", "save", "sv"],
       "abbrev": "SV", "name": "Saves", "is_rate": false
     },
     "innings_pitched": {
@@ -139,19 +139,19 @@
       "abbrev": "IP", "name": "Innings Pitched", "is_rate": false
     },
     "quality_starts": {
-      "aliases": ["quality starts", "qs"],
+      "aliases": ["quality starts", "quality start", "qs"],
       "abbrev": "QS", "name": "Quality Starts", "is_rate": false
     },
     "complete_games": {
-      "aliases": ["complete games", "cg"],
+      "aliases": ["complete games", "complete game", "cg"],
       "abbrev": "CG", "name": "Complete Games", "is_rate": false
     },
     "games_finished": {
-      "aliases": ["games finished", "gf"],
+      "aliases": ["games finished", "game finished", "gf"],
       "abbrev": "GF", "name": "Games Finished", "is_rate": false
     },
     "wild_pitches": {
-      "aliases": ["wild pitches", "wp"],
+      "aliases": ["wild pitches", "wild pitch", "wp"],
       "abbrev": "WP", "name": "Wild Pitches", "is_rate": false
     },
     "balks": {
