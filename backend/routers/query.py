@@ -14,6 +14,7 @@ SSE event format:
 import json
 import asyncio
 import logging
+from typing import Optional
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
