@@ -2306,9 +2306,21 @@ def parse_count_query(input_str: str) -> Optional[dict]:
     if not stat:
         return None
 
+    # Handle word numbers and implicit threshold
     threshold = _extract_threshold(lower, stat=stat)
     if threshold is None:
-        return None
+        # Check for word numbers: "at least one", "hit a home run"
+        _word_numbers = [
+            ("fifty", 50), ("forty", 40), ("thirty", 30), ("twenty", 20),
+            ("ten", 10), ("five", 5), ("four", 4), ("three", 3), ("two", 2), ("one", 1),
+        ]
+        for word, num in _word_numbers:
+            if re.search(rf'\b{word}\b', lower):
+                threshold = float(num)
+                break
+    if threshold is None:
+        # "how many players hit a home run" — implicit threshold of 1
+        threshold = 1.0
 
     pitching_context = any(w in lower for w in ["pitched", "pitching", "pitcher", "pitchers"])
     is_pitching = is_pitching_stat(stat) or pitching_context
