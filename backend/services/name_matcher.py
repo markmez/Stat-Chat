@@ -1630,6 +1630,22 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
         # Count / frequency queries
         "how many player", "how many pitcher", "how many batter",
         "how many times",
+        # Count/strike situational contexts (need count_splits tables)
+        "with 2 strikes", "with two strikes", "2-strike", "two-strike",
+        "with 0 strikes", "with 1 strike", "with one strike",
+        "0-2 count", "1-2 count", "2-2 count", "3-2 count",
+        "0-0 count", "1-0 count", "2-0 count", "3-0 count",
+        "full count", "ahead in the count", "behind in the count",
+        "hitter's count", "pitcher's count",
+        # Pitch type contexts (need pitch_type_splits tables)
+        "against fastball", "against slider", "against curve", "against changeup",
+        "on fastball", "on slider", "on curve", "on changeup",
+        "vs fastball", "vs slider", "vs curve", "vs changeup",
+        # RISP / base state
+        "with risp", "runners in scoring", "with runners on",
+        "bases loaded", "with men on", "bases empty",
+        # Day/night, home/away for leaderboards (per-player splits only)
+        "day game", "night game", "at home", "on the road",
         # Multi-game event counts
         "multi-hit", "multi hit", "multi-homer", "multi homer",
         "multi-hr", "multi hr", "multi home run",
