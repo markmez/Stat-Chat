@@ -8,11 +8,14 @@ Uses:
 - Streaming for the final answer so iOS gets a typewriter effect
 """
 
+import logging
 import os
 import re
 import json
 
 import anthropic
+
+logger = logging.getLogger("statchat.llm")
 
 from prompts import (
     ROUTING_PROMPT,
@@ -141,6 +144,7 @@ class LLMService:
     async def classify_followup(self, question: str, history: list[dict]) -> dict:
         """Classify a follow-up as 'data' or 'analytical' and rewrite data queries."""
         msgs = _build_messages(question, history)
+        logger.info("followup_messages history_len=%d question=%r", len(history), question)
         response = await self.client.messages.create(
             model=ROUTING_MODEL,
             max_tokens=256,
@@ -148,6 +152,7 @@ class LLMService:
             messages=msgs,
         )
         text = response.content[0].text.strip()
+        logger.info("followup_raw_response text=%r", text)
         try:
             result = json.loads(text)
             if result.get("type") == "data" and result.get("rewritten"):
