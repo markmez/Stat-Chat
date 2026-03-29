@@ -206,7 +206,9 @@ class QueryPlan:
 
     @property
     def is_valid(self) -> bool:
-        """A plan is valid if we have a stat and no unexplained words."""
+        """A plan is valid if we have a stat, no unexplained words, and it's a type we handle."""
+        if self.query_type in ("definition", "multi_threshold"):
+            return False  # Handled by specialized parsers
         return (self.stat is not None or self.derived_stat is not None) and len(self.unexplained_words) == 0
 
 
@@ -224,6 +226,36 @@ def decompose(question: str) -> QueryPlan:
     """Decompose a natural language query into a structured QueryPlan."""
     plan = QueryPlan()
     lower = question.strip().lower()
+
+    # --- Early detection: stat definitions ---
+    # "what is OPS", "explain BABIP", "define ERA" — not a DB query
+    definition_triggers = ["what is ", "what's ", "explain ", "define ", "what does ", "how is ", "how do you calculate"]
+    if any(lower.startswith(t) or t in lower for t in definition_triggers):
+        # Check if there's a stat keyword and no leaderboard/threshold trigger
+        has_leaderboard = any(t in lower for t in ["leaders", "leader", "most", "best", "top", "highest", "lowest"])
+        if not has_leaderboard:
+            plan.query_type = "definition"
+            return plan  # Let the old stat definition parser handle it
+
+    # --- Early detection: multi-threshold ---
+    # ".300 with 30 HR", "200 K and sub-3.00 ERA" — compound conditions
+    separators = [" with ", " and ", " while ", " plus "]
+    if any(s in lower for s in separators):
+        # Count how many stat keywords are in the query
+        from .name_matcher import _sorted_stat_aliases, contains_word
+        stat_count = 0
+        for alias in _sorted_stat_aliases:
+            if contains_word(alias, lower):
+                stat_count += 1
+                if stat_count >= 2:
+                    break
+        # Also count batting avg verb patterns as a stat (.300 batted/hit)
+        if re.search(r'(?:batted|hit|batting|hitting)\s+(?:over\s+|above\s+|at least\s+)?\.?\d', lower):
+            stat_count += 1
+        # If 2+ stats with separator, this is a multi-threshold — let old parser handle
+        if stat_count >= 2:
+            plan.query_type = "multi_threshold"
+            return plan
 
     # --- Detect league (modifies the text) ---
     league_result = detect_league(lower)
@@ -332,12 +364,14 @@ def decompose(question: str) -> QueryPlan:
         plan.scope = "career"
         _add_consumed(plan, "career")
 
-    season = detect_season(lower, default_to_most_recent=False)
-    if season:
-        plan.season = season
-        plan.scope = f"season_{season}"
-        _add_consumed(plan, str(season) + " last this year season")
-    elif plan.scope == "current_season":
+    # Only detect explicit season if since_year didn't already claim the year
+    if not plan.since_year:
+        season = detect_season(lower, default_to_most_recent=False)
+        if season:
+            plan.season = season
+            plan.scope = f"season_{season}"
+            _add_consumed(plan, str(season) + " last this year season")
+    if plan.scope == "current_season":
         # Default to current year for leaderboards, no default for all-time
         if plan.query_type in ("leaderboard", "team_ranking"):
             # Past tense → last year
@@ -422,8 +456,14 @@ def decompose(question: str) -> QueryPlan:
             plan.extra_filters.append({"stat": sec_stat, "threshold": sec_threshold, "comparison": sec_comp})
             _add_consumed(plan, secondary_match.group(0))
 
+    # --- Detect "top N" as limit, not threshold ---
+    top_match = re.search(r'\btop\s+(\d+)\b', lower)
+    if top_match:
+        plan.limit = max(1, min(int(top_match.group(1)), 50))
+        _add_consumed(plan, top_match.group(0))
+
     # --- Detect threshold ---
-    # Strip age and secondary filter numbers from text before extracting stat threshold
+    # Strip age, secondary filter, and "top N" from text before extracting stat threshold
     threshold_text = lower
     if plan.age_max:
         threshold_text = re.sub(rf'\b(?:under|younger than)\s+{plan.age_max}\b', '', threshold_text)
@@ -431,6 +471,8 @@ def decompose(question: str) -> QueryPlan:
         threshold_text = re.sub(rf'\b(?:over|older than)\s+{plan.age_min}\b', '', threshold_text)
     if secondary_match and plan.extra_filters:
         threshold_text = threshold_text.replace(secondary_match.group(0), "")
+    if top_match:
+        threshold_text = threshold_text.replace(top_match.group(0), "")
 
     if plan.stat:
         threshold = _extract_threshold(threshold_text, stat=plan.stat)
