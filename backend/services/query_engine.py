@@ -152,6 +152,13 @@ _STOP_WORDS = {
     "them", "their", "those", "these", "there",
     "game", "games",  # consumed by context
     "played", "play", "playing",
+    "hit", "hitting", "batted", "batting",
+    "won", "win", "winning",
+    "stole", "stolen", "stealing",
+    "threw", "thrown", "throwing",
+    "pitched", "pitching",
+    "drove", "driven",
+    "struck", "walked", "walking",
     "scored", "allowed", "given", "gave",
     "during", "when", "where", "only",
     "ago", "back", "since", "sub",
