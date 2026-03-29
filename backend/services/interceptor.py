@@ -229,8 +229,12 @@ def try_intercept(question: str):
         if response:
             logger.info("query_engine_handled question=%r type=%s", trimmed, plan.query_type)
             return response
-    elif plan.unexplained_words:
-        logger.info("query_engine_bail question=%r unexplained=%s", trimmed, plan.unexplained_words)
+    elif plan.unexplained_words and (plan.stat or plan.derived_stat):
+        # Query engine found a stat but couldn't fully understand the query.
+        # Skip old stat-query parsers (they'll give wrong answers too) and
+        # go straight to Haiku/Sonnet which can handle the full context.
+        logger.info("query_engine_bail question=%r unexplained=%s — skipping old parsers", trimmed, plan.unexplained_words)
+        return None
 
     # 14. Milestone — "how many times has someone hit 50 HR?"
     milestone = nm.parse_milestone(trimmed)
