@@ -469,13 +469,6 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
 
         if classification["type"] == "data":
             rewritten = classification.get("rewritten", question)
-            # Only use rewrite if it's actually different AND looks like a real question
-            # (not just the follow-up echoed back)
-            fragment_words = {"what about", "and ", "how about", "vs ", "career?", "vs lefties"}
-            rewrite_is_fragment = any(rewritten.lower().startswith(f) for f in fragment_words) and len(rewritten.split()) < 6
-            if rewrite_is_fragment:
-                logger.warning("followup_rewrite_fragment rewritten=%r — skipping", rewritten)
-                rewritten = question  # Force fall-through
             if rewritten != question:
                 rewritten_query = rewritten
                 logger.info("followup_rewritten original=%r rewritten=%r", question, rewritten)
