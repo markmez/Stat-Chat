@@ -686,6 +686,8 @@ def _detect_since_year(lower: str) -> Optional[int]:
     current_year = _current_calendar_year()
     if "this century" in lower or "21st century" in lower:
         return 2000
+    if "this decade" in lower:
+        return current_year - (current_year % 10)  # 2026 → 2020
     if "last decade" in lower or "past decade" in lower:
         return current_year - 10
     m = re.search(r'since\s+(\d{4})', lower)
@@ -1697,6 +1699,10 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
                 n = int(m.group(1))
                 if 1 < n <= 100:
                     since_year = current_year - n
+
+    # Also check for decade/century/N-year range patterns
+    if since_year is None:
+        since_year = _detect_since_year(lower)
 
     # Only reject player names if not in "since [player]" context
     if since_year is None:
