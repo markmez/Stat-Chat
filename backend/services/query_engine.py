@@ -314,7 +314,14 @@ def _parse_stat_condition(text: str) -> Optional[StatCondition]:
         if stat:
             threshold = _extract_threshold(lower, stat=stat)
             if threshold is not None:
-                return StatCondition(stat, None, threshold, comparison, text)
+                # Consumed: the verb, number, and stat keyword
+                consumed = verb_number.group(0)
+                if stat_after:
+                    for alias in sorted(stat_alias_map.keys(), key=len, reverse=True):
+                        if alias in after_number:
+                            consumed += " " + alias
+                            break
+                return StatCondition(stat, None, threshold, comparison, consumed)
 
     # --- Step 2: Check for "sub + number" without a verb ---
     # "sub-.250 AVG", "sub 3.00 ERA", "sub .250" (infer batting avg)
@@ -348,12 +355,22 @@ def _parse_stat_condition(text: str) -> Optional[StatCondition]:
     if not stat:
         return None
 
-    threshold = _extract_threshold(lower, stat=stat)
-    if threshold is None:
-        # No threshold found — this is a stat without a condition (rank stat)
-        return StatCondition(stat, None, None, ">=", text)
+    # Build consumed text from just the matched stat alias + threshold
+    consumed_parts = []
+    for alias in sorted(stat_alias_map.keys(), key=len, reverse=True):
+        if alias in lower:
+            consumed_parts.append(alias)
+            break
 
-    return StatCondition(stat, None, threshold, comparison, text)
+    threshold = _extract_threshold(lower, stat=stat)
+    if threshold is not None:
+        consumed_parts.append(str(threshold))
+    consumed = " ".join(consumed_parts)
+
+    if threshold is None:
+        return StatCondition(stat, None, None, ">=", consumed)
+
+    return StatCondition(stat, None, threshold, comparison, consumed)
 
 
 # ---------------------------------------------------------------------------
@@ -518,7 +535,16 @@ def decompose(question: str) -> QueryPlan:
     else:
         # No separators — try _parse_stat_condition on the whole query first.
         # This handles "sub .250 AVG", "batted .300", "stole 50 bases" etc.
-        whole_cond = _parse_stat_condition(lower)
+        # Strip age patterns first so "under 25" isn't treated as a stat threshold
+        stat_text = lower
+        age_pre = re.search(r'\b(?:under|younger than|over|older than)\s+(\d+)(?:\s+(?:years?\s+old|year-old))?\b', stat_text)
+        if age_pre:
+            # Check if followed by a stat keyword — if so, it's a stat filter, not age
+            after = stat_text[age_pre.end():].strip()
+            following_stat = match_stat(after.split()[0] if after.split() else "")
+            if not following_stat:
+                stat_text = stat_text[:age_pre.start()] + stat_text[age_pre.end():]
+        whole_cond = _parse_stat_condition(stat_text)
         if whole_cond and (whole_cond.stat or whole_cond.derived):
             plan.stat = whole_cond.stat
             plan.derived_stat = whole_cond.derived
