@@ -388,23 +388,49 @@ def decompose(question: str) -> QueryPlan:
             _add_consumed(plan, pattern)
             break
 
-    # Age filter
-    age_match = re.search(r'\b(?:under|younger than)\s+(\d+)', lower)
+    # Age filter — only match "under/over N" when it's about age, not stats.
+    # "player under 25" = age. "with under 10 HR" = stat filter (not age).
+    # Heuristic: age if followed by nothing or age-like words, not if followed by a stat keyword.
+    age_match = re.search(r'\b(?:under|younger than)\s+(\d+)(?:\s+(?:years?\s+old|year-old|y/?o))?\b', lower)
     if age_match:
-        plan.age_max = int(age_match.group(1))
-        _add_consumed(plan, f"under younger than {age_match.group(1)}")
-    age_match = re.search(r'\b(?:over|older than)\s+(\d+)', lower)
+        # Check if this "under N" is followed by a stat keyword → not age
+        after = lower[age_match.end():].strip()
+        following_stat = match_stat(after.split()[0] if after.split() else "")
+        if not following_stat:
+            plan.age_max = int(age_match.group(1))
+            _add_consumed(plan, f"under younger than {age_match.group(1)} years old year-old")
+    age_match = re.search(r'\b(?:over|older than)\s+(\d+)(?:\s+(?:years?\s+old|year-old|y/?o))?\b', lower)
     if age_match:
-        plan.age_min = int(age_match.group(1))
-        _add_consumed(plan, f"over older than {age_match.group(1)}")
+        after = lower[age_match.end():].strip()
+        following_stat = match_stat(after.split()[0] if after.split() else "")
+        if not following_stat:
+            plan.age_min = int(age_match.group(1))
+            _add_consumed(plan, f"over older than {age_match.group(1)} years old year-old")
+
+    # --- Detect secondary stat filter BEFORE threshold ---
+    # "with under/over N STAT" = filtered leaderboard, not primary threshold
+    secondary_match = re.search(
+        r'\bwith\s+(?:under|fewer than|less than|over|more than|at least)\s+(\d+\.?\d*)\+?\s+(\w+)',
+        lower
+    )
+    if secondary_match and plan.stat:
+        sec_threshold = float(secondary_match.group(1))
+        sec_stat_text = secondary_match.group(2)
+        sec_stat = match_stat(sec_stat_text)
+        if sec_stat and sec_stat.db_column != plan.stat.db_column:
+            sec_comp = "<=" if any(w in secondary_match.group(0) for w in ["under", "fewer", "less"]) else ">="
+            plan.extra_filters.append({"stat": sec_stat, "threshold": sec_threshold, "comparison": sec_comp})
+            _add_consumed(plan, secondary_match.group(0))
 
     # --- Detect threshold ---
-    # Strip age numbers from text before extracting stat threshold
+    # Strip age and secondary filter numbers from text before extracting stat threshold
     threshold_text = lower
     if plan.age_max:
         threshold_text = re.sub(rf'\b(?:under|younger than)\s+{plan.age_max}\b', '', threshold_text)
     if plan.age_min:
         threshold_text = re.sub(rf'\b(?:over|older than)\s+{plan.age_min}\b', '', threshold_text)
+    if secondary_match and plan.extra_filters:
+        threshold_text = threshold_text.replace(secondary_match.group(0), "")
 
     if plan.stat:
         threshold = _extract_threshold(threshold_text, stat=plan.stat)
@@ -431,20 +457,6 @@ def decompose(question: str) -> QueryPlan:
                 break
         if plan.threshold is None:
             plan.threshold = 1.0  # "how many players hit a HR" → threshold 1
-
-    # Detect secondary filter: "with under/over N STAT" (filtered leaderboard)
-    secondary_match = re.search(
-        r'\bwith\s+(?:under|fewer than|less than|over|more than|at least)\s+(\d+\.?\d*)\+?\s+(\w+)',
-        lower
-    )
-    if secondary_match and plan.stat:
-        sec_threshold = float(secondary_match.group(1))
-        sec_stat_text = secondary_match.group(2)
-        sec_stat = match_stat(sec_stat_text)
-        if sec_stat and sec_stat.db_column != plan.stat.db_column:
-            sec_comp = "<=" if any(w in secondary_match.group(0) for w in ["under", "fewer", "less"]) else ">="
-            plan.extra_filters.append({"stat": sec_stat, "threshold": sec_threshold, "comparison": sec_comp})
-            _add_consumed(plan, secondary_match.group(0))
 
     # Under/below patterns (for primary threshold only, if no secondary filter consumed it)
     under_patterns = ["under ", "fewer than ", "less than ", "below ", "no more than ", "or fewer", "or less"]
