@@ -234,7 +234,7 @@ def try_intercept(question: str):
         is_pitching = nm.is_pitching_stat(sup["stat"])
         response = rb.build_superlative(
             sup["stat"], sup["threshold"], sup["superlative"],
-            is_pitching, sup.get("league"))
+            is_pitching, sup.get("league"), since_year=sup.get("since_year"))
         if response:
             return response
 

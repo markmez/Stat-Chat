@@ -3305,7 +3305,8 @@ def build_filtered_leaderboard(rank_stat: StatInfo, filter_stat: StatInfo,
 
 def build_superlative(stat_info: StatInfo, threshold: float, superlative: str,
                       is_pitching: bool = False,
-                      league: Optional[str] = None) -> Optional[str]:
+                      league: Optional[str] = None,
+                      since_year: Optional[int] = None) -> Optional[str]:
     """
     Superlative+threshold: 'youngest to hit 50 HR', 'last player to bat .400'.
 
@@ -3315,6 +3316,8 @@ def build_superlative(stat_info: StatInfo, threshold: float, superlative: str,
     try:
         table = "season_pitching_stats" if is_pitching else "season_batting_stats"
         prefix = "sp" if is_pitching else "s"
+        since_filter = f" AND {prefix}.season >= {since_year}" if since_year else ""
+        since_label = f" Since {since_year}" if since_year else ""
 
         if superlative in ("youngest", "oldest"):
             age_select = f", {prefix}.season - CAST(SUBSTR(p.birthdate, 1, 4) AS INT) AS age_at_season"
@@ -3334,7 +3337,7 @@ def build_superlative(stat_info: StatInfo, threshold: float, superlative: str,
             f"SELECT p.name, {prefix}.{stat_info.db_column}, {prefix}.season{age_select} "
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
-            f"WHERE {prefix}.{stat_info.db_column} >= ?{birthdate_filter}{bad_era}{league_filter} "
+            f"WHERE {prefix}.{stat_info.db_column} >= ?{birthdate_filter}{bad_era}{league_filter}{since_filter} "
             f"ORDER BY {order_by} LIMIT 10",
             (threshold,),
         )
@@ -3351,7 +3354,7 @@ def build_superlative(stat_info: StatInfo, threshold: float, superlative: str,
         }
         sup_label = superlative_labels.get(superlative, superlative.title())
         who = "Pitchers" if is_pitching else "Players"
-        title = f"{sup_label} {who} with {threshold_display}+ {stat_info.display_name}{league_label}"
+        title = f"{sup_label} {who} with {threshold_display}+ {stat_info.display_name}{since_label}{league_label}"
 
         has_age = superlative in ("youngest", "oldest")
         parts = [f"**{title}**\n"]

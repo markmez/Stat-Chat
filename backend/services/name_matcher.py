@@ -628,6 +628,12 @@ def match_stat(input_str: str) -> Optional[StatInfo]:
         if wins_stat:
             return wins_stat
 
+    # "hit N HR/home runs" → home runs (not hits)
+    if re.search(r'\bhit\b', lower) and re.search(r'\b(?:hr|home run|homer)', lower):
+        hr_stat = stat_alias_map.get("home runs") or stat_alias_map.get("hr")
+        if hr_stat:
+            return hr_stat
+
     # "walked" → walks (BB)
     if re.search(r'\bwalked\b', lower):
         walks_stat = stat_alias_map.get("walks") or stat_alias_map.get("bb")
@@ -1953,7 +1959,7 @@ def parse_milestone(input_str: str) -> Optional[dict]:
     if len(non_year_nums) > 1:
         return None
 
-    since = detect_season(lower, default_to_most_recent=False)
+    since = _detect_since_year(lower) or detect_season(lower, default_to_most_recent=False)
     return {
         "stat": stat, "threshold": threshold, "since": since,
         "league": league_result[0] if league_result else None,
@@ -2051,9 +2057,12 @@ def parse_superlative(input_str: str) -> Optional[dict]:
     if threshold is None:
         return None
 
+    since_year = _detect_since_year(lower)
+
     return {
         "stat": stat, "threshold": threshold, "superlative": superlative,
         "league": league_result[0] if league_result else None,
+        "since_year": since_year,
     }
 
 
