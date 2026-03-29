@@ -4463,8 +4463,10 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
             )
             league_label = f" ({league})"
 
-        # For rate stats, recompute from aggregated counting stats across filter values
-        if stat_info.is_rate and col in ("batting_avg", "obp", "slg", "ops", "iso", "babip"):
+        # For rate stats: if multiple filter values, recompute from components.
+        # If single filter value, use the precomputed column directly.
+        needs_aggregation = len(filter_values) > 1
+        if needs_aggregation and stat_info.is_rate and col in ("batting_avg", "obp", "slg", "ops", "iso", "babip"):
             rate_formulas = {
                 "batting_avg": "CAST(SUM(t.hits) AS REAL) / NULLIF(SUM(t.at_bats), 0)",
                 "obp": "CAST(SUM(t.hits) + SUM(t.walks) + SUM(COALESCE(t.hit_by_pitch, 0)) AS REAL) / NULLIF(SUM(t.plate_appearances), 0)",
@@ -4491,7 +4493,18 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
                 f"ORDER BY stat_val DESC LIMIT ?",
                 (season, *filter_values, limit),
             )
+        elif not needs_aggregation:
+            # Single filter value — use precomputed column directly
+            cur.execute(
+                f"SELECT p.name, t.{col} AS stat_val "
+                f"FROM {table} t "
+                f"JOIN players p ON t.player_id = p.player_id "
+                f"WHERE t.season = ? {split_filter}{pa_filter}{league_filter} "
+                f"ORDER BY stat_val DESC LIMIT ?",
+                (season, *filter_values, limit),
+            )
         else:
+            # Counting stat — sum across filter values
             cur.execute(
                 f"SELECT p.name, SUM(t.{col}) AS stat_val "
                 f"FROM {table} t "

@@ -218,6 +218,20 @@ def try_intercept(question: str):
         if response:
             return response
 
+    # 13b. Query Engine — structured decomposer for stat queries
+    # Handles leaderboards, thresholds, counts, superlatives, game-log queries,
+    # split leaderboards, team rankings, and any combination of filters.
+    # Only answers when it fully understands the query (no unexplained words).
+    from services.query_engine import decompose, execute as qe_execute
+    plan = decompose(trimmed)
+    if plan.is_valid:
+        response = qe_execute(plan)
+        if response:
+            logger.info("query_engine_handled question=%r type=%s", trimmed, plan.query_type)
+            return response
+    elif plan.unexplained_words:
+        logger.info("query_engine_bail question=%r unexplained=%s", trimmed, plan.unexplained_words)
+
     # 14. Milestone — "how many times has someone hit 50 HR?"
     milestone = nm.parse_milestone(trimmed)
     if milestone:
