@@ -636,16 +636,15 @@ def detect_current_form(conn, season_filter=None):
         if len(games) < 1:
             continue
 
-        # Early season: if player has fewer than CURRENT_FORM_MIN_GAMES,
-        # use all their games as current form (enables "at this pace" projections
-        # from day 1).
-        if len(games) < CURRENT_FORM_MIN_GAMES:
+        # Early season: use ALL games as current form (no optimization).
+        # This gives "here's how the player is doing so far" rather than
+        # cherry-picking the best stretch.
+        if len(games) < CURRENT_FORM_EARLY_THRESHOLD:
             form_start_idx = 0
             best_start_idx = 0
         else:
-            # Find the tail slice with the highest OPS.
-            # Use shorter minimum slice early season (3 games), full minimum (10) after 14 games.
-            min_slice = CURRENT_FORM_MIN_SLICE if len(games) < CURRENT_FORM_EARLY_THRESHOLD else CURRENT_FORM_FULL_SLICE
+            # Full season: find the tail slice with the highest OPS.
+            min_slice = CURRENT_FORM_FULL_SLICE
             best_start_idx = None
             best_ops = -1.0
             max_slice = min(CURRENT_FORM_MAX_SLICE, len(games))
