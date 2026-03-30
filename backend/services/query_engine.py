@@ -1025,10 +1025,16 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     pa_label = ""  # Will be set by _pa_filter if applicable
 
     # Determine sort
-    if plan.sort_asc:
-        order = "ASC"
-    elif plan.stat and plan.stat.db_column in _LOWER_IS_BETTER:
-        order = "ASC"
+    # "worst" (sort_asc=True) inverts the natural direction:
+    # - For normal stats: worst = ASC (lowest values)
+    # - For lower-is-better stats (ERA, WHIP): worst = DESC (highest values)
+    is_lower_better = plan.stat and plan.stat.db_column in _LOWER_IS_BETTER
+    if plan.sort_asc and is_lower_better:
+        order = "DESC"  # worst ERA = highest
+    elif plan.sort_asc:
+        order = "ASC"   # worst OPS = lowest
+    elif is_lower_better:
+        order = "ASC"   # best ERA = lowest
     else:
         order = "DESC"
 
@@ -1079,18 +1085,32 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             where_parts.append(pa[5:])  # strip " AND "
 
         where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
-
-        cur = conn.cursor()
-        cur.execute(
-            f"SELECT p.name, {stat_expr} AS stat_val, {prefix}.season "
-            f"FROM {table} {prefix} "
-            f"JOIN players p ON {prefix}.player_id = p.player_id "
-            f"{where} "
-            f"ORDER BY stat_val {order} LIMIT ?",
-            tuple(query_params + [plan.limit]),
-        )
-        rows = cur.fetchall()
         scope_label = f"Since {plan.since_year}" if plan.since_year else "All-Time"
+
+        # For counting stats with "since", aggregate across seasons per player
+        if plan.since_year and not is_rate:
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT p.name, SUM({prefix}.{plan.stat.db_column}) AS stat_val "
+                f"FROM {table} {prefix} "
+                f"JOIN players p ON {prefix}.player_id = p.player_id "
+                f"{where} "
+                f"GROUP BY p.player_id "
+                f"ORDER BY stat_val {order} LIMIT ?",
+                tuple(query_params + [plan.limit]),
+            )
+        else:
+            # Rate stats or all-time: show individual seasons
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT p.name, {stat_expr} AS stat_val, {prefix}.season "
+                f"FROM {table} {prefix} "
+                f"JOIN players p ON {prefix}.player_id = p.player_id "
+                f"{where} "
+                f"ORDER BY stat_val {order} LIMIT ?",
+                tuple(query_params + [plan.limit]),
+            )
+        rows = cur.fetchall()
 
     elif plan.scope == "career":
         # Career needs GROUP BY with aggregate formulas for rate stats
