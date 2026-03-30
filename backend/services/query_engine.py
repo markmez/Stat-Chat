@@ -990,9 +990,14 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
             cur.execute(f"SELECT MAX(games) FROM season_pitching_stats WHERE season = ?", (season,))
             r = cur.fetchone()
             max_games = int(r[0]) if r and r[0] else 162
-            ip_min = max(1, int(486 * max_games / 162))
+            if plan.pitcher_role == "reliever":
+                # Relievers: ~1 IP per game, prorate from 60 IP (180 ip_outs) full season
+                ip_min = max(1, int(180 * max_games / 162))
+            else:
+                # Starters: prorate from 162 IP (486 ip_outs) full season
+                ip_min = max(1, int(486 * max_games / 162))
         else:
-            ip_min = 486
+            ip_min = 180 if plan.pitcher_role == "reliever" else 486
         ip_display = f"{ip_min // 3}.{ip_min % 3}"
         return f" AND {prefix}.ip_outs >= {ip_min}", f"Min. {ip_display} IP."
     else:
