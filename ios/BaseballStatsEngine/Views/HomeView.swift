@@ -123,15 +123,24 @@ struct HomeView: View {
 
                     TextField("", text: $questionText, prompt:
                         Text("Search by name or ask any question")
-                            .foregroundStyle(Color(uiColor: .placeholderText))
+                            .foregroundStyle(Color(uiColor: .placeholderText)),
+                        axis: .vertical
                     )
                     .font(.system(.body, design: .rounded))
                     .foregroundStyle(.primary)
+                    .lineLimit(1...3)
                     .focused($isInputFocused)
                     .autocorrectionDisabled(true)
                     .textInputAutocapitalization(.never)
                     .submitLabel(.search)
                     .onSubmit { submitQuestion() }
+                    .onChange(of: questionText) { _, newValue in
+                        // Strip newlines — enter should submit, not add lines
+                        if newValue.contains("\n") {
+                            questionText = newValue.replacingOccurrences(of: "\n", with: "")
+                            submitQuestion()
+                        }
+                    }
 
                     if !questionText.isEmpty {
                         Button {
