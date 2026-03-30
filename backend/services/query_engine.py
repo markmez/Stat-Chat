@@ -1063,26 +1063,72 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         scope_label = f"Since {plan.since_year}" if plan.since_year else "All-Time"
 
     elif plan.scope == "career":
-        # Career needs GROUP BY
-        if is_rate:
-            return None  # Career rate stats need weighted averaging — complex
-        pa = ""
+        # Career needs GROUP BY with aggregate formulas for rate stats
         where_parts = []
         query_params = list(params)
         if filters_str:
             where_parts.append(filters_str)
         where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
-        cur = conn.cursor()
-        cur.execute(
-            f"SELECT p.name, SUM({stat_expr.replace(f'{prefix}.', '')}) AS stat_val "
-            f"FROM {table} {prefix} "
-            f"JOIN players p ON {prefix}.player_id = p.player_id "
-            f"{where} "
-            f"GROUP BY p.player_id "
-            f"ORDER BY stat_val {order} LIMIT ?",
-            tuple(query_params + [plan.limit]),
-        )
+        if is_rate:
+            # Career rate stat formulas
+            _career_rate_formulas = {
+                "batting_avg": ("CAST(SUM({p}.hits) AS REAL) / NULLIF(SUM({p}.at_bats), 0)",
+                                "HAVING SUM({p}.at_bats) >= 5000"),
+                "obp": ("CAST(SUM({p}.hits) + SUM({p}.walks) + SUM(COALESCE({p}.hit_by_pitch, 0)) AS REAL) / NULLIF(SUM({p}.plate_appearances), 0)",
+                        "HAVING SUM({p}.plate_appearances) >= 5000"),
+                "slg": ("CAST((SUM({p}.hits) - SUM({p}.doubles) - SUM({p}.triples) - SUM({p}.home_runs)) + 2*SUM({p}.doubles) + 3*SUM({p}.triples) + 4*SUM({p}.home_runs) AS REAL) / NULLIF(SUM({p}.at_bats), 0)",
+                        "HAVING SUM({p}.at_bats) >= 5000"),
+                "ops": ("(CAST(SUM({p}.hits) + SUM({p}.walks) + SUM(COALESCE({p}.hit_by_pitch, 0)) AS REAL) / NULLIF(SUM({p}.plate_appearances), 0)) + "
+                        "(CAST((SUM({p}.hits) - SUM({p}.doubles) - SUM({p}.triples) - SUM({p}.home_runs)) + 2*SUM({p}.doubles) + 3*SUM({p}.triples) + 4*SUM({p}.home_runs) AS REAL) / NULLIF(SUM({p}.at_bats), 0))",
+                        "HAVING SUM({p}.plate_appearances) >= 5000"),
+                "iso": ("CAST(SUM({p}.doubles) + 2*SUM({p}.triples) + 3*SUM({p}.home_runs) AS REAL) / NULLIF(SUM({p}.at_bats), 0)",
+                        "HAVING SUM({p}.at_bats) >= 5000"),
+                "babip": ("CAST(SUM({p}.hits) - SUM({p}.home_runs) AS REAL) / NULLIF(SUM({p}.at_bats) - SUM({p}.strikeouts) - SUM({p}.home_runs) + SUM(COALESCE({p}.sacrifice_flies, 0)), 0)",
+                          "HAVING SUM({p}.at_bats) >= 5000"),
+                # Pitching rate stats
+                "era": ("9.0 * SUM({p}.earned_runs) / NULLIF(SUM({p}.ip_outs) / 3.0, 0)",
+                        "HAVING SUM({p}.ip_outs) >= 3000"),
+                "whip": ("CAST(SUM({p}.hits) + SUM({p}.walks) AS REAL) / NULLIF(SUM({p}.ip_outs) / 3.0, 0)",
+                         "HAVING SUM({p}.ip_outs) >= 3000"),
+                "k_per_9": ("9.0 * SUM({p}.strikeouts) / NULLIF(SUM({p}.ip_outs) / 3.0, 0)",
+                            "HAVING SUM({p}.ip_outs) >= 3000"),
+                "bb_per_9": ("9.0 * SUM({p}.walks) / NULLIF(SUM({p}.ip_outs) / 3.0, 0)",
+                             "HAVING SUM({p}.ip_outs) >= 3000"),
+                "k_per_bb": ("CAST(SUM({p}.strikeouts) AS REAL) / NULLIF(SUM({p}.walks), 0)",
+                             "HAVING SUM({p}.ip_outs) >= 3000"),
+            }
+            stat_col = plan.stat.db_column if plan.stat else ""
+            if stat_col not in _career_rate_formulas:
+                return None  # Can't compute this career rate stat
+
+            formula_template, having = _career_rate_formulas[stat_col]
+            formula = formula_template.format(p=prefix)
+            having = having.format(p=prefix)
+
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT p.name, {formula} AS stat_val "
+                f"FROM {table} {prefix} "
+                f"JOIN players p ON {prefix}.player_id = p.player_id "
+                f"{where} "
+                f"GROUP BY p.player_id "
+                f"{having} "
+                f"ORDER BY stat_val {order} LIMIT ?",
+                tuple(query_params + [plan.limit]),
+            )
+        else:
+            # Career counting stat — simple SUM
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT p.name, SUM({prefix}.{plan.stat.db_column}) AS stat_val "
+                f"FROM {table} {prefix} "
+                f"JOIN players p ON {prefix}.player_id = p.player_id "
+                f"{where} "
+                f"GROUP BY p.player_id "
+                f"ORDER BY stat_val {order} LIMIT ?",
+                tuple(query_params + [plan.limit]),
+            )
         rows = cur.fetchall()
         scope_label = "Career"
     else:
@@ -1120,8 +1166,11 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             parts.append(f"ROW {i+1}. {row[0]}: {val}")
     parts.append("[/LEADERBOARD]")
 
-    if is_rate and pa:
-        parts.append(f"\n_Min. qualified._")
+    if is_rate:
+        if plan.scope == "career":
+            parts.append(f"\n_Min. 5,000 AB (batting) / 1,000 IP (pitching)._")
+        else:
+            parts.append(f"\n_Min. qualified._")
 
     return "\n".join(parts)
 
