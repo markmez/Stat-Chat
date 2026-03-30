@@ -544,6 +544,9 @@ def decompose(question: str) -> QueryPlan:
         # This handles "sub .250 AVG", "batted .300", "stole 50 bases" etc.
         # Strip age patterns first so "under 25" isn't treated as a stat threshold
         stat_text = lower
+        # Strip game-context phrases so "game" doesn't match as a stat
+        for phrase in ["in a game", "in one game", "in a single game"]:
+            stat_text = stat_text.replace(phrase, " ")
         age_pre = re.search(r'\b(?:under|younger than|over|older than)\s+(\d+)(?:\s+(?:years?\s+old|year-old))?\b', stat_text)
         if age_pre:
             # Check if followed by a stat keyword — if so, it's a stat filter, not age
