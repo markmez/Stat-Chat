@@ -4451,7 +4451,12 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
 
         pa_filter = ""
         if stat_info.is_rate:
-            pa_filter = " AND t.plate_appearances >= 20"
+            # Prorate split PA minimum based on season progress
+            cur.execute("SELECT MAX(games) FROM season_batting_stats WHERE season = ?", (season,))
+            r = cur.fetchone()
+            max_games = int(r[0]) if r and r[0] else 162
+            split_pa_min = max(1, int(20 * max_games / 162))
+            pa_filter = f" AND t.plate_appearances >= {split_pa_min}"
 
         league_filter = ""
         league_label = ""
