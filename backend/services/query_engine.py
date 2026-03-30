@@ -1219,17 +1219,21 @@ def _build_suggestions(plan: QueryPlan, stat_name: str, scope_label: str) -> lis
     current_year = datetime.now().year
     stat_lower = stat_name.lower()
 
-    # Suggest other time scopes
+    # Suggest other time scopes — always explicit about the year
+    last_year = current_year - 1
     if plan.scope.startswith("season_"):
         yr = plan.season or current_year
         if yr == current_year:
-            pills.append(f"\n[SUGGEST]{stat_lower} leaders last year[/SUGGEST]")
+            pills.append(f"\n[SUGGEST]{last_year} {stat_lower} leaders[/SUGGEST]")
         else:
-            pills.append(f"\n[SUGGEST]{stat_lower} leaders {current_year}[/SUGGEST]")
+            pills.append(f"\n[SUGGEST]{current_year} {stat_lower} leaders[/SUGGEST]")
         pills.append(f"[SUGGEST]career {stat_lower} leaders[/SUGGEST]")
     elif plan.scope == "career":
-        pills.append(f"\n[SUGGEST]{stat_lower} leaders[/SUGGEST]")
+        pills.append(f"\n[SUGGEST]{current_year} {stat_lower} leaders[/SUGGEST]")
         pills.append(f"[SUGGEST]all-time single season {stat_lower} leaders[/SUGGEST]")
+    elif plan.scope == "all_time" or plan.scope.startswith("since_"):
+        pills.append(f"\n[SUGGEST]{current_year} {stat_lower} leaders[/SUGGEST]")
+        pills.append(f"[SUGGEST]career {stat_lower} leaders[/SUGGEST]")
 
     # For batting stats, suggest pitching equivalent and vice versa
     if not plan.is_pitching and plan.stat and plan.stat.db_column == "strikeouts":
