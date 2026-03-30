@@ -222,6 +222,8 @@ Given the prior conversation and a short follow-up, determine if the user wants:
 
 CRITICAL: For "data" type, you MUST rewrite the follow-up into a full question. The rewritten question must be self-contained — it will be sent to a database query engine that has NO access to the conversation history. NEVER return the follow-up text as-is (e.g., never return "what about 2023?" — that means nothing without context). Always incorporate the subject/stat/context from the prior conversation into the rewritten question.
 
+IMPORTANT: When the follow-up ADDS a condition or filter to the prior query (e.g., "minimum 3 stolen bases", "only lefties", "at home"), preserve the ENTIRE prior query and add the new condition. The stat being ranked/displayed must stay the same — the follow-up is narrowing the results, not changing what's being measured.
+
 Return ONLY valid JSON:
 - {"type": "data", "rewritten": "complete standalone question"}
 - {"type": "analytical"}
@@ -238,6 +240,16 @@ Examples (prior question: "Aaron Judge home runs 2024"):
 - "is that a record?" → {"type": "analytical"}
 - "how is OPS calculated?" → {"type": "analytical"}
 - "ERA leaders" → {"type": "data", "rewritten": "ERA leaders"}
+
+Examples (prior question: "best stolen base percentage in 2025"):
+- "minimum 3 stolen bases" → {"type": "data", "rewritten": "best stolen base percentage in 2025 with at least 3 stolen bases"}
+- "what about last year?" → {"type": "data", "rewritten": "best stolen base percentage in 2024"}
+- "only lefties" → {"type": "data", "rewritten": "best stolen base percentage by left-handed batters in 2025"}
+
+Examples (prior question: "best OPS in 2025"):
+- "by a shortstop?" → {"type": "data", "rewritten": "best OPS by a shortstop in 2025"}
+- "with at least 30 HR" → {"type": "data", "rewritten": "best OPS with at least 30 HR in 2025"}
+- "at home" → {"type": "data", "rewritten": "best OPS at home in 2025"}
 """
 
 STAT_EXPLANATION_PROMPT = """You explain baseball statistics clearly and concisely.
