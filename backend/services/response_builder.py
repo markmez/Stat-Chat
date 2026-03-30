@@ -587,6 +587,7 @@ def _fetch_career_row(conn, name):
         "FROM season_batting_stats s "
         "JOIN players p ON s.player_id = p.player_id "
         "WHERE p.name = ? "
+        "GROUP BY p.player_id "
         "HAVING COUNT(DISTINCT s.season) > 1",
         (_sanitize(name),),
     )
@@ -751,6 +752,7 @@ def _fetch_pitching_career_row(conn, name):
         "FROM season_pitching_stats sp "
         "JOIN players p ON sp.player_id = p.player_id "
         "WHERE p.name = ? "
+        "GROUP BY p.player_id "
         "HAVING COUNT(DISTINCT sp.season) > 1",
         (_sanitize(name),),
     )

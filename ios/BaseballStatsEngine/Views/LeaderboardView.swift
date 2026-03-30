@@ -47,9 +47,9 @@ struct LeaderboardView: View {
     private var columnWidths: [CGFloat] {
         grid.headers.enumerated().map { idx, header in
             let headerLower = header.lowercased()
-            // Date columns need more space
+            // Date columns need more space ("Sept 27" in monospace)
             if headerLower == "date" {
-                return CGFloat(52)
+                return CGFloat(62)
             }
             // Opponent / team columns
             if headerLower == "opp" || headerLower == "team" {

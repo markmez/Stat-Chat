@@ -776,14 +776,14 @@ def decompose(question: str) -> QueryPlan:
         plan.query_type = "game_log_count"
         n = int(multi_game_match.group(1))
         context = multi_game_match.group(0).lower()
-        if any(w in context for w in ["hit"]):
-            plan.game_log_stat = "hits"
-        elif any(w in context for w in ["hr", "home run", "homer"]):
+        if any(w in context for w in ["hr", "home run", "homer"]):
             plan.game_log_stat = "home_runs"
         elif "rbi" in context:
             plan.game_log_stat = "rbi"
-        elif any(w in context for w in ["strikeout", " k"]):
+        elif any(w in context for w in ["strikeout", "k"]):
             plan.game_log_stat = "strikeouts"
+        elif "hit" in context:
+            plan.game_log_stat = "hits"
         plan.game_log_threshold = n
         _add_consumed(plan, multi_game_match.group(0).replace("+", ""))
 
