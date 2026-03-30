@@ -1089,7 +1089,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         return None
 
     if not rows:
-        return f"No {name} leaders found."
+        return None  # Fall through to Haiku/Sonnet
 
     # Format
     title_prefix = f"{direction_label}{age_label}{bats_label}{position_label}{rookie_label}{role_label}"
@@ -1179,7 +1179,7 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
     op = "with" if plan.comparison == ">=" else "with no more than"
 
     if not rows:
-        return f"No {rookie_label.lower()} {op} {threshold_display} {abbrev} in {scope_label}."
+        return None
 
     title = f"**{rookie_label} {op} {threshold_display}+ {name} ({scope_label})**"
     count = len(rows)
@@ -1277,7 +1277,7 @@ def _execute_superlative(conn, plan: QueryPlan) -> Optional[str]:
     )
     rows = cur.fetchall()
     if not rows:
-        return f"No player has reached {plan.threshold} {abbrev} in a season."
+        return None
 
     sup_labels = {"youngest": "Youngest", "oldest": "Oldest", "first": "First", "last": "Most Recent"}
     sup_label = sup_labels.get(plan.superlative, "")
@@ -1335,7 +1335,7 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
     )
     rows = cur.fetchall()
     if not rows:
-        return f"No players found."
+        return None
 
     scope_label = str(plan.season) if plan.season else "2016-2025"
     stat_name = col.replace("_", " ").title()

@@ -4522,7 +4522,7 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
 
         rows = cur.fetchall()
         if not rows:
-            return f"No {stat_info.display_name} data found {label.lower()} for {season}{league_label}."
+            return None  # No data — let query fall through to Haiku/Sonnet
 
         title = f"**{season} {stat_info.display_name} Leaders {label}{league_label}**\n"
         parts = [title]
