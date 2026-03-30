@@ -878,7 +878,7 @@ def _format_val(stat_col: str, value, is_rate: bool = False) -> str:
             except (ValueError, TypeError):
                 return str(value)
         return _format_rate(value)
-    if stat_col == "ip_outs":
+    if stat_col in ("ip_outs", "innings_pitched"):
         try:
             outs = int(value)
             return f"{outs // 3}.{outs % 3}"
@@ -938,6 +938,9 @@ def _stat_expr(plan: QueryPlan, prefix: str = "s") -> tuple[str, str, str, bool]
         expr = d["formula"].replace("s.", f"{prefix}.")
         return expr, d["display"], d["name"], d["is_rate"]
     stat = plan.stat
+    # innings_pitched is TEXT — use ip_outs (integer) for sorting/computation
+    if stat.db_column == "innings_pitched":
+        return f"{prefix}.ip_outs", stat.display_abbrev, stat.display_name, stat.is_rate
     return f"{prefix}.{stat.db_column}", stat.display_abbrev, stat.display_name, stat.is_rate
 
 

@@ -3898,7 +3898,7 @@ def build_team_ranking(stat_info: StatInfo, season: int) -> Optional[str]:
                 f"FROM season_batting_stats s "
                 f"WHERE s.season = ? AND s.plate_appearances >= 1 "
                 f"GROUP BY s.team HAVING SUM(s.plate_appearances) >= 100 "
-                f"ORDER BY team_stat DESC LIMIT 10",
+                f"ORDER BY team_stat DESC LIMIT 30",
                 (season,),
             )
         else:
@@ -3906,7 +3906,7 @@ def build_team_ranking(stat_info: StatInfo, season: int) -> Optional[str]:
                 f"SELECT s.team, SUM(s.{stat_info.db_column}) AS team_stat "
                 f"FROM season_batting_stats s "
                 f"WHERE s.season = ? "
-                f"GROUP BY s.team ORDER BY team_stat DESC LIMIT 10",
+                f"GROUP BY s.team ORDER BY team_stat DESC LIMIT 30",
                 (season,),
             )
 
