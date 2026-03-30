@@ -597,16 +597,18 @@ def decompose(question: str) -> QueryPlan:
         plan.scope = f"since_{since_year}"
         _add_consumed(plan, "since this last past decade century years year")
 
-    # "in a season" / "ever" / "in history" = all-time
-    all_time_triggers = ["all time", "all-time", "single season", "in a season",
-                         "in a year", "in history", "record"]
-    if any(t in lower for t in all_time_triggers):
-        plan.scope = "all_time"
-        _add_consumed(plan, "all time all-time single season in a season in a year in history record")
-
-    if "career" in lower:
+    # "all time" / "ever" / "in history" / "career" = career totals
+    career_triggers = ["all time", "all-time", "in history", "ever", "career", "record"]
+    if any(t in lower for t in career_triggers):
         plan.scope = "career"
-        _add_consumed(plan, "career")
+        _add_consumed(plan, "all time all-time in history ever career record")
+
+    # "single season" / "in a season" / "in a year" = best single season
+    # This OVERRIDES career if both present ("most HR in a season ever")
+    single_season_triggers = ["single season", "in a season", "in a year"]
+    if any(t in lower for t in single_season_triggers):
+        plan.scope = "all_time"  # all_time = best single season records
+        _add_consumed(plan, "single season in a season in a year")
 
     # Only detect explicit season if since_year didn't already claim the year
     if not plan.since_year:
