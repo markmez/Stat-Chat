@@ -181,6 +181,7 @@ class QueryPlan:
     scope: str = "current_season"  # "current_season", "all_time", "career", "since_YYYY"
     season: Optional[int] = None
     since_year: Optional[int] = None
+    end_year: Optional[int] = None  # For decade ranges: "last decade" = 2010-2019
 
     # Filters
     league: Optional[str] = None
@@ -594,7 +595,12 @@ def decompose(question: str) -> QueryPlan:
     if since_year:
         plan.since_year = since_year
         plan.scope = f"since_{since_year}"
-        _add_consumed(plan, "since this last past decade century years year")
+        _add_consumed(plan, "since this last past decade century years year the in over for during")
+        # "last decade" (standalone, not "in the last decade") = named decade with end year
+        if re.search(r'\blast\s+decade\b', lower) and not re.search(r'\b(?:in|over|for|during)\s+the\s+last\s+decade', lower):
+            current_year = datetime.now().year
+            decade_start = current_year - (current_year % 10) - 10
+            plan.end_year = decade_start + 9  # 2010 → 2019
 
     # "all time" / "ever" / "in history" / "career" = career totals
     career_triggers = ["all time", "all-time", "in history", "ever", "career", "record"]
@@ -1086,13 +1092,21 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         if plan.since_year:
             where_parts.append(f"{prefix}.season >= ?")
             query_params.append(plan.since_year)
+        if plan.end_year:
+            where_parts.append(f"{prefix}.season <= ?")
+            query_params.append(plan.end_year)
         if filters_str:
             where_parts.append(filters_str)
         if pa:
             where_parts.append(pa[5:])  # strip " AND "
 
         where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
-        scope_label = f"Since {plan.since_year}" if plan.since_year else "All-Time"
+        if plan.since_year and plan.end_year:
+            scope_label = f"{plan.since_year}-{plan.end_year}"
+        elif plan.since_year:
+            scope_label = f"Since {plan.since_year}"
+        else:
+            scope_label = "All-Time"
 
         # For counting stats with "since", aggregate across seasons per player
         if plan.since_year and not is_rate:
@@ -1404,6 +1418,9 @@ def _execute_count(conn, plan: QueryPlan) -> Optional[str]:
     elif plan.since_year:
         where_parts.append(f"{prefix}.season >= ?")
         query_params.append(plan.since_year)
+        if plan.end_year:
+            where_parts.append(f"{prefix}.season <= ?")
+            query_params.append(plan.end_year)
     if filters_str:
         where_parts.append(filters_str)
     where = f"WHERE {' AND '.join(where_parts)}"
@@ -1422,6 +1439,8 @@ def _execute_count(conn, plan: QueryPlan) -> Optional[str]:
     threshold_display = _format_val("", plan.threshold, is_rate) if is_rate else str(int(plan.threshold))
     if plan.season:
         scope = str(plan.season)
+    elif plan.since_year and plan.end_year:
+        scope = f"in the {plan.since_year}s"
     elif plan.since_year:
         scope = f"since {plan.since_year}"
     else:

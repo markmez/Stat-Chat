@@ -694,8 +694,14 @@ def _detect_since_year(lower: str) -> Optional[int]:
         return 2000
     if "this decade" in lower:
         return current_year - (current_year % 10)  # 2026 → 2020
-    if "last decade" in lower or "past decade" in lower:
-        return current_year - 10  # last 10 years
+    # "in/over/for the last decade" = rolling 10 years
+    # "last decade" (standalone) = the prior named decade (2010s)
+    if re.search(r'\b(?:in|over|for|during)\s+the\s+last\s+decade', lower):
+        return current_year - 10  # rolling 10 years
+    if "past decade" in lower:
+        return current_year - 10  # rolling 10 years
+    if "last decade" in lower:
+        return current_year - (current_year % 10) - 10  # named decade: 2026 → 2010
     m = re.search(r'since\s+(\d{4})', lower)
     if m:
         return int(m.group(1))
