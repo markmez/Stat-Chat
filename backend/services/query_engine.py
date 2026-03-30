@@ -351,10 +351,11 @@ def _parse_stat_condition(text: str) -> Optional[StatCondition]:
                     return StatCondition(avg_stat, None, threshold, "<=", text)
 
     # --- Step 3: Direct stat match (no verb pattern) ---
-    # "30 HR", "HR leaders", ".800 OPS", "200+ K"
+    # "30 HR", "HR leaders", ".800 OPS", "200+ K", "200k"
     if not stat:
-        # Strip +/- from numbers before stat matching ("200+ K" → "200 K")
+        # Normalize: strip +, add space between number and letter ("200k" → "200 k", "200+ K" → "200 K")
         cleaned = re.sub(r'(\d)\+', r'\1 ', lower)
+        cleaned = re.sub(r'(\d)([a-z])', r'\1 \2', cleaned)
         stat = match_stat(cleaned)
 
     if not stat:
@@ -817,6 +818,12 @@ def decompose(question: str) -> QueryPlan:
         # Short words (1-2 chars) are usually noise
         if len(w_clean) <= 2:
             continue
+        # Number+letter combined tokens ("200k", "30hr") — split and check parts
+        num_letter = re.match(r'^(\d+\.?\d*)([a-z]+)$', w_clean)
+        if num_letter:
+            letter_part = num_letter.group(2)
+            if letter_part in plan.consumed_words or letter_part in _STOP_WORDS or len(letter_part) <= 2:
+                continue
         plan.unexplained_words.append(w_clean)
 
     return plan
@@ -1361,8 +1368,9 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
         val = _format_val(stat_col_key, row[1], is_rate)
         if has_year:
             # row: name, stat_val, season, [extra1, extra2, ...]
-            extra_vals = [str(int(row[3 + j])) if row[3 + j] == int(row[3 + j]) else str(row[3 + j])
-                          for j in range(n_extra) if 3 + j < len(row)]
+            offset = 3
+            extra_vals = [_format_val(plan.extra_filters[j]["stat"].db_column, row[offset + j], plan.extra_filters[j]["stat"].is_rate)
+                          for j in range(n_extra) if offset + j < len(row)]
             extra_str = ", ".join(extra_vals)
             row_text = f"ROW {i+1}. {row[0]}: {row[2]}, {val}"
             if extra_str:
@@ -1370,8 +1378,9 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
             parts.append(row_text)
         else:
             # row: name, stat_val, [extra1, extra2, ...]
-            extra_vals = [str(int(row[2 + j])) if row[2 + j] == int(row[2 + j]) else str(row[2 + j])
-                          for j in range(n_extra) if 2 + j < len(row)]
+            offset = 2
+            extra_vals = [_format_val(plan.extra_filters[j]["stat"].db_column, row[offset + j], plan.extra_filters[j]["stat"].is_rate)
+                          for j in range(n_extra) if offset + j < len(row)]
             extra_str = ", ".join(extra_vals)
             row_text = f"ROW {i+1}. {row[0]}: {val}"
             if extra_str:
