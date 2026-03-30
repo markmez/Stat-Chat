@@ -1401,6 +1401,9 @@ def _execute_count(conn, plan: QueryPlan) -> Optional[str]:
     if plan.season:
         where_parts.append(f"{prefix}.season = ?")
         query_params.append(plan.season)
+    elif plan.since_year:
+        where_parts.append(f"{prefix}.season >= ?")
+        query_params.append(plan.since_year)
     if filters_str:
         where_parts.append(filters_str)
     where = f"WHERE {' AND '.join(where_parts)}"
@@ -1417,8 +1420,13 @@ def _execute_count(conn, plan: QueryPlan) -> Optional[str]:
     count = len(rows)
 
     threshold_display = _format_val("", plan.threshold, is_rate) if is_rate else str(int(plan.threshold))
-    scope = str(plan.season) if plan.season else "all time"
-    summary = f"**{count}** players have had {threshold_display}+ {name} in {scope}.\n"
+    if plan.season:
+        scope = str(plan.season)
+    elif plan.since_year:
+        scope = f"since {plan.since_year}"
+    else:
+        scope = "all time"
+    summary = f"**{count}** players have had {threshold_display}+ {name} {scope}.\n"
 
     parts = [summary]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")

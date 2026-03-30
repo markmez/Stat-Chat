@@ -695,7 +695,7 @@ def _detect_since_year(lower: str) -> Optional[int]:
     if "this decade" in lower:
         return current_year - (current_year % 10)  # 2026 → 2020
     if "last decade" in lower or "past decade" in lower:
-        return current_year - 10
+        return current_year - 10  # last 10 years
     m = re.search(r'since\s+(\d{4})', lower)
     if m:
         return int(m.group(1))
