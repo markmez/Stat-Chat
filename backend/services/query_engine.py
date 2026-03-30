@@ -1298,10 +1298,14 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
         where = f"WHERE {' AND '.join(where_parts)}"
         scope_label = f"Since {plan.since_year}" if plan.since_year else "All-Time"
 
+    # Build extra column selects for extra filters
+    extra_selects = ", ".join(f"{prefix}.{ef['stat'].db_column}" for ef in plan.extra_filters)
+    extra_select_clause = f", {extra_selects}" if extra_selects else ""
+
     cur = conn.cursor()
     if season:
         cur.execute(
-            f"SELECT p.name, {stat_expr} AS stat_val "
+            f"SELECT p.name, {stat_expr} AS stat_val{extra_select_clause} "
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
             f"{where} ORDER BY stat_val DESC",
@@ -1309,7 +1313,7 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
         )
     else:
         cur.execute(
-            f"SELECT p.name, {stat_expr} AS stat_val, {prefix}.season "
+            f"SELECT p.name, {stat_expr} AS stat_val, {prefix}.season{extra_select_clause} "
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
             f"{where} ORDER BY stat_val DESC",
@@ -1324,23 +1328,55 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
     if not rows:
         return None
 
-    title = f"**{rookie_label} {op} {threshold_display}+ {name} ({scope_label})**"
+    # Build title with extra filters
+    filter_parts = [f"{threshold_display}+ {abbrev}"]
+    for ef in plan.extra_filters:
+        ef_stat = ef["stat"]
+        ef_val = int(ef["threshold"]) if ef["threshold"] == int(ef["threshold"]) else ef["threshold"]
+        if ef["comparison"] == "<=":
+            filter_parts.append(f"≤{ef_val} {ef_stat.display_abbrev}")
+        else:
+            filter_parts.append(f"{ef_val}+ {ef_stat.display_abbrev}")
+    title = f"**{rookie_label} with {' and '.join(filter_parts)} ({scope_label})**"
+
     count = len(rows)
     parts = [title, f"{count} matched.\n"]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
 
+    # Build header with extra filter columns
+    extra_headers = [ef["stat"].display_abbrev for ef in plan.extra_filters]
     has_year = not season
+
     if has_year and len(rows[0]) > 2:
-        parts.append(f"HEADER: Year, {abbrev}")
-        for i, row in enumerate(rows):
-            val = _format_val(plan.stat.db_column if plan.stat else "", row[1], is_rate)
-            parts.append(f"ROW {i+1}. {row[0]}: {row[2]}, {val}")
+        all_headers = ["Year", abbrev] + extra_headers
+        parts.append(f"HEADER: {', '.join(all_headers)}")
     else:
-        parts.append(f"HEADER: {abbrev}")
-        for i, row in enumerate(rows):
-            val = _format_val(plan.stat.db_column if plan.stat else "", row[1], is_rate)
-            parts.append(f"ROW {i+1}. {row[0]}: {val}")
+        all_headers = [abbrev] + extra_headers
+        parts.append(f"HEADER: {', '.join(all_headers)}")
+
+    stat_col_key = plan.stat.db_column if plan.stat else (plan.derived_stat or "")
+    n_extra = len(plan.extra_filters)
+    for i, row in enumerate(rows):
+        val = _format_val(stat_col_key, row[1], is_rate)
+        if has_year:
+            # row: name, stat_val, season, [extra1, extra2, ...]
+            extra_vals = [str(int(row[3 + j])) if row[3 + j] == int(row[3 + j]) else str(row[3 + j])
+                          for j in range(n_extra) if 3 + j < len(row)]
+            extra_str = ", ".join(extra_vals)
+            row_text = f"ROW {i+1}. {row[0]}: {row[2]}, {val}"
+            if extra_str:
+                row_text += f", {extra_str}"
+            parts.append(row_text)
+        else:
+            # row: name, stat_val, [extra1, extra2, ...]
+            extra_vals = [str(int(row[2 + j])) if row[2 + j] == int(row[2 + j]) else str(row[2 + j])
+                          for j in range(n_extra) if 2 + j < len(row)]
+            extra_str = ", ".join(extra_vals)
+            row_text = f"ROW {i+1}. {row[0]}: {val}"
+            if extra_str:
+                row_text += f", {extra_str}"
+            parts.append(row_text)
     parts.append("[/LEADERBOARD]")
     return "\n".join(parts)
 
