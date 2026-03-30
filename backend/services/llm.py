@@ -25,6 +25,7 @@ from prompts import (
     STREAK_ANSWER_PROMPT,
     STAT_EXPLANATION_PROMPT,
     FOLLOWUP_CLASSIFY_PROMPT,
+    KNOWLEDGE_MODE_PROMPT,
 )
 
 ROUTING_MODEL = os.getenv("ROUTING_MODEL", "claude-haiku-4-5-20251001")
@@ -175,6 +176,18 @@ class LLMService:
             max_tokens=1024,
             system=_cached_system(ANSWER_GENERATION_PROMPT),
             extra_headers={"anthropic-beta": _CACHE_BETA},
+            messages=msgs,
+        ) as stream:
+            async for text in stream.text_stream:
+                yield text
+
+    async def stream_knowledge(self, question: str, history: list[dict]):
+        """Stream a response from Claude's own baseball knowledge — no SQL, no DB."""
+        msgs = _build_messages(question, history)
+        async with self.client.messages.stream(
+            model=MAIN_MODEL,
+            max_tokens=1024,
+            system=KNOWLEDGE_MODE_PROMPT,
             messages=msgs,
         ) as stream:
             async for text in stream.text_stream:

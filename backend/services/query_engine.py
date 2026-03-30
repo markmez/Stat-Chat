@@ -654,11 +654,15 @@ def decompose(question: str) -> QueryPlan:
 
     # Bats filter
     bats_patterns = [
-        ("left-handed batter", "L"), ("left handed batter", "L"), ("lefty batter", "L"),
-        ("left-handed hitter", "L"), ("left handed hitter", "L"), ("lefty hitter", "L"),
-        ("right-handed batter", "R"), ("right handed batter", "R"), ("righty batter", "R"),
-        ("right-handed hitter", "R"), ("right handed hitter", "R"), ("righty hitter", "R"),
+        # Full phrases (check longest first)
+        ("left-handed batter", "L"), ("left handed batter", "L"),
+        ("left-handed hitter", "L"), ("left handed hitter", "L"),
+        ("right-handed batter", "R"), ("right handed batter", "R"),
+        ("right-handed hitter", "R"), ("right handed hitter", "R"),
         ("switch hitter", "B"), ("switch-hitter", "B"),
+        # Short forms
+        ("lefty batter", "L"), ("lefty hitter", "L"), ("lefty", "L"),
+        ("righty batter", "R"), ("righty hitter", "R"), ("righty", "R"),
     ]
     for pattern, bats_val in bats_patterns:
         if pattern in lower:
@@ -1089,8 +1093,17 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
 
     # Format
     title_prefix = f"{direction_label}{age_label}{bats_label}{position_label}{rookie_label}{role_label}"
+    # Extra filter label: "with ≤10 HR", "with 30+ SB"
+    filter_label = ""
+    for ef in plan.extra_filters:
+        ef_stat = ef["stat"]
+        ef_val = int(ef["threshold"]) if ef["threshold"] == int(ef["threshold"]) else ef["threshold"]
+        if ef["comparison"] == "<=":
+            filter_label += f" with ≤{ef_val} {ef_stat.display_abbrev}"
+        else:
+            filter_label += f" with {ef_val}+ {ef_stat.display_abbrev}"
     has_year = plan.scope in ("all_time",) or plan.scope.startswith("since_")
-    title = f"**{scope_label} {title_prefix}{name} Leaders**\n" if not has_year else f"**{title_prefix}{name} Leaders ({scope_label})**\n"
+    title = f"**{scope_label} {title_prefix}{name} Leaders{filter_label}**\n" if not has_year else f"**{title_prefix}{name} Leaders{filter_label} ({scope_label})**\n"
 
     parts = [title]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")

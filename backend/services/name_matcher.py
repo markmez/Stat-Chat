@@ -795,7 +795,8 @@ _SPLIT_CONTEXTS = {
     # RISP
     "with risp": SplitContext("risp_batting_splits", "split", ["RISP"], "With RISP", ["with risp"]),
     "runners in scoring": SplitContext("risp_batting_splits", "split", ["RISP"], "With RISP", ["runners in scoring position", "runners in scoring"]),
-    "with runners on": SplitContext("risp_batting_splits", "split", ["RISP"], "With RISP", ["with runners on"]),
+    # Note: "with runners on" is NOT the same as RISP — removed to prevent false matches.
+    # We only have RISP splits, not "any runners on base" splits.
     # Home/Away
     "at home": SplitContext("home_away_splits", "split", ["home"], "At Home", ["at home"]),
     "on the road": SplitContext("home_away_splits", "split", ["away"], "On the Road", ["on the road"]),

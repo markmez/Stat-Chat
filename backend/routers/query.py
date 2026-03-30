@@ -517,67 +517,16 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         increment_count(device_id)
         return
 
-    # 4. Route the question (falls through to Claude Sonnet)
-    logger.info("query_to_claude question=%r", question)
+    # 4. Knowledge mode — answer from Claude's baseball knowledge
+    # If we got here, neither the interceptor, query engine, nor Haiku could answer.
+    # Answer from Sonnet's own knowledge rather than trying SQL (which produces
+    # worse results for questions that got this far in the pipeline).
+    logger.info("knowledge_mode question=%r", question)
     try:
-        route = await llm.route_query(question, history)
-    except Exception as e:
-        yield event({"type": "error", "message": f"Routing error: {e}"})
-        return
-
-    # 4a. Stat explanation — no SQL needed
-    if route == "stat_explanation":
-        try:
-            answer = await llm.explain_stat(question)
-            yield event({"type": "text", "text": answer})
-            yield event({"type": "done"})
-            increment_count(device_id)
-        except Exception as e:
-            yield event({"type": "error", "message": str(e)})
-        return
-
-    # 4b. Generate SQL (routing, simple_lookup, streak_finder, current_form all go here)
-    try:
-        sql = await llm.generate_sql(question, history)
-    except Exception as e:
-        yield event({"type": "error", "message": f"SQL generation error: {e}"})
-        return
-
-    if "OFF_TOPIC" in sql:
-        yield event({"type": "text", "text": "I'm a baseball stats engine — ask me about player stats, leaders, averages, and more!"})
-        yield event({"type": "done"})
-        increment_count(device_id)
-        return
-
-    if "NO_DATA" in sql:
-        # Let Claude explain what the stat is and suggest alternatives
-        no_data_result = "NO_DATA — this stat is not stored in our database and cannot be derived from available columns."
-        try:
-            async for chunk in llm.stream_answer(question, sql, no_data_result, history):
-                yield event({"type": "text", "text": chunk})
-        except Exception as e:
-            yield event({"type": "text", "text": "I don't have data for that stat in my database. Try asking about batting stats, pitching stats, or streaks from 2016–2025."})
-        yield event({"type": "done"})
-        increment_count(device_id)
-        return
-
-    # 5. Execute SQL (blocking SQLite call → thread pool)
-    try:
-        loop = asyncio.get_event_loop()
-        result_text, is_streak = await loop.run_in_executor(
-            None, runner.execute_and_format, sql
-        )
-    except RuntimeError as e:
-        yield event({"type": "error", "message": f"I had trouble with that query. Could you rephrase? (SQL error: {e})"})
-        return
-
-    # 6. Stream the answer
-    try:
-        async for chunk in llm.stream_answer(question, sql, result_text, history, is_streak=is_streak):
+        async for chunk in llm.stream_knowledge(question, history):
             yield event({"type": "text", "text": chunk})
     except Exception as e:
-        yield event({"type": "error", "message": str(e)})
-        return
+        yield event({"type": "text", "text": "I'm not sure about that. Try asking about player stats, leaders, or comparisons."})
 
     done_event: dict = {"type": "done"}
     if rewritten_query:
