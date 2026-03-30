@@ -670,6 +670,17 @@ def decompose(question: str) -> QueryPlan:
             _add_consumed(plan, pattern)
             break
 
+    # Special condition patterns
+    # "without getting caught" / "without being caught" → CS = 0
+    if any(p in lower for p in ["without getting caught", "without being caught",
+                                 "never caught", "100% steal", "perfect steal"]):
+        plan.extra_filters.append({
+            "stat": stat_alias_map.get("caught stealing") or stat_alias_map.get("cs"),
+            "threshold": 0,
+            "comparison": "<=",
+        })
+        _add_consumed(plan, "without getting caught without being caught never caught perfect")
+
     # Age filter — only match "under/over N" when it's about age, not stats.
     # "player under 25" = age. "with under 10 HR" = stat filter (not age).
     # Heuristic: age if followed by nothing or age-like words, not if followed by a stat keyword.
