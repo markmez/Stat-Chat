@@ -845,6 +845,15 @@ def _format_val(stat_col: str, value, is_rate: bool = False) -> str:
     """Format a value for display."""
     if value is None:
         return "--"
+    # Percentage stats (0-100 range) — check before rate stats
+    if "percentage" in stat_col or stat_col.endswith("_pct"):
+        try:
+            fv = float(value)
+            if fv == int(fv):
+                return f"{int(fv)}%"
+            return f"{fv:.1f}%"
+        except (ValueError, TypeError):
+            return str(value)
     if is_rate or stat_col in _RATE_STATS:
         if stat_col in ("era", "whip", "k_per_9", "bb_per_9", "hr_per_9", "k_per_bb",
                          "h_per_9", "hr_per_9", "fip"):
@@ -1037,9 +1046,12 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             where += f" AND {filters_str}"
         where += pa
 
+        has_age_filter = plan.age_max or plan.age_min
+        age_select = f", ({prefix}.season - CAST(SUBSTR(p.birthdate, 1, 4) AS INT)) AS player_age" if has_age_filter else ""
+
         cur = conn.cursor()
         cur.execute(
-            f"SELECT p.name, {stat_expr} AS stat_val "
+            f"SELECT p.name, {stat_expr} AS stat_val{age_select} "
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
             f"{where} "
@@ -1167,15 +1179,22 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     parts = [title]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
+    stat_col_key = plan.stat.db_column if plan.stat else (plan.derived_stat or "")
+    has_age_col = (plan.age_max or plan.age_min) and not has_year and len(rows[0]) > 2
     if has_year and len(rows[0]) > 2:
         parts.append(f"HEADER: {abbrev}, Year")
         for i, row in enumerate(rows):
-            val = _format_val(plan.stat.db_column if plan.stat else "", row[1], is_rate)
+            val = _format_val(stat_col_key, row[1], is_rate)
+            parts.append(f"ROW {i+1}. {row[0]}: {val}, {row[2]}")
+    elif has_age_col:
+        parts.append(f"HEADER: {abbrev}, Age")
+        for i, row in enumerate(rows):
+            val = _format_val(stat_col_key, row[1], is_rate)
             parts.append(f"ROW {i+1}. {row[0]}: {val}, {row[2]}")
     else:
         parts.append(f"HEADER: {abbrev}")
         for i, row in enumerate(rows):
-            val = _format_val(plan.stat.db_column if plan.stat else "", row[1], is_rate)
+            val = _format_val(stat_col_key, row[1], is_rate)
             parts.append(f"ROW {i+1}. {row[0]}: {val}")
     parts.append("[/LEADERBOARD]")
 
@@ -1337,7 +1356,7 @@ def _execute_superlative(conn, plan: QueryPlan) -> Optional[str]:
         f"SELECT p.name, {stat_expr} AS stat_val, {prefix}.season{age_select} "
         f"FROM {table} {prefix} "
         f"JOIN players p ON {prefix}.player_id = p.player_id "
-        f"{where} ORDER BY {order_by} LIMIT 10",
+        f"{where} ORDER BY {order_by} LIMIT 50",
         tuple(query_params),
     )
     rows = cur.fetchall()
@@ -1403,7 +1422,12 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
         return None
 
     scope_label = str(plan.season) if plan.season else "2016-2025"
-    stat_name = col.replace("_", " ").title()
+    _game_stat_labels = {
+        "hits": "Hits", "home_runs": "HR", "rbi": "RBI", "runs": "Runs",
+        "stolen_bases": "SB", "walks": "BB", "strikeouts": "K", "doubles": "2B",
+        "triples": "3B",
+    }
+    stat_name = _game_stat_labels.get(col, col.replace("_", " ").title())
     title = f"**Most Games with {threshold}+ {stat_name} ({scope_label})**\n"
     parts = [title]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
