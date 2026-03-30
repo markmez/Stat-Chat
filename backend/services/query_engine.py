@@ -269,9 +269,7 @@ def _parse_stat_condition(text: str) -> Optional[StatCondition]:
     for trigger, key in sorted(derived_triggers.items(), key=lambda x: len(x[0]), reverse=True):
         if trigger in lower:
             threshold = _extract_threshold(lower)
-            if threshold is not None:
-                return StatCondition(None, key, threshold, comparison, text)
-            return None
+            return StatCondition(None, key, threshold, comparison, trigger)
 
     # --- Step 1: Check for "verb + number" patterns ---
     # These indicate the verb is describing an action, not a stat name.
