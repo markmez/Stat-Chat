@@ -39,14 +39,42 @@ struct LeaderboardView: View {
     private let rankWidth: CGFloat = 30
     private let rankNameGap: CGFloat = 6
     private let nameStatGap: CGFloat = 8
-    private let statColumnWidth: CGFloat = 56
+    private let defaultStatColumnWidth: CGFloat = 56
     private let valueGap: CGFloat = 6
+
+    /// Compute per-column widths based on content.
+    /// Date columns and team abbreviations get appropriate widths.
+    private var columnWidths: [CGFloat] {
+        grid.headers.enumerated().map { idx, header in
+            let headerLower = header.lowercased()
+            // Date columns need more space
+            if headerLower == "date" {
+                return CGFloat(52)
+            }
+            // Opponent / team columns
+            if headerLower == "opp" || headerLower == "team" {
+                return CGFloat(36)
+            }
+            // Year columns
+            if headerLower == "year" {
+                return CGFloat(42)
+            }
+            // Age columns
+            if headerLower == "age" {
+                return CGFloat(32)
+            }
+            // Default stat width
+            return defaultStatColumnWidth
+        }
+    }
 
     /// Divider spans rank through the last value column
     private var dividerWidth: CGFloat {
-        var w = rankWidth + rankNameGap + nameWidth + nameStatGap + statColumnWidth
-        for _ in 1..<grid.headers.count {
-            w += valueGap + statColumnWidth
+        let widths = columnWidths
+        guard !widths.isEmpty else { return rankWidth + rankNameGap + nameWidth }
+        var w = rankWidth + rankNameGap + nameWidth + nameStatGap + widths[0]
+        for i in 1..<widths.count {
+            w += valueGap + widths[i]
         }
         return w
     }
@@ -56,7 +84,9 @@ struct LeaderboardView: View {
             // Column headers
             HStack(spacing: 0) {
                 Spacer().frame(width: rankWidth + rankNameGap + nameWidth + nameStatGap)
+                let widths = columnWidths
                 ForEach(Array(grid.headers.enumerated()), id: \.offset) { idx, header in
+                    let colWidth = idx < widths.count ? widths[idx] : defaultStatColumnWidth
                     if isSortable {
                         Button {
                             withAnimation(.easeInOut(duration: 0.15)) {
@@ -77,7 +107,7 @@ struct LeaderboardView: View {
                             }
                             .font(.system(.caption2, design: .monospaced, weight: .semibold))
                             .foregroundStyle(sortColumn == idx ? deepBlue : deepBlue.opacity(0.7))
-                            .frame(minWidth: statColumnWidth, alignment: .leading)
+                            .frame(minWidth: colWidth, alignment: .leading)
                             .padding(.leading, idx > 0 ? valueGap : 0)
                         }
                         .buttonStyle(.plain)
@@ -85,7 +115,7 @@ struct LeaderboardView: View {
                         Text(header)
                             .font(.system(.caption2, design: .monospaced, weight: .semibold))
                             .foregroundStyle(.secondary)
-                            .frame(minWidth: statColumnWidth, alignment: .leading)
+                            .frame(minWidth: colWidth, alignment: .leading)
                             .padding(.leading, idx > 0 ? valueGap : 0)
                     }
                 }
@@ -150,13 +180,14 @@ struct LeaderboardView: View {
                     }
 
                     // Stat values — all primary color
+                    let rowWidths = columnWidths
                     ForEach(Array(row.values.enumerated()), id: \.offset) { idx, val in
+                        let colWidth = idx < rowWidths.count ? rowWidths[idx] : defaultStatColumnWidth
                         Text(val)
                             .font(.system(.callout, design: .monospaced, weight: .medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .frame(minWidth: statColumnWidth, alignment: .leading)
+                            .frame(width: colWidth, alignment: .leading)
                             .padding(.leading, idx == 0 ? nameStatGap : valueGap)
                     }
 

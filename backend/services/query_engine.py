@@ -1207,7 +1207,37 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         elif pa_label:
             parts.append(f"\n_{pa_label}_")
 
+    # Suggestion pills
+    parts.extend(_build_suggestions(plan, name, scope_label))
+
     return "\n".join(parts)
+
+
+def _build_suggestions(plan: QueryPlan, stat_name: str, scope_label: str) -> list[str]:
+    """Generate suggestion pills based on the query plan."""
+    pills = []
+    current_year = datetime.now().year
+    stat_lower = stat_name.lower()
+
+    # Suggest other time scopes
+    if plan.scope.startswith("season_"):
+        yr = plan.season or current_year
+        if yr == current_year:
+            pills.append(f"\n[SUGGEST]{stat_lower} leaders last year[/SUGGEST]")
+        else:
+            pills.append(f"\n[SUGGEST]{stat_lower} leaders {current_year}[/SUGGEST]")
+        pills.append(f"[SUGGEST]career {stat_lower} leaders[/SUGGEST]")
+    elif plan.scope == "career":
+        pills.append(f"\n[SUGGEST]{stat_lower} leaders[/SUGGEST]")
+        pills.append(f"[SUGGEST]all-time single season {stat_lower} leaders[/SUGGEST]")
+
+    # For batting stats, suggest pitching equivalent and vice versa
+    if not plan.is_pitching and plan.stat and plan.stat.db_column == "strikeouts":
+        pills.append(f"[SUGGEST]most K by a pitcher[/SUGGEST]")
+    elif plan.is_pitching and plan.stat and plan.stat.db_column == "strikeouts":
+        pills.append(f"[SUGGEST]most K by a hitter[/SUGGEST]")
+
+    return pills
 
 
 def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
@@ -1436,13 +1466,30 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
     for i, row in enumerate(rows):
         parts.append(f"ROW {i+1}. {row[0]}: {row[1]}")
     parts.append("[/LEADERBOARD]")
+
+    # Suggestion pills for game-log counts
+    if col == "strikeouts" and not plan.is_pitching:
+        parts.append(f"\n[SUGGEST]most {threshold}+ K games by a pitcher[/SUGGEST]")
+    elif col == "strikeouts" and plan.is_pitching:
+        parts.append(f"\n[SUGGEST]most {threshold}+ K games by a hitter[/SUGGEST]")
+    parts.append(f"[SUGGEST]{stat_name} leaders[/SUGGEST]")
+
     return "\n".join(parts)
 
 
 def _execute_game_log_extreme(conn, plan: QueryPlan) -> Optional[str]:
     """Per-game extreme: 'most K in one game'."""
     from .response_builder import build_single_game_extreme
-    return build_single_game_extreme(plan.stat, plan.season, plan.is_pitching, plan.position)
+    result = build_single_game_extreme(plan.stat, plan.season, plan.is_pitching, plan.position)
+    if result and plan.stat:
+        stat_name = plan.stat.display_name.lower()
+        # Add suggestion for the other side (batting/pitching)
+        if plan.stat.db_column == "strikeouts" and not plan.is_pitching:
+            result += f"\n\n[SUGGEST]most K in one game by a pitcher[/SUGGEST]"
+        elif plan.stat.db_column == "strikeouts" and plan.is_pitching:
+            result += f"\n\n[SUGGEST]most K in one game by a hitter[/SUGGEST]"
+        result += f"\n[SUGGEST]{stat_name} leaders[/SUGGEST]"
+    return result
 
 
 def _execute_team_ranking(conn, plan: QueryPlan) -> Optional[str]:
