@@ -969,12 +969,13 @@ def _build_filters(plan: QueryPlan, prefix: str) -> tuple[str, list]:
     return " AND ".join(clauses), params
 
 
-def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None) -> str:
-    """Get PA/IP minimum filter for rate stats, prorated for current season."""
+def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None) -> tuple[str, str]:
+    """Get PA/IP minimum filter for rate stats, prorated for current season.
+    Returns (sql_clause, display_label) tuple."""
     stat_col = plan.stat.db_column if plan.stat else ""
     is_rate = (plan.stat and plan.stat.is_rate) or (plan.derived_stat and _DERIVED_STATS[plan.derived_stat]["is_rate"])
     if not is_rate:
-        return ""
+        return "", ""
 
     if plan.is_pitching:
         if season:
@@ -982,11 +983,11 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
             cur.execute(f"SELECT MAX(games) FROM season_pitching_stats WHERE season = ?", (season,))
             r = cur.fetchone()
             max_games = int(r[0]) if r and r[0] else 162
-            # Prorate: 486 ip_outs for 162 games
             ip_min = max(1, int(486 * max_games / 162))
         else:
             ip_min = 486
-        return f" AND {prefix}.ip_outs >= {ip_min}"
+        ip_display = f"{ip_min // 3}.{ip_min % 3}"
+        return f" AND {prefix}.ip_outs >= {ip_min}", f"Min. {ip_display} IP."
     else:
         if season:
             cur = conn.cursor()
@@ -997,7 +998,7 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
             pa_min = max(1, int(400 * max_games / 162))
         else:
             pa_min = 400
-        return f" AND {prefix}.plate_appearances >= {pa_min}"
+        return f" AND {prefix}.plate_appearances >= {pa_min}", f"Min. {pa_min} PA."
 
 
 # ---------------------------------------------------------------------------
@@ -1009,6 +1010,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     table, prefix = _table_and_prefix(plan)
     stat_expr, abbrev, name, is_rate = _stat_expr(plan, prefix)
     filters_str, params = _build_filters(plan, prefix)
+    pa_label = ""  # Will be set by _pa_filter if applicable
 
     # Determine sort
     if plan.sort_asc:
@@ -1030,7 +1032,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
 
     if plan.scope.startswith("season_"):
         yr = plan.season or datetime.now().year
-        pa = _pa_filter(plan, prefix, conn, yr)
+        pa, pa_label = _pa_filter(plan, prefix, conn, yr)
         where = f"WHERE {prefix}.season = ?"
         query_params = [yr] + params
         if filters_str:
@@ -1050,7 +1052,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         scope_label = str(yr)
 
     elif plan.scope == "all_time" or plan.scope.startswith("since_"):
-        pa = _pa_filter(plan, prefix, conn)
+        pa, pa_label = _pa_filter(plan, prefix, conn)
         where_parts = []
         query_params = list(params)
         if plan.since_year:
@@ -1181,9 +1183,12 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
 
     if is_rate:
         if plan.scope == "career":
-            parts.append(f"\n_Min. 5,000 AB (batting) / 1,000 IP (pitching)._")
-        else:
-            parts.append(f"\n_Min. qualified._")
+            if plan.is_pitching:
+                parts.append(f"\n_Min. 1,000 IP._")
+            else:
+                parts.append(f"\n_Min. 5,000 AB._")
+        elif pa_label:
+            parts.append(f"\n_{pa_label}_")
 
     return "\n".join(parts)
 
@@ -1196,7 +1201,7 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
 
     season = plan.season
     if season:
-        pa = _pa_filter(plan, prefix, conn, season)
+        pa, pa_label = _pa_filter(plan, prefix, conn, season)
         where = f"WHERE {prefix}.season = ? AND {stat_expr} {plan.comparison} ?"
         query_params = [season, plan.threshold] + params
         if filters_str:
@@ -1204,7 +1209,7 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
         where += pa
         scope_label = str(season)
     else:
-        pa = _pa_filter(plan, prefix, conn)
+        pa, pa_label = _pa_filter(plan, prefix, conn)
         where_parts = [f"{stat_expr} {plan.comparison} ?"]
         query_params = [plan.threshold] + params
         if plan.since_year:
