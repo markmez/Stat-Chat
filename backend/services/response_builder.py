@@ -4333,8 +4333,7 @@ def build_single_game_extreme(stat_info: StatInfo, season: Optional[int],
         )
         rows = cur.fetchall()
         if not rows:
-            scope = str(season) if season else "available seasons (2016-2025)"
-            return f"No game log data found for {stat_info.display_name} in {scope}."
+            return None  # Fall through to Haiku/Sonnet
 
         pos_label = f"{_position_label(position)} " if position else ""
         scope_label = str(season) if season else "2016-2025"
@@ -4342,6 +4341,9 @@ def build_single_game_extreme(stat_info: StatInfo, season: Optional[int],
         title = f"Most {stat_info.display_name} in a Single Game ({scope_label})"
         if pos_label:
             title = f"Most {stat_info.display_name} in a Single Game by {pos_label.strip()} ({scope_label})"
+
+        # Use short date format when all results are from the same year
+        single_year = season is not None
 
         parts = [f"**{title}**\n"]
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
