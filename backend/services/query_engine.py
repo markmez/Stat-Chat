@@ -1122,9 +1122,20 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
 
         # For counting stats with "since", aggregate across seasons per player
         if plan.since_year and not is_rate:
+            if plan.derived_stat:
+                # Derived formula: replace "s.col" with "SUM(s.col)" for aggregation
+                d = _DERIVED_STATS[plan.derived_stat]
+                agg_formula = d["formula"]
+                for req_col in d["requires"]:
+                    agg_formula = agg_formula.replace(f"s.{req_col}", f"SUM(s.{req_col})")
+                agg_expr = agg_formula.replace("s.", f"{prefix}.")
+            elif plan.stat:
+                agg_expr = f"SUM({prefix}.{plan.stat.db_column})"
+            else:
+                return None
             cur = conn.cursor()
             cur.execute(
-                f"SELECT p.name, SUM({prefix}.{plan.stat.db_column}) AS stat_val "
+                f"SELECT p.name, {agg_expr} AS stat_val "
                 f"FROM {table} {prefix} "
                 f"JOIN players p ON {prefix}.player_id = p.player_id "
                 f"{where} "
@@ -1305,10 +1316,14 @@ def _build_suggestions(plan: QueryPlan, stat_name: str, scope_label: str) -> lis
     elif plan.scope.startswith("since_") and plan.since_year:
         scope_suffix = f" since {plan.since_year}"
 
-    if not plan.is_pitching and plan.stat and plan.stat.db_column == "strikeouts":
-        pills.append(f"[SUGGEST]most K by a pitcher{scope_suffix}[/SUGGEST]")
-    elif plan.is_pitching and plan.stat and plan.stat.db_column == "strikeouts":
-        pills.append(f"[SUGGEST]most K by a hitter{scope_suffix}[/SUGGEST]")
+    # For stats that exist in both batting and pitching, suggest the other side
+    ambiguous_stats = {"strikeouts", "walks", "hits", "home_runs"}
+    if plan.stat and plan.stat.db_column in ambiguous_stats:
+        stat_abbrev = plan.stat.display_abbrev
+        if not plan.is_pitching:
+            pills.append(f"[SUGGEST]most {stat_abbrev} by a pitcher{scope_suffix}[/SUGGEST]")
+        else:
+            pills.append(f"[SUGGEST]most {stat_abbrev} by a hitter{scope_suffix}[/SUGGEST]")
 
     return pills
 
