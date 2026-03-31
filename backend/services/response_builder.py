@@ -3753,7 +3753,7 @@ def build_pitching_team_stats(team_code: str, stat_info: Optional[StatInfo] = No
             max_games = int(r[0]) if r and r[0] else 162
             ip_min = max(1, int(54 * max_games / 162))
             cur.execute(
-                "SELECT p.name, sp.games, sp.innings_pitched, sp.wins, sp.losses, sp.era "
+                "SELECT p.name, sp.era, sp.strikeouts "
                 "FROM season_pitching_stats sp "
                 "JOIN players p ON sp.player_id = p.player_id "
                 f"WHERE {team_filter} AND sp.season = ? AND sp.ip_outs >= {ip_min} "
@@ -3762,15 +3762,15 @@ def build_pitching_team_stats(team_code: str, stat_info: Optional[StatInfo] = No
             )
             rows = cur.fetchall()
             if not rows:
-                return f"No pitching data found for the {full_name} in {season}."
+                return None
 
             parts = [f"**{full_name}** \u2014 {season} Pitchers\n"]
             parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
             parts.append("[LEADERBOARD]")
-            parts.append("HEADER: G, IP, W, L, ERA")
+            parts.append("HEADER: ERA, SO")
             for i, row in enumerate(rows):
-                era = _format_pitching_rate(row[5], 2)
-                parts.append(f"ROW {i+1}. {row[0]}: {row[1]}, {row[2]}, {row[3]}, {row[4]}, {era}")
+                era = _format_pitching_rate(row[1], 2)
+                parts.append(f"ROW {i+1}. {row[0]}: {era}, {row[2]}")
             parts.append("[/LEADERBOARD]")
             parts.append("\n_Min. 18 IP._")
             parts.append(f"\n[SUGGEST]{nickname} ERA leaders[/SUGGEST]")
