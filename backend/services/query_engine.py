@@ -299,6 +299,7 @@ def _parse_stat_condition(text: str) -> Optional[StatCondition]:
             "walked": "walks",
         }
 
+        stat_after = None  # Initialize before branches
         if verb in _verb_to_stat:
             # Verb has a fixed stat meaning
             stat = stat_alias_map.get(_verb_to_stat[verb])
@@ -606,8 +607,10 @@ def decompose(question: str) -> QueryPlan:
             plan.end_year = decade_start + 9  # 2010 → 2019
 
     # "all time" / "ever" / "in history" / "career" = career totals
-    career_triggers = ["all time", "all-time", "in history", "ever", "career", "record"]
-    if any(t in lower for t in career_triggers):
+    # Use word boundaries for short words to avoid substring matches ("saves" contains "ever")
+    career_phrase_triggers = ["all time", "all-time", "in history", "career"]
+    career_word_triggers = [r'\bever\b', r'\brecord\b']
+    if any(t in lower for t in career_phrase_triggers) or any(re.search(t, lower) for t in career_word_triggers):
         plan.scope = "career"
         _add_consumed(plan, "all time all-time in history ever career record")
 
@@ -1000,7 +1003,10 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
     Returns (sql_clause, display_label) tuple."""
     stat_col = plan.stat.db_column if plan.stat else ""
     is_rate = (plan.stat and plan.stat.is_rate) or (plan.derived_stat and _DERIVED_STATS[plan.derived_stat]["is_rate"])
-    if not is_rate:
+    # Apply PA/IP minimums for rate stats AND for "fewest"/"worst" counting stat queries
+    # (otherwise "fewest walks" returns players with 1 PA and 0 BB)
+    needs_minimum = is_rate or plan.sort_asc
+    if not needs_minimum:
         return "", ""
 
     if plan.is_pitching:
@@ -1288,10 +1294,21 @@ def _build_suggestions(plan: QueryPlan, stat_name: str, scope_label: str) -> lis
         pills.append(f"[SUGGEST]career {stat_lower} leaders[/SUGGEST]")
 
     # For batting stats, suggest pitching equivalent and vice versa
+    # Include the same scope so the pill matches the query context
+    scope_suffix = ""
+    if plan.scope == "career":
+        scope_suffix = " all time"
+    elif plan.scope == "all_time":
+        scope_suffix = " in a season"
+    elif plan.scope.startswith("season_") and plan.season:
+        scope_suffix = f" in {plan.season}"
+    elif plan.scope.startswith("since_") and plan.since_year:
+        scope_suffix = f" since {plan.since_year}"
+
     if not plan.is_pitching and plan.stat and plan.stat.db_column == "strikeouts":
-        pills.append(f"[SUGGEST]most K by a pitcher[/SUGGEST]")
+        pills.append(f"[SUGGEST]most K by a pitcher{scope_suffix}[/SUGGEST]")
     elif plan.is_pitching and plan.stat and plan.stat.db_column == "strikeouts":
-        pills.append(f"[SUGGEST]most K by a hitter[/SUGGEST]")
+        pills.append(f"[SUGGEST]most K by a hitter{scope_suffix}[/SUGGEST]")
 
     return pills
 
