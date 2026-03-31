@@ -253,7 +253,11 @@ def try_intercept(question: str):
     team_stats = nm.parse_team_stats(trimmed)
     if team_stats:
         stat = team_stats.get("stat")
-        if stat and nm.is_pitching_stat(stat):
+        lower_q = trimmed.lower()
+        pitching_context = stat and nm.is_pitching_stat(stat)
+        if not pitching_context:
+            pitching_context = any(w in lower_q for w in ["pitching", "pitcher", "pitchers", "pitching stats"])
+        if pitching_context:
             response = rb.build_pitching_team_stats(
                 team_stats["team_code"], stat, team_stats["season"])
         else:
