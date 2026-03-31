@@ -3708,7 +3708,13 @@ def build_pitching_team_stats(team_code: str, stat_info: Optional[StatInfo] = No
         team_params = [team_code, f"{team_code}/%", f"%/{team_code}"]
 
         if stat_info:
-            ip_filter = " AND sp.ip_outs >= 54" if stat_info.is_rate else ""
+            # Prorate IP minimum for early season
+            cur = conn.cursor()
+            cur.execute("SELECT MAX(games) FROM season_pitching_stats WHERE season = ?", (season,))
+            r = cur.fetchone()
+            max_games_p = int(r[0]) if r and r[0] else 162
+            ip_min_p = max(1, int(54 * max_games_p / 162))
+            ip_filter = f" AND sp.ip_outs >= {ip_min_p}" if stat_info.is_rate else ""
             order_dir = "ASC" if stat_info.display_abbrev in _LOWER_IS_BETTER_PITCHING else "DESC"
 
             cur = conn.cursor()
@@ -3740,12 +3746,17 @@ def build_pitching_team_stats(team_code: str, stat_info: Optional[StatInfo] = No
             return "\n".join(parts)
         else:
             # Team pitching overview sorted by ERA
+            # Prorate IP minimum for early season
             cur = conn.cursor()
+            cur.execute("SELECT MAX(games) FROM season_pitching_stats WHERE season = ?", (season,))
+            r = cur.fetchone()
+            max_games = int(r[0]) if r and r[0] else 162
+            ip_min = max(1, int(54 * max_games / 162))
             cur.execute(
                 "SELECT p.name, sp.games, sp.innings_pitched, sp.wins, sp.losses, sp.era "
                 "FROM season_pitching_stats sp "
                 "JOIN players p ON sp.player_id = p.player_id "
-                f"WHERE {team_filter} AND sp.season = ? AND sp.ip_outs >= 54 "
+                f"WHERE {team_filter} AND sp.season = ? AND sp.ip_outs >= {ip_min} "
                 "ORDER BY sp.era ASC LIMIT 15",
                 tuple(team_params + [season]),
             )
