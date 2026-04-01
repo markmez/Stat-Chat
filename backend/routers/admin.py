@@ -216,3 +216,39 @@ async def detect_notable(
         return {"status": "ok", "events_detected": count}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@router.post("/ai-notable")
+async def ai_notable(
+    season: int | None = None,
+    dry_run: bool = True,
+    authorization: str | None = Header(None),
+):
+    """Run AI-powered notable event detection via Sonnet.
+
+    dry_run=True (default): returns snapshot + insights without writing to DB.
+    dry_run=False: inserts AI insights into notable_events table.
+    """
+    verify_admin(authorization)
+    try:
+        from services.ai_notable_events import generate_ai_insights
+        if dry_run:
+            snapshot, events = generate_ai_insights(DB_PATH, season, dry_run=True)
+            return {
+                "status": "ok",
+                "dry_run": True,
+                "snapshot_chars": len(snapshot) if snapshot else 0,
+                "snapshot": snapshot,
+                "events": events,
+            }
+        else:
+            events = generate_ai_insights(DB_PATH, season, dry_run=False)
+            return {
+                "status": "ok",
+                "dry_run": False,
+                "events_inserted": len(events),
+                "events": events,
+            }
+    except Exception as e:
+        import traceback
+        raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
