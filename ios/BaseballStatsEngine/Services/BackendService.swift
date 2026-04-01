@@ -186,6 +186,7 @@ final class BackendService: Sendable {
         let age: Int
         let team_games: Int?
         let G, AB, R, H, doubles, triples, HR, RBI, SB, CS, BB, IBB, SO, HBP: Int
+        let SF: Int?
         let AVG, OBP, SLG, OPS, OPS_plus, ISO, BABIP: String
     }
 

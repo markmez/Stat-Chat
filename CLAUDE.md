@@ -204,6 +204,16 @@ We download Retrosheet season ZIPs that contain 7 CSV files. We now use **battin
 
 **DANGER: Do NOT re-run `pull_stats.py` (Retrosheet pipeline) without precaution.** It rebuilds `baseball_stats.db` from scratch with only 2016-2025 Retrosheet data, wiping all historical (pre-2016) and live (2026) data. If you need to rerun it, back up `baseball_stats.db` first and merge the results. `pull_live_stats.py` (MSF) is safe — it only inserts/updates current-season rows.
 
+### Stats methodology & discrepancies
+
+**Sacrifice Flies (SF) and pre-1954 stats**: SF wasn't officially tracked until 1954. Our data source (Retrosheet) reconstructs SF for earlier seasons from play-by-play accounts derived from box scores and newspaper records. Baseball Reference does NOT use these reconstructed values — they treat SF as 0 for pre-1954 seasons. This means our career OBP and OPS for pre-1954 players will differ slightly from Baseball Reference. Example: Babe Ruth career OPS is 1.160 in our system vs 1.164 on Baseball Reference. Our number includes estimated SF in the OBP denominator `(AB+BB+HBP+SF)`, while Baseball Reference uses `(AB+BB+HBP)` for those seasons. We consider our approach more accurate since it uses the best available reconstructed data, but users comparing to Baseball Reference may notice small differences for historical players.
+
+**Career rate stat computation**: Career AVG, OBP, SLG, OPS are recomputed from summed raw components across all seasons (e.g., career AVG = total hits / total at-bats). This is mathematically correct but may differ slightly from averaging per-season values because per-season values are stored rounded to 3 decimal places.
+
+**IP qualification rule**: We use the MLB qualification standard: 1.0 inning pitched per scheduled team game. So if a team has played 50 games, pitchers need 50 IP to qualify for rate stat leaderboards. Full season = 162 IP.
+
+**PA qualification for batters**: 400 PA for a full season, prorated by games played for in-progress seasons (e.g., 10 games in = ~25 PA minimum).
+
 ### Known data issues
 - **Ken Griffey Sr./Jr.**: Both stored as "Ken Griffey" (`grifk001` 1973-1991, `grifk002` 1989-2010). Can't disambiguate in UI since both have identical names. Fix: rename `grifk002` to "Ken Griffey Jr." in the `players` table (and all join tables). Aliases in `PlayerNameMatcher` route "Ken Griffey Jr."/"Sr." to "Ken Griffey" but can't distinguish which one.
 - **Bobby Witt Jr. split IDs**: `wittb001` = father (1986-2001), `wittb002` = Jr. data under father's name (2022-2024), `wittjb001` = Jr. from MSF (2025-2026). Jr.'s career is split across two player IDs. Fix: merge `wittb002` data into `wittjb001`.

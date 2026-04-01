@@ -565,6 +565,7 @@ enum PlayerCardService {
                 "2B": Double(s.doubles), "3B": Double(s.triples), "HR": Double(s.HR),
                 "RBI": Double(s.RBI), "SB": Double(s.SB), "CS": Double(s.CS),
                 "BB": Double(s.BB), "IBB": Double(s.IBB), "SO": Double(s.SO), "HBP": Double(s.HBP),
+                "SF": Double(s.SF ?? 0),
             ]
 
             // Look up per-season splits from backend
@@ -761,7 +762,7 @@ enum PlayerCardService {
     private static func buildCareerTotals(from seasons: [SeasonData]) -> StatGridParser.StatGrid? {
         guard seasons.count > 1 else { return nil }
         var totals: [String: Double] = [:]
-        let countingKeys = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "SB", "CS", "BB", "IBB", "SO", "HBP"]
+        let countingKeys = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "SB", "CS", "BB", "IBB", "SO", "HBP", "SF"]
         for s in seasons {
             for key in countingKeys {
                 totals[key, default: 0] += s.countingValues[key] ?? 0
@@ -771,7 +772,7 @@ enum PlayerCardService {
         let h = totals["H"] ?? 0
         let bb = totals["BB"] ?? 0
         let hbp = totals["HBP"] ?? 0
-        let sf = 0.0  // not tracked in counting
+        let sf = totals["SF"] ?? 0
         let pa = ab + bb + hbp + sf
         let singles = h - (totals["2B"] ?? 0) - (totals["3B"] ?? 0) - (totals["HR"] ?? 0)
         let tb = singles + 2 * (totals["2B"] ?? 0) + 3 * (totals["3B"] ?? 0) + 4 * (totals["HR"] ?? 0)

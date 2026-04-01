@@ -60,6 +60,7 @@ class BattingSeason(BaseModel):
     IBB: int
     SO: int
     HBP: int
+    SF: int
     AVG: str
     OBP: str
     SLG: str
@@ -239,7 +240,8 @@ def _fetch_batting_seasons(conn: sqlite3.Connection, name: str) -> List[BattingS
                s.doubles, s.triples, s.home_runs, s.rbi,
                s.stolen_bases, s.caught_stealing,
                s.walks, s.intentional_walks, s.strikeouts, s.hit_by_pitch,
-               s.batting_avg, s.obp, s.slg, s.ops, s.ops_plus, s.iso, s.babip
+               s.batting_avg, s.obp, s.slg, s.ops, s.ops_plus, s.iso, s.babip,
+               s.sacrifice_flies
         FROM season_batting_stats s
         JOIN players p ON s.player_id = p.player_id
         WHERE p.name = ?
@@ -272,6 +274,7 @@ def _fetch_batting_seasons(conn: sqlite3.Connection, name: str) -> List[BattingS
             IBB=_safe_int(r[14]),
             SO=_safe_int(r[15]),
             HBP=_safe_int(r[16]),
+            SF=_safe_int(r[24]),
             AVG=_safe_str(r[17]),
             OBP=_safe_str(r[18]),
             SLG=_safe_str(r[19]),
