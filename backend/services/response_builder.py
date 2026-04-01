@@ -2791,9 +2791,9 @@ def build_pitching_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
                 cur.execute("SELECT MAX(games) FROM season_pitching_stats WHERE season = ?", (yr,))
                 r = cur.fetchone()
                 max_games = int(r[0]) if r and r[0] else 162
-                ip_outs_min = 486 if max_games >= 140 else 243
+                ip_outs_min = max(1, max_games * 3)  # 1 IP per team game
                 ip_filter = f" AND sp.ip_outs >= {ip_outs_min}"
-                ip_note = "Min. qualified IP."
+                ip_note = f"Min. {ip_outs_min // 3}.{ip_outs_min % 3} IP."
 
             cur = conn.cursor()
             cur.execute(
@@ -3713,7 +3713,7 @@ def build_pitching_team_stats(team_code: str, stat_info: Optional[StatInfo] = No
             cur.execute("SELECT MAX(games) FROM season_pitching_stats WHERE season = ?", (season,))
             r = cur.fetchone()
             max_games_p = int(r[0]) if r and r[0] else 162
-            ip_min_p = max(1, int(54 * max_games_p / 162))
+            ip_min_p = max(1, max_games_p * 3)  # 1 IP per team game
             ip_filter = f" AND sp.ip_outs >= {ip_min_p}" if stat_info.is_rate else ""
             order_dir = "ASC" if stat_info.display_abbrev in _LOWER_IS_BETTER_PITCHING else "DESC"
 
@@ -3751,7 +3751,7 @@ def build_pitching_team_stats(team_code: str, stat_info: Optional[StatInfo] = No
             cur.execute("SELECT MAX(games) FROM season_pitching_stats WHERE season = ?", (season,))
             r = cur.fetchone()
             max_games = int(r[0]) if r and r[0] else 162
-            ip_min = max(1, int(54 * max_games / 162))
+            ip_min = max(1, max_games * 3)  # 1 IP per team game
             cur.execute(
                 "SELECT p.name, sp.era, sp.strikeouts "
                 "FROM season_pitching_stats sp "
