@@ -1245,8 +1245,8 @@ struct PlayerCardView: View {
                 season: season, fromGameNumber: effectiveGameNumber
             )
             let formattedDate = PlayerCardService.formatDateShort(formStartDate)
-            let hasRemainingGames = season.teamGames < 162
-            let availableModes: [FormProjectionMode] = hasRemainingGames
+            let playerMissedGames = season.games < season.teamGames
+            let availableModes: [FormProjectionMode] = playerMissedGames
                 ? FormProjectionMode.allCases
                 : [.pace]
 
