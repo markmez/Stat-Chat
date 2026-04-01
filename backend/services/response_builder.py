@@ -4490,11 +4490,13 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
         if needs_aggregation and stat_info.is_rate and col in ("batting_avg", "obp", "slg", "ops", "iso", "babip"):
             rate_formulas = {
                 "batting_avg": "CAST(SUM(t.hits) AS REAL) / NULLIF(SUM(t.at_bats), 0)",
-                "obp": "CAST(SUM(t.hits) + SUM(t.walks) + SUM(COALESCE(t.hit_by_pitch, 0)) AS REAL) / NULLIF(SUM(t.plate_appearances), 0)",
+                "obp": ("CAST(SUM(t.hits) + SUM(t.walks) + SUM(COALESCE(t.hit_by_pitch, 0)) AS REAL) / "
+                        "NULLIF(SUM(t.at_bats) + SUM(t.walks) + SUM(COALESCE(t.hit_by_pitch, 0)) + SUM(COALESCE(t.sacrifice_flies, 0)), 0)"),
                 "slg": ("CAST(SUM(t.hits) - SUM(t.doubles) - SUM(t.triples) - SUM(t.home_runs) "
                         "+ 2*SUM(t.doubles) + 3*SUM(t.triples) + 4*SUM(t.home_runs) AS REAL) "
                         "/ NULLIF(SUM(t.at_bats), 0)"),
-                "ops": ("(CAST(SUM(t.hits) + SUM(t.walks) + SUM(COALESCE(t.hit_by_pitch, 0)) AS REAL) / NULLIF(SUM(t.plate_appearances), 0)) + "
+                "ops": ("(CAST(SUM(t.hits) + SUM(t.walks) + SUM(COALESCE(t.hit_by_pitch, 0)) AS REAL) / "
+                        "NULLIF(SUM(t.at_bats) + SUM(t.walks) + SUM(COALESCE(t.hit_by_pitch, 0)) + SUM(COALESCE(t.sacrifice_flies, 0)), 0)) + "
                         "(CAST(SUM(t.hits) - SUM(t.doubles) - SUM(t.triples) - SUM(t.home_runs) "
                         "+ 2*SUM(t.doubles) + 3*SUM(t.triples) + 4*SUM(t.home_runs) AS REAL) "
                         "/ NULLIF(SUM(t.at_bats), 0))"),

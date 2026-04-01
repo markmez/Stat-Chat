@@ -1165,13 +1165,15 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             _career_rate_formulas = {
                 "batting_avg": ("CAST(SUM({p}.hits) AS REAL) / NULLIF(SUM({p}.at_bats), 0)",
                                 "HAVING SUM({p}.at_bats) >= 5000"),
-                "obp": ("CAST(SUM({p}.hits) + SUM({p}.walks) + SUM(COALESCE({p}.hit_by_pitch, 0)) AS REAL) / NULLIF(SUM({p}.plate_appearances), 0)",
-                        "HAVING SUM({p}.plate_appearances) >= 5000"),
+                "obp": ("CAST(SUM({p}.hits) + SUM({p}.walks) + SUM(COALESCE({p}.hit_by_pitch, 0)) AS REAL) / "
+                        "NULLIF(SUM({p}.at_bats) + SUM({p}.walks) + SUM(COALESCE({p}.hit_by_pitch, 0)) + SUM(COALESCE({p}.sacrifice_flies, 0)), 0)",
+                        "HAVING SUM({p}.at_bats) >= 5000"),
                 "slg": ("CAST((SUM({p}.hits) - SUM({p}.doubles) - SUM({p}.triples) - SUM({p}.home_runs)) + 2*SUM({p}.doubles) + 3*SUM({p}.triples) + 4*SUM({p}.home_runs) AS REAL) / NULLIF(SUM({p}.at_bats), 0)",
                         "HAVING SUM({p}.at_bats) >= 5000"),
-                "ops": ("(CAST(SUM({p}.hits) + SUM({p}.walks) + SUM(COALESCE({p}.hit_by_pitch, 0)) AS REAL) / NULLIF(SUM({p}.plate_appearances), 0)) + "
+                "ops": ("(CAST(SUM({p}.hits) + SUM({p}.walks) + SUM(COALESCE({p}.hit_by_pitch, 0)) AS REAL) / "
+                        "NULLIF(SUM({p}.at_bats) + SUM({p}.walks) + SUM(COALESCE({p}.hit_by_pitch, 0)) + SUM(COALESCE({p}.sacrifice_flies, 0)), 0)) + "
                         "(CAST((SUM({p}.hits) - SUM({p}.doubles) - SUM({p}.triples) - SUM({p}.home_runs)) + 2*SUM({p}.doubles) + 3*SUM({p}.triples) + 4*SUM({p}.home_runs) AS REAL) / NULLIF(SUM({p}.at_bats), 0))",
-                        "HAVING SUM({p}.plate_appearances) >= 5000"),
+                        "HAVING SUM({p}.at_bats) >= 5000"),
                 "iso": ("CAST(SUM({p}.doubles) + 2*SUM({p}.triples) + 3*SUM({p}.home_runs) AS REAL) / NULLIF(SUM({p}.at_bats), 0)",
                         "HAVING SUM({p}.at_bats) >= 5000"),
                 "babip": ("CAST(SUM({p}.hits) - SUM({p}.home_runs) AS REAL) / NULLIF(SUM({p}.at_bats) - SUM({p}.strikeouts) - SUM({p}.home_runs) + SUM(COALESCE({p}.sacrifice_flies, 0)), 0)",
