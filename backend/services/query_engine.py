@@ -864,14 +864,20 @@ def decompose(question: str) -> QueryPlan:
         "walked": ("g.walks >= 1", "a BB"),
     }
 
+    # Only detect streaks when streak-context words are present
+    streak_context_words = ["consecutive", "straight", "in a row", "streak", "streaks",
+                            "first", "opening", "current", "longest"]
+    has_streak_context = any(w in lower for w in streak_context_words)
+
     streak_detected = False
-    for trigger, (condition, label) in sorted(_streak_conditions.items(), key=lambda x: len(x[0]), reverse=True):
-        if trigger in lower:
-            plan.streak_condition = condition
-            plan.streak_condition_label = label
-            _add_consumed(plan, trigger)
-            streak_detected = True
-            break
+    if has_streak_context:
+        for trigger, (condition, label) in sorted(_streak_conditions.items(), key=lambda x: len(x[0]), reverse=True):
+            if trigger in lower:
+                plan.streak_condition = condition
+                plan.streak_condition_label = label
+                _add_consumed(plan, trigger)
+                streak_detected = True
+                break
 
     if streak_detected:
         # Find the number of consecutive games
@@ -1186,6 +1192,9 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         if filters_str:
             where += f" AND {filters_str}"
         where += pa
+        # Exclude zeros for counting stats (don't show players with 0 HR in "most HR" queries)
+        if not is_rate and not plan.sort_asc:
+            where += f" AND {stat_expr} > 0"
 
         has_age_filter = plan.age_max or plan.age_min
         age_select = f", ({prefix}.season - CAST(SUBSTR(p.birthdate, 1, 4) AS INT)) AS player_age" if has_age_filter else ""
