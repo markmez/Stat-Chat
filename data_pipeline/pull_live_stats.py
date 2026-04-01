@@ -1467,6 +1467,18 @@ def main():
         else:
             print(f"Streak detection failed: {result.stderr}")
 
+        # Detect notable events
+        print(f"\nDetecting notable events for {season_year}...")
+        try:
+            # Add parent dir to path so we can import services
+            services_parent = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+            if services_parent not in sys.path:
+                sys.path.insert(0, services_parent)
+            from services.notable_events import detect_all
+            detect_all(args.db, season_year)
+        except Exception as e:
+            print(f"Notable events detection failed: {e}")
+
         elapsed = time.time() - t0
         print(f"\nDone in {elapsed:.1f}s")
     except Exception:

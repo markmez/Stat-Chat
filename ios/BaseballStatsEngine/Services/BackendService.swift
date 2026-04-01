@@ -363,4 +363,26 @@ final class BackendService: Sendable {
         }
         return try JSONDecoder().decode(MilestoneResponse.self, from: data)
     }
+
+    // MARK: - Notable Events
+
+    struct NotableEventData: Decodable {
+        let headline: String
+        let detail: String
+        let category: String
+        let game_date: String
+        let player_names: [String]
+        let team_names: [String]
+    }
+
+    func fetchNotableEvents(limit: Int = 20) async throws -> [NotableEventData] {
+        var components = URLComponents(url: baseURL.appendingPathComponent("notable-events"),
+                                       resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "limit", value: "\(limit)")]
+        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            return []  // Graceful fallback
+        }
+        return (try? JSONDecoder().decode([NotableEventData].self, from: data)) ?? []
+    }
 }

@@ -1,0 +1,173 @@
+import SwiftUI
+
+struct NotableEvent: Identifiable {
+    let id = UUID()
+    let headline: String
+    let detail: String
+    let category: String  // "Streak", "Milestone", "Rarity"
+    let gameDate: String  // "YYYY-MM-DD" from backend
+    let playerNames: [String]
+    let teamNames: [String]
+
+    var timestamp: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let eventDate = formatter.date(from: gameDate) else { return "" }
+        let days = Calendar.current.dateComponents([.day], from: eventDate,
+                                                    to: Calendar.current.startOfDay(for: Date())).day ?? 0
+        switch days {
+        case 0: return "Today"
+        case 1: return "Yesterday"
+        default: return "\(days) days ago"
+        }
+    }
+
+    init(headline: String, detail: String, category: String, gameDate: String,
+         playerNames: [String], teamNames: [String]) {
+        self.headline = headline
+        self.detail = detail
+        self.category = category
+        self.gameDate = gameDate
+        self.playerNames = playerNames
+        self.teamNames = teamNames
+    }
+
+    init(from data: BackendService.NotableEventData) {
+        self.headline = data.headline
+        self.detail = data.detail
+        self.category = data.category
+        self.gameDate = data.game_date
+        self.playerNames = data.player_names
+        self.teamNames = data.team_names
+    }
+}
+
+struct NotableEventsFeed: View {
+    var onPlayerTap: ((String) -> Void)?
+    var onTeamTap: ((String) -> Void)?
+
+    @State private var events: [NotableEvent] = []
+    @State private var hasLoaded = false
+
+    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+
+    var body: some View {
+        if !events.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                // Section header
+                HStack(spacing: 6) {
+                    Image(systemName: "flame.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [.orange, .red],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                    Text("Notable")
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 12)
+
+                // Events
+                LazyVStack(spacing: 12) {
+                    ForEach(events) { event in
+                        eventCard(event)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
+            }
+            .environment(\.openURL, OpenURLAction { url in
+                guard url.scheme == "statchat" else { return .systemAction }
+                let name = url.lastPathComponent.removingPercentEncoding ?? url.lastPathComponent
+                if url.host == "player" {
+                    onPlayerTap?(name)
+                } else if url.host == "team" {
+                    onTeamTap?(name)
+                }
+                return .handled
+            })
+        }
+
+        Color.clear.frame(height: 0)
+            .task {
+                guard !hasLoaded else { return }
+                hasLoaded = true
+                await loadEvents()
+            }
+    }
+
+    private func loadEvents() async {
+        do {
+            let data = try await BackendService().fetchNotableEvents()
+            let loaded = data.map { NotableEvent(from: $0) }
+            await MainActor.run {
+                events = loaded
+            }
+        } catch {
+            // Silently fail — feed just won't show
+        }
+    }
+
+    private func eventCard(_ event: NotableEvent) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Category + timestamp
+            HStack {
+                Text(event.category.uppercased())
+                    .font(.system(.caption2, design: .rounded, weight: .bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(event.timestamp)
+                    .font(.system(.caption2, design: .rounded))
+                    .foregroundStyle(.tertiary)
+            }
+
+            // Combined text — tweet-style
+            Text(highlightedText(event.headline + " " + event.detail, playerNames: event.playerNames, teamNames: event.teamNames))
+                .font(.system(.subheadline, design: .rounded))
+                .foregroundStyle(.primary)
+                .lineSpacing(3)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+
+    /// Build an AttributedString with tappable player/team names
+    private func highlightedText(_ text: String, playerNames: [String], teamNames: [String]) -> AttributedString {
+        var result = AttributedString(text)
+
+        // Highlight + link player names
+        for name in playerNames {
+            if let range = result.range(of: name) {
+                result[range].foregroundColor = deepBlue
+                result[range].font = .system(.subheadline, design: .rounded, weight: .bold)
+                if let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {
+                    result[range].link = URL(string: "statchat://player/\(encoded)")
+                }
+            }
+        }
+
+        // Highlight + link team names
+        for team in teamNames {
+            if let range = result.range(of: team) {
+                result[range].foregroundColor = deepBlue
+                result[range].font = .system(.subheadline, design: .rounded, weight: .bold)
+                if let encoded = team.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {
+                    result[range].link = URL(string: "statchat://team/\(encoded)")
+                }
+            }
+        }
+
+        return result
+    }
+}
+
+#Preview {
+    NotableEventsFeed()
+}
