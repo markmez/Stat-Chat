@@ -252,3 +252,24 @@ async def ai_notable(
     except Exception as e:
         import traceback
         raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
+
+
+@router.get("/ai-notable-snapshot")
+async def ai_notable_snapshot(
+    season: int | None = None,
+    authorization: str | None = Header(None),
+):
+    """Return just the data snapshot that would be sent to Sonnet (no AI call)."""
+    verify_admin(authorization)
+    try:
+        from services.ai_notable_events import compile_daily_snapshot
+        snapshot, latest_date = compile_daily_snapshot(DB_PATH, season)
+        return {
+            "status": "ok",
+            "latest_date": latest_date,
+            "snapshot_chars": len(snapshot) if snapshot else 0,
+            "snapshot": snapshot,
+        }
+    except Exception as e:
+        import traceback
+        raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
