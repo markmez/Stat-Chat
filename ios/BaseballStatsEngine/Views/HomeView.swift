@@ -61,7 +61,7 @@ struct HomeView: View {
                             path.append(HistoryDestination())
                         } label: {
                             Image(systemName: "clock.arrow.circlepath")
-                                .font(.system(size: 15))
+                                .font(.system(size: 17))
                                 .foregroundStyle(.primary.opacity(0.7))
                         }
                     }
@@ -70,7 +70,7 @@ struct HomeView: View {
                         SettingsView()
                     } label: {
                         Image(systemName: "gearshape")
-                            .font(.system(size: 15))
+                            .font(.system(size: 17))
                             .foregroundStyle(.primary.opacity(0.7))
                     }
                 }

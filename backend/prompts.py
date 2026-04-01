@@ -125,10 +125,10 @@ Rules:
 
 ## Data availability by era
 - **Season-level stats** (1898-2026): Full historical coverage. Combine columns and derive stats freely.
-- **Game-level logs** (2016-2025 only): game_batting_logs and game_pitching_logs have per-game stats with dates. Can answer questions like "most HR in a single game" or "stats in April" — but only for 2016-2025. For pre-2016, only season totals exist.
+- **Game-level logs** (1920-2026): game_batting_logs and game_pitching_logs have per-game stats with dates. Can answer questions like "most HR in a single game", "stats in April", streak queries, etc. Full coverage from 1920 onward. For pre-1920, only season totals exist.
 - **Play-by-play derived splits** (2025-2026 only): Platoon, pitch type, count, and RISP splits are pre-aggregated season-level tables derived from play-by-play. These are NOT raw play-by-play — you cannot query individual at-bats or pitches.
 - **Head-to-head** (2025-2026 only): head_to_head table for batter vs pitcher matchups.
-- If a question requires a data era we don't have (e.g., game logs before 2016, play-by-play before 2025), output SELECT 'NEEDS_CONTEXT'.
+- If a question requires a data era we don't have (e.g., game logs before 1920, play-by-play before 2025), output SELECT 'NEEDS_CONTEXT'.
 
 ## Questions beyond the schema
 - If the question requires specific knowledge NOT represented in any database column, output: SELECT 'NEEDS_CONTEXT'
