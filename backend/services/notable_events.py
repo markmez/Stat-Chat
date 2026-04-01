@@ -266,8 +266,8 @@ def detect_pitching_streaks(conn, season, latest_date):
         if scoreless >= 2:
             name = _player_name(conn, pid)
             events.append({
-                "headline": f"{name} has thrown {scoreless} consecutive scoreless starts",
-                "detail": f"Allowing 0 earned runs in 5+ innings each time.",
+                "headline": f"{name} has thrown {scoreless} consecutive scoreless starts, allowing 0 earned runs in 5+ innings each time.",
+                "detail": "",
                 "category": "Streak",
                 "game_date": starts[0][0],
                 "player_names": [name],
@@ -288,8 +288,8 @@ def detect_pitching_streaks(conn, season, latest_date):
         if qs >= 4:
             name = _player_name(conn, pid)
             events.append({
-                "headline": f"{name} has {qs} consecutive quality starts",
-                "detail": f"At least 6 IP with 3 or fewer earned runs each outing.",
+                "headline": f"{name} has {qs} consecutive quality starts — at least 6 IP with 3 or fewer earned runs each outing.",
+                "detail": "",
                 "category": "Streak",
                 "game_date": starts[0][0],
                 "player_names": [name],
@@ -392,18 +392,21 @@ def detect_career_milestones(conn, season, latest_date):
     """
     events = []
 
-    # Batting milestones: (career_col, game_log_col, milestones, label)
+    # Batting milestones: (career_col, game_log_col, milestones, label, action_template)
+    # action_template: lambda(game_value) -> "hit 2 home runs"
     bat_milestones = [
-        ("home_runs", "home_runs", [600, 500, 400, 300, 200, 100], "home runs"),
-        ("hits", "hits", [3000, 2500, 2000, 1500, 1000], "career hits"),
-        ("rbi", "rbi", [1500, 1000, 500], "career RBI"),
+        ("home_runs", "home_runs", [600, 500, 400, 300, 200, 100], "career home runs",
+         lambda v: f"hit {v} home run{'s' if v != 1 else ''}"),
+        ("hits", "hits", [3000, 2500, 2000, 1500, 1000], "career hits",
+         lambda v: f"went {v}-for with {v} hit{'s' if v != 1 else ''}"),
+        ("rbi", "rbi", [1500, 1000, 500], "career RBI",
+         lambda v: f"drove in {v} run{'s' if v != 1 else ''}"),
     ]
 
-    for col, game_col, milestones, label in bat_milestones:
+    for col, game_col, milestones, label, action_fn in bat_milestones:
         # Find players who contributed to this stat in their most recent game
-        # Subquery: for each player, get their latest game, check if stat > 0
         contributors = conn.execute(f"""
-            SELECT g.player_id, g.date
+            SELECT g.player_id, g.date, g.{game_col}
             FROM game_batting_logs g
             INNER JOIN (
                 SELECT player_id, MAX(date) as max_date
@@ -412,13 +415,13 @@ def detect_career_milestones(conn, season, latest_date):
             ) latest ON g.player_id = latest.player_id AND g.date = latest.max_date
             WHERE g.season = ? AND g.{game_col} > 0
         """, (season, season)).fetchall()
-        contributor_dates = {r[0]: r[1] for r in contributors}
+        contributor_info = {r[0]: (r[1], r[2]) for r in contributors}  # pid -> (date, stat_val)
 
-        if not contributor_dates:
+        if not contributor_info:
             continue
 
         # Career totals for those players
-        placeholders = ",".join("?" * len(contributor_dates))
+        placeholders = ",".join("?" * len(contributor_info))
         rows = conn.execute(f"""
             SELECT s.player_id, p.name, SUM(s.{col}) as career_total
             FROM season_batting_stats s
@@ -426,7 +429,7 @@ def detect_career_milestones(conn, season, latest_date):
             WHERE s.player_id IN ({placeholders})
             GROUP BY s.player_id
             ORDER BY career_total DESC
-        """, list(contributor_dates.keys())).fetchall()
+        """, list(contributor_info.keys())).fetchall()
 
         found = 0
         for pid, name, total in rows:
@@ -435,11 +438,21 @@ def detect_career_milestones(conn, season, latest_date):
             for m in milestones:
                 remaining = m - total
                 if 1 <= remaining <= 5:
+                    game_date, stat_val = contributor_info[pid]
+                    action = action_fn(stat_val)
+                    # For hits, fix the template with actual AB
+                    if col == "hits":
+                        game_row = conn.execute("""
+                            SELECT hits, at_bats FROM game_batting_logs
+                            WHERE player_id = ? AND date = ? AND season = ?
+                        """, (pid, game_date, season)).fetchone()
+                        if game_row:
+                            action = f"collected {game_row[0]} hit{'s' if game_row[0] != 1 else ''}"
                     events.append({
-                        "headline": f"{name} is {remaining} away from {m} {label}",
-                        "detail": f"Currently at {total} {label}.",
+                        "headline": f"{name} {action}, and is now {remaining} away from {m} {label}.",
+                        "detail": "",
                         "category": "Milestone",
-                        "game_date": contributor_dates[pid],
+                        "game_date": game_date,
                         "player_names": [name],
                         "team_names": [],
                         "detection_type": f"career_{col}_{m}",
@@ -448,16 +461,19 @@ def detect_career_milestones(conn, season, latest_date):
                     found += 1
                     break
 
-    # Pitching milestones
+    # Pitching milestones: (career_col, game_log_col, milestones, label, action_template)
     pitch_milestones = [
-        ("strikeouts", "strikeouts", [3000, 2500, 2000, 1500, 1000], "career strikeouts"),
-        ("wins", "win", [200, 150, 100], "career wins"),
-        ("saves", "save", [400, 300, 200], "career saves"),
+        ("strikeouts", "strikeouts", [3000, 2500, 2000, 1500, 1000], "career strikeouts",
+         lambda v: f"struck out {v}"),
+        ("wins", "win", [200, 150, 100], "career wins",
+         lambda v: "picked up a win"),
+        ("saves", "save", [400, 300, 200], "career saves",
+         lambda v: "recorded a save"),
     ]
 
-    for col, game_col, milestones, label in pitch_milestones:
+    for col, game_col, milestones, label, action_fn in pitch_milestones:
         contributors = conn.execute(f"""
-            SELECT g.player_id, g.date
+            SELECT g.player_id, g.date, g.{game_col}
             FROM game_pitching_logs g
             INNER JOIN (
                 SELECT player_id, MAX(date) as max_date
@@ -466,12 +482,12 @@ def detect_career_milestones(conn, season, latest_date):
             ) latest ON g.player_id = latest.player_id AND g.date = latest.max_date
             WHERE g.season = ? AND g.{game_col} > 0
         """, (season, season)).fetchall()
-        contributor_dates = {r[0]: r[1] for r in contributors}
+        contributor_info = {r[0]: (r[1], r[2]) for r in contributors}
 
-        if not contributor_dates:
+        if not contributor_info:
             continue
 
-        placeholders = ",".join("?" * len(contributor_dates))
+        placeholders = ",".join("?" * len(contributor_info))
         rows = conn.execute(f"""
             SELECT s.player_id, p.name, SUM(s.{col}) as career_total
             FROM season_pitching_stats s
@@ -479,7 +495,7 @@ def detect_career_milestones(conn, season, latest_date):
             WHERE s.player_id IN ({placeholders})
             GROUP BY s.player_id
             ORDER BY career_total DESC
-        """, list(contributor_dates.keys())).fetchall()
+        """, list(contributor_info.keys())).fetchall()
 
         found = 0
         for pid, name, total in rows:
@@ -488,11 +504,13 @@ def detect_career_milestones(conn, season, latest_date):
             for m in milestones:
                 remaining = m - total
                 if 1 <= remaining <= 5:
+                    game_date, stat_val = contributor_info[pid]
+                    action = action_fn(stat_val)
                     events.append({
-                        "headline": f"{name} is {remaining} away from {m} {label}",
-                        "detail": f"Currently at {total} {label}.",
+                        "headline": f"{name} {action}, and is now {remaining} away from {m} {label}.",
+                        "detail": "",
                         "category": "Milestone",
-                        "game_date": contributor_dates[pid],
+                        "game_date": game_date,
                         "player_names": [name],
                         "team_names": [],
                         "detection_type": f"career_p_{col}_{m}",
@@ -524,17 +542,17 @@ def detect_single_game_performances(conn, season, latest_date):
 
     for name, game_date, h, hr, rbi, ab, doubles, triples in rows:
         if hr and hr >= 3:
-            headline = f"{name} hit {hr} home runs in a single game"
-            detail = f"Went {h}-for-{ab} with {rbi} RBI."
+            headline = f"{name} hit {hr} home runs, going {h}-for-{ab} with {rbi} RBI."
+            detail = ""
         elif h and h >= 5:
-            headline = f"{name} went {h}-for-{ab}"
-            detail = f"A {h}-hit game with {hr or 0} HR and {rbi or 0} RBI."
+            headline = f"{name} went {h}-for-{ab} with {hr or 0} HR and {rbi or 0} RBI."
+            detail = ""
         elif rbi and rbi >= 6:
-            headline = f"{name} drove in {rbi} runs"
-            detail = f"Went {h}-for-{ab} with {hr or 0} home runs."
+            headline = f"{name} drove in {rbi} runs, going {h}-for-{ab} with {hr or 0} home runs."
+            detail = ""
         else:
-            headline = f"{name} went {h}-for-{ab} with {hr} HR"
-            detail = f"Drove in {rbi or 0} runs."
+            headline = f"{name} went {h}-for-{ab} with {hr} HR and {rbi or 0} RBI."
+            detail = ""
 
         events.append({
             "headline": headline,
@@ -567,14 +585,14 @@ def detect_single_game_performances(conn, season, latest_date):
     for name, game_date, ip, so, h, bb, er, ip_outs in rows:
         ip_display = ip or f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
         if ip_outs and ip_outs >= 27 and (h is not None and h <= 1):
-            headline = f"{name} threw a {h}-hitter over {ip_display} innings"
-            detail = f"Struck out {so or 0} with {bb or 0} walks."
+            headline = f"{name} threw a {h}-hitter over {ip_display} innings, striking out {so or 0}."
+            detail = ""
         elif so and so >= 12:
-            headline = f"{name} struck out {so} in {ip_display} innings"
-            detail = f"Allowed {h or 0} hits and {er or 0} earned runs."
+            headline = f"{name} struck out {so} in {ip_display} innings, allowing {h or 0} hits and {er or 0} earned runs."
+            detail = ""
         else:
-            headline = f"{name} dominated: {ip_display} IP, {so or 0} K, {er or 0} ER"
-            detail = f"Allowed just {h or 0} hits and {bb or 0} walks."
+            headline = f"{name} dominated over {ip_display} innings — {so or 0} strikeouts, {h or 0} hits, {er or 0} earned runs."
+            detail = ""
 
         events.append({
             "headline": headline,

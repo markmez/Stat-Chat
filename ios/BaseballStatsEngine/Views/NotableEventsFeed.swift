@@ -72,9 +72,9 @@ struct NotableEventsFeed: View {
                 .padding(.bottom, 12)
 
                 // Events
-                LazyVStack(spacing: 12) {
-                    ForEach(events) { event in
-                        eventCard(event)
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(events.enumerated()), id: \.element.id) { index, event in
+                        eventCard(event, isLast: index == events.count - 1)
                     }
                 }
                 .padding(.horizontal, 20)
@@ -112,30 +112,42 @@ struct NotableEventsFeed: View {
         }
     }
 
-    private func eventCard(_ event: NotableEvent) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Category + timestamp
-            HStack {
-                Text(event.category.uppercased())
-                    .font(.system(.caption2, design: .rounded, weight: .bold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(event.timestamp)
-                    .font(.system(.caption2, design: .rounded))
-                    .foregroundStyle(.tertiary)
-            }
+    @ViewBuilder
+    private func eventCard(_ event: NotableEvent, isLast: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
+                // Category + timestamp
+                HStack {
+                    Text(event.category.uppercased())
+                        .font(.system(.caption2, design: .rounded, weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(event.timestamp)
+                        .font(.system(.caption2, design: .rounded))
+                        .foregroundStyle(.tertiary)
+                }
 
-            // Combined text — tweet-style
-            Text(highlightedText(event.headline + " " + event.detail, playerNames: event.playerNames, teamNames: event.teamNames))
-                .font(.system(.subheadline, design: .rounded))
-                .foregroundStyle(.primary)
-                .lineSpacing(3)
+                // Combined text — tweet-style
+                Text(highlightedText(
+                    event.detail.isEmpty ? event.headline : event.headline + " " + event.detail,
+                    playerNames: event.playerNames, teamNames: event.teamNames))
+                    .font(.system(.subheadline, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .lineSpacing(3)
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 14)
+
+            // Gradient separator
+            if !isLast {
+                LinearGradient(
+                    colors: [Color(red: 0.45, green: 0.7, blue: 1.0), Color(red: 0.1, green: 0.25, blue: 0.7)],
+                    startPoint: .leading, endPoint: .trailing
+                )
+                .frame(height: 2)
+                .clipShape(Capsule())
+            }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-        )
     }
 
     /// Build an AttributedString with tappable player/team names

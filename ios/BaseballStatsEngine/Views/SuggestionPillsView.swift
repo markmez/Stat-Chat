@@ -4,7 +4,7 @@ import SwiftUI
 /// Displays 2 rows of gradient capsule pills, fading one out at a time.
 struct SuggestionPillsView: View {
     var searchHistory: [String] = []
-    var compact: Bool = false
+    var compact: Bool = false  // ignored — always 4 pills
     let onTap: (String) -> Void
 
     @State private var pool: [Suggestion] = []
@@ -13,7 +13,7 @@ struct SuggestionPillsView: View {
     @State private var nextSwapIndex = 0
     @State private var fadingId: String?
 
-    private var maxVisible: Int { compact ? 4 : 6 }
+    private let maxVisible = 4
     private let swapInterval: TimeInterval = 4.0
     private let fadeDuration: TimeInterval = 0.5
 

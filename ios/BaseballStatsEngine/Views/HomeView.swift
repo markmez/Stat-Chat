@@ -180,11 +180,11 @@ struct HomeView: View {
                     }
 
                     SuggestionPillsView(
-                        searchHistory: appState.searchHistory,
-                        compact: !StoreKitService.shared.isSubscribed && !appState.searchHistory.isEmpty
+                        searchHistory: appState.searchHistory
                     ) { query in
                         questionText = query
                     }
+                    .frame(height: 80, alignment: .top)
 
                     // Free usage indicator
                     if !StoreKitService.shared.isSubscribed {
