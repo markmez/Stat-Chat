@@ -24,7 +24,7 @@ from .name_matcher import (
     _detect_split_context, _detect_pitcher_role,
     is_pitching_stat, find_player_in_text, match_player,
     stat_alias_map, _extract_threshold,
-    _POSITION_MAP,
+    _POSITION_MAP, team_alias_map, _sorted_team_aliases,
 )
 
 logger = logging.getLogger("statchat.query_engine")
@@ -156,6 +156,7 @@ _STOP_WORDS = {
     "won", "win", "winning",
     "stole", "stolen", "stealing", "bases",
     "pas", "abs", "plate", "appearance", "appearances",
+    "hits", "runs", "any", "multiple", "each",
     "threw", "thrown", "throwing",
     "pitched", "pitching",
     "drove", "driven",
@@ -703,6 +704,13 @@ def decompose(question: str) -> QueryPlan:
         })
         _add_consumed(plan, "without getting caught without being caught never caught perfect")
 
+    # Team filter
+    for alias in _sorted_team_aliases:
+        if alias in lower:
+            plan.team_code = team_alias_map[alias]
+            _add_consumed(plan, alias)
+            break
+
     # Age filter — only match "under/over N" when it's about age, not stats.
     # "player under 25" = age. "with under 10 HR" = stat filter (not age).
     # Heuristic: age if followed by nothing or age-like words, not if followed by a stat keyword.
@@ -822,6 +830,11 @@ def decompose(question: str) -> QueryPlan:
         "reached base": ("(g.hits + g.walks + COALESCE(g.hit_by_pitch, 0)) >= 1", "reaching base"),
         "got on base": ("(g.hits + g.walks + COALESCE(g.hit_by_pitch, 0)) >= 1", "reaching base"),
         "on base": ("(g.hits + g.walks + COALESCE(g.hit_by_pitch, 0)) >= 1", "reaching base"),
+        # Multiple hits
+        "multiple hits": ("g.hits >= 2", "multiple hits"),
+        "multi-hit": ("g.hits >= 2", "multiple hits"),
+        "multi hit": ("g.hits >= 2", "multiple hits"),
+        "2+ hits": ("g.hits >= 2", "2+ hits"),
         # Hits
         "hit": ("g.hits >= 1", "a hit"),
         "got a hit": ("g.hits >= 1", "a hit"),
@@ -1763,6 +1776,16 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
         season_filter = " AND g.season >= ?"
         season_params = [plan.since_year]
 
+    # Team filter
+    team_filter = ""
+    team_params = []
+    if plan.team_code:
+        # Join with season stats to get team
+        team_filter = (" AND EXISTS (SELECT 1 FROM season_batting_stats sbs "
+                       "WHERE sbs.player_id = g.player_id AND sbs.season = g.season "
+                       "AND (sbs.team = ? OR sbs.team LIKE ? OR sbs.team LIKE ?))")
+        team_params = [plan.team_code, f"{plan.team_code}/%", f"%/{plan.team_code}"]
+
     # Get all qualifying game logs, ordered by player + date
     cur = conn.cursor()
     cur.execute(
@@ -1770,9 +1793,9 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
         f"CASE WHEN {condition} THEN 1 ELSE 0 END AS success "
         f"FROM {table} g "
         f"JOIN players p ON g.player_id = p.player_id "
-        f"WHERE 1=1{season_filter} "
+        f"WHERE 1=1{season_filter}{team_filter} "
         f"ORDER BY g.player_id, g.season, g.date",
-        tuple(season_params),
+        tuple(season_params + team_params),
     )
     rows = cur.fetchall()
 
