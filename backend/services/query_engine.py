@@ -1198,10 +1198,12 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
 
         has_age_filter = plan.age_max or plan.age_min
         age_select = f", ({prefix}.season - CAST(SUBSTR(p.birthdate, 1, 4) AS INT)) AS player_age" if has_age_filter else ""
+        extra_selects = ", ".join(f"{prefix}.{ef['stat'].db_column}" for ef in plan.extra_filters if ef.get('stat'))
+        extra_select_clause = f", {extra_selects}" if extra_selects else ""
 
         cur = conn.cursor()
         cur.execute(
-            f"SELECT p.name, {stat_expr} AS stat_val{age_select} "
+            f"SELECT p.name, {stat_expr} AS stat_val{age_select}{extra_select_clause} "
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
             f"{where} "
@@ -1365,22 +1367,33 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
     stat_col_key = plan.stat.db_column if plan.stat else (plan.derived_stat or "")
-    has_age_col = (plan.age_max or plan.age_min) and not has_year and len(rows[0]) > 2
-    if has_year and len(rows[0]) > 2:
-        parts.append(f"HEADER: {abbrev}, Year")
-        for i, row in enumerate(rows):
-            val = _format_val(stat_col_key, row[1], is_rate)
-            parts.append(f"ROW {i+1}. {row[0]}: {val}, {row[2]}")
+    has_age_col = (plan.age_max or plan.age_min) and not has_year
+    n_extra = len(plan.extra_filters)
+    extra_headers = [ef["stat"].display_abbrev for ef in plan.extra_filters if ef.get("stat")]
+
+    # Build header
+    header_parts = [abbrev]
+    if has_year:
+        header_parts.append("Year")
     elif has_age_col:
-        parts.append(f"HEADER: {abbrev}, Age")
-        for i, row in enumerate(rows):
-            val = _format_val(stat_col_key, row[1], is_rate)
-            parts.append(f"ROW {i+1}. {row[0]}: {val}, {row[2]}")
-    else:
-        parts.append(f"HEADER: {abbrev}")
-        for i, row in enumerate(rows):
-            val = _format_val(stat_col_key, row[1], is_rate)
-            parts.append(f"ROW {i+1}. {row[0]}: {val}")
+        header_parts.append("Age")
+    header_parts.extend(extra_headers)
+    parts.append(f"HEADER: {', '.join(header_parts)}")
+
+    # Build rows
+    for i, row in enumerate(rows):
+        val = _format_val(stat_col_key, row[1], is_rate)
+        row_parts = [val]
+        col_offset = 2  # after name, stat_val
+        if has_year or has_age_col:
+            row_parts.append(str(row[col_offset]))
+            col_offset += 1
+        # Extra filter values
+        for j, ef in enumerate(plan.extra_filters):
+            if col_offset + j < len(row):
+                ef_val = _format_val(ef["stat"].db_column, row[col_offset + j], ef["stat"].is_rate)
+                row_parts.append(ef_val)
+        parts.append(f"ROW {i+1}. {row[0]}: {', '.join(row_parts)}")
     parts.append("[/LEADERBOARD]")
 
     if is_rate:
