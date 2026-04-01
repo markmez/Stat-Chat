@@ -154,7 +154,7 @@ _STOP_WORDS = {
     "played", "play", "playing",
     "hit", "hitting", "batted", "batting",
     "won", "win", "winning",
-    "stole", "stolen", "stealing",
+    "stole", "stolen", "stealing", "bases",
     "threw", "thrown", "throwing",
     "pitched", "pitching",
     "drove", "driven",
