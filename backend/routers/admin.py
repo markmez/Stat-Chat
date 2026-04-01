@@ -174,3 +174,31 @@ async def todays_games(authorization: str | None = Header(None)):
         }
     except Exception as e:
         return {"error": str(e)}
+
+
+HISTORICAL_SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data_pipeline", "load_historical_gamelogs.py")
+
+
+@router.post("/load-historical-gamelogs")
+async def load_historical_gamelogs(
+    start: int = 1920,
+    end: int = 2015,
+    authorization: str | None = Header(None),
+):
+    """One-time: load historical game logs from Retrosheet (1920-2015)."""
+    verify_admin(authorization)
+
+    cmd = [sys.executable, HISTORICAL_SCRIPT, "--db", DB_PATH,
+           "--start", str(start), "--end", str(end)]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        return {
+            "status": "ok" if result.returncode == 0 else "error",
+            "range": f"{start}-{end}",
+            "stdout": result.stdout[-3000:] if result.stdout else "",
+            "stderr": result.stderr[-1000:] if result.stderr else "",
+        }
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Historical load timed out (60 min limit)")
+    except Exception as e:
+        raise HTTPException(500, str(e))
