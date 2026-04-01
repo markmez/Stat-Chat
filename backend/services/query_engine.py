@@ -156,7 +156,7 @@ _STOP_WORDS = {
     "won", "win", "winning",
     "stole", "stolen", "stealing", "bases",
     "pas", "abs", "plate", "appearance", "appearances",
-    "hits", "runs", "any", "multiple", "each",
+    "hits", "runs", "any", "multiple", "each", "allowed", "pitched", "fewer",
     "threw", "thrown", "throwing",
     "pitched", "pitching",
     "drove", "driven",
@@ -210,8 +210,8 @@ class QueryPlan:
     extra_filters: list = field(default_factory=list)  # [{stat, threshold, comparison}]
 
     # Sequential game-log queries ("hit in N consecutive games", "reached base in first 10 PAs")
-    streak_condition: Optional[str] = None  # SQL condition per game: "hits >= 1", "home_runs >= 1"
-    streak_condition_label: Optional[str] = None  # Display: "a hit", "a HR", "reaching base"
+    streak_conditions: list = field(default_factory=list)  # List of SQL conditions per game, ANDed together
+    streak_condition_labels: list = field(default_factory=list)  # Display labels for each condition
     streak_length: Optional[int] = None  # N consecutive games
     streak_direction: Optional[str] = None  # "leading" (from start), "sliding" (anywhere), "trailing" (current)
 
@@ -226,7 +226,7 @@ class QueryPlan:
         if self.query_type in ("definition", "multi_threshold"):
             return False  # Handled by specialized parsers
         if self.query_type == "streak_sequence":
-            return self.streak_condition is not None and len(self.unexplained_words) == 0
+            return len(self.streak_conditions) > 0 and len(self.unexplained_words) == 0
         return (self.stat is not None or self.derived_stat is not None) and len(self.unexplained_words) == 0
 
 
@@ -871,13 +871,79 @@ def decompose(question: str) -> QueryPlan:
 
     streak_detected = False
     if has_streak_context:
-        for trigger, (condition, label) in sorted(_streak_conditions.items(), key=lambda x: len(x[0]), reverse=True):
-            if trigger in lower:
-                plan.streak_condition = condition
-                plan.streak_condition_label = label
-                _add_consumed(plan, trigger)
-                streak_detected = True
-                break
+        # Check if query has explicit per-game numeric thresholds (13+ IP, 0 runs, etc.)
+        # If so, skip named triggers — the thresholds define the conditions
+        has_numeric_thresholds = bool(re.search(r'\d+\+?\s*(?:ip|hits|runs|hr|rbi|walks|strikeouts|k\b|era|innings)', lower))
+
+        # Check for named condition triggers (only when no numeric thresholds)
+        if not has_numeric_thresholds:
+            for trigger, (condition, label) in sorted(_streak_conditions.items(), key=lambda x: len(x[0]), reverse=True):
+                if trigger in lower:
+                    plan.streak_conditions.append(condition)
+                    plan.streak_condition_labels.append(label)
+                    _add_consumed(plan, trigger)
+                    streak_detected = True
+                    break
+
+        # Also parse per-game stat thresholds: "13+ IP, 0 runs and 5 or fewer hits"
+        # Map game-log column names for threshold parsing
+        _game_log_stat_map = {
+            "innings_pitched": ("g.ip_outs", 3),  # multiply threshold by 3 (IP → ip_outs)
+            "ip": ("g.ip_outs", 3),
+            "hits": ("g.hits", 1),
+            "home_runs": ("g.home_runs", 1),
+            "runs": ("g.runs", 1),
+            "rbi": ("g.rbi", 1),
+            "walks": ("g.walks", 1),
+            "strikeouts": ("g.strikeouts", 1),
+            "stolen_bases": ("g.stolen_bases", 1),
+            "earned_runs": ("g.earned_runs", 1),
+        }
+
+        # Strip streak-context phrases before parsing conditions
+        # so "5 or fewer hits in first 2 games" doesn't match "games" as a stat
+        cond_text = lower
+        for phrase in ["in first", "in the first", "in their first", "opening",
+                        "consecutive", "straight", "in a row", "of a season",
+                        "of the season", "games pitched", "games played",
+                        "games started"]:
+            cond_text = cond_text.replace(phrase, " ")
+        # Remove streak length numbers and "games" that remain after stripping
+        cond_text = re.sub(r'(?:first|opening)\s+\d+', '', cond_text)
+        cond_text = re.sub(r'\d+\s*games?\b', '', cond_text)  # "3 games" → ""
+        cond_text = re.sub(r'\bgames?\b', '', cond_text)  # standalone "games"
+
+        # Split on commas and "and" to find multiple conditions
+        _cond_separators = [",", " and "]
+        for sep in _cond_separators:
+            cond_text = cond_text.replace(sep, " |CSEP| ")
+        cond_parts = [p.strip() for p in cond_text.split("|CSEP|") if p.strip()]
+
+        for part in cond_parts:
+            # Look for "N+ STAT" or "N or fewer STAT" or "0 STAT" patterns
+            stat_found = match_stat(part)
+            if stat_found and stat_found.db_column in _game_log_stat_map:
+                threshold = _extract_threshold(part, stat=stat_found)
+                if threshold is not None:
+                    col, multiplier = _game_log_stat_map[stat_found.db_column]
+                    adj_threshold = threshold * multiplier
+
+                    # Determine comparison
+                    under = any(p in part for p in ["or fewer", "fewer than", "or less",
+                                                     "less than", "under", "at most", "no more"])
+                    if under or threshold == 0:
+                        sql_cond = f"{col} <= {int(adj_threshold)}"
+                        label = f"≤{int(threshold)} {stat_found.display_abbrev}"
+                    else:
+                        sql_cond = f"{col} >= {int(adj_threshold)}"
+                        label = f"{int(threshold)}+ {stat_found.display_abbrev}"
+
+                    # Don't duplicate if already captured by trigger
+                    if sql_cond not in plan.streak_conditions:
+                        plan.streak_conditions.append(sql_cond)
+                        plan.streak_condition_labels.append(label)
+                        _add_consumed(plan, part.strip())
+                        streak_detected = True
 
     if streak_detected:
         # Find the number of consecutive games
@@ -1782,11 +1848,16 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
     - "leading" — check from start of season (first N games)
     - "trailing" — current active streak
     """
-    condition = plan.streak_condition
-    if not condition:
+    if not plan.streak_conditions:
         return None
 
-    table = "game_pitching_logs" if plan.is_pitching else "game_batting_logs"
+    # Combine all conditions with AND
+    condition = " AND ".join(plan.streak_conditions)
+
+    # Auto-detect pitching if conditions reference pitching columns
+    pitching_cols = {"g.ip_outs", "g.earned_runs", "g.is_start"}
+    is_pitching = plan.is_pitching or any(pc in c for c in plan.streak_conditions for pc in pitching_cols)
+    table = "game_pitching_logs" if is_pitching else "game_batting_logs"
 
     # Build season filter
     season_filter = ""
@@ -1824,7 +1895,7 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
     if not rows:
         return None
 
-    label = plan.streak_condition_label or "success"
+    label = " + ".join(plan.streak_condition_labels) if plan.streak_condition_labels else "success"
     target_length = plan.streak_length
 
     if plan.streak_direction == "leading":
