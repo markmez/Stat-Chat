@@ -625,7 +625,7 @@ def decompose(question: str) -> QueryPlan:
 
     # "single season" / "in a season" / "in a year" = best single season
     # This OVERRIDES career if both present ("most HR in a season ever")
-    single_season_triggers = ["single season", "in a season", "in a year"]
+    single_season_triggers = ["single season", "in a season", "in a year", "of a season"]
     if any(t in lower for t in single_season_triggers):
         plan.scope = "all_time"  # all_time = best single season records
         _add_consumed(plan, "single season in a season in a year")
@@ -890,6 +890,11 @@ def decompose(question: str) -> QueryPlan:
 
         plan.query_type = "streak_sequence"
         _add_consumed(plan, "consecutive straight in a row games game first opening streak streaks")
+
+        # "of a season" / "in a season" in streak context = search all seasons, not a specific one
+        if any(p in lower for p in ["of a season", "in a season"]) and not plan.since_year:
+            plan.season = None
+            plan.scope = "all_time"
 
     # --- Resolve "lowest" for rate stats ---
     if "lowest" in question.lower():
@@ -1815,7 +1820,7 @@ def _streak_sliding(rows, target_length, label, plan) -> Optional[str]:
 
     if not results:
         if target_length:
-            return f"No player found with {label} in {target_length} consecutive games."
+            return None  # Fall through
         return None
 
     # Sort by streak length descending
@@ -1861,10 +1866,10 @@ def _streak_leading(rows, target_length, label, plan) -> Optional[str]:
 
     if not results:
         scope = str(plan.season) if plan.season else "all seasons"
-        return f"No player had {label} in their first {target_length} games of a season ({scope})."
+        return None  # Fall through to Haiku/Sonnet
 
     scope = str(plan.season) if plan.season else f"Since {plan.since_year}" if plan.since_year else "2016-2025"
-    title = f"**Players with {label} in First {target_length} Games ({scope})**\n"
+    title = f"**Players with {label} in Each of Their First {target_length} Games ({scope})**\n"
     # Sort by most recent first
     results.sort(key=lambda x: x[1], reverse=True)
 
