@@ -1479,7 +1479,8 @@ def _execute_count(conn, plan: QueryPlan) -> Optional[str]:
         scope = f"since {plan.since_year}"
     else:
         scope = "all time"
-    summary = f"**{count}** players have had {threshold_display}+ {name} {scope}.\n"
+    scope_prefix = "in " if scope != "all time" else ""
+    summary = f"**{count}** players have had {threshold_display}+ {name} {scope_prefix}{scope}.\n"
 
     parts = [summary]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
