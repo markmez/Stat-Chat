@@ -202,3 +202,17 @@ async def load_historical_gamelogs(
         raise HTTPException(504, "Historical load timed out (60 min limit)")
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@router.post("/detect-notable")
+async def detect_notable(
+    authorization: str | None = Header(None),
+):
+    """Re-run just the notable events detection (no stats pull or streak detection)."""
+    verify_admin(authorization)
+    try:
+        from services.notable_events import detect_all
+        count = detect_all(DB_PATH)
+        return {"status": "ok", "events_detected": count}
+    except Exception as e:
+        raise HTTPException(500, str(e))
