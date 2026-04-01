@@ -3,53 +3,55 @@ One-time script to load historical game logs (1920-2015) into the existing DB.
 Does NOT touch season stats, splits, or any 2016+ data.
 Only inserts game_batting_logs and game_pitching_logs rows.
 
+No pandas dependency — uses only standard library.
+
 Usage:
     python load_historical_gamelogs.py --db /data/baseball_stats_full.db
     python load_historical_gamelogs.py --db /data/baseball_stats_full.db --start 1950 --end 1980
 """
 
 import argparse
+import csv
 import io
 import os
 import sqlite3
 import sys
 import time
 import zipfile
-
-import pandas as pd
-import requests
+from urllib.request import urlopen
 
 RETROSHEET_URL = "https://www.retrosheet.org/files/TEAM-{year}-CSV.zip"
 
 
 def download_retrosheet_zip(season):
     url = RETROSHEET_URL.format(year=season)
-    resp = requests.get(url, timeout=30)
-    resp.raise_for_status()
-    return zipfile.ZipFile(io.BytesIO(resp.content))
+    resp = urlopen(url, timeout=30)
+    return zipfile.ZipFile(io.BytesIO(resp.read()))
 
 
 def read_csv_from_zip(zf, filename):
+    """Read a CSV from a ZIP, return list of dicts (like DictReader)."""
     for name in zf.namelist():
         if name.lower().endswith(filename.lower()):
             with zf.open(name) as f:
-                return pd.read_csv(f, low_memory=False)
+                text = io.TextIOWrapper(f, encoding="utf-8", errors="replace")
+                return list(csv.DictReader(text))
     return None
 
 
 def safe_int(val, default=0):
+    if val is None or val == "":
+        return default
     try:
-        if pd.isna(val):
-            return default
-        return int(val)
+        return int(float(val))
     except (ValueError, TypeError):
         return default
 
 
 def safe_float(val, default=None):
+    if val is None or val == "":
+        return default
     try:
-        if pd.isna(val):
-            return default
         return float(val)
     except (ValueError, TypeError):
         return default
@@ -62,14 +64,14 @@ def format_date(raw):
     return s
 
 
-def compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so):
+def compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr):
     avg = h / ab if ab > 0 else None
     obp_denom = ab + bb + hbp + sf
     obp = (h + bb + hbp) / obp_denom if obp_denom > 0 else None
     tb = h + doubles + 2 * triples + 3 * hr
     slg = tb / ab if ab > 0 else None
     ops = (obp or 0) + (slg or 0) if obp is not None or slg is not None else None
-    return {"avg": avg, "obp": obp, "slg": slg, "ops": ops}
+    return avg, obp, slg, ops
 
 
 def load_batting_game_logs(conn, start, end):
@@ -85,19 +87,20 @@ def load_batting_game_logs(conn, start, end):
             print(f"  {season}: SKIP ({e})")
             continue
 
-        batting = read_csv_from_zip(zf, "batting.csv")
-        if batting is None:
+        rows_data = read_csv_from_zip(zf, "batting.csv")
+        if rows_data is None:
             print(f"  {season}: no batting.csv")
             continue
 
-        if "gametype" in batting.columns:
-            batting = batting[batting["gametype"] == "regular"]
-        if "stattype" in batting.columns:
-            batting = batting[batting["stattype"] == "value"]
+        count = 0
+        for row in rows_data:
+            # Filter to regular season, stat type = value
+            if row.get("gametype", "regular") != "regular":
+                continue
+            if row.get("stattype", "value") != "value":
+                continue
 
-        rows = 0
-        for _, row in batting.iterrows():
-            pid = str(row.get("id", ""))
+            pid = row.get("id", "").strip()
             if not pid:
                 continue
 
@@ -114,11 +117,11 @@ def load_batting_game_logs(conn, start, end):
             hbp = safe_int(row.get("b_hbp"))
             sf = safe_int(row.get("b_sf"))
 
-            date = format_date(row.get("date", ""))
-            opp = str(row.get("opp", "")) if pd.notna(row.get("opp")) else None
-            vishome = str(row.get("vishome", "")).upper() if pd.notna(row.get("vishome")) else None
+            date_str = format_date(row.get("date", ""))
+            opp = row.get("opp", "").strip() or None
+            vh = row.get("vishome", "").strip().upper() or None
 
-            rates = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so)
+            avg, obp, slg, ops = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr)
 
             cursor.execute("""
                 INSERT OR IGNORE INTO game_batting_logs (
@@ -128,16 +131,16 @@ def load_batting_game_logs(conn, start, end):
                     batting_avg, obp, slg, ops
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                pid, season, date, opp, vishome,
+                pid, season, date_str, opp, vh,
                 pa, ab, h, doubles, triples, hr, r, rbi, bb, so,
-                rates["avg"], rates["obp"], rates["slg"], rates["ops"],
+                avg, obp, slg, ops,
             ))
-            rows += 1
+            count += 1
 
         conn.commit()
-        total += rows
+        total += count
         elapsed = time.time() - t0
-        print(f"  {season}: {rows:,} rows ({elapsed:.1f}s)")
+        print(f"  {season}: {count:,} rows ({elapsed:.1f}s)")
 
     print(f"  Total batting game logs: {total:,}")
     return total
@@ -156,19 +159,19 @@ def load_pitching_game_logs(conn, start, end):
             print(f"  {season}: SKIP ({e})")
             continue
 
-        pitching = read_csv_from_zip(zf, "pitching.csv")
-        if pitching is None:
+        rows_data = read_csv_from_zip(zf, "pitching.csv")
+        if rows_data is None:
             print(f"  {season}: no pitching.csv")
             continue
 
-        if "gametype" in pitching.columns:
-            pitching = pitching[pitching["gametype"] == "regular"]
-        if "stattype" in pitching.columns:
-            pitching = pitching[pitching["stattype"] == "value"]
+        count = 0
+        for row in rows_data:
+            if row.get("gametype", "regular") != "regular":
+                continue
+            if row.get("stattype", "value") != "value":
+                continue
 
-        rows = 0
-        for _, row in pitching.iterrows():
-            pid = str(row.get("id", ""))
+            pid = row.get("id", "").strip()
             if not pid:
                 continue
 
@@ -189,16 +192,18 @@ def load_pitching_game_logs(conn, start, end):
             so = safe_int(row.get("p_k"))
             hbp = safe_int(row.get("p_hbp"))
             bf = safe_int(row.get("p_bf"))
+            gs = safe_int(row.get("p_gs"))
+
+            # Win/loss/save column names vary by season
             w = safe_int(row.get("p_w_game", row.get("p_wins", 0)))
             l = safe_int(row.get("p_l_game", row.get("p_losses", 0)))
             sv = safe_int(row.get("p_sv"))
-            gs = safe_int(row.get("p_gs"))
 
             era = (er * 9.0) / (ip_outs / 3.0) if ip_outs > 0 else None
 
-            date = format_date(row.get("date", ""))
-            opp = str(row.get("opp", "")) if pd.notna(row.get("opp")) else None
-            vishome = str(row.get("vishome", "")).upper() if pd.notna(row.get("vishome")) else None
+            date_str = format_date(row.get("date", ""))
+            opp = row.get("opp", "").strip() or None
+            vh = row.get("vishome", "").strip().upper() or None
 
             cursor.execute("""
                 INSERT OR IGNORE INTO game_pitching_logs (
@@ -208,16 +213,16 @@ def load_pitching_game_logs(conn, start, end):
                     win, loss, save, era
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                pid, season, date, opp, vishome, 1 if gs > 0 else 0,
+                pid, season, date_str, opp, vh, 1 if gs > 0 else 0,
                 ip_outs, innings_text, h, r, er, hr, bb, so, hbp, bf,
                 w, l, sv, era,
             ))
-            rows += 1
+            count += 1
 
         conn.commit()
-        total += rows
+        total += count
         elapsed = time.time() - t0
-        print(f"  {season}: {rows:,} rows ({elapsed:.1f}s)")
+        print(f"  {season}: {count:,} rows ({elapsed:.1f}s)")
 
     print(f"  Total pitching game logs: {total:,}")
     return total
