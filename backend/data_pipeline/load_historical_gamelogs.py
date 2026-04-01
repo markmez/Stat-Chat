@@ -20,7 +20,7 @@ import time
 import zipfile
 from urllib.request import urlopen
 
-RETROSHEET_URL = "https://www.retrosheet.org/files/TEAM-{year}-CSV.zip"
+RETROSHEET_URL = "https://www.retrosheet.org/downloads/{year}/{year}csvs.zip"
 
 
 def download_retrosheet_zip(season):
