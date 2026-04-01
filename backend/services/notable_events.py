@@ -90,6 +90,78 @@ def _player_team_display(conn, player_id, season):
 
 
 # ---------------------------------------------------------------------------
+# Historical comparison engine
+# ---------------------------------------------------------------------------
+
+def _historical_context(conn, streak_len, condition_sql, table="game_batting_logs",
+                        exclude_season=None, exclude_player=None,
+                        at_bat_filter="at_bats > 0"):
+    """Generate a historical context string like 'the longest since X in YYYY'.
+
+    Scans one season at a time, most recent first, using Python to walk
+    each player's game logs and find consecutive runs. Stops at the first
+    season where someone matched.
+
+    Returns empty string if streak is too short, too common, or no match found.
+    """
+    if streak_len < 10:
+        return ""  # Short streaks happen all the time
+
+    exclude_season = exclude_season or 0
+    exclude_player = exclude_player or ""
+
+    # Check recent seasons first, stop at first match
+    seasons = conn.execute(f"""
+        SELECT DISTINCT season FROM {table}
+        WHERE season < ?
+        ORDER BY season DESC
+    """, (exclude_season,)).fetchall()
+
+    for (szn,) in seasons:
+        # Get all games for this season, ordered by player + date
+        games = conn.execute(f"""
+            SELECT player_id, ({condition_sql}) as met
+            FROM {table}
+            WHERE season = ? AND ({at_bat_filter})
+            ORDER BY player_id, date
+        """, (szn,)).fetchall()
+
+        # Find max consecutive run per player in this season
+        best_pid = None
+        best_run = 0
+        current_pid = None
+        current_run = 0
+        max_run_for_player = 0
+
+        for pid, met in games:
+            if pid != current_pid:
+                # Finalize previous player
+                if current_pid and current_pid != exclude_player and max_run_for_player > best_run:
+                    best_run = max_run_for_player
+                    best_pid = current_pid
+                current_pid = pid
+                current_run = 0
+                max_run_for_player = 0
+
+            if met:
+                current_run += 1
+                max_run_for_player = max(max_run_for_player, current_run)
+            else:
+                current_run = 0
+
+        # Finalize last player
+        if current_pid and current_pid != exclude_player and max_run_for_player > best_run:
+            best_run = max_run_for_player
+            best_pid = current_pid
+
+        if best_run >= streak_len:
+            name = _player_name(conn, best_pid)
+            return f"The longest since {name} ({best_run} games) in {szn}."
+
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # Tier 1: High-signal detectors
 # ---------------------------------------------------------------------------
 
@@ -121,10 +193,18 @@ def detect_hitting_streaks(conn, season, latest_date, min_games=8):
         if streak >= min_games:
             name = _player_name(conn, pid)
             team = _player_team_display(conn, pid, season)
+            context = _historical_context(
+                conn, streak, "hits > 0",
+                exclude_season=season, exclude_player=pid
+            )
+            headline = f"{name} has hit safely in {streak} straight games"
+            if context:
+                headline += f", {context.lower()}"
+            else:
+                headline += "."
             events.append({
-                "headline": f"{name} has hit safely in {streak} straight games",
-                "detail": f"The longest active hitting streak in MLB." if streak >= 15
-                    else f"One of the longest active hitting streaks in MLB.",
+                "headline": headline,
+                "detail": "",
                 "category": "Streak",
                 "game_date": latest_date,
                 "player_names": [name],
@@ -136,16 +216,8 @@ def detect_hitting_streaks(conn, season, latest_date, min_games=8):
 
     # Sort by streak length, keep top 3
     events.sort(key=lambda e: e.get("_streak_len", 0), reverse=True)
-
-    # Update detail for #1 to say "longest active"
-    if len(events) > 1:
-        for e in events[1:]:
-            e["detail"] = f"One of the longest active hitting streaks in MLB."
-
-    # Clean up internal field
     for e in events:
         e.pop("_streak_len", None)
-
     return events[:3]
 
 
@@ -176,9 +248,20 @@ def detect_onbase_streaks(conn, season, latest_date, min_games=12):
 
         if streak >= min_games:
             name = _player_name(conn, pid)
+            context = _historical_context(
+                conn, streak,
+                "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
+                exclude_season=season, exclude_player=pid,
+                at_bat_filter="(at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)"
+            )
+            headline = f"{name} has reached base in {streak} straight games"
+            if context:
+                headline += f", {context.lower()}"
+            else:
+                headline += "."
             events.append({
-                "headline": f"{name} has reached base in {streak} straight games",
-                "detail": "The longest active on-base streak in MLB.",
+                "headline": headline,
+                "detail": "",
                 "category": "Streak",
                 "game_date": latest_date,
                 "player_names": [name],
@@ -219,9 +302,18 @@ def detect_hr_streaks(conn, season, latest_date, min_games=4):
 
         if streak >= min_games:
             name = _player_name(conn, pid)
+            context = _historical_context(
+                conn, streak, "home_runs > 0",
+                exclude_season=season, exclude_player=pid
+            )
+            headline = f"{name} has homered in {streak} straight games"
+            if context:
+                headline += f", {context.lower()}"
+            else:
+                headline += "."
             events.append({
-                "headline": f"{name} has homered in {streak} straight games",
-                "detail": f"Only a handful of players each year homer in {min_games}+ consecutive games.",
+                "headline": headline,
+                "detail": "",
                 "category": "Streak",
                 "game_date": latest_date,
                 "player_names": [name],
