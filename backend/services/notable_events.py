@@ -96,21 +96,14 @@ def _player_team_display(conn, player_id, season):
 def _historical_context(conn, streak_len, condition_sql, table="game_batting_logs",
                         exclude_season=None, exclude_player=None,
                         at_bat_filter="at_bats > 0"):
-    """Generate a historical context string like 'the longest since X in YYYY'.
-
-    Scans one season at a time, most recent first, using Python to walk
-    each player's game logs and find consecutive runs. Stops at the first
-    season where someone matched.
-
-    Returns empty string if streak is too short, too common, or no match found.
-    """
+    """For streaks: find the last time someone had a consecutive-game streak
+    of this length. Returns context string or empty."""
     if streak_len < 10:
-        return ""  # Short streaks happen all the time
+        return ""
 
     exclude_season = exclude_season or 0
     exclude_player = exclude_player or ""
 
-    # Check recent seasons first, stop at first match
     seasons = conn.execute(f"""
         SELECT DISTINCT season FROM {table}
         WHERE season < ?
@@ -118,7 +111,6 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
     """, (exclude_season,)).fetchall()
 
     for (szn,) in seasons:
-        # Get all games for this season, ordered by player + date
         games = conn.execute(f"""
             SELECT player_id, ({condition_sql}) as met
             FROM {table}
@@ -126,7 +118,6 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
             ORDER BY player_id, date
         """, (szn,)).fetchall()
 
-        # Find max consecutive run per player in this season
         best_pid = None
         best_run = 0
         current_pid = None
@@ -135,21 +126,18 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
 
         for pid, met in games:
             if pid != current_pid:
-                # Finalize previous player
                 if current_pid and current_pid != exclude_player and max_run_for_player > best_run:
                     best_run = max_run_for_player
                     best_pid = current_pid
                 current_pid = pid
                 current_run = 0
                 max_run_for_player = 0
-
             if met:
                 current_run += 1
                 max_run_for_player = max(max_run_for_player, current_run)
             else:
                 current_run = 0
 
-        # Finalize last player
         if current_pid and current_pid != exclude_player and max_run_for_player > best_run:
             best_run = max_run_for_player
             best_pid = current_pid
@@ -157,6 +145,35 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
         if best_run >= streak_len:
             name = _player_name(conn, best_pid)
             return f"The longest since {name} ({best_run} games) in {szn}."
+
+    return ""
+
+
+def _rarity_last_occurrence(conn, condition_sql, table="game_batting_logs",
+                            exclude_season=None):
+    """For single-game rarities: find the last time this condition was met.
+    Scans backwards from most recent season. Returns 'the first since X in Y'
+    or empty string."""
+    exclude_season = exclude_season or 0
+
+    seasons = conn.execute(f"""
+        SELECT DISTINCT season FROM {table}
+        WHERE season < ?
+        ORDER BY season DESC
+    """, (exclude_season,)).fetchall()
+
+    for (szn,) in seasons:
+        row = conn.execute(f"""
+            SELECT p.name, g.date
+            FROM {table} g
+            JOIN players p ON g.player_id = p.player_id
+            WHERE g.season = ? AND ({condition_sql})
+            ORDER BY g.date DESC
+            LIMIT 1
+        """, (szn,)).fetchone()
+
+        if row:
+            return f"the first since {row[0]} in {szn}."
 
     return ""
 
@@ -614,88 +631,145 @@ def detect_career_milestones(conn, season, latest_date):
     return events
 
 
-def detect_single_game_performances(conn, season, latest_date):
-    """Find standout single-game performances from recent games."""
+def detect_rarities(conn, season, latest_date):
+    """Find performances that happen ~5 or fewer times per season historically.
+
+    Frequency-validated thresholds (from 2016-2025 data):
+      Batting:  4+ HR (~1.5/yr), 6+ hits (~2/yr), 8+ RBI (~3/yr)
+      Pitching: no-hitter (~2.4/yr), 1-hitter 9IP (~5/yr), 15+ K (~2.8/yr)
+
+    Each rarity also gets historical context: when was the last time this happened?
+    """
     events = []
 
-    # Outstanding batting games (last 2 dates)
+    # --- Batting rarities ---
+
+    # Rarity checks: (sql_condition, detection_type, headline_fn)
+    # headline_fn takes (name, row_dict) and returns headline string
+    batting_rarities = [
+        {
+            "condition": "g.home_runs >= 4",
+            "type": "4hr_game",
+            "history_sql": "home_runs >= 4",
+            "headline": lambda n, r: f"{n} hit {r['hr']} home runs, going {r['h']}-for-{r['ab']} with {r['rbi']} RBI.",
+        },
+        {
+            "condition": "g.hits >= 6",
+            "type": "6hit_game",
+            "history_sql": "hits >= 6",
+            "headline": lambda n, r: f"{n} collected {r['h']} hits, going {r['h']}-for-{r['ab']} with {r['hr']} HR and {r['rbi']} RBI.",
+        },
+        {
+            "condition": "g.rbi >= 8",
+            "type": "8rbi_game",
+            "history_sql": "rbi >= 8",
+            "headline": lambda n, r: f"{n} drove in {r['rbi']} runs, going {r['h']}-for-{r['ab']} with {r['hr']} home runs.",
+        },
+    ]
+
+    for rarity in batting_rarities:
+        rows = conn.execute(f"""
+            SELECT p.name, g.player_id, g.date, g.hits, g.home_runs, g.rbi, g.at_bats
+            FROM game_batting_logs g
+            JOIN players p ON g.player_id = p.player_id
+            WHERE g.season = ? AND g.date >= (
+                SELECT DISTINCT date FROM game_batting_logs WHERE season = ?
+                ORDER BY date DESC LIMIT 1 OFFSET 1
+            )
+            AND ({rarity['condition']})
+        """, (season, season)).fetchall()
+
+        for name, pid, game_date, h, hr, rbi, ab in rows:
+            r = {"h": h or 0, "hr": hr or 0, "rbi": rbi or 0, "ab": ab or 0}
+            headline = rarity["headline"](name, r)
+
+            # Historical context: when was the last time this happened?
+            context = _rarity_last_occurrence(
+                conn, rarity["history_sql"], "game_batting_logs",
+                exclude_season=season
+            )
+            if context:
+                headline = headline.rstrip(".") + f" — {context}"
+
+            events.append({
+                "headline": headline,
+                "detail": "",
+                "category": "Rarity",
+                "game_date": game_date,
+                "player_names": [name],
+                "team_names": [],
+                "detection_type": rarity["type"],
+                "priority": 2,
+            })
+
+    # --- Pitching rarities ---
+
+    # Get last 2 game dates for pitching
     rows = conn.execute("""
-        SELECT p.name, g.date, g.hits, g.home_runs, g.rbi, g.at_bats, g.doubles, g.triples
-        FROM game_batting_logs g
-        JOIN players p ON g.player_id = p.player_id
-        WHERE g.season = ? AND g.date >= (
-            SELECT DISTINCT date FROM game_batting_logs WHERE season = ?
-            ORDER BY date DESC LIMIT 1 OFFSET 1
-        )
-        AND (g.home_runs >= 3 OR g.hits >= 5 OR g.rbi >= 6
-             OR (g.hits >= 4 AND g.home_runs >= 2))
-        ORDER BY g.home_runs DESC, g.hits DESC
-    """, (season, season)).fetchall()
-
-    for name, game_date, h, hr, rbi, ab, doubles, triples in rows:
-        if hr and hr >= 3:
-            headline = f"{name} hit {hr} home runs, going {h}-for-{ab} with {rbi} RBI."
-            detail = ""
-        elif h and h >= 5:
-            headline = f"{name} went {h}-for-{ab} with {hr or 0} HR and {rbi or 0} RBI."
-            detail = ""
-        elif rbi and rbi >= 6:
-            headline = f"{name} drove in {rbi} runs, going {h}-for-{ab} with {hr or 0} home runs."
-            detail = ""
-        else:
-            headline = f"{name} went {h}-for-{ab} with {hr} HR and {rbi or 0} RBI."
-            detail = ""
-
-        events.append({
-            "headline": headline,
-            "detail": detail,
-            "category": "Rarity",
-            "game_date": game_date,
-            "player_names": [name],
-            "team_names": [],
-            "detection_type": "big_batting_game",
-            "priority": 2,
-        })
-
-    # Outstanding pitching games
-    rows = conn.execute("""
-        SELECT p.name, g.date, g.innings_pitched, g.strikeouts, g.hits,
-               g.walks, g.earned_runs, g.ip_outs
+        SELECT p.name, g.player_id, g.date, g.innings_pitched, g.strikeouts,
+               g.hits, g.walks, g.earned_runs, g.ip_outs
         FROM game_pitching_logs g
         JOIN players p ON g.player_id = p.player_id
         WHERE g.season = ? AND g.date >= (
             SELECT DISTINCT date FROM game_pitching_logs WHERE season = ?
             ORDER BY date DESC LIMIT 1 OFFSET 1
         )
-        AND (g.strikeouts >= 12
-             OR (g.ip_outs >= 27 AND g.hits <= 1)
-             OR (g.ip_outs >= 21 AND g.earned_runs = 0 AND g.strikeouts >= 10)
-             OR (g.ip_outs >= 27 AND g.walks = 0 AND g.strikeouts >= 8))
-        ORDER BY g.strikeouts DESC
     """, (season, season)).fetchall()
 
-    for name, game_date, ip, so, h, bb, er, ip_outs in rows:
-        ip_display = ip or f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
-        if ip_outs and ip_outs >= 27 and (h is not None and h <= 1):
-            headline = f"{name} threw a {h}-hitter over {ip_display} innings, striking out {so or 0}."
-            detail = ""
-        elif so and so >= 12:
-            headline = f"{name} struck out {so} in {ip_display} innings, allowing {h or 0} hits and {er or 0} earned runs."
-            detail = ""
-        else:
-            headline = f"{name} dominated over {ip_display} innings — {so or 0} strikeouts, {h or 0} hits, {er or 0} earned runs."
-            detail = ""
+    for name, pid, game_date, ip, so, h, bb, er, ip_outs in rows:
+        ip_outs = ip_outs or 0
+        so = so or 0
+        h = h or 0
+        bb = bb or 0
+        er = er or 0
+        ip_display = ip or f"{ip_outs // 3}.{ip_outs % 3}"
 
-        events.append({
-            "headline": headline,
-            "detail": detail,
-            "category": "Rarity",
-            "game_date": game_date,
-            "player_names": [name],
-            "team_names": [],
-            "detection_type": "big_pitching_game",
-            "priority": 2,
-        })
+        # No-hitter: 9+ IP, 0 hits
+        if ip_outs >= 27 and h == 0:
+            headline = f"{name} threw a no-hitter over {ip_display} innings, striking out {so}."
+            context = _rarity_last_occurrence(
+                conn, "ip_outs >= 27 AND hits = 0", "game_pitching_logs",
+                exclude_season=season
+            )
+            if context:
+                headline = headline.rstrip(".") + f" — {context}"
+            events.append({
+                "headline": headline, "detail": "",
+                "category": "Rarity", "game_date": game_date,
+                "player_names": [name], "team_names": [],
+                "detection_type": "no_hitter", "priority": 1,
+            })
+        # 1-hitter: 9+ IP, 1 hit (skip if already a no-hitter)
+        elif ip_outs >= 27 and h == 1:
+            headline = f"{name} threw a 1-hitter over {ip_display} innings, striking out {so}."
+            context = _rarity_last_occurrence(
+                conn, "ip_outs >= 27 AND hits <= 1", "game_pitching_logs",
+                exclude_season=season
+            )
+            if context:
+                headline = headline.rstrip(".") + f" — {context}"
+            events.append({
+                "headline": headline, "detail": "",
+                "category": "Rarity", "game_date": game_date,
+                "player_names": [name], "team_names": [],
+                "detection_type": "1_hitter", "priority": 2,
+            })
+
+        # 15+ strikeout game
+        if so >= 15:
+            headline = f"{name} struck out {so} in {ip_display} innings, allowing {h} hits and {er} earned runs."
+            context = _rarity_last_occurrence(
+                conn, f"strikeouts >= {so}", "game_pitching_logs",
+                exclude_season=season
+            )
+            if context:
+                headline = headline.rstrip(".") + f" — {context}"
+            events.append({
+                "headline": headline, "detail": "",
+                "category": "Rarity", "game_date": game_date,
+                "player_names": [name], "team_names": [],
+                "detection_type": "15k_game", "priority": 2,
+            })
 
     return events
 
@@ -832,7 +906,7 @@ def detect_all(db_path=None, season=None):
     # Tier 2
     print("  Running Tier 2 detectors...")
     events += detect_career_milestones(conn, season, latest_date)
-    events += detect_single_game_performances(conn, season, latest_date)
+    events += detect_rarities(conn, season, latest_date)
     events += detect_hot_streaks_pelt(conn, season, latest_date)
     t2_count = len(events) - t1_count
     print(f"    Tier 2: {t2_count} events")
