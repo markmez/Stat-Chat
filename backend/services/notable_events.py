@@ -301,7 +301,7 @@ def detect_pitching_streaks(conn, season, latest_date):
     return events
 
 
-def detect_season_pace(conn, season):
+def detect_season_pace(conn, season, latest_date=None):
     """Find players on pace for notable season milestones."""
     events = []
 
@@ -341,7 +341,7 @@ def detect_season_pace(conn, season):
                         "headline": f"{name} is on pace for {pace} {stat_col.replace('_', ' ')}",
                         "detail": f"Would {desc}.",
                         "category": "Milestone",
-                        "game_date": str(date.today()),
+                        "game_date": latest_date,
                         "player_names": [name],
                         "team_names": [team] if team else [],
                         "detection_type": f"pace_{stat_col}",
@@ -369,7 +369,7 @@ def detect_season_pace(conn, season):
                 "headline": f"{name} is on pace for {pace} strikeouts",
                 "detail": "Would be among the highest single-season totals in MLB history.",
                 "category": "Milestone",
-                "game_date": str(date.today()),
+                "game_date": latest_date,
                 "player_names": [name],
                 "team_names": [team] if team else [],
                 "detection_type": "pace_pitching_k",
@@ -383,29 +383,50 @@ def detect_season_pace(conn, season):
 # Tier 2: Medium-signal detectors
 # ---------------------------------------------------------------------------
 
-def detect_career_milestones(conn, season):
-    """Find players approaching career milestone numbers."""
+def detect_career_milestones(conn, season, latest_date):
+    """Find players approaching career milestone numbers.
+
+    Only triggers when the player contributed to the milestone stat in
+    their most recent game (e.g., hit a HR → show HR milestone proximity).
+    Capped at 5 away from milestone.
+    """
     events = []
 
-    # Batting milestones: (stat_column, milestone_values, label)
+    # Batting milestones: (career_col, game_log_col, milestones, label)
     bat_milestones = [
-        ("home_runs", [600, 500, 400, 300, 200, 100], "home runs"),
-        ("hits", [3000, 2500, 2000, 1500, 1000], "career hits"),
-        ("rbi", [1500, 1000, 500], "career RBI"),
-        ("stolen_bases", [500, 400, 300], "career stolen bases"),
+        ("home_runs", "home_runs", [600, 500, 400, 300, 200, 100], "home runs"),
+        ("hits", "hits", [3000, 2500, 2000, 1500, 1000], "career hits"),
+        ("rbi", "rbi", [1500, 1000, 500], "career RBI"),
     ]
 
-    for col, milestones, label in bat_milestones:
+    for col, game_col, milestones, label in bat_milestones:
+        # Find players who contributed to this stat in their most recent game
+        # Subquery: for each player, get their latest game, check if stat > 0
+        contributors = conn.execute(f"""
+            SELECT g.player_id, g.date
+            FROM game_batting_logs g
+            INNER JOIN (
+                SELECT player_id, MAX(date) as max_date
+                FROM game_batting_logs WHERE season = ?
+                GROUP BY player_id
+            ) latest ON g.player_id = latest.player_id AND g.date = latest.max_date
+            WHERE g.season = ? AND g.{game_col} > 0
+        """, (season, season)).fetchall()
+        contributor_dates = {r[0]: r[1] for r in contributors}
+
+        if not contributor_dates:
+            continue
+
+        # Career totals for those players
+        placeholders = ",".join("?" * len(contributor_dates))
         rows = conn.execute(f"""
             SELECT s.player_id, p.name, SUM(s.{col}) as career_total
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE s.player_id IN (
-                SELECT DISTINCT player_id FROM season_batting_stats WHERE season = ?
-            )
+            WHERE s.player_id IN ({placeholders})
             GROUP BY s.player_id
             ORDER BY career_total DESC
-        """, (season,)).fetchall()
+        """, list(contributor_dates.keys())).fetchall()
 
         found = 0
         for pid, name, total in rows:
@@ -413,38 +434,52 @@ def detect_career_milestones(conn, season):
                 break
             for m in milestones:
                 remaining = m - total
-                if 1 <= remaining <= 10:
+                if 1 <= remaining <= 5:
                     events.append({
                         "headline": f"{name} is {remaining} away from {m} {label}",
                         "detail": f"Currently at {total} {label}.",
                         "category": "Milestone",
-                        "game_date": str(date.today()),
+                        "game_date": contributor_dates[pid],
                         "player_names": [name],
                         "team_names": [],
                         "detection_type": f"career_{col}_{m}",
                         "priority": 2,
                     })
                     found += 1
-                    break  # Only closest milestone
+                    break
 
     # Pitching milestones
     pitch_milestones = [
-        ("strikeouts", [3000, 2500, 2000, 1500, 1000], "career strikeouts"),
-        ("wins", [200, 150, 100], "career wins"),
-        ("saves", [400, 300, 200], "career saves"),
+        ("strikeouts", "strikeouts", [3000, 2500, 2000, 1500, 1000], "career strikeouts"),
+        ("wins", "win", [200, 150, 100], "career wins"),
+        ("saves", "save", [400, 300, 200], "career saves"),
     ]
 
-    for col, milestones, label in pitch_milestones:
+    for col, game_col, milestones, label in pitch_milestones:
+        contributors = conn.execute(f"""
+            SELECT g.player_id, g.date
+            FROM game_pitching_logs g
+            INNER JOIN (
+                SELECT player_id, MAX(date) as max_date
+                FROM game_pitching_logs WHERE season = ?
+                GROUP BY player_id
+            ) latest ON g.player_id = latest.player_id AND g.date = latest.max_date
+            WHERE g.season = ? AND g.{game_col} > 0
+        """, (season, season)).fetchall()
+        contributor_dates = {r[0]: r[1] for r in contributors}
+
+        if not contributor_dates:
+            continue
+
+        placeholders = ",".join("?" * len(contributor_dates))
         rows = conn.execute(f"""
             SELECT s.player_id, p.name, SUM(s.{col}) as career_total
             FROM season_pitching_stats s
             JOIN players p ON s.player_id = p.player_id
-            WHERE s.player_id IN (
-                SELECT DISTINCT player_id FROM season_pitching_stats WHERE season = ?
-            )
+            WHERE s.player_id IN ({placeholders})
             GROUP BY s.player_id
             ORDER BY career_total DESC
-        """, (season,)).fetchall()
+        """, list(contributor_dates.keys())).fetchall()
 
         found = 0
         for pid, name, total in rows:
@@ -452,12 +487,12 @@ def detect_career_milestones(conn, season):
                 break
             for m in milestones:
                 remaining = m - total
-                if 1 <= remaining <= 10:
+                if 1 <= remaining <= 5:
                     events.append({
                         "headline": f"{name} is {remaining} away from {m} {label}",
                         "detail": f"Currently at {total} {label}.",
                         "category": "Milestone",
-                        "game_date": str(date.today()),
+                        "game_date": contributor_dates[pid],
                         "player_names": [name],
                         "team_names": [],
                         "detection_type": f"career_p_{col}_{m}",
@@ -555,7 +590,7 @@ def detect_single_game_performances(conn, season, latest_date):
     return events
 
 
-def detect_hot_streaks_pelt(conn, season):
+def detect_hot_streaks_pelt(conn, season, latest_date=None):
     """Find players in a PELT-detected hot streak with high OPS."""
     events = []
 
@@ -580,7 +615,7 @@ def detect_hot_streaks_pelt(conn, season):
                 if avg and obp and slg else f"{name} is on a tear — {ops:.3f} OPS over the last {num_games} games",
             "detail": f"Season OPS is {season_ops:.3f}. Current stretch: {hr or 0} HR in {num_games} games.",
             "category": "Streak",
-            "game_date": str(date.today()),
+            "game_date": latest_date,
             "player_names": [name],
             "team_names": [],
             "detection_type": "hot_streak_pelt",
@@ -599,7 +634,7 @@ def detect_hitting_streaks_relaxed(conn, season, latest_date):
     return detect_hitting_streaks(conn, season, latest_date, min_games=5)
 
 
-def detect_league_leaders(conn, season):
+def detect_league_leaders(conn, season, latest_date=None):
     """Surface current league leaders in key stats."""
     events = []
     min_pa = max(20, int(10 * 3.1))  # rough early-season minimum
@@ -631,7 +666,7 @@ def detect_league_leaders(conn, season):
                 "headline": f"{name} leads MLB with {val_str} {label}",
                 "detail": f"The current leader through early-season action.",
                 "category": "Milestone",
-                "game_date": str(date.today()),
+                "game_date": latest_date,
                 "player_names": [name],
                 "team_names": [],
                 "detection_type": f"leader_{col}",
@@ -676,15 +711,15 @@ def detect_all(db_path=None, season=None):
     events += detect_onbase_streaks(conn, season, latest_date, min_games=12)
     events += detect_hr_streaks(conn, season, latest_date, min_games=4)
     events += detect_pitching_streaks(conn, season, latest_date)
-    events += detect_season_pace(conn, season)
+    events += detect_season_pace(conn, season, latest_date)
     t1_count = len(events)
     print(f"    Tier 1: {t1_count} events")
 
     # Tier 2
     print("  Running Tier 2 detectors...")
-    events += detect_career_milestones(conn, season)
+    events += detect_career_milestones(conn, season, latest_date)
     events += detect_single_game_performances(conn, season, latest_date)
-    events += detect_hot_streaks_pelt(conn, season)
+    events += detect_hot_streaks_pelt(conn, season, latest_date)
     t2_count = len(events) - t1_count
     print(f"    Tier 2: {t2_count} events")
 
@@ -692,7 +727,7 @@ def detect_all(db_path=None, season=None):
     if len(events) < 3:
         print("  Running Tier 3 backfill...")
         events += detect_hitting_streaks_relaxed(conn, season, latest_date)
-        events += detect_league_leaders(conn, season)
+        events += detect_league_leaders(conn, season, latest_date)
         t3_count = len(events) - t1_count - t2_count
         print(f"    Tier 3: {t3_count} events")
 
