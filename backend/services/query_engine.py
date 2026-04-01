@@ -155,6 +155,7 @@ _STOP_WORDS = {
     "hit", "hitting", "batted", "batting",
     "won", "win", "winning",
     "stole", "stolen", "stealing", "bases",
+    "pas", "abs", "plate", "appearance", "appearances",
     "threw", "thrown", "throwing",
     "pitched", "pitching",
     "drove", "driven",
@@ -207,6 +208,12 @@ class QueryPlan:
     # Multi-threshold filters (e.g., ".300 with 30 HR")
     extra_filters: list = field(default_factory=list)  # [{stat, threshold, comparison}]
 
+    # Sequential game-log queries ("hit in N consecutive games", "reached base in first 10 PAs")
+    streak_condition: Optional[str] = None  # SQL condition per game: "hits >= 1", "home_runs >= 1"
+    streak_condition_label: Optional[str] = None  # Display: "a hit", "a HR", "reaching base"
+    streak_length: Optional[int] = None  # N consecutive games
+    streak_direction: Optional[str] = None  # "leading" (from start), "sliding" (anywhere), "trailing" (current)
+
     # Validation
     is_pitching: bool = False
     unexplained_words: list = field(default_factory=list)
@@ -217,6 +224,8 @@ class QueryPlan:
         """A plan is valid if we have a stat, no unexplained words, and it's a type we handle."""
         if self.query_type in ("definition", "multi_threshold"):
             return False  # Handled by specialized parsers
+        if self.query_type == "streak_sequence":
+            return self.streak_condition is not None and len(self.unexplained_words) == 0
         return (self.stat is not None or self.derived_stat is not None) and len(self.unexplained_words) == 0
 
 
@@ -802,6 +811,86 @@ def decompose(question: str) -> QueryPlan:
         plan.game_log_threshold = 2
         _add_consumed(plan, "multi-homer multi homer multi-hr multi hr")
 
+    # --- Detect sequential streak queries ---
+    # Patterns: "hit in N consecutive/straight games", "reached base in first N",
+    # "homered in N straight", "when was the last time someone hit in 10 straight"
+    # "longest hitting streak"
+
+    # Condition map: what counts as "success" per game
+    _streak_conditions = {
+        # Reaching base
+        "reached base": ("(g.hits + g.walks + COALESCE(g.hit_by_pitch, 0)) >= 1", "reaching base"),
+        "got on base": ("(g.hits + g.walks + COALESCE(g.hit_by_pitch, 0)) >= 1", "reaching base"),
+        "on base": ("(g.hits + g.walks + COALESCE(g.hit_by_pitch, 0)) >= 1", "reaching base"),
+        # Hits
+        "hit": ("g.hits >= 1", "a hit"),
+        "got a hit": ("g.hits >= 1", "a hit"),
+        "had a hit": ("g.hits >= 1", "a hit"),
+        "hitting streak": ("g.hits >= 1", "a hit"),
+        "hit streak": ("g.hits >= 1", "a hit"),
+        # Home runs
+        "homered": ("g.home_runs >= 1", "a HR"),
+        "hit a homer": ("g.home_runs >= 1", "a HR"),
+        "hit a home run": ("g.home_runs >= 1", "a HR"),
+        "home run": ("g.home_runs >= 1", "a HR"),
+        "hr in": ("g.home_runs >= 1", "a HR"),
+        # Extra base hits
+        "extra base hit": ("(g.doubles + g.triples + g.home_runs) >= 1", "an XBH"),
+        "xbh": ("(g.doubles + g.triples + g.home_runs) >= 1", "an XBH"),
+        "extra-base hit": ("(g.doubles + g.triples + g.home_runs) >= 1", "an XBH"),
+        # RBI
+        "drove in a run": ("g.rbi >= 1", "an RBI"),
+        "rbi in": ("g.rbi >= 1", "an RBI"),
+        "had an rbi": ("g.rbi >= 1", "an RBI"),
+        # Stolen bases
+        "stole a base": ("g.stolen_bases >= 1", "a SB"),
+        "stolen base": ("g.stolen_bases >= 1", "a SB"),
+        # Strikeouts (pitching)
+        "struck out": ("g.strikeouts >= 1", "a K"),
+        # Walks
+        "walked": ("g.walks >= 1", "a BB"),
+    }
+
+    streak_detected = False
+    for trigger, (condition, label) in sorted(_streak_conditions.items(), key=lambda x: len(x[0]), reverse=True):
+        if trigger in lower:
+            plan.streak_condition = condition
+            plan.streak_condition_label = label
+            _add_consumed(plan, trigger)
+            streak_detected = True
+            break
+
+    if streak_detected:
+        # Find the number of consecutive games
+        n_match = re.search(r'(\d+)\s*(?:consecutive|straight|in a row)', lower)
+        if not n_match:
+            n_match = re.search(r'(?:first|opening)\s+(\d+)', lower)
+            if n_match:
+                plan.streak_direction = "leading"
+        if not n_match:
+            # "longest hitting streak" — no number, find the longest
+            if "longest" in lower or "most consecutive" in lower:
+                plan.streak_length = None  # means "find the longest"
+                plan.streak_direction = "sliding"
+                _add_consumed(plan, "longest most consecutive")
+            elif "current" in lower:
+                plan.streak_length = None
+                plan.streak_direction = "trailing"
+                _add_consumed(plan, "current")
+        else:
+            plan.streak_length = int(n_match.group(1))
+            _add_consumed(plan, n_match.group(0))
+
+        if plan.streak_direction is None:
+            plan.streak_direction = "sliding"  # default: find it anywhere
+
+        # "when was the last time" / "last player to" → most recent occurrence
+        if any(p in lower for p in ["last time", "last player", "most recent", "when was the last"]):
+            _add_consumed(plan, "last time last player most recent when was the last")
+
+        plan.query_type = "streak_sequence"
+        _add_consumed(plan, "consecutive straight in a row games game first opening streak streaks")
+
     # --- Resolve "lowest" for rate stats ---
     if "lowest" in question.lower():
         if plan.stat and plan.stat.db_column in _LOWER_IS_BETTER:
@@ -909,7 +998,9 @@ def execute(plan: QueryPlan) -> Optional[str]:
 
     conn = _get_db()
     try:
-        if plan.query_type == "game_log_count":
+        if plan.query_type == "streak_sequence":
+            return _execute_streak_sequence(conn, plan)
+        elif plan.query_type == "game_log_count":
             return _execute_game_log_count(conn, plan)
         elif plan.query_type == "game_log_extreme":
             return _execute_game_log_extreme(conn, plan)
@@ -1637,3 +1728,198 @@ def _execute_team_ranking(conn, plan: QueryPlan) -> Optional[str]:
         season = plan.season or datetime.now().year
         return build_team_ranking(plan.stat, season)
     return None
+
+
+# ===================================================================
+# Streak sequence executor
+# ===================================================================
+
+def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
+    """Find consecutive-game streaks from game logs.
+
+    Handles:
+    - "sliding" — find longest/most recent streak of N games anywhere in season(s)
+    - "leading" — check from start of season (first N games)
+    - "trailing" — current active streak
+    """
+    condition = plan.streak_condition
+    if not condition:
+        return None
+
+    table = "game_pitching_logs" if plan.is_pitching else "game_batting_logs"
+
+    # Build season filter
+    season_filter = ""
+    season_params = []
+    if plan.season:
+        season_filter = " AND g.season = ?"
+        season_params = [plan.season]
+    elif plan.since_year:
+        season_filter = " AND g.season >= ?"
+        season_params = [plan.since_year]
+
+    # Get all qualifying game logs, ordered by player + date
+    cur = conn.cursor()
+    cur.execute(
+        f"SELECT g.player_id, p.name, g.season, g.date, "
+        f"CASE WHEN {condition} THEN 1 ELSE 0 END AS success "
+        f"FROM {table} g "
+        f"JOIN players p ON g.player_id = p.player_id "
+        f"WHERE 1=1{season_filter} "
+        f"ORDER BY g.player_id, g.season, g.date",
+        tuple(season_params),
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        return None
+
+    label = plan.streak_condition_label or "success"
+    target_length = plan.streak_length
+
+    if plan.streak_direction == "leading":
+        return _streak_leading(rows, target_length, label, plan)
+    elif plan.streak_direction == "trailing":
+        return _streak_trailing(rows, target_length, label, plan)
+    else:  # sliding
+        return _streak_sliding(rows, target_length, label, plan)
+
+
+def _streak_sliding(rows, target_length, label, plan) -> Optional[str]:
+    """Find players with the longest consecutive-game streaks, or who achieved N+ games."""
+    # Group by player-season
+    from collections import defaultdict
+    player_seasons = defaultdict(list)
+    player_names = {}
+    for pid, name, season, date, success in rows:
+        player_seasons[(pid, season)].append(success)
+        player_names[pid] = name
+
+    # Find streaks
+    results = []  # (streak_len, player_name, season, start_game, end_game)
+    for (pid, season), games in player_seasons.items():
+        current_streak = 0
+        max_streak = 0
+        max_end = 0
+        for i, success in enumerate(games):
+            if success:
+                current_streak += 1
+                if current_streak > max_streak:
+                    max_streak = current_streak
+                    max_end = i
+            else:
+                current_streak = 0
+        if max_streak > 0:
+            if target_length is None or max_streak >= target_length:
+                results.append((max_streak, player_names[pid], season))
+
+    if not results:
+        if target_length:
+            return f"No player found with {label} in {target_length} consecutive games."
+        return None
+
+    # Sort by streak length descending
+    results.sort(key=lambda x: x[0], reverse=True)
+
+    # Title
+    scope = str(plan.season) if plan.season else f"Since {plan.since_year}" if plan.since_year else "2016-2025"
+    if target_length:
+        title = f"**Players with {label} in {target_length}+ Consecutive Games ({scope})**\n"
+    else:
+        title = f"**Longest Streaks of {label} ({scope})**\n"
+
+    parts = [title]
+    parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+    parts.append("[LEADERBOARD]")
+    parts.append("HEADER: Games, Year")
+    for i, (streak_len, name, season) in enumerate(results[:50]):
+        parts.append(f"ROW {i+1}. {name}: {streak_len}, {season}")
+    parts.append("[/LEADERBOARD]")
+
+    return "\n".join(parts)
+
+
+def _streak_leading(rows, target_length, label, plan) -> Optional[str]:
+    """Find players who achieved the condition in their first N games of a season."""
+    from collections import defaultdict
+    player_seasons = defaultdict(list)
+    player_names = {}
+    for pid, name, season, date, success in rows:
+        player_seasons[(pid, season)].append(success)
+        player_names[pid] = name
+
+    if not target_length:
+        target_length = 10  # default
+
+    results = []
+    for (pid, season), games in player_seasons.items():
+        if len(games) < target_length:
+            continue
+        first_n = games[:target_length]
+        if all(g == 1 for g in first_n):
+            results.append((player_names[pid], season, target_length))
+
+    if not results:
+        scope = str(plan.season) if plan.season else "all seasons"
+        return f"No player had {label} in their first {target_length} games of a season ({scope})."
+
+    scope = str(plan.season) if plan.season else f"Since {plan.since_year}" if plan.since_year else "2016-2025"
+    title = f"**Players with {label} in First {target_length} Games ({scope})**\n"
+    # Sort by most recent first
+    results.sort(key=lambda x: x[1], reverse=True)
+
+    parts = [title]
+    parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+    parts.append("[LEADERBOARD]")
+    parts.append("HEADER: Year")
+    for i, (name, season, _) in enumerate(results[:50]):
+        parts.append(f"ROW {i+1}. {name}: {season}")
+    parts.append("[/LEADERBOARD]")
+
+    return "\n".join(parts)
+
+
+def _streak_trailing(rows, target_length, label, plan) -> Optional[str]:
+    """Find current active streaks (from most recent game backwards)."""
+    from collections import defaultdict
+    player_seasons = defaultdict(list)
+    player_names = {}
+    for pid, name, season, date, success in rows:
+        player_seasons[(pid, season)].append(success)
+        player_names[pid] = name
+
+    # For trailing, we want the most recent season per player
+    current_year = datetime.now().year
+    results = []
+    seen_players = set()
+    for (pid, season) in sorted(player_seasons.keys(), key=lambda x: x[1], reverse=True):
+        if pid in seen_players:
+            continue
+        seen_players.add(pid)
+        games = player_seasons[(pid, season)]
+        # Count from the end
+        streak = 0
+        for success in reversed(games):
+            if success:
+                streak += 1
+            else:
+                break
+        if streak > 0:
+            if target_length is None or streak >= target_length:
+                results.append((streak, player_names[pid], season))
+
+    if not results:
+        return None
+
+    results.sort(key=lambda x: x[0], reverse=True)
+
+    title = f"**Current Active Streaks of {label}**\n"
+    parts = [title]
+    parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+    parts.append("[LEADERBOARD]")
+    parts.append("HEADER: Games")
+    for i, (streak_len, name, season) in enumerate(results[:50]):
+        parts.append(f"ROW {i+1}. {name}: {streak_len}")
+    parts.append("[/LEADERBOARD]")
+
+    return "\n".join(parts)
