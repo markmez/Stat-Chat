@@ -175,29 +175,29 @@ def load_pitching_game_logs(conn, start, end):
             if not pid:
                 continue
 
-            ip_raw = safe_float(row.get("p_ip"), 0)
-            if ip_raw == 0:
+            # Retrosheet uses p_ipouts (integer: total outs recorded)
+            ip_outs = safe_int(row.get("p_ipouts"))
+            if ip_outs == 0:
                 continue
 
-            ip_whole = int(ip_raw)
-            ip_frac = round((ip_raw - ip_whole) * 10)
-            ip_outs = ip_whole * 3 + ip_frac
+            ip_whole = ip_outs // 3
+            ip_frac = ip_outs % 3
             innings_text = f"{ip_whole}.{ip_frac}"
 
             h = safe_int(row.get("p_h"))
             er = safe_int(row.get("p_er"))
             r = safe_int(row.get("p_r"))
             hr = safe_int(row.get("p_hr"))
-            bb = safe_int(row.get("p_w"))
+            bb = safe_int(row.get("p_w"))  # p_w = walks in pitching
             so = safe_int(row.get("p_k"))
             hbp = safe_int(row.get("p_hbp"))
-            bf = safe_int(row.get("p_bf"))
+            bf = safe_int(row.get("p_bfp"))  # batters faced
             gs = safe_int(row.get("p_gs"))
 
-            # Win/loss/save column names vary by season
-            w = safe_int(row.get("p_w_game", row.get("p_wins", 0)))
-            l = safe_int(row.get("p_l_game", row.get("p_losses", 0)))
-            sv = safe_int(row.get("p_sv"))
+            # Game-level win/loss/save: check if this pitcher is the wp/lp/save
+            w = 1 if row.get("wp", "").strip() == pid else 0
+            l = 1 if row.get("lp", "").strip() == pid else 0
+            sv = 1 if row.get("save", "").strip() == pid else 0
 
             era = (er * 9.0) / (ip_outs / 3.0) if ip_outs > 0 else None
 
