@@ -1029,11 +1029,23 @@ def detect_all(db_path=None, season=None):
         except sqlite3.IntegrityError:
             pass  # Duplicate, skip
 
-    # Prune events older than 7 days
+    # Prune: keep 7 days, but if fewer than 5 events remain, keep up to 14 days
     cursor.execute("""
-        DELETE FROM notable_events WHERE game_date < date(?, '-7 days')
+        DELETE FROM notable_events WHERE game_date < date(?, '-14 days')
     """, (latest_date,))
     pruned = cursor.rowcount
+
+    # Check if we have enough recent events
+    recent_count = cursor.execute("""
+        SELECT COUNT(*) FROM notable_events WHERE game_date >= date(?, '-7 days')
+    """, (latest_date,)).fetchone()[0]
+
+    if recent_count >= 5:
+        # Plenty of recent events — prune the 7-14 day old ones
+        cursor.execute("""
+            DELETE FROM notable_events WHERE game_date < date(?, '-7 days')
+        """, (latest_date,))
+        pruned += cursor.rowcount
 
     conn.commit()
     conn.close()
