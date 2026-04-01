@@ -20,9 +20,12 @@ ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 PIPELINE_SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data_pipeline", "pull_live_stats.py")
 
 
-def verify_admin(authorization: str | None):
+def verify_admin(authorization: str | None, key: str | None = None):
     if not ADMIN_KEY:
         raise HTTPException(503, "ADMIN_KEY not configured on server")
+    # Accept either Authorization header or ?key= query param
+    if key == ADMIN_KEY:
+        return
     if authorization != f"Bearer {ADMIN_KEY}":
         raise HTTPException(401, "Invalid admin key")
 
@@ -222,6 +225,7 @@ async def detect_notable(
 async def ai_notable(
     season: int | None = None,
     dry_run: bool = True,
+    key: str | None = None,
     authorization: str | None = Header(None),
 ):
     """Run AI-powered notable event detection via Sonnet.
@@ -229,7 +233,7 @@ async def ai_notable(
     dry_run=True (default): returns snapshot + insights without writing to DB.
     dry_run=False: inserts AI insights into notable_events table.
     """
-    verify_admin(authorization)
+    verify_admin(authorization, key)
     try:
         from services.ai_notable_events import generate_ai_insights
         if dry_run:
@@ -257,10 +261,11 @@ async def ai_notable(
 @router.get("/ai-notable-snapshot")
 async def ai_notable_snapshot(
     season: int | None = None,
+    key: str | None = None,
     authorization: str | None = Header(None),
 ):
     """Return just the data snapshot that would be sent to Sonnet (no AI call)."""
-    verify_admin(authorization)
+    verify_admin(authorization, key)
     try:
         from services.ai_notable_events import compile_daily_snapshot
         snapshot, latest_date = compile_daily_snapshot(DB_PATH, season)
