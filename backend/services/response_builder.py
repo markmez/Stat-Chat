@@ -3772,7 +3772,8 @@ def build_pitching_team_stats(team_code: str, stat_info: Optional[StatInfo] = No
                 era = _format_pitching_rate(row[1], 2)
                 parts.append(f"ROW {i+1}. {row[0]}: {era}, {row[2]}")
             parts.append("[/LEADERBOARD]")
-            parts.append("\n_Min. 18 IP._")
+            ip_display = f"{ip_min // 3}.{ip_min % 3}"
+            parts.append(f"\n_Min. {ip_display} IP._")
             parts.append(f"\n[SUGGEST]{nickname} ERA leaders[/SUGGEST]")
             parts.append(f"[SUGGEST]{nickname} strikeout leaders[/SUGGEST]")
             return "\n".join(parts)
