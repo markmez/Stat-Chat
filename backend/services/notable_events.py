@@ -647,6 +647,13 @@ def detect_rarities(conn, season, latest_date):
     # Rarity checks: (sql_condition, detection_type, headline_fn)
     # headline_fn takes (name, row_dict) and returns headline string
     batting_rarities = [
+        # Order matters — check most specific (combos) first, then single-stat
+        {
+            "condition": "g.doubles >= 1 AND g.triples >= 1 AND g.home_runs >= 1 AND g.hits >= 4",
+            "type": "cycle",
+            "history_sql": "doubles >= 1 AND triples >= 1 AND home_runs >= 1 AND hits >= 4",
+            "headline": lambda n, r: f"{n} hit for the cycle, going {r['h']}-for-{r['ab']} with {r['rbi']} RBI.",
+        },
         {
             "condition": "g.home_runs >= 4",
             "type": "4hr_game",
@@ -665,11 +672,22 @@ def detect_rarities(conn, season, latest_date):
             "history_sql": "rbi >= 8",
             "headline": lambda n, r: f"{n} drove in {r['rbi']} runs, going {r['h']}-for-{r['ab']} with {r['hr']} home runs.",
         },
+        {
+            "condition": "g.hits >= 5 AND g.home_runs >= 2",
+            "type": "5hit_2hr_game",
+            "history_sql": "hits >= 5 AND home_runs >= 2",
+            "headline": lambda n, r: f"{n} went {r['h']}-for-{r['ab']} with {r['hr']} home runs and {r['rbi']} RBI.",
+        },
     ]
+
+    # Track which player+date combos we've already added (avoid duplicates
+    # when a game matches multiple rarities, e.g., cycle + 6-hit game)
+    seen = set()
 
     for rarity in batting_rarities:
         rows = conn.execute(f"""
-            SELECT p.name, g.player_id, g.date, g.hits, g.home_runs, g.rbi, g.at_bats
+            SELECT p.name, g.player_id, g.date, g.hits, g.home_runs, g.rbi,
+                   g.at_bats, g.doubles, g.triples
             FROM game_batting_logs g
             JOIN players p ON g.player_id = p.player_id
             WHERE g.season = ? AND g.date >= (
@@ -679,7 +697,12 @@ def detect_rarities(conn, season, latest_date):
             AND ({rarity['condition']})
         """, (season, season)).fetchall()
 
-        for name, pid, game_date, h, hr, rbi, ab in rows:
+        for name, pid, game_date, h, hr, rbi, ab, doubles, triples in rows:
+            key = (pid, game_date)
+            if key in seen:
+                continue
+            seen.add(key)
+
             r = {"h": h or 0, "hr": hr or 0, "rbi": rbi or 0, "ab": ab or 0}
             headline = rarity["headline"](name, r)
 
