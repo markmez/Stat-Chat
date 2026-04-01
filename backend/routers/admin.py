@@ -221,7 +221,7 @@ async def detect_notable(
         raise HTTPException(500, str(e))
 
 
-@router.post("/ai-notable")
+@router.api_route("/ai-notable", methods=["GET", "POST"])
 async def ai_notable(
     season: int | None = None,
     dry_run: bool = True,
@@ -241,8 +241,6 @@ async def ai_notable(
             return {
                 "status": "ok",
                 "dry_run": True,
-                "snapshot_chars": len(snapshot) if snapshot else 0,
-                "snapshot": snapshot,
                 "events": events,
             }
         else:
