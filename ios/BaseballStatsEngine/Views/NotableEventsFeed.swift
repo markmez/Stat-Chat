@@ -16,8 +16,9 @@ struct NotableEvent: Identifiable {
         let days = Calendar.current.dateComponents([.day], from: eventDate,
                                                     to: Calendar.current.startOfDay(for: Date())).day ?? 0
         switch days {
-        case 0: return "Today"
+        case 0: return "Last night"  // games are evening events; "Today" feels wrong next morning
         case 1: return "Yesterday"
+        case 2: return "2 days ago"
         default: return "\(days) days ago"
         }
     }
