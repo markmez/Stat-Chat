@@ -74,19 +74,20 @@ def scan_start_of_season_streaks(conn, season, latest_date):
     ]
 
     for stype in streak_types:
-        # Compute current-season streaks from game 1
+        # Only check players who played on the latest date
         players = conn.execute("""
             SELECT DISTINCT player_id FROM game_batting_logs
-            WHERE season = ? AND at_bats > 0
-        """, (season,)).fetchall()
+            WHERE season = ? AND date = ? AND at_bats > 0
+        """, (season, latest_date)).fetchall()
 
         for (pid,) in players:
+            # Get games up to and including latest_date
             games = conn.execute("""
                 SELECT hits, walks, COALESCE(hit_by_pitch, 0), home_runs
                 FROM game_batting_logs
-                WHERE player_id = ? AND season = ? AND at_bats > 0
+                WHERE player_id = ? AND season = ? AND at_bats > 0 AND date <= ?
                 ORDER BY date ASC
-            """, (pid, season)).fetchall()
+            """, (pid, season, latest_date)).fetchall()
 
             streak = 0
             for h, bb, hbp, hr in games:
@@ -221,21 +222,26 @@ def scan_pitching_start_of_season(conn, season, latest_date):
     """Find notable pitching feats in first N starts, with historical lookup."""
     facts = []
 
+    # Only pitchers who started on the latest date
     starters = conn.execute("""
-        SELECT player_id, COUNT(*) as starts
-        FROM game_pitching_logs
-        WHERE season = ? AND is_start = 1
-        GROUP BY player_id
+        SELECT player_id, (
+            SELECT COUNT(*) FROM game_pitching_logs g2
+            WHERE g2.player_id = g.player_id AND g2.season = g.season
+            AND g2.is_start = 1 AND g2.date <= ?
+        ) as starts
+        FROM game_pitching_logs g
+        WHERE g.season = ? AND g.is_start = 1 AND g.date = ?
+        GROUP BY g.player_id
         HAVING starts >= 2
-    """, (season,)).fetchall()
+    """, (latest_date, season, latest_date)).fetchall()
 
     for pid, num_starts in starters:
         starts = conn.execute("""
             SELECT strikeouts, walks, earned_runs, ip_outs, hits
             FROM game_pitching_logs
-            WHERE player_id = ? AND season = ? AND is_start = 1
+            WHERE player_id = ? AND season = ? AND is_start = 1 AND date <= ?
             ORDER BY date ASC
-        """, (pid, season)).fetchall()
+        """, (pid, season, latest_date)).fetchall()
 
         name = _player_name(conn, pid)
         team = _team_display(conn, pid, season)
