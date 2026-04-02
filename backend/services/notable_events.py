@@ -976,8 +976,8 @@ def detect_all(db_path=None, season=None):
 
     print(f"  Latest game date: {latest_date}")
 
-    # Clear rule-based events and rebuild — preserve AI insights
-    conn.execute("DELETE FROM notable_events WHERE detection_type != 'ai_insight'")
+    # Clear rule-based and historical events — preserve AI insights
+    conn.execute("DELETE FROM notable_events WHERE detection_type NOT IN ('ai_insight')")
     conn.commit()
 
     events = []
@@ -1007,6 +1007,27 @@ def detect_all(db_path=None, season=None):
         events += detect_league_leaders(conn, season, latest_date)
         t3_count = len(events) - t1_count - t2_count
         print(f"    Tier 3: {t3_count} events")
+
+    # Historical scans (DB-verified facts with templates)
+    try:
+        from services.historical_scans import run_all_scans, template_facts
+        print("  Running historical scans...")
+        hist_facts = run_all_scans(conn, season, latest_date)
+        hist_events = template_facts(conn, hist_facts, season, latest_date)
+        for he in hist_events:
+            events.append({
+                "headline": he["headline"],
+                "detail": "",
+                "category": he.get("category", "historical"),
+                "game_date": latest_date,
+                "player_names": he.get("player_names", []),
+                "team_names": he.get("team_names", []),
+                "detection_type": "historical_scan",
+                "priority": 1,
+            })
+        print(f"    Historical: {len(hist_events)} events")
+    except Exception as e:
+        print(f"    Historical scans failed: {e}")
 
     # Deduplicated insert
     cursor = conn.cursor()

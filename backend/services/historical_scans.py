@@ -416,10 +416,25 @@ def _get_game_line(conn, player_id, date, season):
 
 def template_facts(conn, facts, season, latest_date):
     """Convert structured facts into templated feed-ready text.
-    No Sonnet needed — deterministic copy from DB facts."""
+    No Sonnet needed — deterministic copy from DB facts.
+    Deduplicates by player — keeps the most historically interesting fact per player."""
     events = []
+    seen_players = set()  # Track player_ids already in events
+
+    # Sort facts so historically rarer ones come first (lower hist count = rarer)
+    def _rarity_score(f):
+        hist = f.get("historical", [])
+        count = f.get("historical_count", len(hist))
+        if count == 0: return 0  # Unique in history — most rare
+        return count
+    facts = sorted(facts, key=_rarity_score)
 
     for f in facts:
+        # Dedup: skip if we already have an event for this player
+        pid = f.get("player_id")
+        if pid and pid in seen_players:
+            continue
+
         # Get the triggering game line (most recent game, not necessarily latest_date)
         game_line, line_type = None, None
         if f.get("player_id"):
@@ -458,12 +473,6 @@ def template_facts(conn, facts, season, latest_date):
                 context = f"the last player to do this was {last['player']} in {last['season']}"
 
             headline = f"{game_intro}, and {label} — {context}."
-            events.append({
-                "headline": headline,
-                "category": "historical",
-                "player_names": [player],
-                "team_names": [team] if team else [],
-            })
 
         elif f["type"].startswith("cross_season_"):
             streak = f["streak"]
@@ -472,12 +481,6 @@ def template_facts(conn, facts, season, latest_date):
             ctx = "dating back to last season" if f["spans_seasons"] else "this season"
 
             headline = f"{game_intro}, extending the longest active {label} in MLB to {streak} games, {ctx}."
-            events.append({
-                "headline": headline,
-                "category": "historical",
-                "player_names": [player],
-                "team_names": [team] if team else [],
-            })
 
         elif f["type"] == "10k_0bb_first_2_starts":
             k = f["k"]
@@ -490,12 +493,6 @@ def template_facts(conn, facts, season, latest_date):
                 context = f"only {len(hist)} pitchers have done this in over 100 years, the last being {last['player']} in {last['season']}"
 
             headline = f"{game_intro}, reaching {k} K and 0 BB through his first 2 starts of the season — {context}."
-            events.append({
-                "headline": headline,
-                "category": "historical",
-                "player_names": [player],
-                "team_names": [team] if team else [],
-            })
 
         elif f["type"] == "scoreless_first_n_starts":
             ip = f["ip"]
@@ -504,12 +501,6 @@ def template_facts(conn, facts, season, latest_date):
             game_intro = f"{player} went {game_line} last night" if game_line else f"{player}"
 
             headline = f"{game_intro}, and has now thrown {starts} consecutive scoreless starts to open the season ({ip} IP, {k} K, 0 ER)."
-            events.append({
-                "headline": headline,
-                "category": "historical",
-                "player_names": [player],
-                "team_names": [team] if team else [],
-            })
 
         elif f["type"] == "team_fewest_er":
             er = f["er"]
@@ -524,12 +515,16 @@ def template_facts(conn, facts, season, latest_date):
                 headline = f"The {team} have allowed just {er} earned runs through {games} games, #{rank} all-time behind only {hist_str}."
             else:
                 headline = f"The {team} have allowed just {er} earned runs through {games} games, #{rank} all-time."
+        else:
+            continue
 
-            events.append({
-                "headline": headline,
-                "category": "historical",
-                "player_names": [],
-                "team_names": [team],
-            })
+        events.append({
+            "headline": headline,
+            "category": "historical",
+            "player_names": [player] if player else [],
+            "team_names": [team] if team else [],
+        })
+        if pid:
+            seen_players.add(pid)
 
     return events
