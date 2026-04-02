@@ -1,518 +1,261 @@
 """
-AI-powered notable events detection.
+AI-powered notable events detection using Sonnet.
 
-After rule-based detection runs, this module compiles a data snapshot
-of yesterday's games and current season state, sends it to Claude Sonnet,
-and asks it to identify interesting storylines the rules missed.
+Runs once per day after the rule-based detection. Compiles a data snapshot
+from the DB (yesterday's games, leaders, historical context) and asks Sonnet
+to find 5-8 interesting storylines the rules missed.
 
-Cost: ~$0.02-0.04 per run (once per day for all users).
+Cost: ~$0.02-0.04/day (~$1/month). Runs once for ALL users.
 """
 
 import json
-import logging
 import os
 import sqlite3
 from datetime import date
 
-import anthropic
-
-logger = logging.getLogger("statchat.ai_notable")
-
 DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
-MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
-
-# Retrosheet team code → display name
-RETRO_TO_DISPLAY = {
-    "NYA": "Yankees", "NYN": "Mets", "LAN": "Dodgers", "ANA": "Angels",
-    "CHN": "Cubs", "CHA": "White Sox", "SFN": "Giants", "SDN": "Padres",
-    "SLN": "Cardinals", "KCA": "Royals", "TBA": "Rays", "WAS": "Nationals",
-    "BOS": "Red Sox", "HOU": "Astros", "ATL": "Braves", "PHI": "Phillies",
-    "TEX": "Rangers", "TOR": "Blue Jays", "BAL": "Orioles", "MIN": "Twins",
-    "CLE": "Guardians", "SEA": "Mariners", "MIL": "Brewers", "CIN": "Reds",
-    "PIT": "Pirates", "DET": "Tigers", "ARI": "Diamondbacks", "COL": "Rockies",
-    "MIA": "Marlins", "OAK": "Athletics",
-}
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 
-def _team_name(code):
-    return RETRO_TO_DISPLAY.get(code, code) if code else ""
-
-
-def compile_daily_snapshot(db_path=None, season=None):
-    """Build a compact text summary of yesterday's data for Sonnet to analyze.
-
-    Returns (snapshot_text, latest_date) or (None, None) if no data.
-    """
-    if db_path is None:
-        db_path = DB_PATH
-
-    conn = sqlite3.connect(db_path)
-
-    if season is None:
-        season = date.today().year
-
-    # Find latest game date
-    row = conn.execute(
-        "SELECT MAX(date) FROM game_batting_logs WHERE season = ?", (season,)
-    ).fetchone()
-    latest_date = row[0] if row and row[0] else None
-    if not latest_date:
-        conn.close()
-        return None, None
-
+def _compile_snapshot(conn, season, latest_date):
+    """Build a text snapshot of current data for Sonnet."""
     sections = []
+    sections.append(f"DATE: {date.today().isoformat()}. Current year: {date.today().year}.")
+    sections.append(f"MLB season started late March {season}. Latest game date: {latest_date}.")
 
-    # --- Section 1: Yesterday's standout batting performances ---
-    batting_lines = conn.execute("""
-        SELECT p.name, p.team, g.hits, g.at_bats, g.home_runs, g.rbi,
-               g.doubles, g.triples, g.walks, g.stolen_bases, g.strikeouts
+    team_games = conn.execute("""
+        SELECT MAX(games) FROM season_batting_stats WHERE season = ?
+    """, (season,)).fetchone()
+    if team_games and team_games[0]:
+        sections.append(f"Teams have played approximately {team_games[0]} games each.")
+
+    # Already-detected rule-based events
+    existing = conn.execute("""
+        SELECT headline, category FROM notable_events
+        WHERE detection_type != 'ai_insight'
+        ORDER BY game_date DESC, priority ASC
+    """).fetchall()
+    if existing:
+        sections.append("\n=== ALREADY-DETECTED EVENTS (do NOT duplicate) ===")
+        for headline, category in existing:
+            sections.append(f"- [{category}] {headline}")
+
+    # Yesterday's batting standouts
+    sections.append(f"\n=== YESTERDAY'S BATTING ({latest_date}) ===")
+    bat_rows = conn.execute("""
+        SELECT p.name, g.hits, g.at_bats, g.home_runs, g.rbi, g.doubles, g.triples,
+               g.walks, g.opponent, p.team
         FROM game_batting_logs g
-        JOIN players p ON g.player_id = p.player_id
-        WHERE g.date = ? AND g.season = ? AND g.at_bats >= 1
-        ORDER BY (g.hits * 1.0 / MAX(g.at_bats, 1) + g.home_runs * 0.5 + g.rbi * 0.2) DESC
-        LIMIT 30
-    """, (latest_date, season)).fetchall()
-
-    if batting_lines:
-        lines = [f"## Batting Lines — {latest_date}"]
-        for name, team, h, ab, hr, rbi, d, t, bb, sb, so in batting_lines:
-            team_str = _team_name(team)
-            parts = [f"{name} ({team_str}): {h}-for-{ab}"]
-            if hr: parts.append(f"{hr} HR")
-            if rbi: parts.append(f"{rbi} RBI")
-            if d: parts.append(f"{d} 2B")
-            if t: parts.append(f"{t} 3B")
-            if bb: parts.append(f"{bb} BB")
-            if sb: parts.append(f"{sb} SB")
-            if so: parts.append(f"{so} K")
-            lines.append(", ".join(parts))
-        sections.append("\n".join(lines))
-
-    # --- Section 2: Yesterday's standout pitching performances ---
-    pitching_lines = conn.execute("""
-        SELECT p.name, p.team, g.innings_pitched, g.ip_outs, g.hits, g.earned_runs,
-               g.strikeouts, g.walks, g.home_runs, g.is_start, g.win, g.loss, g.save
-        FROM game_pitching_logs g
         JOIN players p ON g.player_id = p.player_id
         WHERE g.date = ? AND g.season = ?
-        ORDER BY g.ip_outs DESC, g.strikeouts DESC
+        AND (g.home_runs >= 1 OR g.hits >= 3 OR g.rbi >= 3)
+        ORDER BY g.home_runs DESC, g.rbi DESC, g.hits DESC
         LIMIT 20
     """, (latest_date, season)).fetchall()
+    for name, h, ab, hr, rbi, d, t, bb, opp, team in bat_rows:
+        line = f"- {name} ({team}): {h}-for-{ab}"
+        parts = []
+        if hr: parts.append(f"{hr} HR")
+        if rbi: parts.append(f"{rbi} RBI")
+        if d: parts.append(f"{d} 2B")
+        if t: parts.append(f"{t} 3B")
+        if bb: parts.append(f"{bb} BB")
+        if parts: line += ", " + ", ".join(parts)
+        line += f" vs {opp}"
+        sections.append(line)
 
-    if pitching_lines:
-        lines = [f"## Pitching Lines — {latest_date}"]
-        for name, team, ip, ip_outs, h, er, so, bb, hr, start, w, l, sv in pitching_lines:
-            team_str = _team_name(team)
-            ip_display = ip or (f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}")
-            decision = ""
-            if w: decision = " (W)"
-            elif l: decision = " (L)"
-            elif sv: decision = " (SV)"
-            lines.append(f"{name} ({team_str}){decision}: {ip_display} IP, {h or 0} H, {er or 0} ER, {so or 0} K, {bb or 0} BB, {hr or 0} HR")
-        sections.append("\n".join(lines))
+    # Season totals for yesterday's players
+    sections.append(f"\n=== SEASON TOTALS FOR YESTERDAY'S PLAYERS ===")
+    for name, h, ab, hr, rbi, d, t, bb, opp, team in bat_rows:
+        season_row = conn.execute("""
+            SELECT s.home_runs, s.rbi, s.hits, s.games, s.batting_avg, s.stolen_bases
+            FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id
+            WHERE p.name = ? AND s.season = ?
+        """, (name, season)).fetchone()
+        if season_row:
+            shr, srbi, sh, sg, savg, ssb = season_row
+            sections.append(f"- {name}: {sg} G, {shr} HR, {srbi} RBI, {sh} H, {ssb} SB")
 
-    # --- Section 3: Active hitting streaks ---
-    # Walk backward through game logs to find active streaks
-    streak_data = []
-    players_with_games = conn.execute("""
-        SELECT DISTINCT g.player_id, p.name, p.team
-        FROM game_batting_logs g
+    # Yesterday's pitching standouts
+    sections.append(f"\n=== YESTERDAY'S PITCHING ({latest_date}) ===")
+    pitch_rows = conn.execute("""
+        SELECT p.name, g.innings_pitched, g.ip_outs, g.hits, g.earned_runs,
+               g.strikeouts, g.walks, g.is_start, g.win, g.loss, g.save,
+               g.opponent, p.team
+        FROM game_pitching_logs g
         JOIN players p ON g.player_id = p.player_id
-        WHERE g.season = ? AND g.date = ? AND g.at_bats > 0
-    """, (season, latest_date)).fetchall()
+        WHERE g.date = ? AND g.season = ? AND g.is_start = 1
+        ORDER BY g.ip_outs DESC, g.strikeouts DESC
+        LIMIT 15
+    """, (latest_date, season)).fetchall()
+    for name, ip, ip_outs, h, er, so, bb, is_start, w, l, sv, opp, team in pitch_rows:
+        ip_display = ip or f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
+        result = ""
+        if w: result = " (W)"
+        elif l: result = " (L)"
+        sections.append(f"- {name} ({team}): {ip_display} IP, {h} H, {er} ER, {so} K, {bb} BB{result} vs {opp}")
 
-    for pid, name, team in players_with_games:
-        games = conn.execute("""
-            SELECT hits FROM game_batting_logs
-            WHERE player_id = ? AND season = ? AND at_bats > 0
-            ORDER BY date DESC
-        """, (pid, season)).fetchall()
-        streak = 0
-        for (hits,) in games:
-            if hits > 0:
-                streak += 1
-            else:
-                break
-        if streak >= 5:
-            streak_data.append((streak, name, _team_name(team)))
-
-    # Also check cross-season streaks (carry over from last season)
-    for pid, name, team in players_with_games:
-        current_games = conn.execute("""
-            SELECT hits FROM game_batting_logs
-            WHERE player_id = ? AND season = ? AND at_bats > 0
-            ORDER BY date DESC
-        """, (pid, season)).fetchall()
-        current_streak = 0
-        for (hits,) in current_games:
-            if hits > 0:
-                current_streak += 1
-            else:
-                break
-        # If streak extends through all current-season games, check last season
-        if current_streak == len(current_games) and current_streak > 0:
-            prev_games = conn.execute("""
-                SELECT hits FROM game_batting_logs
-                WHERE player_id = ? AND season = ? AND at_bats > 0
-                ORDER BY date DESC
-            """, (pid, season - 1)).fetchall()
-            prev_streak = 0
-            for (hits,) in prev_games:
-                if hits > 0:
-                    prev_streak += 1
-                else:
-                    break
-            if prev_streak > 0:
-                total = current_streak + prev_streak
-                # Update if cross-season streak is longer
-                streak_data = [(s, n, t) if n != name else (max(s, total), n, t)
-                               for s, n, t in streak_data]
-
-    if streak_data:
-        streak_data.sort(reverse=True)
-        lines = ["## Active Hitting Streaks"]
-        for streak, name, team in streak_data[:10]:
-            lines.append(f"{name} ({team}): {streak} games")
-        sections.append("\n".join(lines))
-
-    # --- Section 4: Active on-base streaks ---
-    ob_streak_data = []
-    for pid, name, team in players_with_games:
-        games = conn.execute("""
-            SELECT hits, walks, COALESCE(hit_by_pitch, 0)
-            FROM game_batting_logs
-            WHERE player_id = ? AND season = ?
-              AND (at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)
-            ORDER BY date DESC
-        """, (pid, season)).fetchall()
-        streak = 0
-        for h, bb, hbp in games:
-            if (h + bb + hbp) > 0:
-                streak += 1
-            else:
-                break
-        # Check cross-season
-        if streak == len(games) and streak > 0:
-            prev_games = conn.execute("""
-                SELECT hits, walks, COALESCE(hit_by_pitch, 0)
-                FROM game_batting_logs
-                WHERE player_id = ? AND season = ?
-                  AND (at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)
-                ORDER BY date DESC
-            """, (pid, season - 1)).fetchall()
-            for h, bb, hbp in prev_games:
-                if (h + bb + hbp) > 0:
-                    streak += 1
-                else:
-                    break
-        if streak >= 8:
-            ob_streak_data.append((streak, name, _team_name(team)))
-
-    if ob_streak_data:
-        ob_streak_data.sort(reverse=True)
-        lines = ["## Active On-Base Streaks"]
-        for streak, name, team in ob_streak_data[:10]:
-            lines.append(f"{name} ({team}): {streak} games")
-        sections.append("\n".join(lines))
-
-    # --- Section 5: Season leaders (batting) ---
-    leader_stats = [
-        ("home_runs", "HR"), ("rbi", "RBI"), ("hits", "Hits"),
-        ("batting_avg", "AVG"), ("stolen_bases", "SB"),
-        ("obp", "OBP"), ("slg", "SLG"), ("ops", "OPS"),
-    ]
-    leader_lines = ["## Season Batting Leaders"]
-    for col, label in leader_stats:
-        rows = conn.execute(f"""
-            SELECT p.name, s.{col}, s.games, p.team
-            FROM season_batting_stats s
-            JOIN players p ON s.player_id = p.player_id
-            WHERE s.season = ? AND s.plate_appearances >= 15
-            ORDER BY s.{col} DESC
-            LIMIT 5
-        """, (season,)).fetchall()
-        if rows:
-            entries = []
-            for name, val, g, team in rows:
-                if val is None:
-                    continue
-                if isinstance(val, float) and val < 2:
-                    entries.append(f"{name} (.{int(val*1000):03d})")
-                else:
-                    entries.append(f"{name} ({val})")
-            leader_lines.append(f"{label}: " + ", ".join(entries))
-    if len(leader_lines) > 1:
-        sections.append("\n".join(leader_lines))
-
-    # --- Section 6: Season leaders (pitching) ---
-    pitch_leader_lines = ["## Season Pitching Leaders"]
-    pitch_stats = [
-        ("earned_run_avg", "ERA", "ASC"), ("strikeouts", "K", "DESC"),
-        ("wins", "W", "DESC"), ("saves", "SV", "DESC"),
-        ("whip", "WHIP", "ASC"),
-    ]
-    for col, label, order in pitch_stats:
-        qual = "AND s.innings_pitched_outs >= 10" if col in ("earned_run_avg", "whip") else ""
+    # Season leaders
+    sections.append("\n=== SEASON LEADERS ===")
+    for label, col, table in [
+        ("HR", "home_runs", "season_batting_stats"),
+        ("RBI", "rbi", "season_batting_stats"),
+        ("SB", "stolen_bases", "season_batting_stats"),
+    ]:
         rows = conn.execute(f"""
             SELECT p.name, s.{col}, p.team
-            FROM season_pitching_stats s
-            JOIN players p ON s.player_id = p.player_id
-            WHERE s.season = ? {qual}
-            ORDER BY s.{col} {order}
-            LIMIT 5
+            FROM {table} s JOIN players p ON s.player_id = p.player_id
+            WHERE s.season = ? AND s.plate_appearances >= 15
+            ORDER BY s.{col} DESC LIMIT 5
         """, (season,)).fetchall()
-        if rows:
-            entries = []
-            for name, val, team in rows:
-                if val is None:
-                    continue
-                if isinstance(val, float):
-                    entries.append(f"{name} ({val:.2f})")
-                else:
-                    entries.append(f"{name} ({val})")
-            pitch_leader_lines.append(f"{label}: " + ", ".join(entries))
-    if len(pitch_leader_lines) > 1:
-        sections.append("\n".join(pitch_leader_lines))
+        vals = [f"{name} ({team}) {val}" for name, val, team in rows]
+        sections.append(f"{label}: {', '.join(vals)}")
 
-    # --- Section 7: PELT current form (hot/cold) ---
-    hot_players = conn.execute("""
-        SELECT p.name, cf.ops, cf.batting_avg, cf.num_games, cf.home_runs,
-               s.ops as season_ops, p.team
-        FROM current_form cf
-        JOIN players p ON cf.player_id = p.player_id
-        JOIN season_batting_stats s ON cf.player_id = s.player_id AND cf.season = s.season
-        WHERE cf.season = ? AND cf.num_games >= 5
-        ORDER BY cf.ops DESC
-        LIMIT 10
-    """, (season,)).fetchall()
+    for label, col, order in [("K", "strikeouts", "DESC"), ("W", "wins", "DESC")]:
+        rows = conn.execute(f"""
+            SELECT p.name, s.{col}, p.team
+            FROM season_pitching_stats s JOIN players p ON s.player_id = p.player_id
+            WHERE s.season = ? AND s.games_started >= 1
+            ORDER BY s.{col} {order} LIMIT 5
+        """, (season,)).fetchall()
+        vals = [f"{name} ({team}) {val}" for name, val, team in rows]
+        sections.append(f"{label}: {', '.join(vals)}")
 
-    if hot_players:
-        lines = ["## Hottest Current Stretches (PELT change-point detection)"]
-        for name, ops, avg, ng, hr, s_ops, team in hot_players:
-            avg_str = f".{int((avg or 0)*1000):03d}"
-            lines.append(f"{name} ({_team_name(team)}): {avg_str}/{ops:.3f} OPS over last {ng} games (season OPS: {s_ops:.3f})")
-        sections.append("\n".join(lines))
+    # Historical context from DB
+    sections.append("\n=== DB-VERIFIED HISTORICAL CONTEXT ===")
+    sections.append("(Verified from our game log database 1920-2026. Use confidently.)")
 
-    cold_players = conn.execute("""
-        SELECT p.name, cf.ops, cf.batting_avg, cf.num_games,
-               s.ops as season_ops, p.team
-        FROM current_form cf
-        JOIN players p ON cf.player_id = p.player_id
-        JOIN season_batting_stats s ON cf.player_id = s.player_id AND cf.season = s.season
-        WHERE cf.season = ? AND cf.num_games >= 5
-        ORDER BY cf.ops ASC
-        LIMIT 10
-    """, (season,)).fetchall()
+    hr_leader = conn.execute("""
+        SELECT p.name, s.home_runs, s.games, p.team
+        FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id
+        WHERE s.season = ? ORDER BY s.home_runs DESC LIMIT 1
+    """, (season,)).fetchone()
+    if hr_leader:
+        name, hr, games, team = hr_leader
+        pace = int(hr * 162.0 / games) if games > 0 else 0
+        sections.append(f"- {name}: {hr} HR in {games} games, on pace for {pace}.")
 
-    if cold_players:
-        lines = ["## Coldest Current Stretches"]
-        for name, ops, avg, ng, s_ops, team in cold_players:
-            avg_str = f".{int((avg or 0)*1000):03d}"
-            lines.append(f"{name} ({_team_name(team)}): {avg_str}/{ops:.3f} OPS over last {ng} games (season OPS: {s_ops:.3f})")
-        sections.append("\n".join(lines))
+    cgso = conn.execute("""
+        SELECT p.name, g.date, g.strikeouts, g.hits
+        FROM game_pitching_logs g JOIN players p ON g.player_id = p.player_id
+        WHERE g.season = ? AND g.ip_outs >= 27 AND g.earned_runs = 0
+        ORDER BY g.date ASC LIMIT 1
+    """, (season,)).fetchone()
+    if cgso:
+        prev_cgso = conn.execute("""
+            SELECT g.date FROM game_pitching_logs g
+            WHERE g.season = ? AND g.ip_outs >= 27 AND g.earned_runs = 0
+            ORDER BY g.date ASC LIMIT 1
+        """, (season - 1,)).fetchone()
+        ctx = f"Last year's first CGSO came on {prev_cgso[0]}." if prev_cgso else ""
+        sections.append(f"- First CGSO of {season}: {cgso[0]} on {cgso[1]} ({cgso[3]} H, {cgso[2]} K). {ctx}")
 
-    # --- Section 8: Season pace projections ---
-    pace_lines = ["## 162-Game Pace Projections (min 10 games)"]
-    pace_rows = conn.execute("""
-        SELECT p.name, s.home_runs, s.rbi, s.hits, s.stolen_bases, s.games, p.team
-        FROM season_batting_stats s
-        JOIN players p ON s.player_id = p.player_id
-        WHERE s.season = ? AND s.games >= 10
-        ORDER BY s.home_runs * 162.0 / s.games DESC
-        LIMIT 15
-    """, (season,)).fetchall()
-    for name, hr, rbi, h, sb, g, team in pace_rows:
-        hr_pace = int((hr or 0) * 162 / g) if g else 0
-        rbi_pace = int((rbi or 0) * 162 / g) if g else 0
-        h_pace = int((h or 0) * 162 / g) if g else 0
-        sb_pace = int((sb or 0) * 162 / g) if g else 0
-        pace_lines.append(f"{name} ({_team_name(team)}, {g}G): {hr_pace} HR, {rbi_pace} RBI, {h_pace} H, {sb_pace} SB pace")
-    if len(pace_lines) > 1:
-        sections.append("\n".join(pace_lines))
+    # Player context from DB
+    sections.append("\n=== PLAYER CONTEXT (use ONLY these facts) ===")
+    key_names = set()
+    for row in bat_rows[:10]:
+        key_names.add(row[0])
+    for row in pitch_rows[:10]:
+        key_names.add(row[0])
 
-    # --- Section 9: Already-detected rule-based notable events ---
-    try:
-        existing = conn.execute("""
-            SELECT headline, detail, category, detection_type
-            FROM notable_events
-            ORDER BY priority ASC, game_date DESC
-            LIMIT 20
-        """).fetchall()
-        if existing:
-            lines = ["## Already-Detected Notable Events (rules-based — do NOT duplicate these)"]
-            for headline, detail, cat, dtype in existing:
-                lines.append(f"[{cat}] {headline} {detail}".strip())
-            sections.append("\n".join(lines))
-    except sqlite3.OperationalError:
-        pass  # Table might not exist yet
+    for name in sorted(key_names):
+        career_bat = conn.execute("""
+            SELECT COUNT(DISTINCT s.season), MIN(s.season), MAX(s.season), p.team
+            FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id
+            WHERE p.name = ?
+        """, (name,)).fetchone()
+        career_pitch = conn.execute("""
+            SELECT COUNT(DISTINCT s.season), MIN(s.season), MAX(s.season), p.team
+            FROM season_pitching_stats s JOIN players p ON s.player_id = p.player_id
+            WHERE p.name = ?
+        """, (name,)).fetchone()
 
-    # --- Section 10: Career totals for active players ---
-    career_lines = ["## Career Totals (players who played yesterday)"]
-    career_rows = conn.execute("""
-        SELECT p.name, SUM(s.home_runs) as career_hr, SUM(s.hits) as career_h,
-               SUM(s.rbi) as career_rbi, COUNT(DISTINCT s.season) as seasons, p.team
-        FROM season_batting_stats s
-        JOIN players p ON s.player_id = p.player_id
-        WHERE s.player_id IN (
-            SELECT DISTINCT player_id FROM game_batting_logs
-            WHERE date = ? AND season = ?
-        )
-        GROUP BY s.player_id
-        HAVING career_hr >= 50 OR career_h >= 500
-        ORDER BY career_hr DESC
-        LIMIT 20
-    """, (latest_date, season)).fetchall()
-    for name, hr, h, rbi, seasons, team in career_rows:
-        career_lines.append(f"{name} ({_team_name(team)}): {hr or 0} HR, {h or 0} H, {rbi or 0} RBI over {seasons} seasons")
-    if len(career_lines) > 1:
-        sections.append("\n".join(career_lines))
+        seasons = max(career_bat[0] if career_bat else 0, career_pitch[0] if career_pitch else 0)
+        first = min(career_bat[1] or 9999, career_pitch[1] or 9999)
+        team = (career_bat[3] if career_bat and career_bat[3] else
+                career_pitch[3] if career_pitch and career_pitch[3] else "")
 
-    conn.close()
+        if seasons == 0: continue
+        elif seasons == 1:
+            sections.append(f"- {name} ({team}): Rookie, first MLB season ({first}).")
+        elif seasons == 2:
+            sections.append(f"- {name} ({team}): 2nd MLB season, debuted {first}.")
+        elif seasons <= 5:
+            sections.append(f"- {name} ({team}): Young player, {seasons} seasons since {first}.")
+        else:
+            sections.append(f"- {name} ({team}): Veteran, {seasons} seasons since {first}.")
 
-    snapshot = "\n\n".join(sections)
-    return snapshot, latest_date
+    return "\n".join(sections)
 
 
-SYSTEM_PROMPT = """You are a baseball analyst for a stats app called StatChat. Your job is to identify interesting, notable, or surprising storylines from today's baseball data that our rule-based detection system missed.
+def generate_ai_insights(conn, season, latest_date, dry_run=False):
+    """Generate AI-powered notable events using Sonnet."""
+    snapshot = _compile_snapshot(conn, season, latest_date)
 
-You will receive a comprehensive data snapshot including: yesterday's box scores, active streaks, season leaders, pace projections, hot/cold stretches, career totals, and the events our rules already caught.
+    prompt = f"""You are a baseball analyst writing for a notable events feed in a stats app.
+The current date is {date.today().isoformat()}. The current year is {date.today().year}.
 
-IMPORTANT RULES:
-1. Do NOT fabricate any statistics. Every number you cite must come directly from the data provided.
-2. Do NOT duplicate events already listed in the "Already-Detected Notable Events" section.
-3. Focus on INSIGHTS that connect data points — patterns, cross-references, historical significance, surprising combinations. Things like:
-   - The same player leading multiple categories
-   - A player's current stretch being dramatically different from their season line
-   - A player quietly approaching a career milestone
-   - An unusual statistical combination in a single game
-   - A trend across multiple games (e.g., "3rd straight multi-HR game")
-   - Cross-season streaks
-   - League-wide trends (lots of shutouts, HR surge, etc.)
-4. Return 3-7 events, prioritized by how interesting they'd be to a general baseball fan.
-5. Keep each event concise — headline style, not a paragraph.
+Write 5-8 notable events from yesterday's games. Think like the best stat-nerd
+baseball Twitter account — insightful, punchy, data-driven.
 
-Return valid JSON array only, no other text. Each element:
-{
-  "headline": "The main insight in 1-2 sentences",
-  "detail": "Optional supporting context (1 sentence or empty string)",
-  "category": "Insight" | "Trend" | "Milestone" | "Streak",
-  "player_names": ["Player Name"],
-  "team_names": ["Team Display Name"]
-}"""
+CRITICAL RULES:
+1. Every event MUST lead with what happened yesterday (the triggering game
+   performance), then connect it to the bigger narrative.
+2. Use the DB-VERIFIED HISTORICAL CONTEXT — these are confirmed facts from our
+   database. Cite them confidently.
+3. Do NOT invent historical comparisons beyond what's provided. If the data
+   doesn't include a "first since" fact, don't make one up.
+4. Do NOT duplicate events already detected (listed under ALREADY-DETECTED).
+   If an already-detected event covers a player, you may write about that player
+   ONLY if your angle is substantially different.
+5. ONLY use biographical facts from the PLAYER CONTEXT section. Do not assume
+   team history, rookie status, or career details not listed there.
+6. Write each as a single flowing sentence, conversational and punchy.
+7. Prioritize: historical context, start-of-season milestones, comeback narratives,
+   rookie watch, pace projections, cross-category patterns.
+8. Output ONLY a JSON array: [{{"headline": "...", "player_names": ["..."], "team_names": ["..."]}}]
 
-
-def generate_ai_insights(db_path=None, season=None, dry_run=False):
-    """Run the AI insight pass. Returns list of events.
-
-    If dry_run=True, returns (snapshot, events) without inserting into DB.
-    """
-    snapshot, latest_date = compile_daily_snapshot(db_path, season)
-    if not snapshot:
-        logger.info("No data available for AI insight generation")
-        return [] if not dry_run else (None, [])
-
-    logger.info(f"Compiled snapshot: {len(snapshot)} chars for date {latest_date}")
-
-    client = anthropic.Anthropic()
-
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=2000,
-        system=SYSTEM_PROMPT,
-        messages=[{
-            "role": "user",
-            "content": f"Here is today's baseball data snapshot. Find 3-7 interesting storylines that our rule-based system missed.\n\n{snapshot}"
-        }],
-    )
-
-    # Parse response
-    text = response.content[0].text.strip()
-    # Strip markdown code fences if present
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
-
-    try:
-        events = json.loads(text)
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse AI response: {e}\nResponse: {text[:500]}")
-        return [] if not dry_run else (snapshot, [])
-
-    # Validate structure
-    validated = []
-    for evt in events:
-        if not isinstance(evt, dict) or "headline" not in evt:
-            continue
-        validated.append({
-            "headline": evt.get("headline", ""),
-            "detail": evt.get("detail", ""),
-            "category": evt.get("category", "Insight"),
-            "game_date": latest_date,
-            "player_names": evt.get("player_names", []),
-            "team_names": evt.get("team_names", []),
-            "detection_type": "ai_insight",
-            "priority": 2,
-        })
+DATA SNAPSHOT:
+{snapshot}"""
 
     if dry_run:
-        return snapshot, validated
+        return {"snapshot": snapshot, "prompt_length": len(prompt), "events": []}
 
-    # Insert into notable_events
-    if validated:
-        conn = sqlite3.connect(db_path or DB_PATH)
-        cursor = conn.cursor()
-        inserted = 0
-        for e in validated:
-            try:
-                cursor.execute("""
-                    INSERT OR IGNORE INTO notable_events
-                    (headline, detail, category, game_date, player_names, team_names,
-                     detection_type, priority)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    e["headline"], e["detail"], e["category"], e["game_date"],
-                    json.dumps(e.get("player_names", [])),
-                    json.dumps(e.get("team_names", [])),
-                    e["detection_type"], e["priority"],
-                ))
-                if cursor.rowcount > 0:
-                    inserted += 1
-            except sqlite3.IntegrityError:
-                pass
-        conn.commit()
-        conn.close()
-        logger.info(f"AI insights: {inserted} new events inserted")
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        text = response.content[0].text
+        if "```" in text:
+            text = text.split("```json")[-1].split("```")[0].strip()
+        events = json.loads(text)
+    except Exception as e:
+        return {"snapshot": snapshot, "events": [], "error": str(e)}
 
-    return validated
+    # Insert into notable_events table
+    cursor = conn.cursor()
+    inserted = 0
+    for e in events:
+        try:
+            cursor.execute("""
+                INSERT OR IGNORE INTO notable_events
+                (headline, detail, category, game_date, player_names, team_names,
+                 detection_type, priority)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                e["headline"], "", "Insight", latest_date,
+                json.dumps(e.get("player_names", [])),
+                json.dumps(e.get("team_names", [])),
+                "ai_insight", 2,
+            ))
+            if cursor.rowcount > 0:
+                inserted += 1
+        except sqlite3.IntegrityError:
+            pass
 
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--db", default=DB_PATH)
-    parser.add_argument("--season", type=int, default=None)
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Print snapshot + results without inserting into DB")
-    args = parser.parse_args()
-
-    if args.dry_run:
-        snapshot, events = generate_ai_insights(args.db, args.season, dry_run=True)
-        if snapshot:
-            print("=" * 60)
-            print("DATA SNAPSHOT SENT TO SONNET")
-            print("=" * 60)
-            print(snapshot)
-            print()
-        print("=" * 60)
-        print(f"AI INSIGHTS ({len(events)} events)")
-        print("=" * 60)
-        for i, e in enumerate(events, 1):
-            print(f"\n{i}. [{e['category']}] {e['headline']}")
-            if e['detail']:
-                print(f"   {e['detail']}")
-            print(f"   Players: {e['player_names']}, Teams: {e['team_names']}")
-    else:
-        events = generate_ai_insights(args.db, args.season)
-        print(f"Generated {len(events)} AI insight events")
+    conn.commit()
+    return {"events": events, "inserted": inserted}

@@ -223,56 +223,26 @@ async def detect_notable(
 
 @router.api_route("/ai-notable", methods=["GET", "POST"])
 async def ai_notable(
-    season: int | None = None,
     dry_run: bool = True,
     key: str | None = None,
     authorization: str | None = Header(None),
 ):
-    """Run AI-powered notable event detection via Sonnet.
-
-    dry_run=True (default): returns snapshot + insights without writing to DB.
-    dry_run=False: inserts AI insights into notable_events table.
-    """
+    """Run AI-powered notable events detection. dry_run=true returns snapshot only."""
     verify_admin(authorization, key)
     try:
+        conn = sqlite3.connect(DB_PATH)
+        from services.notable_events import _get_latest_date
         from services.ai_notable_events import generate_ai_insights
-        if dry_run:
-            snapshot, events = generate_ai_insights(DB_PATH, season, dry_run=True)
-            return {
-                "status": "ok",
-                "dry_run": True,
-                "events": events,
-            }
-        else:
-            events = generate_ai_insights(DB_PATH, season, dry_run=False)
-            return {
-                "status": "ok",
-                "dry_run": False,
-                "events_inserted": len(events),
-                "events": events,
-            }
-    except Exception as e:
-        import traceback
-        raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
 
+        season = date.today().year
+        latest_date = _get_latest_date(conn, season)
+        if not latest_date:
+            conn.close()
+            return {"status": "error", "message": "No game logs found"}
 
-@router.get("/ai-notable-snapshot")
-async def ai_notable_snapshot(
-    season: int | None = None,
-    key: str | None = None,
-    authorization: str | None = Header(None),
-):
-    """Return just the data snapshot that would be sent to Sonnet (no AI call)."""
-    verify_admin(authorization, key)
-    try:
-        from services.ai_notable_events import compile_daily_snapshot
-        snapshot, latest_date = compile_daily_snapshot(DB_PATH, season)
-        return {
-            "status": "ok",
-            "latest_date": latest_date,
-            "snapshot_chars": len(snapshot) if snapshot else 0,
-            "snapshot": snapshot,
-        }
+        result = generate_ai_insights(conn, season, latest_date, dry_run=dry_run)
+        conn.close()
+        return {"status": "ok", "dry_run": dry_run, **result}
     except Exception as e:
         import traceback
         raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")

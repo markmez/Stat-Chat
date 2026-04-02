@@ -33,3 +33,4 @@ baseball_stats_full.db
 backend/metering.db
 data_pipeline/.cache/
 data_pipeline/pull_stats_fangraphs.py
+ios/build/
