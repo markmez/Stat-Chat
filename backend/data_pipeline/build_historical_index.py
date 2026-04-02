@@ -210,12 +210,14 @@ def build_team_runs_allowed(conn):
     total = 0
     for (szn,) in seasons:
         # Sum earned runs by team for the season, game by game
+        # Use season_pitching_stats for the correct team that season
         team_games = conn.execute("""
-            SELECT team, date, SUM(earned_runs) as game_er
-            FROM game_pitching_logs
-            WHERE season = ?
-            GROUP BY team, date
-            ORDER BY team, date ASC
+            SELECT s.team, g.date, SUM(g.earned_runs) as game_er
+            FROM game_pitching_logs g
+            JOIN season_pitching_stats s ON g.player_id = s.player_id AND g.season = s.season
+            WHERE g.season = ?
+            GROUP BY s.team, g.date
+            ORDER BY s.team, g.date ASC
         """, (szn,)).fetchall()
 
         current_team = None
