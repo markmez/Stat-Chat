@@ -374,8 +374,23 @@ def run_all_scans(conn, season, latest_date):
 
 
 def _get_game_line(conn, player_id, date, season):
-    """Get a player's batting or pitching line from a specific game."""
-    # Try batting first
+    """Get a player's batting or pitching line from a specific game.
+    Returns pitching line for starters, batting line otherwise."""
+    # Check pitching first (starters get pitching line)
+    pitch_row = conn.execute("""
+        SELECT innings_pitched, ip_outs, hits, earned_runs, strikeouts, walks, win, is_start
+        FROM game_pitching_logs
+        WHERE player_id = ? AND date = ? AND season = ?
+    """, (player_id, date, season)).fetchone()
+    if pitch_row and pitch_row[7]:  # is_start
+        ip, outs, h, er, so, bb, w, _ = pitch_row
+        ip_display = ip or f"{(outs or 0) // 3}.{(outs or 0) % 3}"
+        parts = [f"{ip_display} IP", f"{h} H", f"{er} ER", f"{so} K"]
+        if bb == 0: parts.append("0 BB")
+        if w: parts.append("W")
+        return ", ".join(parts), "pitching"
+
+    # Batting line
     row = conn.execute("""
         SELECT hits, at_bats, home_runs, rbi, doubles, triples, walks
         FROM game_batting_logs
@@ -387,21 +402,8 @@ def _get_game_line(conn, player_id, date, season):
         if hr: parts.append(f"{hr} HR")
         if d: parts.append(f"{d} 2B")
         if rbi: parts.append(f"{rbi} RBI")
+        if bb and h == 0: parts.append(f"{bb} BB")  # Show walks when hitless
         return ", ".join(parts), "batting"
-
-    # Try pitching
-    row = conn.execute("""
-        SELECT innings_pitched, ip_outs, hits, earned_runs, strikeouts, walks, win
-        FROM game_pitching_logs
-        WHERE player_id = ? AND date = ? AND season = ?
-    """, (player_id, date, season)).fetchone()
-    if row:
-        ip, outs, h, er, so, bb, w = row
-        ip_display = ip or f"{(outs or 0) // 3}.{(outs or 0) % 3}"
-        parts = [f"{ip_display} IP", f"{h} H", f"{er} ER", f"{so} K"]
-        if bb == 0: parts.append("0 BB")
-        if w: parts.append("W")
-        return ", ".join(parts), "pitching"
 
     return None, None
 
@@ -415,12 +417,18 @@ def template_facts(conn, facts, season, latest_date):
         # Get the triggering game line (most recent game, not necessarily latest_date)
         game_line, line_type = None, None
         if f.get("player_id"):
-            # Find the player's most recent game date
-            recent = conn.execute("""
+            # Find the player's most recent game date (check both batting and pitching)
+            bat_date = conn.execute("""
                 SELECT MAX(date) FROM game_batting_logs
                 WHERE player_id = ? AND season = ?
             """, (f["player_id"], season)).fetchone()
-            player_last_date = recent[0] if recent and recent[0] else latest_date
+            pitch_date = conn.execute("""
+                SELECT MAX(date) FROM game_pitching_logs
+                WHERE player_id = ? AND season = ?
+            """, (f["player_id"], season)).fetchone()
+            bat_d = bat_date[0] if bat_date and bat_date[0] else ""
+            pitch_d = pitch_date[0] if pitch_date and pitch_date[0] else ""
+            player_last_date = max(bat_d, pitch_d) or latest_date
             game_line, line_type = _get_game_line(conn, f["player_id"], player_last_date, season)
 
         player = f.get("player", "")
