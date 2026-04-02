@@ -289,10 +289,11 @@ def scan_team_historical(conn, season, latest_date):
 
     # Current season team ER through N games
     teams = conn.execute("""
-        SELECT team, COUNT(DISTINCT date) as games, SUM(earned_runs) as total_er
-        FROM game_pitching_logs
-        WHERE season = ?
-        GROUP BY team
+        SELECT s.team, COUNT(DISTINCT g.date) as games, SUM(g.earned_runs) as total_er
+        FROM game_pitching_logs g
+        JOIN season_pitching_stats s ON g.player_id = s.player_id AND g.season = s.season
+        WHERE g.season = ?
+        GROUP BY s.team
         HAVING games >= 5
     """, (season,)).fetchall()
 
