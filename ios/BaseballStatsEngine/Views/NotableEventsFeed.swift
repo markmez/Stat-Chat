@@ -44,6 +44,7 @@ struct NotableEvent: Identifiable {
 struct NotableEventsFeed: View {
     var onPlayerTap: ((String) -> Void)?
     var onTeamTap: ((String) -> Void)?
+    var showHeader: Bool = true
 
     @State private var events: [NotableEvent] = []
     @State private var hasLoaded = false
@@ -53,22 +54,24 @@ struct NotableEventsFeed: View {
     var body: some View {
         if !events.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
-                // Section header
-                HStack(spacing: 6) {
-                    Image(systemName: "flame.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [.orange, .red],
-                                startPoint: .top, endPoint: .bottom
+                if showHeader {
+                    // Section header
+                    HStack(spacing: 6) {
+                        Image(systemName: "flame.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [.orange, .red],
+                                    startPoint: .top, endPoint: .bottom
+                                )
                             )
-                        )
-                    Text("Notable")
-                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                        Text("Notable")
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 12)
                 }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 12)
 
                 // Events
                 LazyVStack(spacing: 0) {
@@ -115,16 +118,10 @@ struct NotableEventsFeed: View {
     private func eventCard(_ event: NotableEvent, isLast: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
-                // Category + timestamp
-                HStack {
-                    Text(event.category.uppercased())
-                        .font(.system(.caption2, design: .rounded, weight: .bold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(event.timestamp)
-                        .font(.system(.caption2, design: .rounded))
-                        .foregroundStyle(.tertiary)
-                }
+                // Timestamp
+                Text(event.timestamp)
+                    .font(.system(.caption2, design: .rounded, weight: .bold))
+                    .foregroundStyle(.secondary)
 
                 // Combined text — tweet-style
                 Text(highlightedText(

@@ -9,6 +9,7 @@ struct HomeView: View {
     @Environment(AppState.self) private var appState
     @State private var questionText = ""
     @State private var path = NavigationPath()
+    @State private var feedExpanded = false
     @FocusState private var isInputFocused: Bool
     @State private var lastNameSearchCount: Int = UserDefaults.standard.integer(forKey: "lastNameSearchCount")
 
@@ -51,10 +52,20 @@ struct HomeView: View {
         }
     }
 
+    /// Height of the peeking drawer
+    private let peekHeight: CGFloat = 140
+    /// Height when fully expanded
+    private let expandedHeight: CGFloat = 480
+
+    private var drawerHeight: CGFloat {
+        feedExpanded ? expandedHeight : peekHeight
+    }
+
     private var mainContent: some View {
-        ScrollView {
+        ZStack(alignment: .bottom) {
+            // Main search area — centered
             VStack(spacing: 0) {
-                // History + Settings buttons (scroll with content)
+                // History + Settings buttons
                 HStack {
                     if !appState.searchHistory.isEmpty {
                         Button {
@@ -76,6 +87,8 @@ struct HomeView: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 8)
+
+                Spacer()
 
                 // Logo + Wordmark — inline
                 VStack(spacing: 6) {
@@ -117,7 +130,6 @@ struct HomeView: View {
                         }
                     }
                 }
-                .padding(.top, 20)
                 .padding(.bottom, 36)
 
                 // Search field
@@ -193,23 +205,108 @@ struct HomeView: View {
                 }
                 .padding(.top, 16)
 
-                // Notable events feed
+                Spacer()
+
+                // Reserve space for the drawer
+                Color.clear.frame(height: peekHeight + 10)
+            }
+            .onTapGesture {
+                isInputFocused = false
+                if feedExpanded {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        feedExpanded = false
+                    }
+                }
+            }
+
+            // Notable events drawer
+            notableDrawer
+                .transition(.move(edge: .bottom))
+        }
+        .ignoresSafeArea(.keyboard)
+        .navigationBarHidden(true)
+    }
+
+    private var notableDrawer: some View {
+        VStack(spacing: 0) {
+            // Drag handle + header
+            VStack(spacing: 8) {
+                Capsule()
+                    .fill(Color(.separator))
+                    .frame(width: 36, height: 4)
+                    .padding(.top, 10)
+
+                HStack(spacing: 6) {
+                    Image(systemName: "flame.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [.orange, .red],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                    Text("Notable")
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    feedExpanded.toggle()
+                }
+            }
+
+            // Feed content
+            ScrollView {
                 NotableEventsFeed(
                     onPlayerTap: { name in
                         path.append(PlayerCardDestination(name: name))
                     },
                     onTeamTap: { code in
                         path.append(TeamCardDestination(code: code))
-                    }
+                    },
+                    showHeader: false
                 )
-                .padding(.top, 24)
             }
+            .scrollDisabled(!feedExpanded)
         }
-        .scrollDismissesKeyboard(.interactively)
-        .onTapGesture {
-            isInputFocused = false
-        }
-        .navigationBarHidden(true)
+        .frame(height: drawerHeight)
+        .padding(.horizontal, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 28)
+                .fill(Color(.secondarySystemBackground))
+                .shadow(color: .black.opacity(0.15), radius: 20, y: 0)
+                .shadow(color: .black.opacity(0.10), radius: 8, y: -6)
+                .padding(.horizontal, 12)
+                .ignoresSafeArea(edges: .bottom)
+        )
+        .highPriorityGesture(
+            feedExpanded ? nil :
+            DragGesture(minimumDistance: 8)
+                .onEnded { value in
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        if value.translation.height < -20 {
+                            feedExpanded = true
+                        }
+                    }
+                }
+        )
+        .simultaneousGesture(
+            feedExpanded ?
+            DragGesture(minimumDistance: 8)
+                .onEnded { value in
+                    if value.translation.height > 40 {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            feedExpanded = false
+                        }
+                    }
+                }
+            : nil
+        )
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: feedExpanded)
     }
 
     private var freeUsageIndicator: some View {
