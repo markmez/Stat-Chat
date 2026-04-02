@@ -483,7 +483,7 @@ def template_facts(conn, facts, season, latest_date):
                 last = hist[0]
                 context = f"only {len(hist)} pitchers have done this in over 100 years, the last being {last['player']} in {last['season']}"
 
-            headline = f"{game_intro}, reaching {k} K and 0 BB through his first 2 starts — {context}."
+            headline = f"{game_intro}, reaching {k} K and 0 BB through his first 2 starts of the season — {context}."
             events.append({
                 "headline": headline,
                 "category": "historical",

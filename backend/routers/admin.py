@@ -273,10 +273,11 @@ async def build_historical_index(
 
 @router.api_route("/historical-scans", methods=["GET", "POST"])
 async def historical_scans(
+    as_of: str | None = None,
     key: str | None = None,
     authorization: str | None = Header(None),
 ):
-    """Run historical scans using pre-computed index. Fast."""
+    """Run historical scans. Optional as_of=YYYY-MM-DD to simulate a past date."""
     verify_admin(authorization, key)
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -284,7 +285,7 @@ async def historical_scans(
         from services.historical_scans import run_all_scans
 
         season = date.today().year
-        latest_date = _get_latest_date(conn, season)
+        latest_date = as_of or _get_latest_date(conn, season)
         if not latest_date:
             conn.close()
             return {"status": "error", "message": "No game logs found"}
