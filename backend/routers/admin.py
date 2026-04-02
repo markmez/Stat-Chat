@@ -248,12 +248,35 @@ async def ai_notable(
         raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
 
 
+@router.post("/build-historical-index")
+async def build_historical_index(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """One-time: build historical index table for fast lookups."""
+    verify_admin(authorization, key)
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "data_pipeline", "build_historical_index.py")
+    try:
+        result = subprocess.run(
+            [sys.executable, script, "--db", DB_PATH],
+            capture_output=True, text=True, timeout=3600,
+        )
+        return {
+            "status": "ok" if result.returncode == 0 else "error",
+            "stdout": result.stdout[-3000:] if result.stdout else "",
+            "stderr": result.stderr[-1000:] if result.stderr else "",
+        }
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Index build timed out (60 min limit)")
+
+
 @router.api_route("/historical-scans", methods=["GET", "POST"])
 async def historical_scans(
     key: str | None = None,
     authorization: str | None = Header(None),
 ):
-    """Run historical scans and return structured facts."""
+    """Run historical scans using pre-computed index. Fast."""
     verify_admin(authorization, key)
     try:
         conn = sqlite3.connect(DB_PATH)

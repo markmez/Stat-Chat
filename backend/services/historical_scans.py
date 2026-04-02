@@ -1,14 +1,11 @@
 """
 Historical scan engine for notable events.
 
-Runs specific SQL queries against game logs (1920-2026) to find
-Sarah Langs-style historical facts:
-  - "Nth player to do X in first N games"
-  - "First since [year] to do X" with full historical list
-  - Cross-season active streaks
-  - Team-level historical rankings
+Uses the pre-computed `historical_index` table for instant lookups.
+The index is built once by `build_historical_index.py` and covers 1920-2025.
 
-Each scan returns structured facts that Sonnet formats into prose.
+Each scan computes a current-season stat, then looks up historical
+comparisons from the index.
 """
 
 import sqlite3
@@ -33,157 +30,97 @@ def _team_display(conn, player_id, season):
     return row[0] if row and row[0] else ""
 
 
+def _has_index(conn):
+    """Check if historical_index table exists."""
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='historical_index'"
+    ).fetchone()
+    return row is not None
+
+
 # ---------------------------------------------------------------------------
-# Scan: consecutive-game streaks to start a season
+# Scan: start-of-season batting streaks
 # ---------------------------------------------------------------------------
 
 def scan_start_of_season_streaks(conn, season, latest_date):
-    """Find players with streaks from the start of the season.
-
-    e.g., "hit in each of the team's first 5 games",
-          "reached base in each of first N games",
-          "HR in each of first N games"
-    """
+    """Find players with streaks from game 1 of the season, with historical context."""
     facts = []
 
     streak_types = [
         {
-            "name": "hit_every_game",
-            "condition": lambda g: g["hits"] > 0,
-            "filter": "at_bats > 0",
+            "scan_type": "start_hit_streak",
+            "condition": lambda h, bb, hbp, hr: h > 0,
             "min_games": 5,
-            "template": "has hit safely in each of the first {n} games this season",
-            "history_condition": "hits > 0",
-            "history_filter": "at_bats > 0",
+            "label": "has hit safely in each of the first {n} games this season",
         },
         {
-            "name": "reached_base_every_game",
-            "condition": lambda g: (g["hits"] + g["walks"] + g["hbp"]) > 0,
-            "filter": "(at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)",
+            "scan_type": "start_onbase_streak",
+            "condition": lambda h, bb, hbp, hr: (h + bb + hbp) > 0,
             "min_games": 7,
-            "template": "has reached base in each of the first {n} games this season",
-            "history_condition": "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
-            "history_filter": "(at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)",
+            "label": "has reached base in each of the first {n} games this season",
         },
         {
-            "name": "multi_hit_every_game",
-            "condition": lambda g: g["hits"] >= 2,
-            "filter": "at_bats > 0",
+            "scan_type": "start_multi_hit_streak",
+            "condition": lambda h, bb, hbp, hr: h >= 2,
             "min_games": 4,
-            "template": "has had multiple hits in each of the first {n} games this season",
-            "history_condition": "hits >= 2",
-            "history_filter": "at_bats > 0",
+            "label": "has had multiple hits in each of the first {n} games this season",
         },
         {
-            "name": "hr_every_game",
-            "condition": lambda g: g["hr"] > 0,
-            "filter": "at_bats > 0",
+            "scan_type": "start_hr_streak",
+            "condition": lambda h, bb, hbp, hr: hr > 0,
             "min_games": 3,
-            "template": "has homered in each of the first {n} games this season",
-            "history_condition": "home_runs > 0",
-            "history_filter": "at_bats > 0",
+            "label": "has homered in each of the first {n} games this season",
         },
     ]
 
     for stype in streak_types:
-        # Get all players with games this season, ordered by date
-        players = conn.execute(f"""
+        # Compute current-season streaks from game 1
+        players = conn.execute("""
             SELECT DISTINCT player_id FROM game_batting_logs
-            WHERE season = ? AND {stype['filter']}
+            WHERE season = ? AND at_bats > 0
         """, (season,)).fetchall()
 
         for (pid,) in players:
-            games = conn.execute(f"""
-                SELECT date, hits, walks, COALESCE(hit_by_pitch, 0) as hbp,
-                       home_runs as hr, at_bats
+            games = conn.execute("""
+                SELECT hits, walks, COALESCE(hit_by_pitch, 0), home_runs
                 FROM game_batting_logs
-                WHERE player_id = ? AND season = ? AND {stype['filter']}
+                WHERE player_id = ? AND season = ? AND at_bats > 0
                 ORDER BY date ASC
             """, (pid, season)).fetchall()
 
-            # Check if streak runs from game 1
             streak = 0
-            for g in games:
-                row = {"hits": g[1], "walks": g[2], "hbp": g[3], "hr": g[4], "at_bats": g[5]}
-                if stype["condition"](row):
+            for h, bb, hbp, hr in games:
+                if stype["condition"](h or 0, bb or 0, hbp or 0, hr or 0):
                     streak += 1
                 else:
                     break
 
             if streak >= stype["min_games"] and streak == len(games):
-                # Perfect start — streak covers all games played
                 name = _player_name(conn, pid)
                 team = _team_display(conn, pid, season)
 
-                # Historical lookup: who else has done this?
-                historical = _find_historical_season_start_streak(
-                    conn, streak, stype["history_condition"],
-                    stype["history_filter"], season, pid
-                )
+                # Lookup from historical index
+                historical = conn.execute("""
+                    SELECT player_name, season, value
+                    FROM historical_index
+                    WHERE scan_type = ? AND value >= ?
+                    ORDER BY season DESC
+                """, (stype["scan_type"], streak)).fetchall()
+
+                hist_list = [{"player": h[0], "season": h[1], "games": h[2]} for h in historical]
 
                 facts.append({
-                    "type": f"season_start_{stype['name']}",
+                    "type": stype["scan_type"],
                     "player": name,
+                    "player_id": pid,
                     "team": team,
                     "streak": streak,
-                    "text": stype["template"].format(n=streak),
-                    "historical": historical,
+                    "label": stype["label"].format(n=streak),
+                    "historical": hist_list,
+                    "historical_count": len(hist_list),
                 })
 
     return facts
-
-
-def _find_historical_season_start_streak(conn, streak_len, condition_sql,
-                                          filter_sql, exclude_season, exclude_player):
-    """Find historical instances of season-opening streaks.
-
-    Efficient approach: for each season, get all games ordered by player+date,
-    then walk through in Python to find start-of-season streaks.
-    One query per season instead of one per player-season.
-    """
-    matches = []
-
-    seasons = conn.execute("""
-        SELECT DISTINCT season FROM game_batting_logs
-        WHERE season < ? AND season >= 1920
-        ORDER BY season DESC
-    """, (exclude_season,)).fetchall()
-
-    for (szn,) in seasons:
-        games = conn.execute(f"""
-            SELECT player_id, ({condition_sql}) as met
-            FROM game_batting_logs
-            WHERE season = ? AND {filter_sql}
-            ORDER BY player_id, date ASC
-        """, (szn,)).fetchall()
-
-        # Walk through, tracking start-of-season streak per player
-        current_pid = None
-        current_streak = 0
-        broken = False
-
-        for pid, met in games:
-            if pid != current_pid:
-                # Finalize previous player
-                if current_pid and current_streak >= streak_len and current_pid != exclude_player:
-                    name = _player_name(conn, current_pid)
-                    matches.append({"player": name, "season": szn, "games": current_streak})
-                current_pid = pid
-                current_streak = 0
-                broken = False
-
-            if not broken:
-                if met:
-                    current_streak += 1
-                else:
-                    broken = True
-
-        # Finalize last player
-        if current_pid and current_streak >= streak_len and current_pid != exclude_player:
-            name = _player_name(conn, current_pid)
-            matches.append({"player": name, "season": szn, "games": current_streak})
-
-    return matches
 
 
 # ---------------------------------------------------------------------------
@@ -191,103 +128,94 @@ def _find_historical_season_start_streak(conn, streak_len, condition_sql,
 # ---------------------------------------------------------------------------
 
 def scan_cross_season_streaks(conn, season, latest_date):
-    """Find active streaks that carry over from last season.
-
-    e.g., "Ohtani has the longest active on-base streak in MLB (36 games)"
-    """
+    """Find active streaks carrying over from last season."""
     facts = []
 
-    streak_checks = [
+    checks = [
         {
             "name": "hitting_streak",
-            "condition": "hits > 0",
+            "condition_sql": "hits > 0",
             "filter": "at_bats > 0",
             "min_games": 10,
             "label": "hitting streak",
         },
         {
             "name": "on_base_streak",
-            "condition": "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
+            "condition_sql": "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
             "filter": "(at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)",
             "min_games": 15,
             "label": "on-base streak",
         },
     ]
 
-    for check in streak_checks:
-        # Get players active this season
+    for check in checks:
         players = conn.execute(f"""
             SELECT DISTINCT player_id FROM game_batting_logs
             WHERE season = ? AND date = ? AND {check['filter']}
         """, (season, latest_date)).fetchall()
 
         for (pid,) in players:
-            # Get current season games (reverse order)
-            current_games = conn.execute(f"""
-                SELECT ({check['condition']}) as met
+            # Current season (reverse)
+            current = conn.execute(f"""
+                SELECT ({check['condition_sql']}) as met
                 FROM game_batting_logs
                 WHERE player_id = ? AND season = ? AND {check['filter']}
                 ORDER BY date DESC
             """, (pid, season)).fetchall()
 
             streak = 0
-            for (met,) in current_games:
+            for (met,) in current:
                 if met:
                     streak += 1
                 else:
                     break
 
-            # If streak covers ALL current season games, extend into last season
-            if streak == len(current_games) and streak > 0:
-                prev_games = conn.execute(f"""
-                    SELECT ({check['condition']}) as met
+            # Extend into last season if streak covers all current games
+            spans = False
+            if streak == len(current) and streak > 0:
+                prev = conn.execute(f"""
+                    SELECT ({check['condition_sql']}) as met
                     FROM game_batting_logs
                     WHERE player_id = ? AND season = ? AND {check['filter']}
                     ORDER BY date DESC
                 """, (pid, season - 1)).fetchall()
 
-                for (met,) in prev_games:
+                for (met,) in prev:
                     if met:
                         streak += 1
+                        spans = True
                     else:
                         break
 
             if streak >= check["min_games"]:
                 name = _player_name(conn, pid)
                 team = _team_display(conn, pid, season)
-                spans_seasons = streak > len(current_games)
-
                 facts.append({
                     "type": f"cross_season_{check['name']}",
                     "player": name,
                     "team": team,
                     "streak": streak,
-                    "spans_seasons": spans_seasons,
+                    "spans_seasons": spans,
                     "label": check["label"],
                 })
 
-    # Sort by streak length, keep top per type
+    # Keep top per type
     by_type = {}
     for f in facts:
         t = f["type"]
         if t not in by_type or f["streak"] > by_type[t]["streak"]:
             by_type[t] = f
-
     return list(by_type.values())
 
 
 # ---------------------------------------------------------------------------
-# Scan: pitching start-of-season dominance
+# Scan: pitching start-of-season
 # ---------------------------------------------------------------------------
 
 def scan_pitching_start_of_season(conn, season, latest_date):
-    """Find pitching feats in first N starts of season.
-
-    e.g., "10+ K and 0 BB in first 2 starts — only player since 1900 to do this"
-    """
+    """Find notable pitching feats in first N starts, with historical lookup."""
     facts = []
 
-    # Get all starters with 2+ starts this season
     starters = conn.execute("""
         SELECT player_id, COUNT(*) as starts
         FROM game_pitching_logs
@@ -304,221 +232,136 @@ def scan_pitching_start_of_season(conn, season, latest_date):
             ORDER BY date ASC
         """, (pid, season)).fetchall()
 
-        total_k = sum(s[0] or 0 for s in starts)
-        total_bb = sum(s[1] or 0 for s in starts)
-        total_er = sum(s[2] or 0 for s in starts)
-        total_outs = sum(s[3] or 0 for s in starts)
-        total_h = sum(s[4] or 0 for s in starts)
-
         name = _player_name(conn, pid)
         team = _team_display(conn, pid, season)
 
-        # Check: 10+ K and 0 BB in first 2 starts
-        if num_starts >= 2 and total_k >= 10 and total_bb == 0:
+        # Check first 2 starts: 10+ K and 0 BB
+        if num_starts >= 2:
             first_2 = starts[:2]
             k2 = sum(s[0] or 0 for s in first_2)
             bb2 = sum(s[1] or 0 for s in first_2)
             if k2 >= 10 and bb2 == 0:
-                historical = _find_pitchers_with_feat_in_first_n_starts(
-                    conn, 2, "SUM(strikeouts) >= 10 AND SUM(walks) = 0",
-                    season, pid
-                )
+                # Lookup from index
+                historical = conn.execute("""
+                    SELECT player_name, season, value as k
+                    FROM historical_index
+                    WHERE scan_type = 'pitcher_first_2_starts'
+                    AND value >= 10 AND value2 = 0
+                    ORDER BY season DESC
+                """).fetchall()
+                hist_list = [{"player": h[0], "season": h[1], "k": h[2]} for h in historical]
+
                 facts.append({
                     "type": "10k_0bb_first_2_starts",
                     "player": name,
                     "team": team,
                     "k": k2,
-                    "bb": bb2,
                     "starts": 2,
-                    "historical": historical,
+                    "historical": hist_list,
                 })
 
-        # Check: 0 ER in first 2+ starts with 5+ IP each
+        # All starts scoreless with 5+ IP
         all_scoreless = all((s[2] or 0) == 0 and (s[3] or 0) >= 15 for s in starts)
         if all_scoreless and num_starts >= 2:
-            ip_display = f"{total_outs // 3}.{total_outs % 3}"
-            historical = _find_pitchers_scoreless_first_n_starts(
-                conn, num_starts, season, pid
-            )
+            total_outs = sum(s[3] or 0 for s in starts)
+            total_k = sum(s[0] or 0 for s in starts)
+            ip = f"{total_outs // 3}.{total_outs % 3}"
+
             facts.append({
                 "type": "scoreless_first_n_starts",
                 "player": name,
                 "team": team,
                 "starts": num_starts,
-                "ip": ip_display,
+                "ip": ip,
                 "k": total_k,
-                "historical": historical,
             })
 
     return facts
 
 
-def _find_pitchers_with_feat_in_first_n_starts(conn, n, having_clause, exclude_season, exclude_pid):
-    """Find pitchers with 10+ K and 0 BB in first N starts. One query per season."""
-    matches = []
-    seasons = conn.execute("""
-        SELECT DISTINCT season FROM game_pitching_logs
-        WHERE season < ? AND season >= 1920 AND is_start = 1
-        ORDER BY season DESC
-    """, (exclude_season,)).fetchall()
-
-    for (szn,) in seasons:
-        # Get all starts ordered by player + date
-        starts = conn.execute("""
-            SELECT player_id, strikeouts, walks
-            FROM game_pitching_logs
-            WHERE season = ? AND is_start = 1
-            ORDER BY player_id, date ASC
-        """, (szn,)).fetchall()
-
-        # Walk through, track first N starts per player
-        current_pid = None
-        start_count = 0
-        total_k = 0
-        total_bb = 0
-
-        for pid, k, bb in starts:
-            if pid != current_pid:
-                # Finalize previous
-                if current_pid and start_count >= n and total_k >= 10 and total_bb == 0 and current_pid != exclude_pid:
-                    name = _player_name(conn, current_pid)
-                    matches.append({"player": name, "season": szn, "k": total_k})
-                current_pid = pid
-                start_count = 0
-                total_k = 0
-                total_bb = 0
-
-            if start_count < n:
-                start_count += 1
-                total_k += (k or 0)
-                total_bb += (bb or 0)
-
-        # Finalize last
-        if current_pid and start_count >= n and total_k >= 10 and total_bb == 0 and current_pid != exclude_pid:
-            name = _player_name(conn, current_pid)
-            matches.append({"player": name, "season": szn, "k": total_k})
-
-    return matches
-
-
-def _find_pitchers_scoreless_first_n_starts(conn, n, exclude_season, exclude_pid):
-    """Find pitchers with N scoreless starts (5+ IP) to open a season. One query per season."""
-    matches = []
-    seasons = conn.execute("""
-        SELECT DISTINCT season FROM game_pitching_logs
-        WHERE season < ? AND season >= 1920 AND is_start = 1
-        ORDER BY season DESC
-    """, (exclude_season,)).fetchall()
-
-    for (szn,) in seasons:
-        starts = conn.execute("""
-            SELECT player_id, earned_runs, ip_outs
-            FROM game_pitching_logs
-            WHERE season = ? AND is_start = 1
-            ORDER BY player_id, date ASC
-        """, (szn,)).fetchall()
-
-        current_pid = None
-        start_count = 0
-        all_scoreless = True
-
-        for pid, er, outs in starts:
-            if pid != current_pid:
-                if current_pid and start_count >= n and all_scoreless and current_pid != exclude_pid:
-                    name = _player_name(conn, current_pid)
-                    matches.append({"player": name, "season": szn})
-                current_pid = pid
-                start_count = 0
-                all_scoreless = True
-
-            if start_count < n:
-                start_count += 1
-                if (er or 0) > 0 or (outs or 0) < 15:
-                    all_scoreless = False
-
-        if current_pid and start_count >= n and all_scoreless and current_pid != exclude_pid:
-            name = _player_name(conn, current_pid)
-            matches.append({"player": name, "season": szn})
-
-    return matches
-
-
 # ---------------------------------------------------------------------------
-# Scan: team-level historical
+# Scan: team historical
 # ---------------------------------------------------------------------------
 
 def scan_team_historical(conn, season, latest_date):
-    """Find team-level historical facts.
-
-    e.g., "Yankees have allowed 6 runs this season, 3rd fewest through 6 games ever"
-    """
+    """Find team-level historical facts using pre-computed index."""
     facts = []
 
-    # Get team run totals for the current season
+    # Current season team ER through N games
     teams = conn.execute("""
-        SELECT team, SUM(earned_runs) as team_er, COUNT(DISTINCT date) as games
+        SELECT team, COUNT(DISTINCT date) as games, SUM(earned_runs) as total_er
         FROM game_pitching_logs
-        WHERE season = ? AND is_start = 1
+        WHERE season = ?
         GROUP BY team
-        HAVING games >= 4
+        HAVING games >= 5
     """, (season,)).fetchall()
 
-    for team, team_er, games in teams:
+    for team, games, team_er in teams:
         if team_er is None:
             continue
 
-        # How does this compare historically? Count teams with fewer ER through same # of games
-        fewer = conn.execute("""
-            SELECT team, season, SUM(earned_runs) as ter
-            FROM game_pitching_logs
-            WHERE season < ? AND season >= 1920 AND is_start = 1
-            GROUP BY team, season
-            HAVING COUNT(DISTINCT date) >= ? AND SUM(earned_runs) < ?
-            ORDER BY ter ASC
-        """, (season, games, team_er)).fetchall()
+        # Find closest game count in the index
+        index_game_count = None
+        for gc in [5, 6, 7, 8, 10, 15, 20]:
+            if gc <= games:
+                index_game_count = gc
 
-        if len(fewer) <= 5:  # Top 5 or fewer historically
+        if not index_game_count:
+            continue
+
+        # How many teams historically had fewer ER through this many games?
+        fewer = conn.execute("""
+            SELECT team, season, value as er
+            FROM historical_index
+            WHERE scan_type = ? AND value < ?
+            ORDER BY value ASC
+        """, (f"team_er_through_{index_game_count}", team_er)).fetchall()
+
+        if len(fewer) <= 10:
             rank = len(fewer) + 1
-            historical_list = [(t, s, er) for t, s, er in fewer]
+            hist_list = [{"team": h[0], "season": h[1], "er": h[2]} for h in fewer[:5]]
             facts.append({
                 "type": "team_fewest_er",
                 "team": team,
                 "er": team_er,
-                "games": games,
+                "games": index_game_count,
                 "rank": rank,
-                "historical": historical_list,
+                "historical": hist_list,
             })
 
     return facts
 
 
 # ---------------------------------------------------------------------------
-# Main: run all scans
+# Main
 # ---------------------------------------------------------------------------
 
 def run_all_scans(conn, season, latest_date):
-    """Run all historical scans and return structured facts."""
-    all_facts = []
+    """Run all historical scans using pre-computed index."""
+    if not _has_index(conn):
+        print("  WARNING: historical_index table not found. Run build_historical_index.py first.")
+        return []
 
-    print("  Running historical scans...")
+    all_facts = []
+    print("  Running historical scans (using index)...")
 
     facts = scan_start_of_season_streaks(conn, season, latest_date)
-    print(f"    Start-of-season streaks: {len(facts)} facts")
+    print(f"    Start-of-season streaks: {len(facts)}")
     all_facts.extend(facts)
 
     facts = scan_cross_season_streaks(conn, season, latest_date)
-    print(f"    Cross-season streaks: {len(facts)} facts")
+    print(f"    Cross-season streaks: {len(facts)}")
     all_facts.extend(facts)
 
     facts = scan_pitching_start_of_season(conn, season, latest_date)
-    print(f"    Pitching start-of-season: {len(facts)} facts")
+    print(f"    Pitching start-of-season: {len(facts)}")
     all_facts.extend(facts)
 
     facts = scan_team_historical(conn, season, latest_date)
-    print(f"    Team historical: {len(facts)} facts")
+    print(f"    Team historical: {len(facts)}")
     all_facts.extend(facts)
 
-    print(f"  Total historical facts: {len(all_facts)}")
+    print(f"  Total facts: {len(all_facts)}")
     return all_facts
 
 
@@ -526,16 +369,22 @@ def format_facts_for_prompt(facts):
     """Convert structured facts into text for the Sonnet prompt."""
     lines = []
     for f in facts:
-        if f["type"].startswith("season_start_"):
+        if f["type"].startswith("start_"):
             hist = f.get("historical", [])
-            if hist:
-                hist_str = ", ".join(f"{h['season']} {h['player']}" for h in hist[:5])
-                lines.append(f"- {f['player']} ({f['team']}) {f['text']}. "
-                           f"Previous players to do this: {hist_str}. "
-                           f"({len(hist)} total in history since 1920)")
-            else:
-                lines.append(f"- {f['player']} ({f['team']}) {f['text']}. "
+            count = f.get("historical_count", len(hist))
+            if count == 0:
+                lines.append(f"- {f['player']} ({f['team']}) {f['label']}. "
                            f"No other player has done this since 1920.")
+            elif count <= 5:
+                hist_str = ", ".join(f"{h['season']} {h['player']} ({h['games']} games)"
+                                   for h in hist[:5])
+                lines.append(f"- {f['player']} ({f['team']}) {f['label']}. "
+                           f"The only others to do this since 1920: {hist_str}.")
+            else:
+                most_recent = hist[0]
+                lines.append(f"- {f['player']} ({f['team']}) {f['label']}. "
+                           f"Most recent: {most_recent['player']} in {most_recent['season']}. "
+                           f"({count} total since 1920)")
 
         elif f["type"].startswith("cross_season_"):
             ctx = "dating back to last season" if f["spans_seasons"] else "this season"
@@ -544,33 +393,29 @@ def format_facts_for_prompt(facts):
 
         elif f["type"] == "10k_0bb_first_2_starts":
             hist = f.get("historical", [])
-            if hist:
-                hist_str = ", ".join(f"{h['season']} {h['player']}" for h in hist[:5])
-                lines.append(f"- {f['player']} ({f['team']}) has {f['k']} K and 0 BB in "
-                           f"first {f['starts']} starts. Others to do this since 1920: "
-                           f"{hist_str}. ({len(hist)} total)")
+            if not hist:
+                lines.append(f"- {f['player']} ({f['team']}): {f['k']} K and 0 BB in "
+                           f"first 2 starts. The only pitcher to do this since 1920.")
             else:
-                lines.append(f"- {f['player']} ({f['team']}) has {f['k']} K and 0 BB in "
-                           f"first {f['starts']} starts. No other pitcher has done this "
-                           f"since 1920.")
+                hist_str = ", ".join(f"{h['season']} {h['player']}" for h in hist[:5])
+                lines.append(f"- {f['player']} ({f['team']}): {f['k']} K and 0 BB in "
+                           f"first 2 starts. Others since 1920: {hist_str}.")
 
         elif f["type"] == "scoreless_first_n_starts":
-            hist = f.get("historical", [])
-            count = len(hist)
-            lines.append(f"- {f['player']} ({f['team']}) has thrown {f['starts']} consecutive "
-                        f"scoreless starts (5+ IP each) to open the season ({f['ip']} IP, "
-                        f"{f['k']} K). {count} other pitchers have done this since 1920.")
+            lines.append(f"- {f['player']} ({f['team']}): {f['starts']} consecutive "
+                        f"scoreless starts (5+ IP) to open the season. "
+                        f"{f['ip']} IP, {f['k']} K, 0 ER.")
 
         elif f["type"] == "team_fewest_er":
             hist = f.get("historical", [])
-            if hist:
-                hist_str = ", ".join(f"{s} {t} ({er} ER)" for t, s, er in hist[:3])
+            if f["rank"] == 1:
                 lines.append(f"- {f['team']} has allowed {f['er']} earned runs through "
-                           f"{f['games']} games, ranking #{f['rank']} all-time. "
-                           f"Fewer: {hist_str}.")
+                           f"{f['games']} games — the fewest in MLB history.")
             else:
-                lines.append(f"- {f['team']} has allowed {f['er']} earned runs through "
-                           f"{f['games']} games, the fewest in MLB history through "
-                           f"{f['games']} games.")
+                hist_str = ", ".join(f"{h['season']} {h['team']} ({h['er']})"
+                                   for h in hist[:3])
+                lines.append(f"- {f['team']} has allowed {f['er']} ER through "
+                           f"{f['games']} games, #{f['rank']} all-time. "
+                           f"Fewer: {hist_str}.")
 
     return "\n".join(lines)
