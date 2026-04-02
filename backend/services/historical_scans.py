@@ -135,43 +135,53 @@ def scan_start_of_season_streaks(conn, season, latest_date):
 
 def _find_historical_season_start_streak(conn, streak_len, condition_sql,
                                           filter_sql, exclude_season, exclude_player):
-    """Find all historical instances of a player having a streak of N+ games
-    from the start of a season where every game met the condition."""
+    """Find historical instances of season-opening streaks.
+
+    Efficient approach: for each season, get all games ordered by player+date,
+    then walk through in Python to find start-of-season streaks.
+    One query per season instead of one per player-season.
+    """
     matches = []
 
-    # Get all player-seasons (excluding current)
-    player_seasons = conn.execute(f"""
-        SELECT DISTINCT player_id, season FROM game_batting_logs
-        WHERE season < ? AND season >= 1920 AND {filter_sql}
+    seasons = conn.execute("""
+        SELECT DISTINCT season FROM game_batting_logs
+        WHERE season < ? AND season >= 1920
         ORDER BY season DESC
     """, (exclude_season,)).fetchall()
 
-    # Group by player-season
-    checked = set()
-    for pid, szn in player_seasons:
-        key = (pid, szn)
-        if key in checked:
-            continue
-        checked.add(key)
-
+    for (szn,) in seasons:
         games = conn.execute(f"""
-            SELECT ({condition_sql}) as met
+            SELECT player_id, ({condition_sql}) as met
             FROM game_batting_logs
-            WHERE player_id = ? AND season = ? AND {filter_sql}
-            ORDER BY date ASC
-        """, (pid, szn)).fetchall()
+            WHERE season = ? AND {filter_sql}
+            ORDER BY player_id, date ASC
+        """, (szn,)).fetchall()
 
-        # Count streak from start
-        start_streak = 0
-        for (met,) in games:
-            if met:
-                start_streak += 1
-            else:
-                break
+        # Walk through, tracking start-of-season streak per player
+        current_pid = None
+        current_streak = 0
+        broken = False
 
-        if start_streak >= streak_len:
-            name = _player_name(conn, pid)
-            matches.append({"player": name, "season": szn, "games": start_streak})
+        for pid, met in games:
+            if pid != current_pid:
+                # Finalize previous player
+                if current_pid and current_streak >= streak_len and current_pid != exclude_player:
+                    name = _player_name(conn, current_pid)
+                    matches.append({"player": name, "season": szn, "games": current_streak})
+                current_pid = pid
+                current_streak = 0
+                broken = False
+
+            if not broken:
+                if met:
+                    current_streak += 1
+                else:
+                    broken = True
+
+        # Finalize last player
+        if current_pid and current_streak >= streak_len and current_pid != exclude_player:
+            name = _player_name(conn, current_pid)
+            matches.append({"player": name, "season": szn, "games": current_streak})
 
     return matches
 
@@ -344,7 +354,7 @@ def scan_pitching_start_of_season(conn, season, latest_date):
 
 
 def _find_pitchers_with_feat_in_first_n_starts(conn, n, having_clause, exclude_season, exclude_pid):
-    """Find all pitchers who met a condition in their first N starts of a season."""
+    """Find pitchers with 10+ K and 0 BB in first N starts. One query per season."""
     matches = []
     seasons = conn.execute("""
         SELECT DISTINCT season FROM game_pitching_logs
@@ -353,37 +363,46 @@ def _find_pitchers_with_feat_in_first_n_starts(conn, n, having_clause, exclude_s
     """, (exclude_season,)).fetchall()
 
     for (szn,) in seasons:
-        pitchers = conn.execute("""
-            SELECT DISTINCT player_id FROM game_pitching_logs
+        # Get all starts ordered by player + date
+        starts = conn.execute("""
+            SELECT player_id, strikeouts, walks
+            FROM game_pitching_logs
             WHERE season = ? AND is_start = 1
+            ORDER BY player_id, date ASC
         """, (szn,)).fetchall()
 
-        for (pid,) in pitchers:
-            if pid == exclude_pid:
-                continue
-            first_n = conn.execute(f"""
-                SELECT strikeouts, walks, earned_runs, ip_outs
-                FROM game_pitching_logs
-                WHERE player_id = ? AND season = ? AND is_start = 1
-                ORDER BY date ASC LIMIT ?
-            """, (pid, szn, n)).fetchall()
+        # Walk through, track first N starts per player
+        current_pid = None
+        start_count = 0
+        total_k = 0
+        total_bb = 0
 
-            if len(first_n) < n:
-                continue
+        for pid, k, bb in starts:
+            if pid != current_pid:
+                # Finalize previous
+                if current_pid and start_count >= n and total_k >= 10 and total_bb == 0 and current_pid != exclude_pid:
+                    name = _player_name(conn, current_pid)
+                    matches.append({"player": name, "season": szn, "k": total_k})
+                current_pid = pid
+                start_count = 0
+                total_k = 0
+                total_bb = 0
 
-            total_k = sum(s[0] or 0 for s in first_n)
-            total_bb = sum(s[1] or 0 for s in first_n)
+            if start_count < n:
+                start_count += 1
+                total_k += (k or 0)
+                total_bb += (bb or 0)
 
-            # Evaluate the having clause
-            if total_k >= 10 and total_bb == 0:
-                name = _player_name(conn, pid)
-                matches.append({"player": name, "season": szn, "k": total_k})
+        # Finalize last
+        if current_pid and start_count >= n and total_k >= 10 and total_bb == 0 and current_pid != exclude_pid:
+            name = _player_name(conn, current_pid)
+            matches.append({"player": name, "season": szn, "k": total_k})
 
     return matches
 
 
 def _find_pitchers_scoreless_first_n_starts(conn, n, exclude_season, exclude_pid):
-    """Find pitchers who threw N+ scoreless starts (5+ IP each) to open a season."""
+    """Find pitchers with N scoreless starts (5+ IP) to open a season. One query per season."""
     matches = []
     seasons = conn.execute("""
         SELECT DISTINCT season FROM game_pitching_logs
@@ -392,27 +411,34 @@ def _find_pitchers_scoreless_first_n_starts(conn, n, exclude_season, exclude_pid
     """, (exclude_season,)).fetchall()
 
     for (szn,) in seasons:
-        pitchers = conn.execute("""
-            SELECT DISTINCT player_id FROM game_pitching_logs
+        starts = conn.execute("""
+            SELECT player_id, earned_runs, ip_outs
+            FROM game_pitching_logs
             WHERE season = ? AND is_start = 1
+            ORDER BY player_id, date ASC
         """, (szn,)).fetchall()
 
-        for (pid,) in pitchers:
-            if pid == exclude_pid:
-                continue
-            first_n = conn.execute("""
-                SELECT earned_runs, ip_outs
-                FROM game_pitching_logs
-                WHERE player_id = ? AND season = ? AND is_start = 1
-                ORDER BY date ASC LIMIT ?
-            """, (pid, szn, n)).fetchall()
+        current_pid = None
+        start_count = 0
+        all_scoreless = True
 
-            if len(first_n) < n:
-                continue
+        for pid, er, outs in starts:
+            if pid != current_pid:
+                if current_pid and start_count >= n and all_scoreless and current_pid != exclude_pid:
+                    name = _player_name(conn, current_pid)
+                    matches.append({"player": name, "season": szn})
+                current_pid = pid
+                start_count = 0
+                all_scoreless = True
 
-            if all((s[0] or 0) == 0 and (s[1] or 0) >= 15 for s in first_n):
-                name = _player_name(conn, pid)
-                matches.append({"player": name, "season": szn})
+            if start_count < n:
+                start_count += 1
+                if (er or 0) > 0 or (outs or 0) < 15:
+                    all_scoreless = False
+
+        if current_pid and start_count >= n and all_scoreless and current_pid != exclude_pid:
+            name = _player_name(conn, current_pid)
+            matches.append({"player": name, "season": szn})
 
     return matches
 
