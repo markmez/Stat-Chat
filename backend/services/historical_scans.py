@@ -50,13 +50,13 @@ def scan_start_of_season_streaks(conn, season, latest_date):
         {
             "scan_type": "start_hit_streak",
             "condition": lambda h, bb, hbp, hr: h > 0,
-            "min_games": 5,
+            "min_games": 6,
             "label": "has hit safely in each of the first {n} games this season",
         },
         {
             "scan_type": "start_onbase_streak",
             "condition": lambda h, bb, hbp, hr: (h + bb + hbp) > 0,
-            "min_games": 7,
+            "min_games": 8,
             "label": "has reached base in each of the first {n} games this season",
         },
         {
@@ -99,13 +99,13 @@ def scan_start_of_season_streaks(conn, season, latest_date):
                 name = _player_name(conn, pid)
                 team = _team_display(conn, pid, season)
 
-                # Lookup from historical index
+                # Lookup from historical index (exclude current season)
                 historical = conn.execute("""
                     SELECT player_name, season, value
                     FROM historical_index
-                    WHERE scan_type = ? AND value >= ?
+                    WHERE scan_type = ? AND value >= ? AND season < ?
                     ORDER BY season DESC
-                """, (stype["scan_type"], streak)).fetchall()
+                """, (stype["scan_type"], streak, season)).fetchall()
 
                 hist_list = [{"player": h[0], "season": h[1], "games": h[2]} for h in historical]
 
@@ -241,14 +241,14 @@ def scan_pitching_start_of_season(conn, season, latest_date):
             k2 = sum(s[0] or 0 for s in first_2)
             bb2 = sum(s[1] or 0 for s in first_2)
             if k2 >= 10 and bb2 == 0:
-                # Lookup from index
+                # Lookup from index (exclude current season, dedup by player+season)
                 historical = conn.execute("""
-                    SELECT player_name, season, value as k
+                    SELECT DISTINCT player_name, season, value as k
                     FROM historical_index
                     WHERE scan_type = 'pitcher_first_2_starts'
-                    AND value >= 10 AND value2 = 0
+                    AND value >= 10 AND value2 = 0 AND season < ?
                     ORDER BY season DESC
-                """).fetchall()
+                """, (season,)).fetchall()
                 hist_list = [{"player": h[0], "season": h[1], "k": h[2]} for h in historical]
 
                 facts.append({
@@ -314,9 +314,9 @@ def scan_team_historical(conn, season, latest_date):
         fewer = conn.execute("""
             SELECT team, season, value as er
             FROM historical_index
-            WHERE scan_type = ? AND value < ?
+            WHERE scan_type = ? AND value < ? AND season < ?
             ORDER BY value ASC
-        """, (f"team_er_through_{index_game_count}", team_er)).fetchall()
+        """, (f"team_er_through_{index_game_count}", team_er, season)).fetchall()
 
         if len(fewer) <= 10:
             rank = len(fewer) + 1
