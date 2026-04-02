@@ -109,6 +109,10 @@ def scan_start_of_season_streaks(conn, season, latest_date):
 
                 hist_list = [{"player": h[0], "season": h[1], "games": h[2]} for h in historical]
 
+                # Only include if historically rare (≤100 total, or last occurrence was 2+ years ago)
+                if len(hist_list) > 100 and hist_list and hist_list[0]["season"] >= season - 1:
+                    continue  # Too common and happened recently
+
                 facts.append({
                     "type": stype["scan_type"],
                     "player": name,
@@ -236,18 +240,18 @@ def scan_pitching_start_of_season(conn, season, latest_date):
         name = _player_name(conn, pid)
         team = _team_display(conn, pid, season)
 
-        # Check first 2 starts: 10+ K and 0 BB
+        # Check first 2 starts: 15+ K and 0 BB (rare — ~47 in 100+ years at 10+, much fewer at 15+)
         if num_starts >= 2:
             first_2 = starts[:2]
             k2 = sum(s[0] or 0 for s in first_2)
             bb2 = sum(s[1] or 0 for s in first_2)
-            if k2 >= 10 and bb2 == 0:
+            if k2 >= 15 and bb2 == 0:
                 # Lookup from index (exclude current season, dedup by player+season)
                 historical = conn.execute("""
                     SELECT DISTINCT player_name, season, value as k
                     FROM historical_index
                     WHERE scan_type = 'pitcher_first_2_starts'
-                    AND value >= 10 AND value2 = 0 AND season < ?
+                    AND value >= 15 AND value2 = 0 AND season < ?
                     ORDER BY season DESC
                 """, (season,)).fetchall()
                 hist_list = [{"player": h[0], "season": h[1], "k": h[2]} for h in historical]
@@ -408,10 +412,16 @@ def template_facts(conn, facts, season, latest_date):
     events = []
 
     for f in facts:
-        # Get the triggering game line
+        # Get the triggering game line (most recent game, not necessarily latest_date)
         game_line, line_type = None, None
         if f.get("player_id"):
-            game_line, line_type = _get_game_line(conn, f["player_id"], latest_date, season)
+            # Find the player's most recent game date
+            recent = conn.execute("""
+                SELECT MAX(date) FROM game_batting_logs
+                WHERE player_id = ? AND season = ?
+            """, (f["player_id"], season)).fetchone()
+            player_last_date = recent[0] if recent and recent[0] else latest_date
+            game_line, line_type = _get_game_line(conn, f["player_id"], player_last_date, season)
 
         player = f.get("player", "")
         team = f.get("team", "")
