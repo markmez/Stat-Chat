@@ -246,3 +246,36 @@ async def ai_notable(
     except Exception as e:
         import traceback
         raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
+
+
+@router.api_route("/historical-scans", methods=["GET", "POST"])
+async def historical_scans(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Run historical scans and return structured facts."""
+    verify_admin(authorization, key)
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        from services.notable_events import _get_latest_date
+        from services.historical_scans import run_all_scans, format_facts_for_prompt
+
+        season = date.today().year
+        latest_date = _get_latest_date(conn, season)
+        if not latest_date:
+            conn.close()
+            return {"status": "error", "message": "No game logs found"}
+
+        facts = run_all_scans(conn, season, latest_date)
+        formatted = format_facts_for_prompt(facts)
+        conn.close()
+        return {
+            "status": "ok",
+            "latest_date": latest_date,
+            "num_facts": len(facts),
+            "facts": facts,
+            "formatted": formatted,
+        }
+    except Exception as e:
+        import traceback
+        raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
