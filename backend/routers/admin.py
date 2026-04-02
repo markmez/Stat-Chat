@@ -290,14 +290,14 @@ async def historical_scans(
             return {"status": "error", "message": "No game logs found"}
 
         facts = run_all_scans(conn, season, latest_date)
-        formatted = format_facts_for_prompt(facts)
+        from services.historical_scans import template_facts
+        templated = template_facts(conn, facts, season, latest_date)
         conn.close()
         return {
             "status": "ok",
             "latest_date": latest_date,
             "num_facts": len(facts),
-            "facts": facts,
-            "formatted": formatted,
+            "templated_events": templated,
         }
     except Exception as e:
         import traceback
