@@ -281,7 +281,7 @@ async def historical_scans(
     try:
         conn = sqlite3.connect(DB_PATH)
         from services.notable_events import _get_latest_date
-        from services.historical_scans import run_all_scans, format_facts_for_prompt
+        from services.historical_scans import run_all_scans
 
         season = date.today().year
         latest_date = _get_latest_date(conn, season)
