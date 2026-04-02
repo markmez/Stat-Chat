@@ -976,8 +976,8 @@ def detect_all(db_path=None, season=None):
 
     print(f"  Latest game date: {latest_date}")
 
-    # Clear and rebuild — ensures stale events don't persist
-    conn.execute("DELETE FROM notable_events")
+    # Clear rule-based events and rebuild — preserve AI insights
+    conn.execute("DELETE FROM notable_events WHERE detection_type != 'ai_insight'")
     conn.commit()
 
     events = []
