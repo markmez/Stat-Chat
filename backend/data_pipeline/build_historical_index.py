@@ -41,8 +41,13 @@ def create_index_table(conn):
             detail TEXT
         )
     """)
-    conn.execute("CREATE INDEX idx_hist_type ON historical_index(scan_type)")
-    conn.execute("CREATE INDEX idx_hist_type_val ON historical_index(scan_type, value)")
+    conn.commit()
+    # Indexes added after all inserts for performance
+
+
+def add_indexes(conn):
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_hist_type ON historical_index(scan_type)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_hist_type_val ON historical_index(scan_type, value)")
     conn.commit()
 
 
@@ -248,12 +253,15 @@ def main():
     print(f"Building historical index in {args.db}")
     conn = sqlite3.connect(args.db)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA cache_size=-50000")  # 50MB cache
 
     t0 = time.time()
     create_index_table(conn)
     build_batting_season_start_streaks(conn)
     build_pitching_first_starts(conn)
     build_team_runs_allowed(conn)
+    add_indexes(conn)
 
     count = conn.execute("SELECT COUNT(*) FROM historical_index").fetchone()[0]
     elapsed = time.time() - t0
