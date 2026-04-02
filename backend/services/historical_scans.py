@@ -193,6 +193,7 @@ def scan_cross_season_streaks(conn, season, latest_date):
                 facts.append({
                     "type": f"cross_season_{check['name']}",
                     "player": name,
+                    "player_id": pid,
                     "team": team,
                     "streak": streak,
                     "spans_seasons": spans,
@@ -254,6 +255,7 @@ def scan_pitching_start_of_season(conn, season, latest_date):
                 facts.append({
                     "type": "10k_0bb_first_2_starts",
                     "player": name,
+                    "player_id": pid,
                     "team": team,
                     "k": k2,
                     "starts": 2,
@@ -270,6 +272,7 @@ def scan_pitching_start_of_season(conn, season, latest_date):
             facts.append({
                 "type": "scoreless_first_n_starts",
                 "player": name,
+                "player_id": pid,
                 "team": team,
                 "starts": num_starts,
                 "ip": ip,
@@ -366,57 +369,143 @@ def run_all_scans(conn, season, latest_date):
     return all_facts
 
 
-def format_facts_for_prompt(facts):
-    """Convert structured facts into text for the Sonnet prompt."""
-    lines = []
+def _get_game_line(conn, player_id, date, season):
+    """Get a player's batting or pitching line from a specific game."""
+    # Try batting first
+    row = conn.execute("""
+        SELECT hits, at_bats, home_runs, rbi, doubles, triples, walks
+        FROM game_batting_logs
+        WHERE player_id = ? AND date = ? AND season = ?
+    """, (player_id, date, season)).fetchone()
+    if row and (row[0] or 0) + (row[6] or 0) > 0:
+        h, ab, hr, rbi, d, t, bb = row
+        parts = [f"{h}-for-{ab}"]
+        if hr: parts.append(f"{hr} HR")
+        if d: parts.append(f"{d} 2B")
+        if rbi: parts.append(f"{rbi} RBI")
+        return ", ".join(parts), "batting"
+
+    # Try pitching
+    row = conn.execute("""
+        SELECT innings_pitched, ip_outs, hits, earned_runs, strikeouts, walks, win
+        FROM game_pitching_logs
+        WHERE player_id = ? AND date = ? AND season = ?
+    """, (player_id, date, season)).fetchone()
+    if row:
+        ip, outs, h, er, so, bb, w = row
+        ip_display = ip or f"{(outs or 0) // 3}.{(outs or 0) % 3}"
+        parts = [f"{ip_display} IP", f"{h} H", f"{er} ER", f"{so} K"]
+        if bb == 0: parts.append("0 BB")
+        if w: parts.append("W")
+        return ", ".join(parts), "pitching"
+
+    return None, None
+
+
+def template_facts(conn, facts, season, latest_date):
+    """Convert structured facts into templated feed-ready text.
+    No Sonnet needed — deterministic copy from DB facts."""
+    events = []
+
     for f in facts:
-        if f["type"].startswith("start_"):
-            hist = f.get("historical", [])
-            count = f.get("historical_count", len(hist))
-            if count == 0:
-                lines.append(f"- {f['player']} ({f['team']}) {f['label']}. "
-                           f"No other player has done this since 1920.")
-            elif count <= 5:
-                hist_str = ", ".join(f"{h['season']} {h['player']} ({h['games']} games)"
-                                   for h in hist[:5])
-                lines.append(f"- {f['player']} ({f['team']}) {f['label']}. "
-                           f"The only others to do this since 1920: {hist_str}.")
+        # Get the triggering game line
+        game_line, line_type = None, None
+        if f.get("player_id"):
+            game_line, line_type = _get_game_line(conn, f["player_id"], latest_date, season)
+
+        player = f.get("player", "")
+        team = f.get("team", "")
+        hist = f.get("historical", [])
+        hist_count = f.get("historical_count", len(hist))
+
+        if f["type"].startswith("start_") and f["type"] != "start_onbase_streak":
+            # Batting start-of-season streak
+            streak = f["streak"]
+            label = f["label"]
+            game_intro = f"{player} went {game_line} last night" if game_line else f"{player}"
+
+            if hist_count == 0:
+                context = f"no other player has done this in over 100 years"
+            elif hist_count <= 10:
+                last = hist[0]
+                context = f"only {hist_count} players have done this in over 100 years, the last being {last['player']} in {last['season']}"
             else:
-                most_recent = hist[0]
-                lines.append(f"- {f['player']} ({f['team']}) {f['label']}. "
-                           f"Most recent: {most_recent['player']} in {most_recent['season']}. "
-                           f"({count} total since 1920)")
+                last = hist[0]
+                context = f"the last player to do this was {last['player']} in {last['season']}"
+
+            headline = f"{game_intro}, and {label} — {context}."
+            events.append({
+                "headline": headline,
+                "category": "historical",
+                "player_names": [player],
+                "team_names": [team] if team else [],
+            })
 
         elif f["type"].startswith("cross_season_"):
+            streak = f["streak"]
+            label = f["label"]
+            game_intro = f"{player} went {game_line} last night" if game_line else f"{player}"
             ctx = "dating back to last season" if f["spans_seasons"] else "this season"
-            lines.append(f"- {f['player']} ({f['team']}) has the longest active "
-                        f"{f['label']} in MLB at {f['streak']} games, {ctx}.")
+
+            headline = f"{game_intro}, extending the longest active {label} in MLB to {streak} games, {ctx}."
+            events.append({
+                "headline": headline,
+                "category": "historical",
+                "player_names": [player],
+                "team_names": [team] if team else [],
+            })
 
         elif f["type"] == "10k_0bb_first_2_starts":
-            hist = f.get("historical", [])
+            k = f["k"]
+            game_intro = f"{player} went {game_line} last night" if game_line else f"{player}"
+
             if not hist:
-                lines.append(f"- {f['player']} ({f['team']}): {f['k']} K and 0 BB in "
-                           f"first 2 starts. The only pitcher to do this since 1920.")
+                context = f"the only pitcher to do this in over 100 years"
             else:
-                hist_str = ", ".join(f"{h['season']} {h['player']}" for h in hist[:5])
-                lines.append(f"- {f['player']} ({f['team']}): {f['k']} K and 0 BB in "
-                           f"first 2 starts. Others since 1920: {hist_str}.")
+                last = hist[0]
+                context = f"only {len(hist)} pitchers have done this in over 100 years, the last being {last['player']} in {last['season']}"
+
+            headline = f"{game_intro}, reaching {k} K and 0 BB through his first 2 starts — {context}."
+            events.append({
+                "headline": headline,
+                "category": "historical",
+                "player_names": [player],
+                "team_names": [team] if team else [],
+            })
 
         elif f["type"] == "scoreless_first_n_starts":
-            lines.append(f"- {f['player']} ({f['team']}): {f['starts']} consecutive "
-                        f"scoreless starts (5+ IP) to open the season. "
-                        f"{f['ip']} IP, {f['k']} K, 0 ER.")
+            ip = f["ip"]
+            k = f["k"]
+            starts = f["starts"]
+            game_intro = f"{player} went {game_line} last night" if game_line else f"{player}"
+
+            headline = f"{game_intro}, and has now thrown {starts} consecutive scoreless starts to open the season ({ip} IP, {k} K, 0 ER)."
+            events.append({
+                "headline": headline,
+                "category": "historical",
+                "player_names": [player],
+                "team_names": [team] if team else [],
+            })
 
         elif f["type"] == "team_fewest_er":
-            hist = f.get("historical", [])
-            if f["rank"] == 1:
-                lines.append(f"- {f['team']} has allowed {f['er']} earned runs through "
-                           f"{f['games']} games — the fewest in MLB history.")
-            else:
-                hist_str = ", ".join(f"{h['season']} {h['team']} ({h['er']})"
-                                   for h in hist[:3])
-                lines.append(f"- {f['team']} has allowed {f['er']} ER through "
-                           f"{f['games']} games, #{f['rank']} all-time. "
-                           f"Fewer: {hist_str}.")
+            er = f["er"]
+            games = f["games"]
+            rank = f["rank"]
 
-    return "\n".join(lines)
+            if rank == 1:
+                headline = f"The {team} have allowed just {er} earned runs through {games} games — the fewest by any team in over 100 years."
+            elif rank <= 5:
+                hist_str = ", ".join(f"the {h['season']} {h['team']} ({h['er']})"
+                                   for h in hist[:3])
+                headline = f"The {team} have allowed just {er} earned runs through {games} games, #{rank} all-time behind only {hist_str}."
+            else:
+                headline = f"The {team} have allowed just {er} earned runs through {games} games, #{rank} all-time."
+
+            events.append({
+                "headline": headline,
+                "category": "historical",
+                "player_names": [],
+                "team_names": [team],
+            })
+
+    return events
