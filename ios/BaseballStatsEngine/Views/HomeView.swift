@@ -1,5 +1,13 @@
 import SwiftUI
 
+// Track scroll position for drawer collapse gating
+private struct ScrollOffsetKey: PreferenceKey {
+    nonisolated(unsafe) static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 // Shared navigation destination types
 struct ResultsDestination: Hashable { let question: String }
 struct PlayerCardDestination: Hashable { let name: String; var alternatives: [String] = [] }
@@ -10,6 +18,7 @@ struct HomeView: View {
     @State private var questionText = ""
     @State private var path = NavigationPath()
     @State private var feedExpanded = false
+    @State private var feedScrolledToTop = true
     @FocusState private var isInputFocused: Bool
     @State private var lastNameSearchCount: Int = UserDefaults.standard.integer(forKey: "lastNameSearchCount")
 
@@ -261,15 +270,30 @@ struct HomeView: View {
 
             // Feed content
             ScrollView {
-                NotableEventsFeed(
-                    onPlayerTap: { name in
-                        path.append(PlayerCardDestination(name: name))
-                    },
-                    onTeamTap: { code in
-                        path.append(TeamCardDestination(code: code))
-                    },
-                    showHeader: false
-                )
+                VStack(spacing: 0) {
+                    // Scroll position sentinel
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: ScrollOffsetKey.self,
+                            value: geo.frame(in: .named("feedScroll")).minY
+                        )
+                    }
+                    .frame(height: 0)
+
+                    NotableEventsFeed(
+                        onPlayerTap: { name in
+                            path.append(PlayerCardDestination(name: name))
+                        },
+                        onTeamTap: { code in
+                            path.append(TeamCardDestination(code: code))
+                        },
+                        showHeader: false
+                    )
+                }
+            }
+            .coordinateSpace(name: "feedScroll")
+            .onPreferenceChange(ScrollOffsetKey.self) { offset in
+                feedScrolledToTop = offset >= -5  // small tolerance
             }
             .scrollDisabled(!feedExpanded)
         }
@@ -294,9 +318,9 @@ struct HomeView: View {
                     }
                 }
         )
-        .simultaneousGesture(
-            feedExpanded ?
-            DragGesture(minimumDistance: 8)
+        .gesture(
+            feedExpanded && feedScrolledToTop ?
+            DragGesture(minimumDistance: 20)
                 .onEnded { value in
                     if value.translation.height > 40 {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
