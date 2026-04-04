@@ -247,6 +247,63 @@ def build_team_runs_allowed(conn):
     print(f"    {total} team records")
 
 
+def build_team_starter_era(conn):
+    """For each team-season, compute cumulative starter ERA through N games.
+
+    Stores ER and IP outs (so ERA = er * 27 / ip_outs) for starters only.
+    Enables "lowest starter ERA through N games in history" queries.
+    """
+    print("  Building team starter ERA index...")
+
+    seasons = conn.execute("""
+        SELECT DISTINCT season FROM game_pitching_logs
+        WHERE season >= 1920 AND is_start = 1 ORDER BY season
+    """).fetchall()
+
+    total = 0
+    for (szn,) in seasons:
+        team_games = conn.execute("""
+            SELECT s.team, g.date, SUM(g.earned_runs) as game_er, SUM(g.ip_outs) as game_outs
+            FROM game_pitching_logs g
+            JOIN season_pitching_stats s ON g.player_id = s.player_id AND g.season = s.season
+            WHERE g.season = ? AND g.is_start = 1
+            GROUP BY s.team, g.date
+            ORDER BY s.team, g.date ASC
+        """, (szn,)).fetchall()
+
+        current_team = None
+        game_num = 0
+        cum_er = 0
+        cum_outs = 0
+
+        for team, dt, game_er, game_outs in team_games:
+            if team != current_team:
+                current_team = team
+                game_num = 0
+                cum_er = 0
+                cum_outs = 0
+
+            game_num += 1
+            cum_er += (game_er or 0)
+            cum_outs += (game_outs or 0)
+
+            if game_num in (5, 6, 7, 8, 10, 15, 20) and cum_outs > 0:
+                # Store ERA as integer * 100 for precision (e.g., 0.53 ERA = 53)
+                era_x100 = int(round(cum_er * 2700 / cum_outs))
+                conn.execute("""
+                    INSERT INTO historical_index
+                    (scan_type, player_id, player_name, team, season, value, value2, detail)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (f"team_starter_era_through_{game_num}", None, None, team, szn,
+                      era_x100, cum_outs,
+                      f"{cum_er} ER, {cum_outs // 3}.{cum_outs % 3} IP, {cum_er * 9 / (cum_outs / 3):.2f} ERA"))
+                total += 1
+
+        conn.commit()
+
+    print(f"    {total} team starter ERA records")
+
+
 def build_career_start_batting(conn):
     """For each player, compute cumulative stats through their first N career games.
 
@@ -453,6 +510,7 @@ def main():
     build_batting_season_start_streaks(conn)
     build_pitching_first_starts(conn)
     build_team_runs_allowed(conn)
+    build_team_starter_era(conn)
     build_career_start_batting(conn)
     build_career_debut_ages(conn)
     add_indexes(conn)

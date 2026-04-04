@@ -347,6 +347,67 @@ def scan_team_historical(conn, season, latest_date):
 
 
 # ---------------------------------------------------------------------------
+# Scan: team starter ERA
+# ---------------------------------------------------------------------------
+
+def scan_team_starter_era(conn, season, latest_date):
+    """Find teams with historically low starter ERA through N games."""
+    facts = []
+
+    # Current season: compute starter ERA per team through latest_date
+    teams = conn.execute("""
+        SELECT s.team, COUNT(DISTINCT g.date) as games,
+               SUM(g.earned_runs) as total_er, SUM(g.ip_outs) as total_outs
+        FROM game_pitching_logs g
+        JOIN season_pitching_stats s ON g.player_id = s.player_id AND g.season = s.season
+        WHERE g.season = ? AND g.is_start = 1 AND g.date <= ?
+        GROUP BY s.team
+        HAVING games >= 5
+    """, (season, latest_date)).fetchall()
+
+    for team, games, total_er, total_outs in teams:
+        if not total_outs or total_outs == 0:
+            continue
+
+        era = total_er * 9.0 / (total_outs / 3.0)
+        era_x100 = int(round(total_er * 2700 / total_outs))
+
+        # Find closest game count in index
+        index_game_count = None
+        for gc in [5, 6, 7, 8, 10, 15, 20]:
+            if gc <= games:
+                index_game_count = gc
+        if not index_game_count:
+            continue
+
+        # How many teams historically had a LOWER starter ERA through this many games?
+        lower = conn.execute("""
+            SELECT team, season, value as era_x100, detail
+            FROM historical_index
+            WHERE scan_type = ? AND value < ? AND season < ?
+            ORDER BY value ASC
+        """, (f"team_starter_era_through_{index_game_count}", era_x100, season)).fetchall()
+
+        rank = len(lower) + 1
+
+        if rank <= 10:
+            hist_list = [{"team": h[0], "season": h[1], "era_x100": h[2], "detail": h[3]} for h in lower[:5]]
+            ip_display = f"{total_outs // 3}.{total_outs % 3}"
+            facts.append({
+                "type": "team_starter_era",
+                "team": team,
+                "era": era,
+                "er": total_er,
+                "ip": ip_display,
+                "games": index_game_count,
+                "rank": rank,
+                "historical": hist_list,
+            })
+
+    return facts
+
+
+# ---------------------------------------------------------------------------
 # Scan: career-start milestones ("most HR in first N career games")
 # ---------------------------------------------------------------------------
 
@@ -595,6 +656,10 @@ def run_all_scans(conn, season, latest_date):
     print(f"    Team historical: {len(facts)}")
     all_facts.extend(facts)
 
+    facts = scan_team_starter_era(conn, season, latest_date)
+    print(f"    Team starter ERA: {len(facts)}")
+    all_facts.extend(facts)
+
     facts = scan_career_start(conn, season, latest_date)
     print(f"    Career-start milestones: {len(facts)}")
     all_facts.extend(facts)
@@ -743,6 +808,24 @@ def template_facts(conn, facts, season, latest_date):
                 headline = f"The {team} have allowed just {er} earned runs through {games} games, #{rank} all-time behind only {hist_str}."
             else:
                 headline = f"The {team} have allowed just {er} earned runs through {games} games, #{rank} all-time."
+
+        elif f["type"] == "team_starter_era":
+            era = f["era"]
+            er = f["er"]
+            ip = f["ip"]
+            games = f["games"]
+            rank = f["rank"]
+
+            if rank == 1:
+                headline = f"The {team}'s starters have a {era:.2f} ERA ({er} ER in {ip} IP) through {games} games — the lowest by any team's starters in over 100 years."
+            elif rank <= 5:
+                hist_str = ", ".join(
+                    f"the {h['season']} {h['team']} ({h['era_x100'] / 100:.2f})"
+                    for h in hist[:3]
+                )
+                headline = f"The {team}'s starters have a {era:.2f} ERA through {games} games, #{rank} lowest all-time behind only {hist_str}."
+            else:
+                headline = f"The {team}'s starters have a {era:.2f} ERA through {games} games, #{rank} lowest all-time."
 
         elif f["type"] == "career_start":
             val = f["value"]
