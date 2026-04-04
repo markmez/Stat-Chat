@@ -271,7 +271,8 @@ async def debug_player(
 
     game_logs = conn.execute("""
         SELECT date, season, plate_appearances, at_bats, hits, home_runs, rbi
-        FROM game_batting_logs WHERE player_id = ? ORDER BY date DESC LIMIT 15
+        FROM game_batting_logs WHERE player_id = ? AND season >= 2026
+        ORDER BY date ASC
     """, (pid,)).fetchall()
 
     conn.close()
