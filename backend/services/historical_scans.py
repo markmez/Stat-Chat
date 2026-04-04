@@ -700,22 +700,23 @@ def scan_leaderboard_changes(conn, season, latest_date):
         return facts
     cutoff = recent_dates[-1][0]
 
-    # Batting stats to check
+    # Batting stats: (season_col, abbrev, label, min_val, game_log_col)
+    # game_log_col is used to check if the player contributed to this stat today
     bat_stats = [
-        ("home_runs", "HR", "home runs", 3),       # min value to care about
-        ("rbi", "RBI", "RBI", 5),
-        ("hits", "hits", "hits", 10),
-        ("stolen_bases", "SB", "stolen bases", 3),
-        ("batting_avg", "AVG", "batting average", None),
-        ("obp", "OBP", "OBP", None),
-        ("ops", "OPS", "OPS", None),
-        ("slg", "SLG", "slugging", None),
+        ("home_runs", "HR", "home runs", 3, "home_runs"),
+        ("rbi", "RBI", "RBI", 5, "rbi"),
+        ("hits", "hits", "hits", 10, "hits"),
+        ("stolen_bases", "SB", "stolen bases", 3, None),  # no game log col
+        ("batting_avg", "AVG", "batting average", None, "hits"),
+        ("obp", "OBP", "OBP", None, "hits"),
+        ("ops", "OPS", "OPS", None, "hits"),
+        ("slg", "SLG", "slugging", None, "hits"),
     ]
 
     # Min PA for rate stats
     min_pa_rate = 20
 
-    for col, abbrev, label, min_val in bat_stats:
+    for col, abbrev, label, min_val, game_col in bat_stats:
         is_rate = col in ("batting_avg", "obp", "ops", "slg")
         pa_filter = f"AND s.plate_appearances >= {min_pa_rate}" if is_rate else ""
         val_filter = f"AND s.{col} >= {min_val}" if min_val else ""
@@ -753,19 +754,23 @@ def scan_leaderboard_changes(conn, season, latest_date):
                 continue
 
             # Get the leader's game contribution today
-            game = conn.execute(f"""
-                SELECT {col.replace('batting_avg','hits').replace('obp','hits').replace('ops','hits').replace('slg','hits')}
-                FROM game_batting_logs
-                WHERE player_id = ? AND season = ? AND date >= ?
-                ORDER BY date DESC LIMIT 1
-            """, (leader_pid, season, cutoff)).fetchone()
+            game_contribution = 0
+            if game_col:
+                game = conn.execute(f"""
+                    SELECT {game_col}
+                    FROM game_batting_logs
+                    WHERE player_id = ? AND season = ? AND date >= ?
+                    ORDER BY date DESC LIMIT 1
+                """, (leader_pid, season, cutoff)).fetchone()
+                game_contribution = game[0] if game and game[0] else 0
+            else:
+                # No game log column (e.g., stolen_bases) — just check if they played
+                game_contribution = 1
 
             # For counting stats: did they JUST take the lead?
-            # Leader is ahead by a small margin AND their today's game contributed
             if not is_rate:
                 margin = leader_val - runner_up_val
-                if game and game[0]:
-                    game_contribution = game[0]
+                if game_contribution > 0:
                     # They took or extended the lead if margin <= game contribution
                     if margin <= game_contribution and margin > 0:
                         team = leader_team
