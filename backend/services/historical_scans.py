@@ -347,6 +347,226 @@ def scan_team_historical(conn, season, latest_date):
 
 
 # ---------------------------------------------------------------------------
+# Scan: career-start milestones ("most HR in first N career games")
+# ---------------------------------------------------------------------------
+
+def scan_career_start(conn, season, latest_date):
+    """Find players early in their careers who just set or approached records
+    in 'most X in first N career games.'"""
+    facts = []
+
+    # Get players who played on the latest date
+    active = conn.execute("""
+        SELECT DISTINCT player_id FROM game_batting_logs
+        WHERE season = ? AND date = ? AND at_bats > 0
+    """, (season, latest_date)).fetchall()
+
+    for (pid,) in active:
+        # Count total career games for this player
+        career_count = conn.execute("""
+            SELECT COUNT(*) FROM game_batting_logs
+            WHERE player_id = ? AND at_bats > 0 AND date <= ?
+        """, (pid, latest_date)).fetchone()[0]
+
+        # Only check players with ≤20 career games (early career)
+        if career_count > 20:
+            continue
+
+        # Find the closest snapshot point at or below their career game count
+        snapshot_points = [3, 5, 7, 10, 15, 20]
+        check_point = None
+        for sp in reversed(snapshot_points):
+            if career_count >= sp:
+                check_point = sp
+                break
+        if not check_point:
+            continue
+
+        # Compute their cumulative stats through that checkpoint
+        first_n = conn.execute("""
+            SELECT hits, home_runs, rbi, doubles, triples
+            FROM game_batting_logs
+            WHERE player_id = ? AND at_bats > 0
+            ORDER BY date ASC
+            LIMIT ?
+        """, (pid, check_point)).fetchall()
+
+        cum_hr = sum(r[1] or 0 for r in first_n)
+        cum_rbi = sum(r[2] or 0 for r in first_n)
+        cum_xbh = sum((r[3] or 0) + (r[4] or 0) + (r[1] or 0) for r in first_n)
+        cum_hits = sum(r[0] or 0 for r in first_n)
+
+        name = _player_name(conn, pid)
+        team = _team_display(conn, pid, season)
+
+        # Check each stat against the historical index
+        for stat_name, cum_val, label in [
+            ("hr", cum_hr, "home runs"),
+            ("rbi", cum_rbi, "RBI"),
+            ("xbh", cum_xbh, "extra-base hits"),
+            ("hits", cum_hits, "hits"),
+        ]:
+            if cum_val == 0:
+                continue
+
+            scan_type = f"career_first_{check_point}_{stat_name}"
+
+            # How many players historically had MORE than this?
+            more = conn.execute("""
+                SELECT COUNT(DISTINCT player_id) FROM historical_index
+                WHERE scan_type = ? AND value > ?
+            """, (scan_type, cum_val)).fetchone()[0]
+
+            # How many had the SAME or more?
+            same_or_more = conn.execute("""
+                SELECT COUNT(DISTINCT player_id) FROM historical_index
+                WHERE scan_type = ? AND value >= ?
+            """, (scan_type, cum_val)).fetchone()[0]
+
+            rank = more + 1  # This player's rank
+
+            # Only notable if top 5 all-time
+            if rank > 5:
+                continue
+
+            # Get the players they just passed or tied
+            passed = conn.execute("""
+                SELECT DISTINCT player_name, season, value
+                FROM historical_index
+                WHERE scan_type = ? AND value = ?
+                ORDER BY season DESC
+                LIMIT 5
+            """, (scan_type, cum_val)).fetchall()
+
+            # Get who's still ahead
+            ahead = conn.execute("""
+                SELECT DISTINCT player_name, season, value
+                FROM historical_index
+                WHERE scan_type = ? AND value > ?
+                ORDER BY value DESC
+                LIMIT 3
+            """, (scan_type, cum_val)).fetchall()
+
+            facts.append({
+                "type": "career_start",
+                "player": name,
+                "player_id": pid,
+                "team": team,
+                "stat": stat_name,
+                "stat_label": label,
+                "value": cum_val,
+                "career_games": check_point,
+                "rank": rank,
+                "tied_with": [{"player": p[0], "season": p[1], "value": p[2]} for p in passed if p[0] != name],
+                "ahead": [{"player": p[0], "season": p[1], "value": p[2]} for p in ahead],
+            })
+
+    return facts
+
+
+def scan_debut_youngest(conn, season, latest_date):
+    """Find players whose debut was on the latest date and check if they're
+    the youngest to achieve their debut stat line."""
+    facts = []
+
+    # Find players whose first-ever game was on the latest date
+    debuts = conn.execute("""
+        SELECT g.player_id, g.hits, g.home_runs, g.rbi, g.doubles, g.triples
+        FROM game_batting_logs g
+        WHERE g.date = ? AND g.season = ? AND g.at_bats > 0
+        AND NOT EXISTS (
+            SELECT 1 FROM game_batting_logs g2
+            WHERE g2.player_id = g.player_id AND g2.date < g.date
+        )
+    """, (latest_date, season)).fetchall()
+
+    for pid, h, hr, rbi, d, t in debuts:
+        xbh = (d or 0) + (t or 0) + (hr or 0)
+        if xbh == 0 and (rbi or 0) == 0:
+            continue  # Unremarkable debut
+
+        name = _player_name(conn, pid)
+        team = _team_display(conn, pid, season)
+
+        # Get this player's age in days at debut
+        age_row = conn.execute("""
+            SELECT p.birthdate FROM players p WHERE p.player_id = ?
+        """, (pid,)).fetchone()
+        if not age_row or not age_row[0]:
+            continue
+
+        try:
+            from datetime import datetime
+            birth = datetime.strptime(age_row[0], "%Y-%m-%d")
+            debut = datetime.strptime(latest_date, "%Y-%m-%d")
+            age_days = (debut - birth).days
+            age_years = age_days // 365
+        except:
+            continue
+
+        # Check: youngest with XBH + RBI in debut
+        if xbh > 0 and (rbi or 0) > 0:
+            younger = conn.execute("""
+                SELECT COUNT(*) FROM historical_index
+                WHERE scan_type = 'debut_xbh_rbi' AND value < ?
+            """, (age_days,)).fetchone()[0]
+
+            if younger == 0:
+                # This is THE youngest ever
+                prev_youngest = conn.execute("""
+                    SELECT player_name, season, value, detail
+                    FROM historical_index
+                    WHERE scan_type = 'debut_xbh_rbi'
+                    ORDER BY value ASC
+                    LIMIT 1
+                """).fetchone()
+                facts.append({
+                    "type": "youngest_debut",
+                    "player": name,
+                    "player_id": pid,
+                    "team": team,
+                    "age_years": age_years,
+                    "xbh": xbh,
+                    "rbi": rbi or 0,
+                    "hr": hr or 0,
+                    "previous_youngest": {
+                        "player": prev_youngest[0], "season": prev_youngest[1]
+                    } if prev_youngest else None,
+                })
+            else:
+                # Check if youngest since a notable year
+                younger_recent = conn.execute("""
+                    SELECT player_name, season FROM historical_index
+                    WHERE scan_type = 'debut_xbh_rbi' AND value < ? AND season > ?
+                    ORDER BY value ASC LIMIT 1
+                """, (age_days, season - 30)).fetchone()
+
+                if not younger_recent:
+                    # Youngest in 30+ years
+                    last_younger = conn.execute("""
+                        SELECT player_name, season FROM historical_index
+                        WHERE scan_type = 'debut_xbh_rbi' AND value < ?
+                        ORDER BY season DESC LIMIT 1
+                    """, (age_days,)).fetchone()
+
+                    if last_younger:
+                        facts.append({
+                            "type": "youngest_debut_since",
+                            "player": name,
+                            "player_id": pid,
+                            "team": team,
+                            "age_years": age_years,
+                            "xbh": xbh,
+                            "rbi": rbi or 0,
+                            "last_younger": {
+                                "player": last_younger[0], "season": last_younger[1]
+                            },
+                        })
+
+    return facts
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -373,6 +593,14 @@ def run_all_scans(conn, season, latest_date):
 
     facts = scan_team_historical(conn, season, latest_date)
     print(f"    Team historical: {len(facts)}")
+    all_facts.extend(facts)
+
+    facts = scan_career_start(conn, season, latest_date)
+    print(f"    Career-start milestones: {len(facts)}")
+    all_facts.extend(facts)
+
+    facts = scan_debut_youngest(conn, season, latest_date)
+    print(f"    Debut youngest: {len(facts)}")
     all_facts.extend(facts)
 
     print(f"  Total facts: {len(all_facts)}")
@@ -515,6 +743,50 @@ def template_facts(conn, facts, season, latest_date):
                 headline = f"The {team} have allowed just {er} earned runs through {games} games, #{rank} all-time behind only {hist_str}."
             else:
                 headline = f"The {team} have allowed just {er} earned runs through {games} games, #{rank} all-time."
+
+        elif f["type"] == "career_start":
+            val = f["value"]
+            stat_label = f["stat_label"]
+            cg = f["career_games"]
+            rank = f["rank"]
+            game_intro = f"{player} went {game_line} last night" if game_line else f"{player}"
+
+            # Build the "passing" context
+            tied = f.get("tied_with", [])
+            ahead = f.get("ahead", [])
+
+            if rank == 1:
+                if tied:
+                    passed_str = ", ".join(f"{t['player']} ({t['season']})" for t in tied[:3])
+                    headline = f"{game_intro}, giving him the most {stat_label} ({val}) in a player's first {cg} career games in over 100 years, passing {passed_str}."
+                else:
+                    headline = f"{game_intro}, giving him the most {stat_label} ({val}) in a player's first {cg} career games in over 100 years."
+            else:
+                if ahead:
+                    ahead_str = ", ".join(f"{a['player']} ({a['value']}, {a['season']})" for a in ahead[:3])
+                    headline = f"{game_intro}, giving him {val} {stat_label} in his first {cg} career games — #{rank} all-time, behind only {ahead_str}."
+                else:
+                    headline = f"{game_intro}, giving him {val} {stat_label} in his first {cg} career games — #{rank} all-time."
+
+        elif f["type"] == "youngest_debut":
+            age = f["age_years"]
+            xbh = f["xbh"]
+            rbi = f["rbi"]
+            prev = f.get("previous_youngest")
+            game_intro = f"{player} went {game_line} last night in his MLB debut" if game_line else f"{player} made his MLB debut"
+
+            if prev:
+                headline = f"{game_intro}, becoming the youngest player ({age}) with an extra-base hit and an RBI in his debut in over 100 years, surpassing {prev['player']} in {prev['season']}."
+            else:
+                headline = f"{game_intro}, becoming the youngest player ({age}) with an extra-base hit and an RBI in his debut in over 100 years."
+
+        elif f["type"] == "youngest_debut_since":
+            age = f["age_years"]
+            last = f["last_younger"]
+            game_intro = f"{player} went {game_line} last night in his MLB debut" if game_line else f"{player} made his MLB debut"
+
+            headline = f"{game_intro}, becoming the youngest player ({age}) with an extra-base hit and an RBI in his debut since {last['player']} in {last['season']}."
+
         else:
             continue
 

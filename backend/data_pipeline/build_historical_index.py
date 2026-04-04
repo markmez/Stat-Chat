@@ -247,6 +247,196 @@ def build_team_runs_allowed(conn):
     print(f"    {total} team records")
 
 
+def build_career_start_batting(conn):
+    """For each player, compute cumulative stats through their first N career games.
+
+    Stores: HR, hits, XBH, RBI through first 3, 5, 7, 10, 15, 20 career games.
+    Also stores age at debut (from birthdate).
+    """
+    print("  Building career-start batting index...")
+
+    # Get birthdates for age calculation
+    birthdates = {}
+    for row in conn.execute("SELECT player_id, birthdate FROM players WHERE birthdate IS NOT NULL"):
+        birthdates[row[0]] = row[1]
+
+    # Process one player at a time to avoid loading 5.8M rows into memory
+    players = conn.execute("""
+        SELECT DISTINCT player_id FROM game_batting_logs
+    """).fetchall()
+
+    snapshot_points = [3, 5, 7, 10, 15, 20]
+    max_snapshot = max(snapshot_points)
+    total = 0
+
+    for (pid,) in players:
+        # Get this player's first N career games (across all seasons)
+        games = conn.execute("""
+            SELECT date, season, hits, home_runs, rbi, doubles, triples
+            FROM game_batting_logs
+            WHERE player_id = ? AND at_bats > 0
+            ORDER BY date ASC
+            LIMIT ?
+        """, (pid, max_snapshot)).fetchall()
+
+        if not games:
+            continue
+
+        debut_date = games[0][0]
+        cum_hr = cum_hits = cum_rbi = cum_xbh = 0
+
+        for career_game, (date, season, h, hr, rbi, d, t) in enumerate(games, 1):
+            cum_hr += (hr or 0)
+            cum_hits += (h or 0)
+            cum_rbi += (rbi or 0)
+            cum_xbh += (d or 0) + (t or 0) + (hr or 0)
+
+            if career_game in snapshot_points:
+                name = _player_name(conn, pid)
+
+                # Calculate age at debut
+                age_at_debut = None
+                bd = birthdates.get(pid)
+                if bd and debut_date:
+                    try:
+                        from datetime import datetime
+                        birth = datetime.strptime(bd, "%Y-%m-%d")
+                        debut = datetime.strptime(debut_date, "%Y-%m-%d")
+                        age_at_debut = (debut - birth).days // 365
+                    except:
+                        pass
+
+                # Store HR through N career games
+                if cum_hr > 0:
+                    conn.execute("""
+                        INSERT INTO historical_index
+                        (scan_type, player_id, player_name, season, value, value2, detail)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (f"career_first_{career_game}_hr", pid, name, season,
+                          cum_hr, age_at_debut,
+                          f"{cum_hr} HR in first {career_game} career games"))
+                    total += 1
+
+                # Store XBH through N career games
+                if cum_xbh > 0:
+                    conn.execute("""
+                        INSERT INTO historical_index
+                        (scan_type, player_id, player_name, season, value, value2, detail)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (f"career_first_{career_game}_xbh", pid, name, season,
+                          cum_xbh, age_at_debut,
+                          f"{cum_xbh} XBH in first {career_game} career games"))
+                    total += 1
+
+                # Store RBI through N career games
+                if cum_rbi > 0:
+                    conn.execute("""
+                        INSERT INTO historical_index
+                        (scan_type, player_id, player_name, season, value, value2, detail)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (f"career_first_{career_game}_rbi", pid, name, season,
+                          cum_rbi, age_at_debut,
+                          f"{cum_rbi} RBI in first {career_game} career games"))
+                    total += 1
+
+                # Store hits through N career games
+                if cum_hits > 0:
+                    conn.execute("""
+                        INSERT INTO historical_index
+                        (scan_type, player_id, player_name, season, value, value2, detail)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (f"career_first_{career_game}_hits", pid, name, season,
+                          cum_hits, age_at_debut,
+                          f"{cum_hits} H in first {career_game} career games"))
+                    total += 1
+
+        # Commit per player batch
+        if total % 50000 == 0 and total > 0:
+            conn.commit()
+
+    conn.commit()
+    print(f"    {total} career-start batting records")
+
+
+def build_career_debut_ages(conn):
+    """For each player, store their debut game stats with age.
+
+    Enables "youngest player to do X in their debut" queries.
+    """
+    print("  Building debut game index...")
+
+    birthdates = {}
+    for row in conn.execute("SELECT player_id, birthdate FROM players WHERE birthdate IS NOT NULL"):
+        birthdates[row[0]] = row[1]
+
+    # Get first career game for each player
+    debuts = conn.execute("""
+        SELECT g.player_id, MIN(g.date) as debut_date
+        FROM game_batting_logs g
+        WHERE g.at_bats > 0
+        GROUP BY g.player_id
+    """).fetchall()
+
+    total = 0
+    for pid, debut_date in debuts:
+        # Get the debut game stats
+        game = conn.execute("""
+            SELECT hits, home_runs, rbi, doubles, triples, at_bats, walks
+            FROM game_batting_logs
+            WHERE player_id = ? AND date = ?
+            ORDER BY season ASC LIMIT 1
+        """, (pid, debut_date)).fetchone()
+
+        if not game:
+            continue
+
+        h, hr, rbi, d, t, ab, bb = game
+        xbh = (d or 0) + (t or 0) + (hr or 0)
+
+        # Calculate age at debut
+        age_days = None
+        bd = birthdates.get(pid)
+        if bd and debut_date:
+            try:
+                from datetime import datetime
+                birth = datetime.strptime(bd, "%Y-%m-%d")
+                debut = datetime.strptime(debut_date, "%Y-%m-%d")
+                age_days = (debut - birth).days
+            except:
+                continue
+
+        if age_days is None:
+            continue
+
+        name = _player_name(conn, pid)
+        season = int(debut_date[:4])
+
+        # Store debut with XBH + RBI (for Griffin-type queries)
+        if xbh > 0 and (rbi or 0) > 0:
+            conn.execute("""
+                INSERT INTO historical_index
+                (scan_type, player_id, player_name, season, value, value2, detail)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, ("debut_xbh_rbi", pid, name, season,
+                  age_days, xbh,
+                  f"Age {age_days // 365}y {(age_days % 365) // 30}m, {xbh} XBH, {rbi} RBI in debut"))
+            total += 1
+
+        # Store debut with HR
+        if (hr or 0) > 0:
+            conn.execute("""
+                INSERT INTO historical_index
+                (scan_type, player_id, player_name, season, value, value2, detail)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, ("debut_hr", pid, name, season,
+                  age_days, hr,
+                  f"Age {age_days // 365}, {hr} HR in debut"))
+            total += 1
+
+    conn.commit()
+    print(f"    {total} debut records")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default=DB_PATH)
@@ -263,6 +453,8 @@ def main():
     build_batting_season_start_streaks(conn)
     build_pitching_first_starts(conn)
     build_team_runs_allowed(conn)
+    build_career_start_batting(conn)
+    build_career_debut_ages(conn)
     add_indexes(conn)
 
     count = conn.execute("SELECT COUNT(*) FROM historical_index").fetchone()[0]
