@@ -85,14 +85,14 @@ def scan_start_of_season_streaks(conn, season, latest_date):
 
         players = conn.execute("""
             SELECT DISTINCT player_id FROM game_batting_logs
-            WHERE season = ? AND date >= ? AND at_bats > 0
+            WHERE season = ? AND date >= ? AND (plate_appearances > 0 OR at_bats > 0)
         """, (season, cutoff)).fetchall()
 
         for (pid,) in players:
             games = conn.execute("""
                 SELECT hits, walks, COALESCE(hit_by_pitch, 0), home_runs
                 FROM game_batting_logs
-                WHERE player_id = ? AND season = ? AND at_bats > 0
+                WHERE player_id = ? AND season = ? AND (plate_appearances > 0 OR at_bats > 0)
                 ORDER BY date ASC
             """, (pid, season)).fetchall()
 
@@ -147,14 +147,14 @@ def scan_cross_season_streaks(conn, season, latest_date):
         {
             "name": "hitting_streak",
             "condition_sql": "hits > 0",
-            "filter": "at_bats > 0",
+            "filter": "plate_appearances > 0",
             "min_games": 10,
             "label": "hitting streak",
         },
         {
             "name": "on_base_streak",
             "condition_sql": "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
-            "filter": "(at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)",
+            "filter": "(plate_appearances > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)",
             "min_games": 15,
             "label": "on-base streak",
         },
@@ -454,7 +454,7 @@ def scan_career_start(conn, season, latest_date):
                MAX(CASE WHEN g.date >= ? THEN g.doubles ELSE 0 END) as g_doubles,
                MAX(CASE WHEN g.date >= ? THEN g.triples ELSE 0 END) as g_triples
         FROM game_batting_logs g
-        WHERE g.season = ? AND g.at_bats > 0
+        WHERE g.season = ? 
         GROUP BY g.player_id
         HAVING COUNT(*) <= 30
     """, (recent_cutoff, recent_cutoff, recent_cutoff, recent_cutoff, recent_cutoff, season)).fetchall()
@@ -463,7 +463,7 @@ def scan_career_start(conn, season, latest_date):
         # Count total career games
         career_count = conn.execute("""
             SELECT COUNT(*) FROM game_batting_logs
-            WHERE player_id = ? AND at_bats > 0
+            WHERE player_id = ? 
         """, (pid,)).fetchone()[0]
 
         if career_count > 30:
@@ -473,7 +473,7 @@ def scan_career_start(conn, season, latest_date):
         first_n = conn.execute("""
             SELECT hits, home_runs, rbi, doubles, triples
             FROM game_batting_logs
-            WHERE player_id = ? AND at_bats > 0
+            WHERE player_id = ? 
             ORDER BY date ASC
             LIMIT ?
         """, (pid, career_count)).fetchall()
@@ -573,7 +573,7 @@ def scan_debut_youngest(conn, season, latest_date):
     debuts = conn.execute("""
         SELECT g.player_id, g.hits, g.home_runs, g.rbi, g.doubles, g.triples
         FROM game_batting_logs g
-        WHERE g.date = ? AND g.season = ? AND g.at_bats > 0
+        WHERE g.date = ? AND g.season = ? 
         AND NOT EXISTS (
             SELECT 1 FROM game_batting_logs g2
             WHERE g2.player_id = g.player_id AND g2.date < g.date

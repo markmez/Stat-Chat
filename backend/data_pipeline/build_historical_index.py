@@ -73,7 +73,7 @@ def build_batting_season_start_streaks(conn):
         games = conn.execute("""
             SELECT player_id, hits, walks, COALESCE(hit_by_pitch, 0), home_runs
             FROM game_batting_logs
-            WHERE season = ? AND at_bats > 0
+            WHERE season = ? AND (plate_appearances > 0 OR at_bats > 0)
             ORDER BY player_id, date ASC
         """, (szn,)).fetchall()
 
@@ -330,7 +330,7 @@ def build_career_start_batting(conn):
         games = conn.execute("""
             SELECT date, season, hits, home_runs, rbi, doubles, triples
             FROM game_batting_logs
-            WHERE player_id = ? AND at_bats > 0
+            WHERE player_id = ? 
             ORDER BY date ASC
             LIMIT ?
         """, (pid, max_game)).fetchall()
@@ -454,7 +454,7 @@ def build_career_debut_ages(conn):
     debuts = conn.execute("""
         SELECT g.player_id, MIN(g.date) as debut_date
         FROM game_batting_logs g
-        WHERE g.at_bats > 0
+        WHERE 1=1
         GROUP BY g.player_id
     """).fetchall()
 
