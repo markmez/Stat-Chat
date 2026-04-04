@@ -1479,6 +1479,21 @@ def main():
         except Exception as e:
             print(f"Notable events detection failed: {e}")
 
+        # AI-powered insights (Sonnet, once per day)
+        print(f"\nGenerating AI insights...")
+        try:
+            from services.notable_events import _get_latest_date
+            from services.ai_notable_events import generate_ai_insights
+            ai_conn = sqlite3.connect(args.db)
+            latest = _get_latest_date(ai_conn, season_year)
+            if latest:
+                result = generate_ai_insights(ai_conn, season_year, latest, dry_run=False)
+                ai_events = result.get("events", [])
+                print(f"  AI insights: {len(ai_events)} generated")
+            ai_conn.close()
+        except Exception as e:
+            print(f"AI insights failed: {e}")
+
         elapsed = time.time() - t0
         print(f"\nDone in {elapsed:.1f}s")
     except Exception:
