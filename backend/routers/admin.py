@@ -292,6 +292,29 @@ async def debug_player(
     }
 
 
+@router.post("/fix-doubleheader-schema")
+async def fix_doubleheader_schema(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Run schema migration to fix doubleheader data loss."""
+    verify_admin(authorization, key)
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "data_pipeline", "fix_doubleheader_schema.py")
+    try:
+        result = subprocess.run(
+            [sys.executable, script, "--db", DB_PATH],
+            capture_output=True, text=True, timeout=600,
+        )
+        return {
+            "status": "ok" if result.returncode == 0 else "error",
+            "stdout": result.stdout[-3000:] if result.stdout else "",
+            "stderr": result.stderr[-1000:] if result.stderr else "",
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/build-historical-index")
 async def build_historical_index(
     key: str | None = None,

@@ -669,6 +669,7 @@ def load_game_logs(conn, start_season, end_season):
             sf = safe_int(row.get("b_sf"))
 
             date = format_date(row.get("date", ""))
+            game_number = safe_int(row.get("number", 0))
             opp = str(row.get("opp", "")) if pd.notna(row.get("opp")) else None
             vishome = str(row.get("vishome", "")).upper() if pd.notna(row.get("vishome")) else None
 
@@ -676,13 +677,13 @@ def load_game_logs(conn, start_season, end_season):
 
             cursor.execute("""
                 INSERT OR REPLACE INTO game_batting_logs (
-                    player_id, season, date, opponent, vishome,
+                    player_id, season, date, game_number, opponent, vishome,
                     plate_appearances, at_bats, hits, doubles, triples,
                     home_runs, runs, rbi, walks, strikeouts,
                     batting_avg, obp, slg, ops
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                pid, season, date, opp, vishome,
+                pid, season, date, game_number, opp, vishome,
                 pa, ab, h, doubles, triples, hr, r, rbi, bb, so,
                 rates["avg"], rates["obp"], rates["slg"], rates["ops"],
             ))

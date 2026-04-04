@@ -438,6 +438,9 @@ def pull_game_logs(conn, season_str):
             continue
         logs = data.get("gamelogs", [])
 
+        # Track game numbers per player per date for doubleheaders
+        player_date_game_num = {}
+
         for entry in logs:
             player = entry.get("player", {})
             team_info = entry.get("team", {})
@@ -447,6 +450,7 @@ def pull_game_logs(conn, season_str):
 
             # Daily format uses flat abbreviation keys
             game_date = game.get("startTime", "")[:10]
+            game_id = game.get("id", 0)  # MSF game ID for doubleheader ordering
             away_team = game.get("awayTeamAbbreviation", "")
             home_team = game.get("homeTeamAbbreviation", "")
             is_home = team_abbrev == home_team
@@ -457,6 +461,12 @@ def pull_game_logs(conn, season_str):
             bat = all_stats.get("batting", {})
             if bat and (safe_int(bat.get("atBats")) > 0 or safe_int(bat.get("batterWalks")) > 0 or safe_int(bat.get("hitByPitch")) > 0):
                 pid = find_or_create_player(cursor, player, team_abbrev, season_year)
+
+                # Determine game number for doubleheaders
+                pkey = (pid, game_date)
+                game_num = player_date_game_num.get(pkey, 0)
+                player_date_game_num[pkey] = game_num + 1
+
                 ab = safe_int(bat.get("atBats"))
                 h = safe_int(bat.get("hits"))
                 doubles = safe_int(bat.get("secondBaseHits"))
@@ -470,13 +480,14 @@ def pull_game_logs(conn, season_str):
 
                 cursor.execute("""
                     INSERT OR REPLACE INTO game_batting_logs
-                    (player_id, season, date, opponent, vishome, plate_appearances, at_bats,
+                    (player_id, season, date, game_number, opponent, vishome,
+                     plate_appearances, at_bats,
                      hits, doubles, triples, home_runs, runs, rbi, walks, strikeouts,
                      hit_by_pitch, sacrifice_flies,
                      batting_avg, obp, slg, ops)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    pid, season_year, game_date, retro_team(opponent), vishome,
+                    pid, season_year, game_date, game_num, retro_team(opponent), vishome,
                     pa, ab, h, doubles, triples, hr,
                     safe_int(bat.get("runs")),
                     safe_int(bat.get("runsBattedIn")),
@@ -488,6 +499,14 @@ def pull_game_logs(conn, season_str):
             pitch = all_stats.get("pitching", {})
             if pitch and safe_float(pitch.get("inningsPitched"), 0) > 0:
                 pid = find_or_create_player(cursor, player, team_abbrev, season_year)
+
+                # Determine game number for doubleheaders
+                pkey = (pid, game_date)
+                if pkey not in player_date_game_num:
+                    player_date_game_num[pkey] = 0
+                game_num = player_date_game_num[pkey]
+                # Don't increment again if batting already incremented for this player+date
+
                 ip_raw = safe_float(pitch.get("inningsPitched"), 0)
                 ip_whole = int(ip_raw)
                 ip_frac = round((ip_raw - ip_whole) * 10)
@@ -500,12 +519,13 @@ def pull_game_logs(conn, season_str):
 
                 cursor.execute("""
                     INSERT OR REPLACE INTO game_pitching_logs
-                    (player_id, season, date, opponent, vishome, is_start, ip_outs, innings_pitched,
+                    (player_id, season, date, game_number, opponent, vishome, is_start,
+                     ip_outs, innings_pitched,
                      hits, runs, earned_runs, home_runs, walks, strikeouts, hit_by_pitch,
                      batters_faced, win, loss, save, era)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    pid, season_year, game_date, retro_team(opponent), vishome,
+                    pid, season_year, game_date, game_num, retro_team(opponent), vishome,
                     1 if safe_int(misc.get("gamesStarted")) > 0 else 0,
                     ip_outs, innings_text, h_p,
                     safe_int(pitch.get("runsAllowed")),

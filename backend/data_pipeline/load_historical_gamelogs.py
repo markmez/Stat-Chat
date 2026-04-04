@@ -118,6 +118,7 @@ def load_batting_game_logs(conn, start, end):
             sf = safe_int(row.get("b_sf"))
 
             date_str = format_date(row.get("date", ""))
+            game_number = safe_int(row.get("number", 0))
             opp = row.get("opp", "").strip() or None
             vh = row.get("vishome", "").strip().upper() or None
 
@@ -125,13 +126,13 @@ def load_batting_game_logs(conn, start, end):
 
             cursor.execute("""
                 INSERT OR IGNORE INTO game_batting_logs (
-                    player_id, season, date, opponent, vishome,
+                    player_id, season, date, game_number, opponent, vishome,
                     plate_appearances, at_bats, hits, doubles, triples,
                     home_runs, runs, rbi, walks, strikeouts,
                     batting_avg, obp, slg, ops
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                pid, season, date_str, opp, vh,
+                pid, season, date_str, game_number, opp, vh,
                 pa, ab, h, doubles, triples, hr, r, rbi, bb, so,
                 avg, obp, slg, ops,
             ))
@@ -202,18 +203,19 @@ def load_pitching_game_logs(conn, start, end):
             era = (er * 9.0) / (ip_outs / 3.0) if ip_outs > 0 else None
 
             date_str = format_date(row.get("date", ""))
+            game_number = safe_int(row.get("number", 0))
             opp = row.get("opp", "").strip() or None
             vh = row.get("vishome", "").strip().upper() or None
 
             cursor.execute("""
                 INSERT OR IGNORE INTO game_pitching_logs (
-                    player_id, season, date, opponent, vishome, is_start,
+                    player_id, season, date, game_number, opponent, vishome, is_start,
                     ip_outs, innings_pitched, hits, runs, earned_runs,
                     home_runs, walks, strikeouts, hit_by_pitch, batters_faced,
                     win, loss, save, era
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                pid, season, date_str, opp, vh, 1 if gs > 0 else 0,
+                pid, season, date_str, game_number, opp, vh, 1 if gs > 0 else 0,
                 ip_outs, innings_text, h, r, er, hr, bb, so, hbp, bf,
                 w, l, sv, era,
             ))
