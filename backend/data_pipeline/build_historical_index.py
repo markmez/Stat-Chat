@@ -305,9 +305,9 @@ def build_team_starter_era(conn):
 
 
 def build_career_start_batting(conn):
-    """For each player, compute cumulative stats through their first N career games.
+    """For each player, compute cumulative stats through their first 1-30 career games.
 
-    Stores: HR, hits, XBH, RBI through first 3, 5, 7, 10, 15, 20 career games.
+    Stores: HR, hits, XBH, RBI, doubles, triples at every game through 30.
     Also stores age at debut (from birthdate).
     """
     print("  Building career-start batting index...")
@@ -322,33 +322,35 @@ def build_career_start_batting(conn):
         SELECT DISTINCT player_id FROM game_batting_logs
     """).fetchall()
 
-    snapshot_points = [3, 5, 7, 10, 15, 20]
-    max_snapshot = max(snapshot_points)
+    max_game = 30  # Store every game through first 30 career games
     total = 0
 
     for (pid,) in players:
-        # Get this player's first N career games (across all seasons)
+        # Get this player's first 30 career games (across all seasons)
         games = conn.execute("""
             SELECT date, season, hits, home_runs, rbi, doubles, triples
             FROM game_batting_logs
             WHERE player_id = ? AND at_bats > 0
             ORDER BY date ASC
             LIMIT ?
-        """, (pid, max_snapshot)).fetchall()
+        """, (pid, max_game)).fetchall()
 
         if not games:
             continue
 
         debut_date = games[0][0]
-        cum_hr = cum_hits = cum_rbi = cum_xbh = 0
+        cum_hr = cum_hits = cum_rbi = cum_xbh = cum_doubles = cum_triples = cum_sb = 0
 
         for career_game, (date, season, h, hr, rbi, d, t) in enumerate(games, 1):
             cum_hr += (hr or 0)
             cum_hits += (h or 0)
             cum_rbi += (rbi or 0)
+            cum_doubles += (d or 0)
+            cum_triples += (t or 0)
             cum_xbh += (d or 0) + (t or 0) + (hr or 0)
 
-            if career_game in snapshot_points:
+            # Store at every game through 30
+            if career_game <= max_game:
                 name = _player_name(conn, pid)
 
                 # Calculate age at debut
@@ -405,6 +407,28 @@ def build_career_start_batting(conn):
                     """, (f"career_first_{career_game}_hits", pid, name, season,
                           cum_hits, age_at_debut,
                           f"{cum_hits} H in first {career_game} career games"))
+                    total += 1
+
+                # Store doubles through N career games
+                if cum_doubles > 0:
+                    conn.execute("""
+                        INSERT INTO historical_index
+                        (scan_type, player_id, player_name, season, value, value2, detail)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (f"career_first_{career_game}_doubles", pid, name, season,
+                          cum_doubles, age_at_debut,
+                          f"{cum_doubles} 2B in first {career_game} career games"))
+                    total += 1
+
+                # Store triples through N career games
+                if cum_triples > 0:
+                    conn.execute("""
+                        INSERT INTO historical_index
+                        (scan_type, player_id, player_name, season, value, value2, detail)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (f"career_first_{career_game}_triples", pid, name, season,
+                          cum_triples, age_at_debut,
+                          f"{cum_triples} 3B in first {career_game} career games"))
                     total += 1
 
         # Commit per player batch

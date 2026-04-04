@@ -413,64 +413,78 @@ def scan_team_starter_era(conn, season, latest_date):
 
 def scan_career_start(conn, season, latest_date):
     """Find players early in their careers who just set or approached records
-    in 'most X in first N career games.'"""
+    in 'most X in first N career games.'
+
+    Only surfaces when the player's game on latest_date contributed to the stat
+    (homered → show HR rank, doubled → show doubles rank, etc.).
+    Checks every career game through 30.
+    """
     facts = []
 
-    # Get players who played on the latest date
+    # Get players who played on the latest date with their game stats
     active = conn.execute("""
-        SELECT DISTINCT player_id FROM game_batting_logs
+        SELECT player_id, hits, home_runs, rbi, doubles, triples
+        FROM game_batting_logs
         WHERE season = ? AND date = ? AND at_bats > 0
     """, (season, latest_date)).fetchall()
 
-    for (pid,) in active:
-        # Count total career games for this player
+    for pid, g_hits, g_hr, g_rbi, g_doubles, g_triples in active:
+        # Count total career games through latest_date
         career_count = conn.execute("""
             SELECT COUNT(*) FROM game_batting_logs
             WHERE player_id = ? AND at_bats > 0 AND date <= ?
         """, (pid, latest_date)).fetchone()[0]
 
-        # Only check players with ≤20 career games (early career)
-        if career_count > 20:
+        if career_count > 30:
             continue
 
-        # Find the closest snapshot point at or below their career game count
-        snapshot_points = [3, 5, 7, 10, 15, 20]
-        check_point = None
-        for sp in reversed(snapshot_points):
-            if career_count >= sp:
-                check_point = sp
-                break
-        if not check_point:
-            continue
-
-        # Compute their cumulative stats through that checkpoint
+        # Compute cumulative stats through their current career game count
         first_n = conn.execute("""
             SELECT hits, home_runs, rbi, doubles, triples
             FROM game_batting_logs
             WHERE player_id = ? AND at_bats > 0
             ORDER BY date ASC
             LIMIT ?
-        """, (pid, check_point)).fetchall()
+        """, (pid, career_count)).fetchall()
 
         cum_hr = sum(r[1] or 0 for r in first_n)
         cum_rbi = sum(r[2] or 0 for r in first_n)
         cum_xbh = sum((r[3] or 0) + (r[4] or 0) + (r[1] or 0) for r in first_n)
         cum_hits = sum(r[0] or 0 for r in first_n)
+        cum_doubles = sum(r[3] or 0 for r in first_n)
+        cum_triples = sum(r[4] or 0 for r in first_n)
 
         name = _player_name(conn, pid)
         team = _team_display(conn, pid, season)
 
-        # Check each stat against the historical index
-        for stat_name, cum_val, label in [
-            ("hr", cum_hr, "home runs"),
-            ("rbi", cum_rbi, "RBI"),
-            ("xbh", cum_xbh, "extra-base hits"),
-            ("hits", cum_hits, "hits"),
-        ]:
+        # Only check stats where the player contributed TODAY
+        # (homered → check HR, doubled → check doubles, etc.)
+        stats_to_check = []
+        if (g_hr or 0) > 0:
+            stats_to_check.append(("hr", cum_hr, "home runs"))
+        if (g_doubles or 0) > 0:
+            stats_to_check.append(("doubles", cum_doubles, "doubles"))
+        if (g_triples or 0) > 0:
+            stats_to_check.append(("triples", cum_triples, "triples"))
+        if (g_rbi or 0) > 0:
+            stats_to_check.append(("rbi", cum_rbi, "RBI"))
+        if (g_hits or 0) > 0:
+            stats_to_check.append(("hits", cum_hits, "hits"))
+        if (g_hr or 0) + (g_doubles or 0) + (g_triples or 0) > 0:
+            stats_to_check.append(("xbh", cum_xbh, "extra-base hits"))
+
+        for stat_name, cum_val, label in stats_to_check:
             if cum_val == 0:
                 continue
 
-            scan_type = f"career_first_{check_point}_{stat_name}"
+            scan_type = f"career_first_{career_count}_{stat_name}"
+
+            # Check if this scan type exists in the index
+            exists = conn.execute("""
+                SELECT COUNT(*) FROM historical_index WHERE scan_type = ?
+            """, (scan_type,)).fetchone()[0]
+            if exists == 0:
+                continue
 
             # How many players historically had MORE than this?
             more = conn.execute("""
@@ -478,13 +492,7 @@ def scan_career_start(conn, season, latest_date):
                 WHERE scan_type = ? AND value > ?
             """, (scan_type, cum_val)).fetchone()[0]
 
-            # How many had the SAME or more?
-            same_or_more = conn.execute("""
-                SELECT COUNT(DISTINCT player_id) FROM historical_index
-                WHERE scan_type = ? AND value >= ?
-            """, (scan_type, cum_val)).fetchone()[0]
-
-            rank = more + 1  # This player's rank
+            rank = more + 1
 
             # Only notable if top 5 all-time
             if rank > 5:
@@ -494,10 +502,10 @@ def scan_career_start(conn, season, latest_date):
             passed = conn.execute("""
                 SELECT DISTINCT player_name, season, value
                 FROM historical_index
-                WHERE scan_type = ? AND value = ?
+                WHERE scan_type = ? AND value = ? AND player_id != ?
                 ORDER BY season DESC
                 LIMIT 5
-            """, (scan_type, cum_val)).fetchall()
+            """, (scan_type, cum_val, pid)).fetchall()
 
             # Get who's still ahead
             ahead = conn.execute("""
@@ -516,9 +524,9 @@ def scan_career_start(conn, season, latest_date):
                 "stat": stat_name,
                 "stat_label": label,
                 "value": cum_val,
-                "career_games": check_point,
+                "career_games": career_count,
                 "rank": rank,
-                "tied_with": [{"player": p[0], "season": p[1], "value": p[2]} for p in passed if p[0] != name],
+                "tied_with": [{"player": p[0], "season": p[1], "value": p[2]} for p in passed],
                 "ahead": [{"player": p[0], "season": p[1], "value": p[2]} for p in ahead],
             })
 
