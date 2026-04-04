@@ -667,6 +667,174 @@ def scan_debut_youngest(conn, season, latest_date):
 
 
 # ---------------------------------------------------------------------------
+# Scan: leaderboard changes (took the lead in a stat)
+# ---------------------------------------------------------------------------
+
+AL_TEAMS = {"NYA", "BOS", "TOR", "BAL", "TBA",
+            "CLE", "CHA", "MIN", "DET", "KCA",
+            "HOU", "SEA", "ANA", "TEX", "OAK", "ATH"}
+NL_TEAMS = {"NYN", "PHI", "ATL", "MIA", "WAS",
+            "CHN", "MIL", "SLN", "PIT", "CIN",
+            "LAN", "SDN", "SFN", "ARI", "COL"}
+
+
+def _league_for_team(team):
+    if team in AL_TEAMS:
+        return "AL"
+    if team in NL_TEAMS:
+        return "NL"
+    return None
+
+
+def scan_leaderboard_changes(conn, season, latest_date):
+    """Find players who took the lead in a stat leaderboard (MLB, AL, or NL)
+    as a result of their most recent game."""
+    facts = []
+
+    # Get recent game dates
+    recent_dates = conn.execute("""
+        SELECT DISTINCT date FROM game_batting_logs
+        WHERE season = ? ORDER BY date DESC LIMIT 2
+    """, (season,)).fetchall()
+    if not recent_dates:
+        return facts
+    cutoff = recent_dates[-1][0]
+
+    # Batting stats to check
+    bat_stats = [
+        ("home_runs", "HR", "home runs", 3),       # min value to care about
+        ("rbi", "RBI", "RBI", 5),
+        ("hits", "hits", "hits", 10),
+        ("stolen_bases", "SB", "stolen bases", 3),
+        ("batting_avg", "AVG", "batting average", None),
+        ("obp", "OBP", "OBP", None),
+        ("ops", "OPS", "OPS", None),
+        ("slg", "SLG", "slugging", None),
+    ]
+
+    # Min PA for rate stats
+    min_pa_rate = 20
+
+    for col, abbrev, label, min_val in bat_stats:
+        is_rate = col in ("batting_avg", "obp", "ops", "slg")
+        pa_filter = f"AND s.plate_appearances >= {min_pa_rate}" if is_rate else ""
+        val_filter = f"AND s.{col} >= {min_val}" if min_val else ""
+
+        # Get top 3 for MLB, AL, NL
+        for scope, team_filter in [
+            ("MLB", ""),
+            ("AL", f"AND s.team IN ({','.join(repr(t) for t in AL_TEAMS)})"),
+            ("NL", f"AND s.team IN ({','.join(repr(t) for t in NL_TEAMS)})"),
+        ]:
+            rows = conn.execute(f"""
+                SELECT p.player_id, p.name, s.{col}, s.team
+                FROM season_batting_stats s
+                JOIN players p ON s.player_id = p.player_id
+                WHERE s.season = ? {pa_filter} {val_filter} {team_filter}
+                ORDER BY s.{col} DESC
+                LIMIT 3
+            """, (season,)).fetchall()
+
+            if len(rows) < 2:
+                continue
+
+            leader_pid, leader_name, leader_val, leader_team = rows[0]
+            runner_up_pid, runner_up_name, runner_up_val, runner_up_team = rows[1]
+
+            if leader_val is None or runner_up_val is None:
+                continue
+
+            # Did the leader play recently?
+            played = conn.execute("""
+                SELECT COUNT(*) FROM game_batting_logs
+                WHERE player_id = ? AND season = ? AND date >= ?
+            """, (leader_pid, season, cutoff)).fetchone()[0]
+            if not played:
+                continue
+
+            # Get the leader's game contribution today
+            game = conn.execute(f"""
+                SELECT {col.replace('batting_avg','hits').replace('obp','hits').replace('ops','hits').replace('slg','hits')}
+                FROM game_batting_logs
+                WHERE player_id = ? AND season = ? AND date >= ?
+                ORDER BY date DESC LIMIT 1
+            """, (leader_pid, season, cutoff)).fetchone()
+
+            # For counting stats: did they JUST take the lead?
+            # Leader is ahead by a small margin AND their today's game contributed
+            if not is_rate:
+                margin = leader_val - runner_up_val
+                if game and game[0]:
+                    game_contribution = game[0]
+                    # They took or extended the lead if margin <= game contribution
+                    if margin <= game_contribution and margin > 0:
+                        team = leader_team
+                        league = _league_for_team(team)
+
+                        # Skip MLB if they also lead their league (avoid duplicate)
+                        if scope == "MLB":
+                            league_rows = conn.execute(f"""
+                                SELECT p.player_id
+                                FROM season_batting_stats s
+                                JOIN players p ON s.player_id = p.player_id
+                                WHERE s.season = ? {val_filter}
+                                AND s.team IN ({','.join(repr(t) for t in (AL_TEAMS if league == 'AL' else NL_TEAMS))})
+                                ORDER BY s.{col} DESC LIMIT 1
+                            """, (season,)).fetchone()
+                            if league_rows and league_rows[0] == leader_pid:
+                                continue  # Will be covered by AL/NL scope
+
+                        facts.append({
+                            "type": "leaderboard_change",
+                            "player": leader_name,
+                            "player_id": leader_pid,
+                            "team": team,
+                            "stat": col,
+                            "stat_label": label,
+                            "stat_abbrev": abbrev,
+                            "value": leader_val,
+                            "scope": scope,
+                            "runner_up": runner_up_name,
+                            "runner_up_val": runner_up_val,
+                        })
+
+            # For rate stats: just check if they lead
+            else:
+                # Only notable if they have enough PA and lead
+                if leader_val > runner_up_val:
+                    team = leader_team
+                    league = _league_for_team(team)
+
+                    if scope == "MLB":
+                        league_rows = conn.execute(f"""
+                            SELECT p.player_id
+                            FROM season_batting_stats s
+                            JOIN players p ON s.player_id = p.player_id
+                            WHERE s.season = ? {pa_filter}
+                            AND s.team IN ({','.join(repr(t) for t in (AL_TEAMS if league == 'AL' else NL_TEAMS))})
+                            ORDER BY s.{col} DESC LIMIT 1
+                        """, (season,)).fetchone()
+                        if league_rows and league_rows[0] == leader_pid:
+                            continue
+
+                    facts.append({
+                        "type": "leaderboard_change",
+                        "player": leader_name,
+                        "player_id": leader_pid,
+                        "team": team,
+                        "stat": col,
+                        "stat_label": label,
+                        "stat_abbrev": abbrev,
+                        "value": leader_val,
+                        "scope": scope,
+                        "runner_up": runner_up_name,
+                        "runner_up_val": runner_up_val,
+                    })
+
+    return facts
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -705,6 +873,10 @@ def run_all_scans(conn, season, latest_date):
 
     facts = scan_debut_youngest(conn, season, latest_date)
     print(f"    Debut youngest: {len(facts)}")
+    all_facts.extend(facts)
+
+    facts = scan_leaderboard_changes(conn, season, latest_date)
+    print(f"    Leaderboard changes: {len(facts)}")
     all_facts.extend(facts)
 
     print(f"  Total facts: {len(all_facts)}")
@@ -901,6 +1073,24 @@ def template_facts(conn, facts, season, latest_date):
                 headline = f"{game_intro}, becoming the youngest player ({age}) with an extra-base hit and an RBI in his debut in over 100 years, surpassing {prev['player']} in {prev['season']}."
             else:
                 headline = f"{game_intro}, becoming the youngest player ({age}) with an extra-base hit and an RBI in his debut in over 100 years."
+
+        elif f["type"] == "leaderboard_change":
+            val = f["value"]
+            scope = f["scope"]
+            stat_label = f["stat_label"]
+            abbrev = f["stat_abbrev"]
+            runner_up = f["runner_up"]
+            runner_up_val = f["runner_up_val"]
+            game_intro = f"{player} went {game_line} last night" if game_line else f"{player}"
+
+            if isinstance(val, float):
+                val_str = f".{int(val * 1000):03d}"
+                ru_str = f".{int(runner_up_val * 1000):03d}"
+            else:
+                val_str = str(val)
+                ru_str = str(runner_up_val)
+
+            headline = f"{game_intro}, taking the {scope} lead in {stat_label} ({val_str}), passing {runner_up} ({ru_str})."
 
         elif f["type"] == "youngest_debut_since":
             age = f["age_years"]
