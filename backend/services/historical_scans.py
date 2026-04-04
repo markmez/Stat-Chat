@@ -713,8 +713,8 @@ def scan_leaderboard_changes(conn, season, latest_date):
         ("slg", "SLG", "slugging", None, "hits"),
     ]
 
-    # Min PA for rate stats
-    min_pa_rate = 20
+    # Min PA for rate stats — higher threshold reduces noise from small samples
+    min_pa_rate = 30
 
     for col, abbrev, label, min_val, game_col in bat_stats:
         is_rate = col in ("batting_avg", "obp", "ops", "slg")
@@ -1089,8 +1089,14 @@ def template_facts(conn, facts, season, latest_date):
             game_intro = f"{player} went {game_line} last night" if game_line else f"{player}"
 
             if isinstance(val, float):
-                val_str = f".{int(val * 1000):03d}"
-                ru_str = f".{int(runner_up_val * 1000):03d}"
+                if val >= 1.0:
+                    val_str = f"{val:.3f}"
+                else:
+                    val_str = f".{int(val * 1000):03d}"
+                if runner_up_val >= 1.0:
+                    ru_str = f"{runner_up_val:.3f}"
+                else:
+                    ru_str = f".{int(runner_up_val * 1000):03d}"
             else:
                 val_str = str(val)
                 ru_str = str(runner_up_val)
