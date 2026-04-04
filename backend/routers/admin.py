@@ -248,6 +248,49 @@ async def ai_notable(
         raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
 
 
+@router.get("/debug-player")
+async def debug_player(
+    name: str,
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Debug: show game log rows vs season stats for a player."""
+    verify_admin(authorization, key)
+    conn = sqlite3.connect(DB_PATH)
+    player = conn.execute("SELECT player_id, name, team FROM players WHERE name LIKE ?",
+                          (f"%{name}%",)).fetchone()
+    if not player:
+        conn.close()
+        return {"error": f"Player not found: {name}"}
+    pid = player[0]
+
+    season_stats = conn.execute("""
+        SELECT season, games, plate_appearances, at_bats, hits, home_runs, rbi
+        FROM season_batting_stats WHERE player_id = ? ORDER BY season DESC LIMIT 3
+    """, (pid,)).fetchall()
+
+    game_logs = conn.execute("""
+        SELECT date, season, plate_appearances, at_bats, hits, home_runs, rbi
+        FROM game_batting_logs WHERE player_id = ? ORDER BY date DESC LIMIT 15
+    """, (pid,)).fetchall()
+
+    conn.close()
+    return {
+        "player_id": pid,
+        "name": player[1],
+        "team": player[2],
+        "season_stats": [
+            {"season": r[0], "games": r[1], "pa": r[2], "ab": r[3], "h": r[4], "hr": r[5], "rbi": r[6]}
+            for r in season_stats
+        ],
+        "game_log_count": len(game_logs),
+        "game_logs": [
+            {"date": r[0], "season": r[1], "pa": r[2], "ab": r[3], "h": r[4], "hr": r[5], "rbi": r[6]}
+            for r in game_logs
+        ],
+    }
+
+
 @router.post("/build-historical-index")
 async def build_historical_index(
     key: str | None = None,
