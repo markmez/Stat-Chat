@@ -215,6 +215,20 @@ CRITICAL RULES:
    rookie watch, pace projections, cross-category patterns.
 8. Output ONLY a JSON array: [{{"headline": "...", "player_names": ["..."], "team_names": ["..."]}}]
 
+STYLE RULES — READ CAREFULLY:
+9. Do NOT pad sentences with empty context. "After a productive winter" or
+   "in his fourth season" are filler. If you don't have a meaningful fact,
+   end the sentence. A stat line speaks for itself.
+10. Career year/season count is ONLY interesting at extremes: debut, second
+    year, or 15+ year veteran. "In his fourth season" is never interesting.
+11. 162-game pace projections are inherently absurd early in the season.
+    Note the pace as a fun fact but do NOT editorialize about whether they
+    can sustain it. "On a 115-homer pace through 7 games" is interesting.
+    "If he can keep this up" is cringe. Every baseball fan knows a week-one
+    pace won't hold. Wink at it, don't take it seriously.
+12. Less is more. A clean stat line with one piece of context beats a
+    sentence stuffed with qualifiers. If in doubt, cut words.
+
 DATA SNAPSHOT:
 {snapshot}"""
 
