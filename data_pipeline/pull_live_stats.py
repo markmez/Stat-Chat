@@ -396,11 +396,14 @@ def get_game_dates(season_str):
         sched = game.get("schedule", {})
         start = sched.get("startTime", "")
         if start:
+            # Use the raw UTC date for the API request — MSF indexes by UTC date
             dt = datetime.strptime(start[:19], "%Y-%m-%dT%H:%M:%S")
-            # Games starting 00:00-05:59 UTC are evening Eastern games (previous day)
-            if dt.hour < 6:
-                dt = dt - timedelta(days=1)
             dates.add(dt.strftime("%Y%m%d"))
+            # Also add the previous day for late-night games (in case MSF
+            # indexes by local date instead)
+            if dt.hour < 6:
+                prev = dt - timedelta(days=1)
+                dates.add(prev.strftime("%Y%m%d"))
 
     if not dates:
         return []
