@@ -965,6 +965,7 @@ def template_facts(conn, facts, season, latest_date):
         team = f.get("team", "")
         hist = f.get("historical", [])
         hist_count = f.get("historical_count", len(hist))
+        secondary_names = []  # Players mentioned in historical context
 
         if f["type"].startswith("start_") and f["type"] != "start_onbase_streak":
             # Batting start-of-season streak
@@ -977,9 +978,11 @@ def template_facts(conn, facts, season, latest_date):
             elif hist_count <= 10:
                 last = hist[0]
                 context = f"only {hist_count} players have done this in over 100 years, the last being {last['player']} in {last['season']}"
+                secondary_names.append(last["player"])
             else:
                 last = hist[0]
                 context = f"the last player to do this was {last['player']} in {last['season']}"
+                secondary_names.append(last["player"])
 
             headline = f"{game_intro}, and {label} — {context}."
 
@@ -1000,6 +1003,7 @@ def template_facts(conn, facts, season, latest_date):
             else:
                 last = hist[0]
                 context = f"only {len(hist)} pitchers have done this in over 100 years, the last being {last['player']} in {last['season']}"
+                secondary_names.append(last["player"])
 
             headline = f"{game_intro}, reaching {k} K and 0 BB through his first 2 starts of the season — {context}."
 
@@ -1058,12 +1062,14 @@ def template_facts(conn, facts, season, latest_date):
                 if tied:
                     passed_str = ", ".join(f"{t['player']} ({t['season']})" for t in tied[:3])
                     headline = f"{game_intro}, giving him the most {stat_label} ({val}) in a player's first {cg} career games in over 100 years, passing {passed_str}."
+                    secondary_names.extend(t["player"] for t in tied[:3])
                 else:
                     headline = f"{game_intro}, giving him the most {stat_label} ({val}) in a player's first {cg} career games in over 100 years."
             else:
                 if ahead:
                     ahead_str = ", ".join(f"{a['player']} ({a['value']}, {a['season']})" for a in ahead[:3])
                     headline = f"{game_intro}, giving him {val} {stat_label} in his first {cg} career games — #{rank} all-time, behind only {ahead_str}."
+                    secondary_names.extend(a["player"] for a in ahead[:3])
                 else:
                     headline = f"{game_intro}, giving him {val} {stat_label} in his first {cg} career games — #{rank} all-time."
 
@@ -1076,6 +1082,7 @@ def template_facts(conn, facts, season, latest_date):
 
             if prev:
                 headline = f"{game_intro}, becoming the youngest player ({age}) with an extra-base hit and an RBI in his debut in over 100 years, surpassing {prev['player']} in {prev['season']}."
+                secondary_names.append(prev["player"])
             else:
                 headline = f"{game_intro}, becoming the youngest player ({age}) with an extra-base hit and an RBI in his debut in over 100 years."
 
@@ -1102,6 +1109,7 @@ def template_facts(conn, facts, season, latest_date):
                 ru_str = str(runner_up_val)
 
             headline = f"{game_intro}, taking the {scope} lead in {stat_label} ({val_str}), passing {runner_up} ({ru_str})."
+            secondary_names.append(runner_up)
 
         elif f["type"] == "youngest_debut_since":
             age = f["age_years"]
@@ -1109,14 +1117,16 @@ def template_facts(conn, facts, season, latest_date):
             game_intro = f"{player} went {game_line} last night in his MLB debut" if game_line else f"{player} made his MLB debut"
 
             headline = f"{game_intro}, becoming the youngest player ({age}) with an extra-base hit and an RBI in his debut since {last['player']} in {last['season']}."
+            secondary_names.append(last["player"])
 
         else:
             continue
 
+        all_names = ([player] if player else []) + secondary_names
         events.append({
             "headline": headline,
             "category": "historical",
-            "player_names": [player] if player else [],
+            "player_names": all_names,
             "team_names": [team] if team else [],
         })
         if pid:
