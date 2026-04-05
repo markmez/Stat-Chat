@@ -481,6 +481,11 @@ struct PlayerCardView: View {
                     countIdx: $countSplitIndex
                 )
 
+                // Game logs (current season)
+                if !card.gameLogs.isEmpty {
+                    gameLogSection(card: card)
+                }
+
                 // Fielding (collapsed)
                 fieldingSection(season: current)
             }
@@ -1150,6 +1155,81 @@ struct PlayerCardView: View {
             StatGridView(grid: grid)
                 .padding(.horizontal, 6)
         }
+    }
+
+    @State private var showAllGameLogs = false
+
+    @ViewBuilder
+    private func gameLogSection(card: PlayerCard) -> some View {
+        let logs = card.isPitcher ? card.pitchingGameLogs.map { g in
+            (date: g.date, opponent: g.opponent, line: g.line)
+        } : card.gameLogs.map { g in
+            (date: g.date, opponent: g.opponent, line: g.line)
+        }
+
+        if !logs.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Game Log")
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+
+                let visible = showAllGameLogs ? logs : Array(logs.prefix(7))
+
+                VStack(spacing: 0) {
+                    ForEach(Array(visible.enumerated()), id: \.offset) { index, log in
+                        VStack(spacing: 0) {
+                            HStack(alignment: .top) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(formatGameDate(log.date))
+                                        .font(.system(.caption2, design: .rounded, weight: .bold))
+                                        .foregroundStyle(.secondary)
+                                    if !log.opponent.isEmpty {
+                                        Text("vs \(log.opponent)")
+                                            .font(.system(.caption2, design: .rounded))
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+                                .frame(width: 60, alignment: .leading)
+
+                                Text(log.line)
+                                    .font(.system(.caption, design: .rounded))
+                                    .foregroundStyle(.primary)
+
+                                Spacer()
+                            }
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 16)
+
+                            if index < visible.count - 1 {
+                                Divider().padding(.leading, 76)
+                            }
+                        }
+                    }
+                }
+
+                if logs.count > 7 && !showAllGameLogs {
+                    Button {
+                        withAnimation { showAllGameLogs = true }
+                    } label: {
+                        Text("Show all \(logs.count) games")
+                            .font(.system(.caption, design: .rounded, weight: .medium))
+                            .foregroundStyle(Color(red: 0.1, green: 0.25, blue: 0.7))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                }
+            }
+        }
+    }
+
+    private func formatGameDate(_ dateStr: String) -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        guard let date = fmt.date(from: dateStr) else { return dateStr }
+        let display = DateFormatter()
+        display.dateFormat = "M/d"
+        return display.string(from: date)
     }
 
     @ViewBuilder

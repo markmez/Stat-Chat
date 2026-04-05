@@ -175,6 +175,8 @@ class PlayerCardResponse(BaseModel):
     pitching_season_splits: List[PitchingSeasonSplits] = []
     current_form: Optional[dict] = None
     pitching_current_form: Optional[dict] = None
+    game_logs: List[GameLogEntry] = []
+    pitching_game_logs: List[PitchingGameLogEntry] = []
 
 
 # ---------------------------------------------------------------------------
@@ -1081,6 +1083,7 @@ def _fetch_pitching_current_form(conn, name, season):
 
 class GameLogEntry(BaseModel):
     date: str
+    opponent: str = ""
     at_bats: int
     hits: int
     doubles: int
@@ -1095,56 +1098,65 @@ class GameLogEntry(BaseModel):
 
 class PitchingGameLogEntry(BaseModel):
     date: str
+    opponent: str = ""
     ip_outs: int
+    innings_pitched: str = ""
     hits: int
     earned_runs: int
     walks: int
     strikeouts: int
     home_runs: int
     is_start: bool
+    win: bool = False
+    loss: bool = False
 
 
 def _fetch_batting_game_logs(conn, name, season):
-    """Fetch batting game logs for a player-season."""
+    """Fetch batting game logs for a player-season, most recent first."""
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT g.date, g.at_bats, g.hits, g.doubles, g.triples, g.home_runs,
-                   g.runs, g.rbi, g.walks, g.strikeouts, g.plate_appearances
+            SELECT g.date, g.opponent, g.at_bats, g.hits, g.doubles, g.triples,
+                   g.home_runs, g.runs, g.rbi, g.walks, g.strikeouts, g.plate_appearances
             FROM game_batting_logs g
             JOIN players p ON g.player_id = p.player_id
             WHERE p.name = ? AND g.season = ?
-            ORDER BY g.date ASC
+            ORDER BY g.date DESC
         """, (_sanitize(name), season))
         rows = cur.fetchall()
         return [GameLogEntry(
-            date=r[0] or "", at_bats=_safe_int(r[1]), hits=_safe_int(r[2]),
-            doubles=_safe_int(r[3]), triples=_safe_int(r[4]), home_runs=_safe_int(r[5]),
-            runs=_safe_int(r[6]), rbi=_safe_int(r[7]), walks=_safe_int(r[8]),
-            strikeouts=_safe_int(r[9]), plate_appearances=_safe_int(r[10])
+            date=r[0] or "", opponent=r[1] or "", at_bats=_safe_int(r[2]),
+            hits=_safe_int(r[3]), doubles=_safe_int(r[4]), triples=_safe_int(r[5]),
+            home_runs=_safe_int(r[6]), runs=_safe_int(r[7]), rbi=_safe_int(r[8]),
+            walks=_safe_int(r[9]), strikeouts=_safe_int(r[10]),
+            plate_appearances=_safe_int(r[11])
         ) for r in rows]
     except Exception:
         return []
 
 
 def _fetch_pitching_game_logs(conn, name, season):
-    """Fetch pitching game logs for a player-season."""
+    """Fetch pitching game logs for a player-season, most recent first."""
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT g.date, g.ip_outs, g.hits, g.earned_runs,
-                   g.walks, g.strikeouts, g.home_runs, g.is_start
+            SELECT g.date, g.opponent, g.ip_outs, g.innings_pitched, g.hits,
+                   g.earned_runs, g.walks, g.strikeouts, g.home_runs,
+                   g.is_start, g.win, g.loss
             FROM game_pitching_logs g
             JOIN players p ON g.player_id = p.player_id
             WHERE p.name = ? AND g.season = ?
-            ORDER BY g.date ASC
+            ORDER BY g.date DESC
         """, (_sanitize(name), season))
         rows = cur.fetchall()
         return [PitchingGameLogEntry(
-            date=r[0] or "", ip_outs=_safe_int(r[1]), hits=_safe_int(r[2]),
-            earned_runs=_safe_int(r[3]), walks=_safe_int(r[4]),
-            strikeouts=_safe_int(r[5]), home_runs=_safe_int(r[6]),
-            is_start=bool(r[7]) if r[7] is not None else False
+            date=r[0] or "", opponent=r[1] or "", ip_outs=_safe_int(r[2]),
+            innings_pitched=r[3] or "", hits=_safe_int(r[4]),
+            earned_runs=_safe_int(r[5]), walks=_safe_int(r[6]),
+            strikeouts=_safe_int(r[7]), home_runs=_safe_int(r[8]),
+            is_start=bool(r[9]) if r[9] is not None else False,
+            win=bool(r[10]) if r[10] is not None else False,
+            loss=bool(r[11]) if r[11] is not None else False,
         ) for r in rows]
     except Exception:
         return []
@@ -1209,6 +1221,12 @@ async def player_card(name: str = Query(..., description="Player name to look up
             if pitching:
                 pitching_current_form = _fetch_pitching_current_form(conn, name, pitching[0].year)
 
+        # Game logs for current season only (most recent first)
+        from datetime import date
+        current_year = date.today().year
+        game_logs = _fetch_batting_game_logs(conn, name, current_year) if batting else []
+        pitching_game_logs = _fetch_pitching_game_logs(conn, name, current_year) if (pitcher or two_way) else []
+
         return PlayerCardResponse(
             player_info=info,
             batting_seasons=batting,
@@ -1223,6 +1241,8 @@ async def player_card(name: str = Query(..., description="Player name to look up
             pitching_season_splits=pitching_season_splits,
             current_form=current_form,
             pitching_current_form=pitching_current_form,
+            game_logs=game_logs,
+            pitching_game_logs=pitching_game_logs,
         )
     finally:
         conn.close()

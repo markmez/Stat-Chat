@@ -155,6 +155,36 @@ final class BackendService: Sendable {
         let season_counting_values: [String: Double]
     }
 
+    struct GameLogEntryData: Decodable, Sendable {
+        let date: String
+        let opponent: String?
+        let at_bats: Int
+        let hits: Int
+        let doubles: Int
+        let triples: Int
+        let home_runs: Int
+        let runs: Int
+        let rbi: Int
+        let walks: Int
+        let strikeouts: Int
+        let plate_appearances: Int
+    }
+
+    struct PitchingGameLogEntryData: Decodable, Sendable {
+        let date: String
+        let opponent: String?
+        let ip_outs: Int
+        let innings_pitched: String?
+        let hits: Int
+        let earned_runs: Int
+        let walks: Int
+        let strikeouts: Int
+        let home_runs: Int
+        let is_start: Bool
+        let win: Bool?
+        let loss: Bool?
+    }
+
     struct PlayerCardData: Decodable, Sendable {
         let player_info: PlayerInfoData?
         let batting_seasons: [BattingSeasonData]
@@ -169,6 +199,8 @@ final class BackendService: Sendable {
         let pitching_season_splits: [PitchingSeasonSplitsData]?
         let current_form: CurrentFormData?
         let pitching_current_form: PitchingCurrentFormData?
+        let game_logs: [GameLogEntryData]?
+        let pitching_game_logs: [PitchingGameLogEntryData]?
     }
 
     struct PlayerInfoData: Decodable, Sendable {

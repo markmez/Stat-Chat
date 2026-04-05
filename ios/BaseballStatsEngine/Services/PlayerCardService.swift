@@ -104,6 +104,22 @@ struct PlayerCard: Sendable {
     let pitchingCareerTotals: StatGridParser.StatGrid?
     let pitchingCareerPlatoonSplits: StatGridParser.StatGrid?
     let pitchingCareerHomeAwaySplits: StatGridParser.StatGrid?
+    let gameLogs: [GameLogDisplay]
+    let pitchingGameLogs: [PitchingGameLogDisplay]
+}
+
+struct GameLogDisplay: Sendable, Identifiable {
+    let id = UUID()
+    let date: String
+    let opponent: String
+    let line: String  // "2-for-4, 1 HR, 2 RBI"
+}
+
+struct PitchingGameLogDisplay: Sendable, Identifiable {
+    let id = UUID()
+    let date: String
+    let opponent: String
+    let line: String  // "7.0 IP, 3 H, 0 ER, 8 K (W)"
 }
 
 // MARK: - Team Card models
@@ -506,7 +522,9 @@ enum PlayerCardService {
             pitchingSeasons: pitchingSeasons,
             pitchingCareerTotals: pitchingCareer,
             pitchingCareerPlatoonSplits: pitchingCareerPlatoon,
-            pitchingCareerHomeAwaySplits: pitchingCareerHomeAway
+            pitchingCareerHomeAwaySplits: pitchingCareerHomeAway,
+            gameLogs: [],
+            pitchingGameLogs: []
         )
     }
 
@@ -691,6 +709,27 @@ enum PlayerCardService {
         let recentPlatoon = seasons.first?.platoonSplits
         let recentStreaks = seasons.first?.streaks
 
+        // Convert game logs to display format
+        let gameLogs: [GameLogDisplay] = (data.game_logs ?? []).map { g in
+            var parts: [String] = ["\(g.hits)-for-\(g.at_bats)"]
+            if g.home_runs > 0 { parts.append("\(g.home_runs) HR") }
+            if g.doubles > 0 { parts.append("\(g.doubles) 2B") }
+            if g.triples > 0 { parts.append("\(g.triples) 3B") }
+            if g.rbi > 0 { parts.append("\(g.rbi) RBI") }
+            if g.walks > 0 { parts.append("\(g.walks) BB") }
+            if g.strikeouts > 0 { parts.append("\(g.strikeouts) K") }
+            return GameLogDisplay(date: g.date, opponent: g.opponent ?? "", line: parts.joined(separator: ", "))
+        }
+        let pitchingGameLogs: [PitchingGameLogDisplay] = (data.pitching_game_logs ?? []).map { g in
+            let ip = g.innings_pitched ?? "\(g.ip_outs / 3).\(g.ip_outs % 3)"
+            var parts: [String] = ["\(ip) IP", "\(g.hits) H", "\(g.earned_runs) ER", "\(g.strikeouts) K"]
+            if g.walks > 0 { parts.append("\(g.walks) BB") }
+            var result = ""
+            if g.win == true { result = " (W)" }
+            else if g.loss == true { result = " (L)" }
+            return PitchingGameLogDisplay(date: g.date, opponent: g.opponent ?? "", line: parts.joined(separator: ", ") + result)
+        }
+
         return PlayerCard(
             name: displayName,
             team: headerTeam,
@@ -712,7 +751,9 @@ enum PlayerCardService {
             pitchingSeasons: pitchingSeasons,
             pitchingCareerTotals: pitchingCareer,
             pitchingCareerPlatoonSplits: pitchingCareerPlatoon,
-            pitchingCareerHomeAwaySplits: pitchingCareerHomeAway
+            pitchingCareerHomeAwaySplits: pitchingCareerHomeAway,
+            gameLogs: gameLogs,
+            pitchingGameLogs: pitchingGameLogs
         )
     }
 
