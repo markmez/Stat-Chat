@@ -430,6 +430,11 @@ def pull_game_logs(conn, season_str):
     cursor.execute("DELETE FROM game_batting_logs WHERE season = ?", (season_year,))
     cursor.execute("DELETE FROM game_pitching_logs WHERE season = ?", (season_year,))
 
+    # Track game numbers per player per stored date — persists across all API date requests.
+    # Handles cases where two different request dates (e.g., 20260326 and 20260327) both
+    # return games that store under the same date (e.g., 2026-03-27 due to UTC offset).
+    player_date_game_num = {}
+
     for i, gdate in enumerate(game_dates):
         time.sleep(2)  # Rate limit courtesy
         try:
@@ -440,9 +445,6 @@ def pull_game_logs(conn, season_str):
         if not data:
             continue
         logs = data.get("gamelogs", [])
-
-        # Track game numbers per player per date for doubleheaders
-        player_date_game_num = {}
 
         for entry in logs:
             player = entry.get("player", {})
