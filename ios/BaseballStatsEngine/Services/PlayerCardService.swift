@@ -711,7 +711,7 @@ enum PlayerCardService {
 
         // Convert game logs to display format
         let gameLogs: [GameLogDisplay] = (data.game_logs ?? []).map { g in
-            var parts: [String] = ["\(g.hits)-for-\(g.at_bats)"]
+            var parts: [String] = ["\(g.hits) for \(g.at_bats)"]
             if g.home_runs > 0 { parts.append("\(g.home_runs) HR") }
             if g.doubles > 0 { parts.append("\(g.doubles) 2B") }
             if g.triples > 0 { parts.append("\(g.triples) 3B") }
@@ -720,6 +720,7 @@ enum PlayerCardService {
             if g.strikeouts > 0 { parts.append("\(g.strikeouts) K") }
             return GameLogDisplay(date: g.date, opponent: g.opponent ?? "", line: parts.joined(separator: ", "))
         }
+
         let pitchingGameLogs: [PitchingGameLogDisplay] = (data.pitching_game_logs ?? []).map { g in
             let ip = g.innings_pitched ?? "\(g.ip_outs / 3).\(g.ip_outs % 3)"
             var parts: [String] = ["\(ip) IP", "\(g.hits) H", "\(g.earned_runs) ER", "\(g.strikeouts) K"]

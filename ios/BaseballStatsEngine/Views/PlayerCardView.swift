@@ -482,7 +482,7 @@ struct PlayerCardView: View {
                 )
 
                 // Game logs (current season)
-                if !card.gameLogs.isEmpty {
+                if !card.gameLogs.isEmpty || !card.pitchingGameLogs.isEmpty {
                     gameLogSection(card: card)
                 }
 
@@ -633,6 +633,11 @@ struct PlayerCardView: View {
                     season: current, tab: $splitTab,
                     pitchIdx: $pitchTypeIndex, countIdx: $countSplitIndex
                 )
+
+                // Pitching game logs
+                if !card.pitchingGameLogs.isEmpty {
+                    gameLogSection(card: card)
+                }
             }
 
             // Pitching career totals + 162-game pace
@@ -1157,68 +1162,132 @@ struct PlayerCardView: View {
         }
     }
 
-    @State private var showAllGameLogs = false
+    @State private var gameLogExpanded = false
+    @State private var gameLogMonth: String = ""  // "" = most recent, or "March", "April", etc.
 
     @ViewBuilder
     private func gameLogSection(card: PlayerCard) -> some View {
-        let logs = card.isPitcher ? card.pitchingGameLogs.map { g in
+        let allLogs = card.isPitcher ? card.pitchingGameLogs.map { g in
             (date: g.date, opponent: g.opponent, line: g.line)
         } : card.gameLogs.map { g in
             (date: g.date, opponent: g.opponent, line: g.line)
         }
 
-        if !logs.isEmpty {
+        if !allLogs.isEmpty {
+            // Group logs by month
+            let months = gameLogMonths(allLogs.map(\.date))
+            let filtered = gameLogMonth.isEmpty ? allLogs : allLogs.filter { logMatchesMonth($0.date, month: gameLogMonth) }
+            let visible = gameLogExpanded ? filtered : Array(filtered.prefix(7))
+
             VStack(alignment: .leading, spacing: 8) {
-                Text("Game Log")
+                Text("Game Logs")
                     .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.primary)
                     .padding(.horizontal, 16)
 
-                let visible = showAllGameLogs ? logs : Array(logs.prefix(7))
-
                 VStack(spacing: 0) {
-                    ForEach(Array(visible.enumerated()), id: \.offset) { index, log in
-                        VStack(spacing: 0) {
-                            HStack(alignment: .top) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(formatGameDate(log.date))
-                                        .font(.system(.caption2, design: .rounded, weight: .bold))
-                                        .foregroundStyle(.secondary)
-                                    if !log.opponent.isEmpty {
-                                        Text("vs \(log.opponent)")
-                                            .font(.system(.caption2, design: .rounded))
-                                            .foregroundStyle(.tertiary)
+                    // Month pills (if more than one month)
+                    if months.count > 1 {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 0) {
+                                // "Recent" pill
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.15)) {
+                                        gameLogMonth = ""
+                                        gameLogExpanded = false
+                                    }
+                                } label: {
+                                    Text("Recent")
+                                        .font(.system(.caption, design: .rounded, weight: .semibold))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
+                                        .background(
+                                            gameLogMonth.isEmpty
+                                            ? AnyShapeStyle(LinearGradient(
+                                                colors: [lightBlue, deepBlue],
+                                                startPoint: .leading, endPoint: .trailing))
+                                            : AnyShapeStyle(Color.clear)
+                                        )
+                                        .clipShape(Capsule())
+                                        .foregroundStyle(gameLogMonth.isEmpty ? .white : .secondary)
+                                }
+
+                                ForEach(months, id: \.self) { month in
+                                    Button {
+                                        withAnimation(.easeInOut(duration: 0.15)) {
+                                            gameLogMonth = month
+                                            gameLogExpanded = false
+                                        }
+                                    } label: {
+                                        Text(month)
+                                            .font(.system(.caption, design: .rounded, weight: .semibold))
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 6)
+                                            .background(
+                                                gameLogMonth == month
+                                                ? AnyShapeStyle(LinearGradient(
+                                                    colors: [lightBlue, deepBlue],
+                                                    startPoint: .leading, endPoint: .trailing))
+                                                : AnyShapeStyle(Color.clear)
+                                            )
+                                            .clipShape(Capsule())
+                                            .foregroundStyle(gameLogMonth == month ? .white : .secondary)
                                     }
                                 }
-                                .frame(width: 60, alignment: .leading)
+                            }
+                            .padding(.horizontal, 12)
+                        }
+                        .padding(.top, 8)
+                    }
+
+                    // Game log rows
+                    ForEach(Array(visible.enumerated()), id: \.offset) { index, log in
+                        VStack(spacing: 0) {
+                            HStack {
+                                Text(formatGameDate(log.date))
+                                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                    .frame(width: 36, alignment: .leading)
 
                                 Text(log.line)
-                                    .font(.system(.caption, design: .rounded))
+                                    .font(.system(.subheadline, design: .rounded))
                                     .foregroundStyle(.primary)
+                                if !log.opponent.isEmpty {
+                                    Text("vs \(log.opponent)")
+                                        .font(.system(.subheadline, design: .rounded))
+                                        .foregroundStyle(.tertiary)
+                                }
 
                                 Spacer()
                             }
                             .padding(.vertical, 8)
-                            .padding(.horizontal, 16)
+                            .padding(.horizontal, 12)
 
                             if index < visible.count - 1 {
-                                Divider().padding(.leading, 76)
+                                Divider()
+                                    .padding(.horizontal, 12)
                             }
                         }
                     }
-                }
 
-                if logs.count > 7 && !showAllGameLogs {
-                    Button {
-                        withAnimation { showAllGameLogs = true }
-                    } label: {
-                        Text("Show all \(logs.count) games")
-                            .font(.system(.caption, design: .rounded, weight: .medium))
-                            .foregroundStyle(Color(red: 0.1, green: 0.25, blue: 0.7))
+                    // Show more button
+                    if filtered.count > 7 && !gameLogExpanded {
+                        Button {
+                            withAnimation { gameLogExpanded = true }
+                        } label: {
+                            Text("Show more")
+                                .font(.system(.caption, design: .rounded, weight: .medium))
+                                .foregroundStyle(deepBlue)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                        }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 4)
                 }
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(.secondarySystemBackground))
+                )
+                .padding(.horizontal, 6)
             }
         }
     }
@@ -1230,6 +1299,34 @@ struct PlayerCardView: View {
         let display = DateFormatter()
         display.dateFormat = "M/d"
         return display.string(from: date)
+    }
+
+    private func gameLogMonths(_ dates: [String]) -> [String] {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        let monthFmt = DateFormatter()
+        monthFmt.dateFormat = "MMMM"
+        var seen = Set<String>()
+        var result: [String] = []
+        for d in dates.reversed() {  // Chronological order (oldest first)
+            if let date = fmt.date(from: d) {
+                let month = monthFmt.string(from: date)
+                if !seen.contains(month) {
+                    seen.insert(month)
+                    result.append(month)
+                }
+            }
+        }
+        return result
+    }
+
+    private func logMatchesMonth(_ dateStr: String, month: String) -> Bool {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        let monthFmt = DateFormatter()
+        monthFmt.dateFormat = "MMMM"
+        guard let date = fmt.date(from: dateStr) else { return false }
+        return monthFmt.string(from: date) == month
     }
 
     @ViewBuilder
