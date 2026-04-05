@@ -976,9 +976,8 @@ def detect_all(db_path=None, season=None):
 
     print(f"  Latest game date: {latest_date}")
 
-    # Clear rule-based and historical events — preserve AI insights
-    conn.execute("DELETE FROM notable_events WHERE detection_type NOT IN ('ai_insight')")
-    conn.commit()
+    # Don't wipe old events — let them age out via the retention window.
+    # INSERT OR IGNORE handles dedup (UNIQUE constraint on headline + date).
 
     events = []
 
