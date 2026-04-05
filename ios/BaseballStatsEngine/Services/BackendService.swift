@@ -376,7 +376,7 @@ final class BackendService: Sendable {
         let game_context: String?
     }
 
-    func fetchNotableEvents(limit: Int = 20) async throws -> [NotableEventData] {
+    func fetchNotableEvents(limit: Int = 200) async throws -> [NotableEventData] {
         var components = URLComponents(url: baseURL.appendingPathComponent("notable-events"),
                                        resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "limit", value: "\(limit)")]

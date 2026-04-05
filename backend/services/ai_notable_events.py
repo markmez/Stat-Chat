@@ -190,6 +190,15 @@ def _compile_snapshot(conn, season, latest_date):
 
 def generate_ai_insights(conn, season, latest_date, dry_run=False):
     """Generate AI-powered notable events using Sonnet."""
+    # Skip if we already have AI insights for this game date
+    existing = conn.execute("""
+        SELECT COUNT(*) FROM notable_events
+        WHERE detection_type = 'ai_insight' AND game_date = ?
+    """, (latest_date,)).fetchone()[0]
+    if existing > 0 and not dry_run:
+        print(f"  AI insights already exist for {latest_date} ({existing} events), skipping")
+        return {"events": [], "skipped": True}
+
     snapshot = _compile_snapshot(conn, season, latest_date)
 
     prompt = f"""You are a baseball analyst writing for a notable events feed in a stats app.

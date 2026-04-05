@@ -127,38 +127,40 @@ struct NotableEventsFeed: View {
             .padding(.horizontal, 4)
             .padding(.vertical, 14)
 
-            // Gradient separator
-            if !isLast {
-                LinearGradient(
-                    colors: [Color(red: 0.45, green: 0.7, blue: 1.0), Color(red: 0.1, green: 0.25, blue: 0.7)],
-                    startPoint: .leading, endPoint: .trailing
-                )
-                .frame(height: 2)
-                .clipShape(Capsule())
-            }
+            // Gradient separator (always present, invisible on last item to maintain alignment)
+            LinearGradient(
+                colors: [Color(red: 0.45, green: 0.7, blue: 1.0), Color(red: 0.1, green: 0.25, blue: 0.7)],
+                startPoint: .leading, endPoint: .trailing
+            )
+            .frame(height: 2)
+            .clipShape(Capsule())
+            .opacity(isLast ? 0 : 1)
         }
     }
 
-    /// Build an AttributedString with tappable player/team names
+    /// Build an AttributedString with tappable player/team names.
+    /// First player is bold + linked (primary). Subsequent players are linked but not bold.
     private func highlightedText(_ text: String, playerNames: [String], teamNames: [String]) -> AttributedString {
         var result = AttributedString(text)
 
         // Highlight + link player names
-        for name in playerNames {
+        for (index, name) in playerNames.enumerated() {
             if let range = result.range(of: name) {
                 result[range].foregroundColor = deepBlue
-                result[range].font = .system(.subheadline, design: .rounded, weight: .bold)
+                if index == 0 {
+                    // Primary player: bold
+                    result[range].font = .system(.subheadline, design: .rounded, weight: .bold)
+                }
                 if let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {
                     result[range].link = URL(string: "statchat://player/\(encoded)")
                 }
             }
         }
 
-        // Highlight + link team names
+        // Highlight + link team names (not bold)
         for team in teamNames {
             if let range = result.range(of: team) {
                 result[range].foregroundColor = deepBlue
-                result[range].font = .system(.subheadline, design: .rounded, weight: .bold)
                 if let encoded = team.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {
                     result[range].link = URL(string: "statchat://team/\(encoded)")
                 }
