@@ -1057,6 +1057,163 @@ def detect_league_leaders(conn, season, latest_date=None):
 
 
 # ---------------------------------------------------------------------------
+# On This Date — historic moments from today's date in past years
+# ---------------------------------------------------------------------------
+
+def detect_on_this_date(conn, season, latest_date):
+    """Find historic moments from today's month-day in past seasons.
+
+    Very high threshold — no-hitters, 4+ HR games, 20+ K, etc.
+    Returns 1-2 items max to avoid competing with current events.
+    """
+    events = []
+
+    try:
+        month_day = latest_date[5:]  # "04-05" from "2026-04-05"
+    except:
+        return events
+
+    # No-hitters on this date
+    nohitters = conn.execute("""
+        SELECT p.name, g.season, g.innings_pitched, g.strikeouts, g.walks, g.opponent
+        FROM game_pitching_logs g
+        JOIN players p ON g.player_id = p.player_id
+        WHERE substr(g.date, 6) = ? AND g.season < ? AND g.ip_outs >= 27 AND g.hits = 0
+        ORDER BY g.season DESC
+    """, (month_day, season)).fetchall()
+
+    for name, yr, ip, so, bb, opp in nohitters[:1]:  # Just the most recent
+        opp_name = team_display(opp) if opp else ""
+        headline = f"On this date in {yr}, {name} threw a no-hitter"
+        if so:
+            headline += f" with {so} strikeouts"
+        if opp_name:
+            headline += f" against the {opp_name}"
+        headline += "."
+        events.append({
+            "headline": headline,
+            "detail": "",
+            "category": "On This Date",
+            "game_date": latest_date,
+            "player_names": [name],
+            "team_names": [opp_name] if opp_name else [],
+            "detection_type": "on_this_date",
+            "priority": 3,
+        })
+
+    # 4+ HR games on this date
+    big_hr = conn.execute("""
+        SELECT p.name, g.season, g.home_runs, g.hits, g.at_bats, g.rbi, g.opponent
+        FROM game_batting_logs g
+        JOIN players p ON g.player_id = p.player_id
+        WHERE substr(g.date, 6) = ? AND g.season < ? AND g.home_runs >= 4
+        ORDER BY g.home_runs DESC, g.season DESC
+    """, (month_day, season)).fetchall()
+
+    for name, yr, hr, h, ab, rbi, opp in big_hr[:1]:
+        opp_name = team_display(opp) if opp else ""
+        headline = f"On this date in {yr}, {name} hit {hr} home runs"
+        if opp_name:
+            headline += f" against the {opp_name}"
+        headline += f", going {h}-for-{ab} with {rbi or 0} RBI."
+        events.append({
+            "headline": headline,
+            "detail": "",
+            "category": "On This Date",
+            "game_date": latest_date,
+            "player_names": [name],
+            "team_names": [opp_name] if opp_name else [],
+            "detection_type": "on_this_date",
+            "priority": 3,
+        })
+
+    # 18+ K games on this date (extremely rare)
+    big_k = conn.execute("""
+        SELECT p.name, g.season, g.strikeouts, g.innings_pitched, g.ip_outs,
+               g.hits, g.earned_runs, g.opponent
+        FROM game_pitching_logs g
+        JOIN players p ON g.player_id = p.player_id
+        WHERE substr(g.date, 6) = ? AND g.season < ? AND g.strikeouts >= 18
+        ORDER BY g.strikeouts DESC, g.season DESC
+    """, (month_day, season)).fetchall()
+
+    for name, yr, so, ip, ip_outs, h, er, opp in big_k[:1]:
+        opp_name = team_display(opp) if opp else ""
+        ip_display = ip or f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
+        headline = f"On this date in {yr}, {name} struck out {so} in {ip_display} innings"
+        if opp_name:
+            headline += f" against the {opp_name}"
+        headline += "."
+        events.append({
+            "headline": headline,
+            "detail": "",
+            "category": "On This Date",
+            "game_date": latest_date,
+            "player_names": [name],
+            "team_names": [opp_name] if opp_name else [],
+            "detection_type": "on_this_date",
+            "priority": 3,
+        })
+
+    # 6+ hit games on this date
+    big_hits = conn.execute("""
+        SELECT p.name, g.season, g.hits, g.at_bats, g.home_runs, g.rbi, g.opponent
+        FROM game_batting_logs g
+        JOIN players p ON g.player_id = p.player_id
+        WHERE substr(g.date, 6) = ? AND g.season < ? AND g.hits >= 6
+        ORDER BY g.hits DESC, g.season DESC
+    """, (month_day, season)).fetchall()
+
+    for name, yr, h, ab, hr, rbi, opp in big_hits[:1]:
+        opp_name = team_display(opp) if opp else ""
+        headline = f"On this date in {yr}, {name} went {h}-for-{ab}"
+        if hr:
+            headline += f" with {hr} HR"
+        if opp_name:
+            headline += f" against the {opp_name}"
+        headline += "."
+        events.append({
+            "headline": headline,
+            "detail": "",
+            "category": "On This Date",
+            "game_date": latest_date,
+            "player_names": [name],
+            "team_names": [opp_name] if opp_name else [],
+            "detection_type": "on_this_date",
+            "priority": 3,
+        })
+
+    # 10+ RBI game on this date (extremely rare)
+    big_rbi = conn.execute("""
+        SELECT p.name, g.season, g.rbi, g.hits, g.at_bats, g.home_runs, g.opponent
+        FROM game_batting_logs g
+        JOIN players p ON g.player_id = p.player_id
+        WHERE substr(g.date, 6) = ? AND g.season < ? AND g.rbi >= 10
+        ORDER BY g.rbi DESC, g.season DESC
+    """, (month_day, season)).fetchall()
+
+    for name, yr, rbi, h, ab, hr, opp in big_rbi[:1]:
+        opp_name = team_display(opp) if opp else ""
+        headline = f"On this date in {yr}, {name} drove in {rbi} runs, going {h}-for-{ab} with {hr or 0} home runs"
+        if opp_name:
+            headline += f" against the {opp_name}"
+        headline += "."
+        events.append({
+            "headline": headline,
+            "detail": "",
+            "category": "On This Date",
+            "game_date": latest_date,
+            "player_names": [name],
+            "team_names": [opp_name] if opp_name else [],
+            "detection_type": "on_this_date",
+            "priority": 3,
+        })
+
+    # Limit to 2 best (most extreme)
+    return events[:2]
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -1139,6 +1296,12 @@ def detect_all(db_path=None, season=None):
         print(f"    Historical: {len(hist_events)} events")
     except Exception as e:
         print(f"    Historical scans failed: {e}")
+
+    # On This Date — historic moments from today's date in past years
+    print("  Running On This Date...")
+    otd_events = detect_on_this_date(conn, season, latest_date)
+    events += otd_events
+    print(f"    On This Date: {len(otd_events)} events")
 
     # Deduplicated insert with game context
     cursor = conn.cursor()
