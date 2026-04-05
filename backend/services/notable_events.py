@@ -159,7 +159,11 @@ def _get_game_context(conn, player_id, game_date, season):
     team_name = team_display(team_code)
     opp_name = team_display(opponent)
 
-    return f"{date_str} · {team_name} {team_runs} - {opp_name} {opp_runs}"
+    # Winning team listed first
+    if team_runs >= opp_runs:
+        return f"{date_str} · {team_name} {team_runs} - {opp_name} {opp_runs}"
+    else:
+        return f"{date_str} · {opp_name} {opp_runs} - {team_name} {team_runs}"
 
 
 def _get_latest_date(conn, season):
