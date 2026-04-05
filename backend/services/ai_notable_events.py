@@ -195,7 +195,7 @@ def generate_ai_insights(conn, season, latest_date, dry_run=False):
     prompt = f"""You are a baseball analyst writing for a notable events feed in a stats app.
 The current date is {date.today().isoformat()}. The current year is {date.today().year}.
 
-Write 5-8 notable events from yesterday's games. Think like the best stat-nerd
+Write notable events from yesterday's games. Think like the best stat-nerd
 baseball Twitter account — insightful, punchy, data-driven.
 
 CRITICAL RULES:
@@ -234,8 +234,8 @@ QUALITY THRESHOLD — READ CAREFULLY:
     tear or the stats have broader context. 4+ K in a game for a good
     hitter could be notable.
 12. If you can't articulate WHY something is interesting beyond "he played
-    well," don't include it. Aim for 3-5 truly interesting items rather
-    than 7 mediocre ones.
+    well," don't include it. Quality over quantity — only include items
+    that pass the bar above. Could be 2 items or 10, depending on the day.
 
 STYLE RULES:
 13. Do NOT pad sentences with empty context. If you don't have a meaningful
