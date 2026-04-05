@@ -38,7 +38,7 @@ struct NotableEventsFeed: View {
     var showHeader: Bool = true
 
     @State private var events: [NotableEvent] = []
-    @State private var hasLoaded = false
+    @State private var lastLoadTime: Date?
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
 
@@ -87,9 +87,17 @@ struct NotableEventsFeed: View {
 
         Color.clear.frame(height: 0)
             .task {
-                guard !hasLoaded else { return }
-                hasLoaded = true
-                await loadEvents()
+                // Load on first appear
+                if lastLoadTime == nil {
+                    await loadEvents()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
+                // Reload when app returns from background (max every 5 min)
+                Task {
+                    if let last = lastLoadTime, Date().timeIntervalSince(last) < 300 { return }
+                    await loadEvents()
+                }
             }
     }
 
@@ -99,6 +107,7 @@ struct NotableEventsFeed: View {
             let loaded = data.map { NotableEvent(from: $0) }
             await MainActor.run {
                 events = loaded
+                lastLoadTime = Date()
             }
         } catch {
             // Silently fail — feed just won't show
