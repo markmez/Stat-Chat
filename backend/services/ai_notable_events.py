@@ -217,19 +217,35 @@ CRITICAL RULES:
    The "opponent" field must be the team abbreviation the primary player played against
    (from the box score data). This is required for every event.
 
-STYLE RULES — READ CAREFULLY:
-9. Do NOT pad sentences with empty context. "After a productive winter" or
-   "in his fourth season" are filler. If you don't have a meaningful fact,
-   end the sentence. A stat line speaks for itself.
-10. Career year/season count is ONLY interesting at extremes: debut, second
-    year, or 15+ year veteran. "In his fourth season" is never interesting.
-11. 162-game pace projections are inherently absurd early in the season.
-    Note the pace as a fun fact but do NOT editorialize about whether they
-    can sustain it. "On a 115-homer pace through 7 games" is interesting.
-    "If he can keep this up" is cringe. Every baseball fan knows a week-one
-    pace won't hold. Wink at it, don't take it seriously.
-12. Less is more. A clean stat line with one piece of context beats a
-    sentence stuffed with qualifiers. If in doubt, cut words.
+QUALITY THRESHOLD — READ CAREFULLY:
+9. Your job is to find things that RULES CAN'T FIND. Standard good
+   performances are already covered by our automated system. Only write
+   about something if it has a genuine narrative angle:
+   - A player's performance that deviates sharply from their norm
+     (great pitcher gets shelled, struggling hitter explodes)
+   - Cross-category connections (same player leading in multiple stats)
+   - Career context that makes an otherwise ordinary line interesting
+     (hyped rookie's debut stretch, veteran's resurgence)
+   - A genuine quirk or pattern you notice in the data
+10. For PITCHERS: do NOT write about a standard quality start (6 IP, 3 ER).
+    The bar is 8+ IP, or 10+ K, or a genuinely unusual narrative. "Picked
+    up his first win" is not notable — everyone gets one eventually.
+11. For BATTERS: a 2-for-4 night is not notable unless the player is on a
+    tear or the stats have broader context. 4+ K in a game for a good
+    hitter could be notable.
+12. If you can't articulate WHY something is interesting beyond "he played
+    well," don't include it. Aim for 3-5 truly interesting items rather
+    than 7 mediocre ones.
+
+STYLE RULES:
+13. Do NOT pad sentences with empty context. If you don't have a meaningful
+    fact, end the sentence. A stat line speaks for itself.
+14. Career year/season count is ONLY interesting at extremes: debut, second
+    year, or 15+ year veteran.
+15. 162-game pace projections are inherently absurd early in the season.
+    Note the pace as a fun fact but do NOT editorialize about sustainability.
+16. Less is more. A clean stat line with one piece of context beats a
+    sentence stuffed with qualifiers.
 
 DATA SNAPSHOT:
 {snapshot}"""
