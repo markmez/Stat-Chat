@@ -175,8 +175,8 @@ class PlayerCardResponse(BaseModel):
     pitching_season_splits: List[PitchingSeasonSplits] = []
     current_form: Optional[dict] = None
     pitching_current_form: Optional[dict] = None
-    game_logs: List[GameLogEntry] = []
-    pitching_game_logs: List[PitchingGameLogEntry] = []
+    game_logs: List["GameLogEntry"] = []
+    pitching_game_logs: List["PitchingGameLogEntry"] = []
 
 
 # ---------------------------------------------------------------------------
