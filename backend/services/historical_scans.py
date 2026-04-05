@@ -1090,10 +1090,17 @@ def template_facts(conn, facts, season, latest_date):
             val = f["value"]
             scope = f["scope"]
             stat_label = f["stat_label"]
+            stat = f.get("stat", "")
             abbrev = f["stat_abbrev"]
             runner_up = f["runner_up"]
             runner_up_val = f["runner_up_val"]
-            game_intro = f"{player} went {game_line} last night" if game_line else f"{player}"
+
+            if game_line:
+                game_intro = f"{player} went {game_line} last night"
+            elif stat == "stolen_bases":
+                game_intro = f"{player} swiped a bag last night"
+            else:
+                game_intro = f"{player}"
 
             if isinstance(val, float):
                 if val >= 1.0:
