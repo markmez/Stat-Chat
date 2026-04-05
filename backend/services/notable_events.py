@@ -27,7 +27,7 @@ RETRO_TO_DISPLAY = {
     "TEX": "Rangers", "TOR": "Blue Jays", "BAL": "Orioles", "MIN": "Twins",
     "CLE": "Guardians", "SEA": "Mariners", "MIL": "Brewers", "CIN": "Reds",
     "PIT": "Pirates", "DET": "Tigers", "ARI": "Diamondbacks", "COL": "Rockies",
-    "MIA": "Marlins", "OAK": "Athletics",
+    "MIA": "Marlins", "OAK": "Athletics", "ATH": "Athletics",
 }
 
 

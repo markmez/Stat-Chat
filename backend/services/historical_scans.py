@@ -672,7 +672,7 @@ def scan_debut_youngest(conn, season, latest_date):
 
 AL_TEAMS = {"NYA", "BOS", "TOR", "BAL", "TBA",
             "CLE", "CHA", "MIN", "DET", "KCA",
-            "HOU", "SEA", "ANA", "TEX", "OAK", "ATH"}
+            "HOU", "SEA", "ANA", "TEX", "OAK", "ATH"}  # ATH = MSF code for Oakland
 NL_TEAMS = {"NYN", "PHI", "ATL", "MIA", "WAS",
             "CHN", "MIL", "SLN", "PIT", "CIN",
             "LAN", "SDN", "SFN", "ARI", "COL"}
