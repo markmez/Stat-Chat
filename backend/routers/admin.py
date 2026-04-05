@@ -248,6 +248,31 @@ async def ai_notable(
         raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
 
 
+@router.post("/poll")
+async def poll_new_games(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Trigger a lightweight poll for new games."""
+    verify_admin(authorization, key)
+    poll_script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "data_pipeline", "poll_new_games.py")
+    try:
+        result = subprocess.run(
+            [sys.executable, poll_script, "--db", DB_PATH],
+            capture_output=True, text=True, timeout=120,
+        )
+        return {
+            "status": "ok" if result.returncode == 0 else "error",
+            "stdout": result.stdout[-2000:] if result.stdout else "",
+            "stderr": result.stderr[-500:] if result.stderr else "",
+        }
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Poll timed out")
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.get("/debug-player")
 async def debug_player(
     name: str,
