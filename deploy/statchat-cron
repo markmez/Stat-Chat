@@ -3,6 +3,7 @@
 # Early morning catch-all: 5:35 AM EDT
 # Afternoon games: 5:00 PM EDT daily
 # Weekend 4 PM starts: 7:30 PM EDT (Sat/Sun only)
+# Weekly full refresh: Sunday 6:00 AM EDT (reconciliation)
 
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
@@ -10,3 +11,4 @@ PATH=/usr/local/bin:/usr/bin:/bin
 35 3,4,5,6,9 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 0 21 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 30 23 * * 0,6 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+0 10 * * 0 statchat /opt/statchat/repo/deploy/refresh.sh --full-refresh >> /data/refresh.log 2>&1

@@ -21,8 +21,8 @@ HC_PING_URL="https://hc-ping.com/d3f0c82b-235a-477f-8ed5-3f6ac4c6daa7"
 echo ""
 echo "=== Pipeline refresh starting at $(date) ==="
 
-# Run pipeline
-if $VENV $PIPELINE --db $DB; then
+# Run pipeline (pass through any extra args like --full-refresh)
+if $VENV $PIPELINE --db $DB "$@"; then
     echo "=== Pipeline completed at $(date) ==="
 else
     echo "=== Pipeline FAILED at $(date) ==="

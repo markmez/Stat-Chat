@@ -413,8 +413,37 @@ def get_game_dates(season_str):
     return sorted(d for d in dates if d <= today)
 
 
-def pull_game_logs(conn, season_str):
-    """Pull batting and pitching game logs from MySportsFeeds (daily batches)."""
+def _get_last_game_date_pulled(conn, season_year):
+    """Get the last game date we successfully pulled logs for."""
+    try:
+        row = conn.execute("""
+            SELECT updated_at FROM data_freshness WHERE key = ?
+        """, (f"last_game_date_{season_year}",)).fetchone()
+        return row[0] if row else None
+    except:
+        return None
+
+
+def _set_last_game_date_pulled(conn, season_year, last_date):
+    """Record the last game date we successfully pulled."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS data_freshness (
+            key TEXT PRIMARY KEY, updated_at TEXT NOT NULL, season TEXT
+        )
+    """)
+    conn.execute("""
+        INSERT OR REPLACE INTO data_freshness (key, updated_at, season)
+        VALUES (?, ?, ?)
+    """, (f"last_game_date_{season_year}", last_date, str(season_year)))
+    conn.commit()
+
+
+def pull_game_logs(conn, season_str, full_refresh=False):
+    """Pull batting and pitching game logs from MySportsFeeds.
+
+    Cumulative by default: only pulls dates since the last successful pull.
+    full_refresh=True: wipes and re-pulls all dates (weekly reconciliation).
+    """
     season_year = detect_season(season_str)
     print(f"  Pulling game logs for {season_str}...")
 
@@ -422,13 +451,30 @@ def pull_game_logs(conn, season_str):
     if not game_dates:
         print("    No game dates found")
         return 0, 0
-    print(f"    Found {len(game_dates)} game days")
 
     cursor = conn.cursor()
     bat_count = 0
     pitch_count = 0
-    cursor.execute("DELETE FROM game_batting_logs WHERE season = ?", (season_year,))
-    cursor.execute("DELETE FROM game_pitching_logs WHERE season = ?", (season_year,))
+
+    if full_refresh:
+        print(f"    Full refresh: wiping and re-pulling all {len(game_dates)} game days")
+        cursor.execute("DELETE FROM game_batting_logs WHERE season = ?", (season_year,))
+        cursor.execute("DELETE FROM game_pitching_logs WHERE season = ?", (season_year,))
+    else:
+        # Only pull dates since last successful pull
+        last_pulled = _get_last_game_date_pulled(conn, season_year)
+        if last_pulled:
+            # Pull from 1 day before last_pulled (to catch late corrections)
+            # and all new dates
+            cutoff = last_pulled.replace("-", "")
+            old_count = len(game_dates)
+            # Include the last pulled date (for corrections) + all newer
+            game_dates = [d for d in game_dates if d >= cutoff]
+            print(f"    Incremental: {len(game_dates)} new/recent dates (of {old_count} total)")
+        else:
+            print(f"    First run: pulling all {len(game_dates)} game days")
+            cursor.execute("DELETE FROM game_batting_logs WHERE season = ?", (season_year,))
+            cursor.execute("DELETE FROM game_pitching_logs WHERE season = ?", (season_year,))
 
     # Track game numbers per player per stored date — persists across all API date requests.
     # Handles cases where two different request dates (e.g., 20260326 and 20260327) both
@@ -550,6 +596,11 @@ def pull_game_logs(conn, season_str):
                 pitch_count += 1
 
         conn.commit()
+
+    # Record the last date we pulled so next run can be incremental
+    if game_dates:
+        last_date = f"{game_dates[-1][:4]}-{game_dates[-1][4:6]}-{game_dates[-1][6:8]}"
+        _set_last_game_date_pulled(conn, season_year, last_date)
 
     print(f"    Loaded {bat_count} batting + {pitch_count} pitching game logs across {len(game_dates)} days")
     return bat_count, pitch_count
@@ -1402,6 +1453,8 @@ def main():
     parser.add_argument("--season", default=None,
                         help="Season identifier (e.g. '2026-pre', '2026-regular'). Auto-detects if omitted.")
     parser.add_argument("--db", default=DB_PATH, help="Path to SQLite database")
+    parser.add_argument("--full-refresh", action="store_true",
+                        help="Wipe and re-pull all game logs (weekly reconciliation)")
     args = parser.parse_args()
 
     # Auto-detect season
@@ -1449,7 +1502,7 @@ def main():
         compute_league_averages_and_ops_plus(conn, season_year)
         pull_season_pitching(conn, args.season)
         compute_pitching_league_averages(conn, season_year)
-        pull_game_logs(conn, args.season)
+        pull_game_logs(conn, args.season, full_refresh=args.full_refresh)
 
         # Compute home/away splits from game logs
         compute_batting_home_away_splits(conn, season_year)
