@@ -49,6 +49,7 @@ def ensure_table(conn):
             team_names TEXT,
             detection_type TEXT NOT NULL,
             priority INTEGER NOT NULL,
+            game_context TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE(detection_type, game_date, headline)
         )
@@ -56,7 +57,76 @@ def ensure_table(conn):
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_notable_date ON notable_events(game_date)
     """)
+    # Migrate: add game_context if missing
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(notable_events)").fetchall()}
+    if "game_context" not in cols:
+        conn.execute("ALTER TABLE notable_events ADD COLUMN game_context TEXT")
     conn.commit()
+
+
+def _get_game_context(conn, player_id, game_date, season):
+    """Build game context string like 'April 5 · Dodgers 4 - Astros 3'.
+
+    Looks up the player's team, opponent, and sums runs for both sides.
+    """
+    # Get player's game info
+    game = conn.execute("""
+        SELECT g.opponent, g.vishome, s.team
+        FROM game_batting_logs g
+        JOIN season_batting_stats s ON g.player_id = s.player_id AND g.season = s.season
+        WHERE g.player_id = ? AND g.date = ? AND g.season = ?
+        LIMIT 1
+    """, (player_id, game_date, season)).fetchone()
+
+    if not game:
+        # Try pitching logs
+        game = conn.execute("""
+            SELECT g.opponent, g.vishome, s.team
+            FROM game_pitching_logs g
+            JOIN season_pitching_stats s ON g.player_id = s.player_id AND g.season = s.season
+            WHERE g.player_id = ? AND g.date = ? AND g.season = ?
+            LIMIT 1
+        """, (player_id, game_date, season)).fetchone()
+
+    if not game:
+        # Just format the date
+        try:
+            from datetime import datetime
+            dt = datetime.strptime(game_date, "%Y-%m-%d")
+            return dt.strftime("%B %-d")
+        except:
+            return game_date
+
+    opponent, vishome, team_code = game
+
+    # Sum runs for player's team
+    team_runs = conn.execute("""
+        SELECT COALESCE(SUM(g.runs), 0)
+        FROM game_batting_logs g
+        JOIN season_batting_stats s ON g.player_id = s.player_id AND g.season = s.season
+        WHERE g.date = ? AND g.season = ? AND s.team = ?
+    """, (game_date, season, team_code)).fetchone()[0]
+
+    # Sum runs for opponent
+    opp_runs = conn.execute("""
+        SELECT COALESCE(SUM(g.runs), 0)
+        FROM game_batting_logs g
+        JOIN season_batting_stats s ON g.player_id = s.player_id AND g.season = s.season
+        WHERE g.date = ? AND g.season = ? AND s.team = ?
+    """, (game_date, season, opponent)).fetchone()[0]
+
+    # Format date
+    try:
+        from datetime import datetime
+        dt = datetime.strptime(game_date, "%Y-%m-%d")
+        date_str = dt.strftime("%B %-d")
+    except:
+        date_str = game_date
+
+    team_name = team_display(team_code)
+    opp_name = team_display(opponent)
+
+    return f"{date_str} · {team_name} {team_runs} - {opp_name} {opp_runs}"
 
 
 def _get_latest_date(conn, season):
@@ -1028,21 +1098,40 @@ def detect_all(db_path=None, season=None):
     except Exception as e:
         print(f"    Historical scans failed: {e}")
 
-    # Deduplicated insert
+    # Deduplicated insert with game context
     cursor = conn.cursor()
     inserted = 0
     for e in events:
+        # Look up game context for the first player
+        game_context = None
+        player_names = e.get("player_names", [])
+        if player_names:
+            first_name = player_names[0]
+            pid_row = conn.execute(
+                "SELECT player_id FROM players WHERE name = ?", (first_name,)
+            ).fetchone()
+            if pid_row:
+                game_context = _get_game_context(conn, pid_row[0], e["game_date"], season)
+
+        if not game_context:
+            try:
+                from datetime import datetime
+                dt = datetime.strptime(e["game_date"], "%Y-%m-%d")
+                game_context = dt.strftime("%B %-d")
+            except:
+                game_context = e["game_date"]
+
         try:
             cursor.execute("""
                 INSERT OR IGNORE INTO notable_events
                 (headline, detail, category, game_date, player_names, team_names,
-                 detection_type, priority)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 detection_type, priority, game_context)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 e["headline"], e["detail"], e["category"], e["game_date"],
                 json.dumps(e.get("player_names", [])),
                 json.dumps(e.get("team_names", [])),
-                e["detection_type"], e["priority"],
+                e["detection_type"], e["priority"], game_context,
             ))
             if cursor.rowcount > 0:
                 inserted += 1

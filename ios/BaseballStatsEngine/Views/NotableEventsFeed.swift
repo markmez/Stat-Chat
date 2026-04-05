@@ -4,31 +4,21 @@ struct NotableEvent: Identifiable {
     let id = UUID()
     let headline: String
     let detail: String
-    let category: String  // "Streak", "Milestone", "Rarity"
-    let gameDate: String  // "YYYY-MM-DD" from backend
+    let category: String
+    let gameDate: String
     let playerNames: [String]
     let teamNames: [String]
-
-    var timestamp: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        guard let eventDate = formatter.date(from: gameDate) else { return "" }
-        let days = Calendar.current.dateComponents([.day], from: eventDate,
-                                                    to: Calendar.current.startOfDay(for: Date())).day ?? 0
-        switch days {
-        case 0, 1: return "Yesterday"
-        default: return "\(days) days ago"
-        }
-    }
+    let gameContext: String  // "April 5 · Dodgers 4 - Astros 3"
 
     init(headline: String, detail: String, category: String, gameDate: String,
-         playerNames: [String], teamNames: [String]) {
+         playerNames: [String], teamNames: [String], gameContext: String = "") {
         self.headline = headline
         self.detail = detail
         self.category = category
         self.gameDate = gameDate
         self.playerNames = playerNames
         self.teamNames = teamNames
+        self.gameContext = gameContext
     }
 
     init(from data: BackendService.NotableEventData) {
@@ -38,6 +28,7 @@ struct NotableEvent: Identifiable {
         self.gameDate = data.game_date
         self.playerNames = data.player_names
         self.teamNames = data.team_names
+        self.gameContext = data.game_context ?? ""
     }
 }
 
@@ -118,10 +109,12 @@ struct NotableEventsFeed: View {
     private func eventCard(_ event: NotableEvent, isLast: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
-                // Timestamp
-                Text(event.timestamp)
-                    .font(.system(.caption2, design: .rounded, weight: .bold))
-                    .foregroundStyle(.secondary)
+                // Game context: "April 5 · Dodgers 4 - Astros 3"
+                if !event.gameContext.isEmpty {
+                    Text(event.gameContext)
+                        .font(.system(.caption2, design: .rounded, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
 
                 // Combined text — tweet-style
                 Text(highlightedText(

@@ -24,7 +24,8 @@ async def get_notable_events(limit: int = QueryParam(20, le=50)):
             return []
 
         rows = conn.execute("""
-            SELECT headline, detail, category, game_date, player_names, team_names
+            SELECT headline, detail, category, game_date, player_names, team_names,
+                   game_context
             FROM notable_events
             ORDER BY game_date DESC, priority ASC, id DESC
             LIMIT ?
@@ -40,6 +41,7 @@ async def get_notable_events(limit: int = QueryParam(20, le=50)):
             "game_date": r[3],
             "player_names": json.loads(r[4]) if r[4] else [],
             "team_names": json.loads(r[5]) if r[5] else [],
+            "game_context": r[6] or "",
         }
         for r in rows
     ]

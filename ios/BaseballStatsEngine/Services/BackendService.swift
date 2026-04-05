@@ -373,6 +373,7 @@ final class BackendService: Sendable {
         let game_date: String
         let player_names: [String]
         let team_names: [String]
+        let game_context: String?
     }
 
     func fetchNotableEvents(limit: Int = 20) async throws -> [NotableEventData] {
