@@ -18,10 +18,12 @@
             host: 3.223.208.21
             username: ubuntu
             key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
-            script: |                                                                                                
+            script: |
               cd /opt/statchat/repo
-              sudo -u statchat git pull                                                                              
-              sudo -u statchat /opt/statchat/venv/bin/pip install -q -r backend/requirements.txt                   
+              sudo -u statchat git pull
+              sudo -u statchat /opt/statchat/venv/bin/pip install -q -r backend/requirements.txt
+              sudo cp deploy/statchat-cron /etc/cron.d/statchat
+              sudo chmod 644 /etc/cron.d/statchat
               sudo systemctl restart statchat
-              sleep 2                                                                                                
+              sleep 2
               curl -sf http://127.0.0.1:8000/health || exit 1
