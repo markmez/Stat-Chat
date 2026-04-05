@@ -396,14 +396,14 @@ def get_game_dates(season_str):
         sched = game.get("schedule", {})
         start = sched.get("startTime", "")
         if start:
-            # Use the raw UTC date for the API request — MSF indexes by UTC date
+            # Convert UTC to local date for the API request.
+            # MSF indexes games by their MLB-official date (local),
+            # but the schedule startTime is UTC.
             dt = datetime.strptime(start[:19], "%Y-%m-%dT%H:%M:%S")
-            dates.add(dt.strftime("%Y%m%d"))
-            # Also add the previous day for late-night games (in case MSF
-            # indexes by local date instead)
+            # Games starting 00:00-05:59 UTC are evening Eastern games (previous day)
             if dt.hour < 6:
-                prev = dt - timedelta(days=1)
-                dates.add(prev.strftime("%Y%m%d"))
+                dt = dt - timedelta(days=1)
+            dates.add(dt.strftime("%Y%m%d"))
 
     if not dates:
         return []
@@ -453,8 +453,10 @@ def pull_game_logs(conn, season_str):
             all_stats = entry.get("stats", {})
             team_abbrev = team_info.get("abbreviation", "")
 
-            # Daily format uses flat abbreviation keys
-            game_date = game.get("startTime", "")[:10]
+            # Use the MSF request date (gdate) as the game date — this is the
+            # official MLB game date. Don't parse startTime which is UTC and
+            # puts late ET games on the wrong calendar day.
+            game_date = f"{gdate[:4]}-{gdate[4:6]}-{gdate[6:8]}"
             game_id = game.get("id", 0)  # MSF game ID for doubleheader ordering
             away_team = game.get("awayTeamAbbreviation", "")
             home_team = game.get("homeTeamAbbreviation", "")
