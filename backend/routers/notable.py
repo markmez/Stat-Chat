@@ -12,7 +12,7 @@ DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
 
 
 @router.get("/notable-events")
-async def get_notable_events(limit: int = QueryParam(200, le=500)):
+async def get_notable_events(limit: int = QueryParam(50, le=200)):
     """Return recent notable baseball events, ordered by date and priority."""
     conn = sqlite3.connect(DB_PATH)
     try:
