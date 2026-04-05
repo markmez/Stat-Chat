@@ -125,30 +125,48 @@ def migrate_schema(conn):
 
 
 def check_integrity(conn):
-    """Compare season stats game counts vs game log row counts.
-    Reports any discrepancies."""
+    """Compare season stats counting totals vs game log sums.
+
+    Compares PA, AB, H, HR, RBI between season_batting_stats and the sum
+    of game_batting_logs. Game count differences are expected (defensive
+    subs with 0 PA don't get game log rows) — stat totals are what matter.
+    """
     print("\n  Running data integrity check...")
 
     mismatches = conn.execute("""
-        SELECT p.name, s.season, s.games as season_games,
-               COUNT(g.id) as log_rows,
-               s.games - COUNT(g.id) as missing
+        SELECT p.name, s.season,
+               s.plate_appearances as season_pa,
+               COALESCE(SUM(g.plate_appearances), 0) as log_pa,
+               s.hits as season_h,
+               COALESCE(SUM(g.hits), 0) as log_h,
+               s.home_runs as season_hr,
+               COALESCE(SUM(g.home_runs), 0) as log_hr,
+               s.rbi as season_rbi,
+               COALESCE(SUM(g.rbi), 0) as log_rbi
         FROM season_batting_stats s
         JOIN players p ON s.player_id = p.player_id
         LEFT JOIN game_batting_logs g ON s.player_id = g.player_id AND s.season = g.season
-        WHERE s.season >= 2026
+        WHERE s.season >= 2026 AND s.plate_appearances > 0
         GROUP BY s.player_id, s.season
-        HAVING s.games != COUNT(g.id) AND s.games > 0
-        ORDER BY missing DESC
+        HAVING s.plate_appearances != COALESCE(SUM(g.plate_appearances), 0)
+            OR s.hits != COALESCE(SUM(g.hits), 0)
+            OR s.home_runs != COALESCE(SUM(g.home_runs), 0)
+            OR s.rbi != COALESCE(SUM(g.rbi), 0)
+        ORDER BY (s.plate_appearances - COALESCE(SUM(g.plate_appearances), 0)) DESC
         LIMIT 20
     """).fetchall()
 
     if mismatches:
-        print(f"  WARNING: {len(mismatches)} players with game count mismatches:")
-        for name, season, sg, lr, missing in mismatches:
-            print(f"    {name} ({season}): season_stats={sg}G, game_logs={lr} rows, missing={missing}")
+        print(f"  WARNING: {len(mismatches)} players with stat mismatches:")
+        for name, season, spa, lpa, sh, lh, shr, lhr, srbi, lrbi in mismatches:
+            diffs = []
+            if spa != lpa: diffs.append(f"PA {spa}vs{lpa}")
+            if sh != lh: diffs.append(f"H {sh}vs{lh}")
+            if shr != lhr: diffs.append(f"HR {shr}vs{lhr}")
+            if srbi != lrbi: diffs.append(f"RBI {srbi}vs{lrbi}")
+            print(f"    {name} ({season}): {', '.join(diffs)}")
     else:
-        print("  All game counts match!")
+        print("  All stat totals match!")
 
     return mismatches
 
