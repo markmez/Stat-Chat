@@ -133,6 +133,14 @@ def check_integrity(conn):
     """
     print("\n  Running data integrity check...")
 
+    # Exclude players who have a game on the most recent date — their season
+    # totals may include games whose logs aren't available yet.
+    # Only flag mismatches for players whose most recent game is 2+ days old.
+    latest = conn.execute("""
+        SELECT MAX(date) FROM game_batting_logs WHERE season >= 2026
+    """).fetchone()
+    latest_date = latest[0] if latest and latest[0] else "9999-99-99"
+
     mismatches = conn.execute("""
         SELECT p.name, s.season,
                s.plate_appearances as season_pa,
@@ -147,6 +155,10 @@ def check_integrity(conn):
         JOIN players p ON s.player_id = p.player_id
         LEFT JOIN game_batting_logs g ON s.player_id = g.player_id AND s.season = g.season
         WHERE s.season >= 2026 AND s.plate_appearances > 0
+            AND s.player_id NOT IN (
+                SELECT DISTINCT player_id FROM game_batting_logs
+                WHERE date >= ? AND season >= 2026
+            )
         GROUP BY s.player_id, s.season
         HAVING s.plate_appearances != COALESCE(SUM(g.plate_appearances), 0)
             OR s.hits != COALESCE(SUM(g.hits), 0)
@@ -154,7 +166,7 @@ def check_integrity(conn):
             OR s.rbi != COALESCE(SUM(g.rbi), 0)
         ORDER BY (s.plate_appearances - COALESCE(SUM(g.plate_appearances), 0)) DESC
         LIMIT 20
-    """).fetchall()
+    """, (latest_date,)).fetchall()
 
     if mismatches:
         print(f"  WARNING: {len(mismatches)} players with stat mismatches:")
