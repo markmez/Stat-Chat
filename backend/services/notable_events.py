@@ -64,6 +64,39 @@ def ensure_table(conn):
     conn.commit()
 
 
+def backfill_game_context(conn, season):
+    """One-time: fill game_context for existing events that don't have it."""
+    rows = conn.execute("""
+        SELECT id, player_names, game_date FROM notable_events
+        WHERE (game_context IS NULL OR game_context = '') AND player_names IS NOT NULL
+    """).fetchall()
+
+    if not rows:
+        return 0
+
+    updated = 0
+    for row_id, player_names_json, game_date in rows:
+        try:
+            names = json.loads(player_names_json) if player_names_json else []
+            if not names:
+                continue
+            pid_row = conn.execute(
+                "SELECT player_id FROM players WHERE name = ?", (names[0],)
+            ).fetchone()
+            if not pid_row:
+                continue
+            context = _get_game_context(conn, pid_row[0], game_date, season)
+            if context:
+                conn.execute("UPDATE notable_events SET game_context = ? WHERE id = ?",
+                             (context, row_id))
+                updated += 1
+        except:
+            continue
+
+    conn.commit()
+    return updated
+
+
 def _get_game_context(conn, player_id, game_date, season):
     """Build game context string like 'April 5 · Dodgers 4 - Astros 3'.
 
@@ -1048,6 +1081,11 @@ def detect_all(db_path=None, season=None):
 
     # Don't wipe old events — let them age out via the retention window.
     # INSERT OR IGNORE handles dedup (UNIQUE constraint on headline + date).
+
+    # Backfill game_context for any events that don't have it yet
+    backfilled = backfill_game_context(conn, season)
+    if backfilled:
+        print(f"  Backfilled game_context for {backfilled} events")
 
     events = []
 
