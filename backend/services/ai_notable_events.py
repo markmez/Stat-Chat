@@ -213,7 +213,9 @@ CRITICAL RULES:
 6. Write each as a single flowing sentence, conversational and punchy.
 7. Prioritize: historical context, start-of-season milestones, comeback narratives,
    rookie watch, pace projections, cross-category patterns.
-8. Output ONLY a JSON array: [{{"headline": "...", "player_names": ["..."], "team_names": ["..."]}}]
+8. Output ONLY a JSON array: [{{"headline": "...", "player_names": ["..."], "team_names": ["..."], "opponent": "OPP"}}]
+   The "opponent" field must be the team abbreviation the primary player played against
+   (from the box score data). This is required for every event.
 
 STYLE RULES — READ CAREFULLY:
 9. Do NOT pad sentences with empty context. "After a productive winter" or
@@ -250,21 +252,41 @@ DATA SNAPSHOT:
     except Exception as e:
         return {"snapshot": snapshot, "events": [], "error": str(e)}
 
-    # Insert into notable_events table
+    # Insert into notable_events table with game context
     cursor = conn.cursor()
     inserted = 0
     for e in events:
+        # Look up game context using first player + opponent
+        game_context = None
+        player_names = e.get("player_names", [])
+        opponent = e.get("opponent", "")
+        if player_names:
+            pid_row = conn.execute(
+                "SELECT player_id FROM players WHERE name = ?", (player_names[0],)
+            ).fetchone()
+            if pid_row:
+                from services.notable_events import _get_game_context
+                game_context = _get_game_context(conn, pid_row[0], latest_date, season)
+
+        if not game_context:
+            try:
+                from datetime import datetime as dt_cls
+                d = dt_cls.strptime(latest_date, "%Y-%m-%d")
+                game_context = d.strftime("%B %-d")
+            except:
+                game_context = latest_date
+
         try:
             cursor.execute("""
                 INSERT OR IGNORE INTO notable_events
                 (headline, detail, category, game_date, player_names, team_names,
-                 detection_type, priority)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 detection_type, priority, game_context)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 e["headline"], "", "Insight", latest_date,
                 json.dumps(e.get("player_names", [])),
                 json.dumps(e.get("team_names", [])),
-                "ai_insight", 2,
+                "ai_insight", 2, game_context,
             ))
             if cursor.rowcount > 0:
                 inserted += 1
