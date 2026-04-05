@@ -342,25 +342,32 @@ struct HomeView: View {
             return f
         }()
 
-        return VStack(spacing: 4) {
-            HStack(spacing: 4) {
-                Text("\(remaining) free search\(remaining == 1 ? "" : "es") remaining")
+        return VStack(spacing: 8) {
+            if remaining > 0 {
+                HStack(spacing: 4) {
+                    Text("\(remaining) free search\(remaining == 1 ? "" : "es") remaining")
+                        .font(.system(.caption2, design: .rounded))
+                        .foregroundStyle(.secondary)
+                    Text("·")
+                        .foregroundStyle(.quaternary)
+                    Text("Resets \(formatter.string(from: resetDate))")
+                        .font(.system(.caption2, design: .rounded))
+                        .foregroundStyle(.quaternary)
+                }
+            } else {
+                Text("0 free searches remaining · Resets \(formatter.string(from: resetDate))")
                     .font(.system(.caption2, design: .rounded))
-                    .foregroundStyle(remaining == 0 ? .red : .secondary)
-                Text("·")
-                    .foregroundStyle(.quaternary)
-                Text("Resets \(formatter.string(from: resetDate))")
-                    .font(.system(.caption2, design: .rounded))
-                    .foregroundStyle(.quaternary)
-            }
+                    .foregroundStyle(.secondary)
 
-            if remaining == 0 {
                 Button {
                     appState.showPaywall = true
                 } label: {
-                    Text("Upgrade for unlimited")
-                        .font(.system(.caption2, design: .rounded, weight: .medium))
-                        .foregroundStyle(deepBlue)
+                    Text("Upgrade for Unlimited")
+                        .font(.system(.caption, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 10)
+                        .background(deepBlue, in: RoundedRectangle(cornerRadius: 10))
                 }
             }
         }
