@@ -108,7 +108,7 @@ struct ResultCard: View {
         case .text(let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                let isSectionHeader = trimmed.hasPrefix("**") && !trimmed.hasPrefix("**Projected")
+                let isSectionHeader = trimmed.hasPrefix("**")
                 // addLinks/addTeamLinks are internally cached — safe to call on every render
                 let displayText = isStreaming ? trimmed : PlayerNameMatcher.addTeamLinks(to: PlayerNameMatcher.addLinks(to: trimmed))
                 Text(LocalizedStringKey(displayText))
