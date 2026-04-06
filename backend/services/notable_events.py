@@ -100,29 +100,26 @@ def backfill_game_context(conn, season):
 def _get_game_context(conn, player_id, game_date, season):
     """Build game context string like 'April 5 · Dodgers 4 - Astros 3'.
 
-    Looks up the player's team, opponent, and sums runs for both sides.
+    Looks up the player's team and opponent from game logs, then fetches
+    the actual score from the MLB Stats API.
     """
-    # Get player's game info
+    # Get player's game info (team + opponent)
     game = conn.execute("""
-        SELECT g.opponent, g.vishome, s.team
+        SELECT g.opponent, g.vishome
         FROM game_batting_logs g
-        JOIN season_batting_stats s ON g.player_id = s.player_id AND g.season = s.season
         WHERE g.player_id = ? AND g.date = ? AND g.season = ?
         LIMIT 1
     """, (player_id, game_date, season)).fetchone()
 
     if not game:
-        # Try pitching logs
         game = conn.execute("""
-            SELECT g.opponent, g.vishome, s.team
+            SELECT g.opponent, g.vishome
             FROM game_pitching_logs g
-            JOIN season_pitching_stats s ON g.player_id = s.player_id AND g.season = s.season
             WHERE g.player_id = ? AND g.date = ? AND g.season = ?
             LIMIT 1
         """, (player_id, game_date, season)).fetchone()
 
     if not game:
-        # Just format the date
         try:
             from datetime import datetime
             dt = datetime.strptime(game_date, "%Y-%m-%d")
@@ -130,23 +127,13 @@ def _get_game_context(conn, player_id, game_date, season):
         except:
             return game_date
 
-    opponent, vishome, team_code = game
+    opponent, vishome = game
 
-    # Sum runs for player's team
-    team_runs = conn.execute("""
-        SELECT COALESCE(SUM(g.runs), 0)
-        FROM game_batting_logs g
-        JOIN season_batting_stats s ON g.player_id = s.player_id AND g.season = s.season
-        WHERE g.date = ? AND g.season = ? AND s.team = ?
-    """, (game_date, season, team_code)).fetchone()[0]
-
-    # Sum runs for opponent
-    opp_runs = conn.execute("""
-        SELECT COALESCE(SUM(g.runs), 0)
-        FROM game_batting_logs g
-        JOIN season_batting_stats s ON g.player_id = s.player_id AND g.season = s.season
-        WHERE g.date = ? AND g.season = ? AND s.team = ?
-    """, (game_date, season, opponent)).fetchone()[0]
+    # Get player's team from players table
+    team_row = conn.execute(
+        "SELECT team FROM players WHERE player_id = ?", (player_id,)
+    ).fetchone()
+    team_code = team_row[0] if team_row else None
 
     # Format date
     try:
@@ -156,14 +143,86 @@ def _get_game_context(conn, player_id, game_date, season):
     except:
         date_str = game_date
 
+    if not team_code:
+        return date_str
+
     team_name = team_display(team_code)
     opp_name = team_display(opponent)
+
+    # Fetch actual score from MLB Stats API
+    team_runs, opp_runs = _fetch_game_score(game_date, team_code, opponent)
+    if team_runs is None:
+        return f"{date_str} · {team_name} vs {opp_name}"
 
     # Winning team listed first
     if team_runs >= opp_runs:
         return f"{date_str} · {team_name} {team_runs} - {opp_name} {opp_runs}"
     else:
         return f"{date_str} · {opp_name} {opp_runs} - {team_name} {team_runs}"
+
+
+# Cache for MLB Stats API score lookups: {"YYYY-MM-DD": {(away, home): (away_runs, home_runs)}}
+_score_cache: dict = {}
+
+
+def _fetch_game_score(game_date, team_code, opponent_code):
+    """Fetch the actual game score from the MLB Stats API.
+
+    Returns (team_runs, opponent_runs) or (None, None) if not found.
+    """
+    import requests
+
+    # Check cache first
+    if game_date in _score_cache:
+        cached = _score_cache[game_date]
+        for (away, home), (away_r, home_r) in cached.items():
+            if away == team_code and home == opponent_code:
+                return away_r, home_r
+            if home == team_code and away == opponent_code:
+                return home_r, away_r
+        return None, None
+
+    # Fetch all games for this date and cache them
+    try:
+        resp = requests.get(
+            "https://statsapi.mlb.com/api/v1/schedule",
+            params={"sportId": 1, "date": game_date, "hydrate": "linescore"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        return None, None
+
+    from services.daily_games import _team_to_retro
+
+    date_scores = {}
+    dates = data.get("dates", [])
+    games = dates[0].get("games", []) if dates else []
+    for game in games:
+        teams = game.get("teams", {})
+        away_info = teams.get("away", {})
+        home_info = teams.get("home", {})
+        away_retro = _team_to_retro(away_info.get("team", {}))
+        home_retro = _team_to_retro(home_info.get("team", {}))
+
+        linescore = game.get("linescore", {})
+        away_runs = linescore.get("teams", {}).get("away", {}).get("runs")
+        home_runs = linescore.get("teams", {}).get("home", {}).get("runs")
+
+        if away_retro and home_retro and away_runs is not None and home_runs is not None:
+            date_scores[(away_retro, home_retro)] = (away_runs, home_runs)
+
+    _score_cache[game_date] = date_scores
+
+    # Look up this specific matchup
+    for (away, home), (away_r, home_r) in date_scores.items():
+        if away == team_code and home == opponent_code:
+            return away_r, home_r
+        if home == team_code and away == opponent_code:
+            return home_r, away_r
+
+    return None, None
 
 
 def _get_latest_date(conn, season):

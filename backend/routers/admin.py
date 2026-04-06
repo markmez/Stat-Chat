@@ -228,6 +228,26 @@ async def clear_matchup_previews(
         raise HTTPException(500, str(e))
 
 
+@router.post("/refresh-game-contexts")
+async def refresh_game_contexts(
+    authorization: str | None = Header(None),
+):
+    """Clear and recompute all game_context values for recent events."""
+    verify_admin(authorization)
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        # Clear all game contexts so backfill recomputes them
+        conn.execute("UPDATE notable_events SET game_context = NULL")
+        conn.commit()
+        from services.notable_events import backfill_game_context
+        season = date.today().year
+        updated = backfill_game_context(conn, season)
+        conn.close()
+        return {"status": "ok", "updated": updated}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/detect-notable")
 async def detect_notable(
     authorization: str | None = Header(None),
