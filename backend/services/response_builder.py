@@ -428,32 +428,72 @@ def _career_pitching_rate_formula(stat: StatInfo) -> Optional[str]:
 # ===================================================================
 
 def build_season_summary(name: str, season: int) -> Optional[str]:
-    """Batting season stats as a [STATGRID] block."""
+    """Batting season stats as a [STATGRID] block. Combines multi-team seasons."""
     conn = _get_db()
     try:
         season = _resolve_season(conn, name, season)
         display_name, _ = _get_player_info(conn, name)
         cur = conn.cursor()
+        # Aggregate across teams for traded players
         cur.execute(
-            "SELECT s.team, s.games, s.at_bats, s.runs, s.hits, "
-            "s.doubles, s.triples, s.home_runs, s.rbi, s.stolen_bases, s.caught_stealing, "
-            "s.walks, s.intentional_walks, s.strikeouts, s.hit_by_pitch, "
-            "s.batting_avg, s.obp, s.slg, s.ops, s.ops_plus, s.iso, s.babip "
+            "SELECT GROUP_CONCAT(DISTINCT s.team), "
+            "SUM(s.games), SUM(s.at_bats), SUM(s.runs), SUM(s.hits), "
+            "SUM(s.doubles), SUM(s.triples), SUM(s.home_runs), SUM(s.rbi), "
+            "SUM(s.stolen_bases), SUM(s.caught_stealing), "
+            "SUM(s.walks), SUM(s.intentional_walks), SUM(s.strikeouts), SUM(s.hit_by_pitch), "
+            "SUM(s.sacrifice_flies), SUM(s.plate_appearances) "
             "FROM season_batting_stats s "
             "JOIN players p ON s.player_id = p.player_id "
             "WHERE p.name = ? AND s.season = ?",
             (_sanitize(name), season),
         )
         row = cur.fetchone()
-        if not row or len(row) < 22:
+        if not row or not row[1]:
             return None
 
-        team = _team_full_name(row[0])
-        values = list(row[1:22])
+        teams_str = row[0] or ""
+        g, ab, r, h = row[1], row[2], row[3], row[4]
+        d, t, hr, rbi = row[5], row[6], row[7], row[8]
+        sb, cs = row[9], row[10]
+        bb, ibb, so, hbp = row[11], row[12], row[13], row[14]
+        sf, pa = row[15] or 0, row[16] or 0
+
+        # Compute rate stats from aggregated counting stats
+        avg = h / ab if ab else 0
+        obp_denom = ab + bb + (hbp or 0) + sf
+        obp = (h + bb + (hbp or 0)) / obp_denom if obp_denom else 0
+        singles = h - (d or 0) - (t or 0) - (hr or 0)
+        slg = (singles + 2*(d or 0) + 3*(t or 0) + 4*(hr or 0)) / ab if ab else 0
+        ops = obp + slg
+        iso = slg - avg if avg else 0
+        babip_denom = ab - so - hr + sf
+        babip = (h - hr) / babip_denom if babip_denom > 0 else 0
+
+        # OPS+ — use the stored value if single team, otherwise skip
+        ops_plus = "--"
+        if "/" not in teams_str:
+            single_row = cur.execute(
+                "SELECT s.ops_plus FROM season_batting_stats s "
+                "JOIN players p ON s.player_id = p.player_id "
+                "WHERE p.name = ? AND s.season = ? LIMIT 1",
+                (_sanitize(name), season),
+            ).fetchone()
+            if single_row and single_row[0] is not None:
+                ops_plus = str(single_row[0])
+
+        # Format team display
+        team_codes = [t.strip() for t in teams_str.split(",")]
+        if len(team_codes) > 1:
+            team_display_str = "/".join(_team_full_name(t) for t in team_codes)
+        else:
+            team_display_str = _team_full_name(team_codes[0])
+
+        values = [g, ab, r, h, d, t, hr, rbi, sb, cs, bb, ibb, so, hbp,
+                  avg, obp, slg, ops, ops_plus, iso, babip]
         formatted = _format_values(BATTING_HEADERS, [str(v) if v is not None else "" for v in values])
 
         parts = []
-        parts.append(f"**{display_name}** \u2014 {season} Season ({team})\n")
+        parts.append(f"**{display_name}** \u2014 {season} Season ({team_display_str})\n")
         parts.append("[STATGRID]")
         parts.append("HEADER: " + ", ".join(BATTING_HEADERS))
         parts.append("ROW: " + ", ".join(formatted))
@@ -473,37 +513,87 @@ def build_season_summary(name: str, season: int) -> Optional[str]:
 # ===================================================================
 
 def build_pitching_season_summary(name: str, season: int) -> Optional[str]:
-    """Pitching season stats as a [STATGRID] block."""
+    """Pitching season stats as a [STATGRID] block. Combines multi-team seasons."""
     conn = _get_db()
     try:
         season = _resolve_season(conn, name, season, "season_pitching_stats", "sp")
         display_name, _ = _get_player_info(conn, name)
         cur = conn.cursor()
+        # Aggregate across teams for traded pitchers
         cur.execute(
-            "SELECT sp.team, sp.wins, sp.losses, sp.saves, sp.games, sp.games_started, "
-            "sp.games_finished, sp.complete_games, sp.quality_starts, sp.innings_pitched, "
-            "sp.hits, sp.runs, sp.earned_runs, sp.home_runs, sp.walks, sp.intentional_walks, "
-            "sp.strikeouts, sp.hit_by_pitch, sp.wild_pitches, sp.balks, "
-            "sp.batters_faced, sp.sacrifice_hits, sp.sacrifice_flies, "
-            "sp.stolen_bases, sp.caught_stealing, "
-            "sp.era, sp.whip, sp.k_per_9, sp.bb_per_9, sp.k_per_bb, "
-            "sp.h_per_9, sp.hr_per_9, sp.baa, sp.era_plus "
+            "SELECT GROUP_CONCAT(DISTINCT sp.team), "
+            "SUM(sp.wins), SUM(sp.losses), SUM(sp.saves), SUM(sp.games), SUM(sp.games_started), "
+            "SUM(sp.games_finished), SUM(sp.complete_games), SUM(sp.quality_starts), "
+            "SUM(sp.ip_outs), "
+            "SUM(sp.hits), SUM(sp.runs), SUM(sp.earned_runs), SUM(sp.home_runs), "
+            "SUM(sp.walks), SUM(sp.intentional_walks), "
+            "SUM(sp.strikeouts), SUM(sp.hit_by_pitch), SUM(sp.wild_pitches), SUM(sp.balks), "
+            "SUM(sp.batters_faced), SUM(sp.sacrifice_hits), SUM(sp.sacrifice_flies), "
+            "SUM(sp.stolen_bases), SUM(sp.caught_stealing) "
             "FROM season_pitching_stats sp "
             "JOIN players p ON sp.player_id = p.player_id "
             "WHERE p.name = ? AND sp.season = ?",
             (_sanitize(name), season),
         )
         row = cur.fetchone()
-        if not row or len(row) < 34:
+        if not row or not row[1]:
             return None
 
-        team = _team_full_name(row[0])
-        values = [str(v) if v is not None else "" for v in row[1:34]]
+        teams_str = row[0] or ""
+        w, l, sv, g, gs = row[1], row[2], row[3], row[4], row[5]
+        gf, cg, qs = row[6], row[7], row[8]
+        ip_outs = row[9] or 0
+        h, r, er, hr = row[10], row[11], row[12], row[13]
+        bb, ibb, so, hbp = row[14], row[15], row[16], row[17]
+        wp, bk = row[18], row[19]
+        bf, sh, sf = row[20], row[21], row[22]
+        sb_p, cs_p = row[23], row[24]
+
+        # Compute rate stats
+        ip = ip_outs / 3.0 if ip_outs else 0
+        ip_display = f"{ip_outs // 3}.{ip_outs % 3}" if ip_outs else "0.0"
+        era = (er * 9.0) / ip if ip > 0 else 0
+        whip = (h + bb) / ip if ip > 0 else 0
+        k9 = (so * 9.0) / ip if ip > 0 else 0
+        bb9 = (bb * 9.0) / ip if ip > 0 else 0
+        k_bb = so / bb if bb > 0 else 0
+        h9 = (h * 9.0) / ip if ip > 0 else 0
+        hr9 = (hr * 9.0) / ip if ip > 0 else 0
+        baa_denom = bf - bb - (hbp or 0) - (sh or 0) - (sf or 0) if bf else 0
+        baa = h / baa_denom if baa_denom > 0 else 0
+
+        # ERA+ from single team if not traded
+        era_plus = "--"
+        if "," not in teams_str:
+            single_row = cur.execute(
+                "SELECT sp.era_plus FROM season_pitching_stats sp "
+                "JOIN players p ON sp.player_id = p.player_id "
+                "WHERE p.name = ? AND sp.season = ? LIMIT 1",
+                (_sanitize(name), season),
+            ).fetchone()
+            if single_row and single_row[0] is not None:
+                era_plus = str(single_row[0])
+
+        # Format team display
+        team_codes = [t.strip() for t in teams_str.split(",")]
+        if len(team_codes) > 1:
+            team_display_str = "/".join(_team_full_name(t) for t in team_codes)
+        else:
+            team_display_str = _team_full_name(team_codes[0])
+
+        # Build values matching PITCHING_ALL_HEADERS order
+        values = [str(v) if v is not None else "" for v in [
+            w, l, sv, g, gs, gf, cg, qs, ip_display,
+            h, r, er, hr, bb, ibb, so, hbp, wp, bk,
+            bf, sh, sf, sb_p, cs_p,
+            f"{era:.2f}", f"{whip:.2f}", f"{k9:.1f}", f"{bb9:.1f}", f"{k_bb:.1f}",
+            f"{h9:.1f}", f"{hr9:.1f}", f"{baa:.3f}", era_plus,
+        ]]
         formatted = _format_pitching_values(PITCHING_ALL_HEADERS, values)
         display_values = _filter_pitching_for_display(formatted)
 
         parts = []
-        parts.append(f"**{display_name}** \u2014 {season} Season ({team})\n")
+        parts.append(f"**{display_name}** \u2014 {season} Season ({team_display_str})\n")
         parts.append("[STATGRID]")
         parts.append("HEADER: " + ", ".join(PITCHING_HEADERS))
         parts.append("ROW: " + ", ".join(display_values))
