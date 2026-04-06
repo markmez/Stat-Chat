@@ -244,6 +244,7 @@ _STOP_WORDS = {
     "per", "into", "both", "either", "but", "so", "yet",
     "while", "above", "below", "without", "like",
     "really", "actually", "currently", "recently",
+    "appeared", "appearing", "recorded", "posted", "put",
     "?", "!", ".",
 }
 
@@ -868,10 +869,13 @@ def decompose(question: str) -> QueryPlan:
     # Heuristic: age if followed by nothing or age-like words, not if followed by a stat keyword.
     age_match = re.search(r'\b(?:under|younger than)\s+(\d+)(?:\s+(?:years?\s+old|year-old|y/?o))?\b', lower)
     if age_match:
-        # Check if this "under N" is followed by a stat keyword → not age
+        # Check if this "under N" is preceded by a stat keyword (ERA under 3) → not age
+        before = lower[:age_match.start()].strip()
+        preceding_stat = match_stat(before.split()[-1] if before.split() else "")
+        # Check if followed by a stat keyword → also not age
         after = lower[age_match.end():].strip()
         following_stat = match_stat(after.split()[0] if after.split() else "")
-        if not following_stat:
+        if not following_stat and not preceding_stat:
             plan.age_max = int(age_match.group(1))
             _add_consumed(plan, f"under younger than {age_match.group(1)} years old year-old")
     age_match = re.search(r'\b(?:over|older than)\s+(\d+)(?:\s+(?:years?\s+old|year-old|y/?o))?\b', lower)
@@ -1199,6 +1203,19 @@ def decompose(question: str) -> QueryPlan:
     if plan.scope == "date_range":
         plan.threshold = None
         plan.query_type = "leaderboard"
+
+    # Final overrides for per_season — if the primary threshold equals the season count,
+    # it was likely extracted from "last 3 years" not from a stat condition.
+    # Try to re-extract the real threshold from the query text.
+    if plan.per_season and plan.threshold is not None and plan.season_count:
+        if plan.threshold == float(plan.season_count):
+            # The threshold is the season count leaking. Try to find the real one.
+            # Look for "at least N", "N+", or bare numbers near the stat keyword
+            numbers = re.findall(r'(?:at least |least |minimum )?(\d+\.?\d*)\+?\s*(?:game|hit|home|rbi|run|walk|steal|win|save|strikeout|sb|hr|k|bb)', lower)
+            if numbers:
+                plan.threshold = float(numbers[0])
+            else:
+                plan.threshold = None  # let the extra_filters carry the conditions
 
     return plan
 
@@ -1816,8 +1833,12 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
     table, prefix = _table_and_prefix(plan)
     current_year = date.today().year
     n_seasons = plan.season_count or 3
-    start_year = current_year - n_seasons + 1
-    seasons = list(range(start_year, current_year + 1))
+    # Use completed seasons — current year likely has too few games
+    # If we're past July, include current year; otherwise use last N completed
+    month = date.today().month
+    most_recent = current_year if month >= 8 else current_year - 1
+    start_year = most_recent - n_seasons + 1
+    seasons = list(range(start_year, most_recent + 1))
 
     # Build the per-season condition
     conditions = []
@@ -1904,7 +1925,7 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
         "era": "ERA", "whip": "WHIP", "k_per_9": "K/9", "innings_pitched": "IP",
     }
 
-    title = f"**Players meeting criteria in each of the last {n_seasons} seasons** ({start_year}-{current_year})\n"
+    title = f"**Players meeting criteria in each of the last {n_seasons} seasons** ({start_year}-{most_recent})\n"
     parts = [title]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
