@@ -314,6 +314,42 @@ async def fix_duplicate_players(
         raise HTTPException(500, str(e))
 
 
+@router.post("/repair-game-logs")
+async def repair_game_logs(
+    season: str = "2025-regular",
+    authorization: str | None = Header(None),
+):
+    """Re-pull game logs only for a specific season. No season stats, no splits, no streaks."""
+    verify_admin(authorization)
+    try:
+        cmd = [sys.executable, "-c", f"""
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname('{PIPELINE_SCRIPT}'), '..'))
+sys.path.insert(0, os.path.dirname('{PIPELINE_SCRIPT}'))
+os.environ['MSF_API_KEY'] = os.environ.get('MSF_API_KEY', '')
+os.environ['DB_PATH'] = '{DB_PATH}'
+import sqlite3
+from pull_live_stats import pull_game_logs, detect_season
+conn = sqlite3.connect('{DB_PATH}')
+conn.execute('PRAGMA journal_mode=WAL')
+print('Starting game log repair for {season}')
+bat, pitch = pull_game_logs(conn, '{season}', full_refresh=True)
+conn.close()
+print(f'Done: {{bat}} batting, {{pitch}} pitching game logs')
+"""]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800,
+                                env={**os.environ})
+        return {
+            "status": "ok" if result.returncode == 0 else "error",
+            "stdout": result.stdout[-10000:] if result.stdout else "",
+            "stderr": result.stderr[-5000:] if result.stderr else "",
+        }
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Timed out")
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/run-sql")
 async def run_sql(
     sql: str = "",
