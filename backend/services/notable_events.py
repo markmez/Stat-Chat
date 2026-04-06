@@ -1303,9 +1303,7 @@ def detect_matchup_previews(conn, season):
         # Parse start time for display
         time_str = _parse_game_time_et(game.get("start_time", ""))
 
-        game_context = f"Matchup Preview · {away_display} vs {home_display}"
-        if time_str:
-            game_context += f", {time_str}"
+        game_context = "Matchup Preview"
 
         events.append({
             "headline": compelling,
