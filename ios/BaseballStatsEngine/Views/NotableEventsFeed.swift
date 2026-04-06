@@ -39,6 +39,7 @@ struct NotableEventsFeed: View {
     var onTeamTap: ((String) -> Void)?
     var onMatchupTap: ((String) -> Void)?  // Query string for matchup preview
     var showHeader: Bool = true
+    @Binding var matchupPills: [String]
 
     @State private var events: [NotableEvent] = []
     @State private var lastLoadTime: Date?
@@ -146,8 +147,18 @@ struct NotableEventsFeed: View {
             loaded = stubs + loaded
             #endif
 
+            // Extract matchup pill strings from "Tonight" events
+            let pills = loaded
+                .filter { $0.category == "Tonight" && $0.playerNames.count >= 2 }
+                .map { event -> String in
+                    let batter = event.playerNames[0]
+                    let lastName = batter.components(separatedBy: " ").last ?? batter
+                    return "\(lastName) tonight"
+                }
+
             await MainActor.run {
                 events = loaded
+                matchupPills = pills
                 lastLoadTime = Date()
             }
         } catch {
@@ -256,5 +267,5 @@ struct NotableEventsFeed: View {
 }
 
 #Preview {
-    NotableEventsFeed()
+    NotableEventsFeed(matchupPills: .constant([]))
 }

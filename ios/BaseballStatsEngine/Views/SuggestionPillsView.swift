@@ -5,6 +5,7 @@ import SwiftUI
 struct SuggestionPillsView: View {
     var searchHistory: [String] = []
     var compact: Bool = false
+    var matchupPills: [String] = []
     let onTap: (String) -> Void
 
     @State private var pool: [Suggestion] = []
@@ -53,10 +54,21 @@ struct SuggestionPillsView: View {
             .task(id: "rotate") {
                 await rotatePills()
             }
+            .onChange(of: matchupPills) { _, newPills in
+                // Inject matchup pills when feed loads (may arrive after initial pool build)
+                let matchupSuggestions = newPills.map { Suggestion(id: "matchup_\($0)", text: $0) }
+                pool.removeAll { $0.id.hasPrefix("matchup_") }
+                pool.insert(contentsOf: matchupSuggestions, at: 0)
+            }
         } else {
             Color.clear.frame(height: 20)
                 .task {
                     pool = SuggestionEngine.shared.buildPool(searchHistory: searchHistory)
+                    // Inject matchup preview pills at the front of the pool
+                    let matchupSuggestions = matchupPills.map {
+                        Suggestion(id: "matchup_\($0)", text: $0)
+                    }
+                    pool.insert(contentsOf: matchupSuggestions, at: 0)
                     let initial = Array(pool.prefix(maxVisible))
                     visible = initial
                     visibleSet = Set(initial.map(\.id))

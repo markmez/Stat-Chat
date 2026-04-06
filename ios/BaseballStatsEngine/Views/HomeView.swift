@@ -21,6 +21,7 @@ struct HomeView: View {
     @State private var feedScrolledToTop = true
     @FocusState private var isInputFocused: Bool
     @State private var lastNameSearchCount: Int = UserDefaults.standard.integer(forKey: "lastNameSearchCount")
+    @State private var matchupPills: [String] = []
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
@@ -202,7 +203,8 @@ struct HomeView: View {
 
                     SuggestionPillsView(
                         searchHistory: appState.searchHistory,
-                        compact: !StoreKitService.shared.isSubscribed
+                        compact: !StoreKitService.shared.isSubscribed,
+                        matchupPills: matchupPills
                     ) { query in
                         questionText = query
                     }
@@ -287,7 +289,11 @@ struct HomeView: View {
                         onTeamTap: { code in
                             path.append(TeamCardDestination(code: code))
                         },
-                        showHeader: false
+                        onMatchupTap: { query in
+                            path.append(ResultsDestination(question: query))
+                        },
+                        showHeader: false,
+                        matchupPills: $matchupPills
                     )
                 }
             }
