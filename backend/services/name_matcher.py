@@ -500,8 +500,11 @@ def find_player_in_text(text: str) -> Optional[str]:
             return nickname_aliases[alias]
 
     # Check full names (longest first, already sorted)
+    # Try both exact and accent-stripped matching
+    ascii_lower = strip_diacritics(lower)
     for name in sorted_names:
-        if contains_word(name.lower(), lower):
+        name_lower = name.lower()
+        if contains_word(name_lower, lower) or contains_word(strip_diacritics(name_lower), ascii_lower):
             return _resolve_embedded_name(name)
 
     # Try unambiguous last name
