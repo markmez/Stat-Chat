@@ -322,21 +322,10 @@ async def repair_game_logs(
     """Re-pull game logs only for a specific season. No season stats, no splits, no streaks."""
     verify_admin(authorization)
     try:
-        cmd = [sys.executable, "-c", f"""
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname('{PIPELINE_SCRIPT}'), '..'))
-sys.path.insert(0, os.path.dirname('{PIPELINE_SCRIPT}'))
-os.environ['MSF_API_KEY'] = os.environ.get('MSF_API_KEY', '')
-os.environ['DB_PATH'] = '{DB_PATH}'
-import sqlite3
-from pull_live_stats import pull_game_logs, detect_season
-conn = sqlite3.connect('{DB_PATH}')
-conn.execute('PRAGMA journal_mode=WAL')
-print('Starting game log repair for {season}')
-bat, pitch = pull_game_logs(conn, '{season}', full_refresh=True)
-conn.close()
-print(f'Done: {{bat}} batting, {{pitch}} pitching game logs')
-"""]
+        # Use the pipeline script directly with a special flag
+        pipeline_dir = os.path.dirname(PIPELINE_SCRIPT)
+        repair_script = os.path.join(pipeline_dir, "repair_game_logs.py")
+        cmd = [sys.executable, repair_script, "--season", season, "--db", DB_PATH]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800,
                                 env={**os.environ})
         return {
