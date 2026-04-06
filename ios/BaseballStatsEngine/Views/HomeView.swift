@@ -250,7 +250,7 @@ struct HomeView: View {
 
             // Tab bar — Twitter/X style underline
             HStack(spacing: 0) {
-                drawerTabButton("Notable", tab: .notable)
+                drawerTabButton("Events", tab: .notable)
                 drawerTabButton("Leaders", tab: .leaders)
             }
             .padding(.horizontal, 16)
