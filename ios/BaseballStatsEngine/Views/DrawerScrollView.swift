@@ -63,6 +63,8 @@ struct DrawerScrollView<Content: View>: UIViewRepresentable {
         var parent: DrawerScrollView
         var hostController: UIHostingController<Content>?
         private var didTriggerCollapse = false
+        private var wasAtTopWhenDragStarted = false
+        private var isDragging = false
 
         init(parent: DrawerScrollView) {
             self.parent = parent
@@ -76,10 +78,11 @@ struct DrawerScrollView<Content: View>: UIViewRepresentable {
                 }
             }
 
-            // If at top and user is pulling down (negative offset = rubber band)
-            if scrollView.contentOffset.y < -60 && !didTriggerCollapse {
+            // Only collapse on pull-down if the user STARTED their drag at the top
+            // This prevents momentum from an aggressive scroll-up triggering collapse
+            if isDragging && wasAtTopWhenDragStarted
+                && scrollView.contentOffset.y < -60 && !didTriggerCollapse {
                 didTriggerCollapse = true
-                // Reset content offset so it doesn't bounce weird
                 scrollView.contentOffset = .zero
                 DispatchQueue.main.async {
                     self.parent.onPullDown()
@@ -88,7 +91,13 @@ struct DrawerScrollView<Content: View>: UIViewRepresentable {
         }
 
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+            isDragging = true
             didTriggerCollapse = false
+            wasAtTopWhenDragStarted = scrollView.contentOffset.y <= 0
+        }
+
+        func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+            isDragging = false
         }
     }
 }
