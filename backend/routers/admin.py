@@ -313,6 +313,30 @@ async def fix_duplicate_players(
         raise HTTPException(500, str(e))
 
 
+@router.post("/run-sql")
+async def run_sql(
+    sql: str = "",
+    authorization: str | None = Header(None),
+):
+    """Run a SQL statement against the DB. USE WITH EXTREME CAUTION."""
+    verify_admin(authorization)
+    if not sql:
+        raise HTTPException(400, "No SQL provided")
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        if sql.strip().upper().startswith("SELECT"):
+            rows = conn.execute(sql).fetchall()
+            conn.close()
+            return {"rows": [list(r) for r in rows[:100]]}
+        else:
+            cur = conn.execute(sql)
+            conn.commit()
+            conn.close()
+            return {"status": "ok", "rows_affected": cur.rowcount}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/refresh-game-contexts")
 async def refresh_game_contexts(
     authorization: str | None = Header(None),
