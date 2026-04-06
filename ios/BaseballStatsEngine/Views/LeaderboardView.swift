@@ -151,8 +151,14 @@ struct LeaderboardView: View {
                             .frame(width: rankWidth, alignment: .trailing)
                     }
 
-                    // Player or team name (tappable)
-                    if let teamCode = PlayerCardService.teamCodeFromFullName(playerName),
+                    // Player or team name (tappable — skip in compact/pitch-mix mode)
+                    if isCompact {
+                        Text(playerName)
+                            .font(.system(.callout, design: .rounded, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .frame(width: nameWidth, alignment: .leading)
+                    } else if let teamCode = PlayerCardService.teamCodeFromFullName(playerName),
                        let tap = onTeamTap {
                         Button {
                             tap(teamCode)

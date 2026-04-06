@@ -4290,7 +4290,7 @@ def build_matchup(batter_name: str, pitcher_name: str,
             pitcher_last = pitcher_display.split()[-1] if pitcher_display else pitcher_display
             parts.append(f"**Pitch Mix Projection**")
             parts.append(f"[SUBTITLE]{batter_last}'s stats against each pitch in {pitcher_last}'s arsenal[/SUBTITLE]")
-            parts.append(f"[SUBTITLE]% is how often {pitcher_last} throws this pitch historically.[/SUBTITLE]")
+            parts.append(f"[SUBTITLE]% is how often {pitcher_last} throws this pitch historically[/SUBTITLE]")
             parts.append("[LEADERBOARD]")
             parts.append("HEADER: PA, AVG, OBP, SLG")
             for i, (pt, pct, pa, avg, obp, slg, ops) in enumerate(mix_table_rows):
