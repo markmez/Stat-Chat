@@ -612,46 +612,67 @@ def build_pitching_season_summary(name: str, season: int) -> Optional[str]:
 # 3. build_comparison
 # ===================================================================
 
-def _fetch_season_row(conn, name, year):
-    """Fetch a specific season's formatted batting values. Returns (year, values) or None."""
+def _aggregate_batting_season(conn, name, year):
+    """Aggregate batting stats across teams for a season. Returns (year, formatted_values) or None."""
     cur = conn.cursor()
     cur.execute(
-        "SELECT s.season, s.games, s.at_bats, s.runs, s.hits, "
-        "s.doubles, s.triples, s.home_runs, s.rbi, s.stolen_bases, s.caught_stealing, "
-        "s.walks, s.intentional_walks, s.strikeouts, s.hit_by_pitch, "
-        "s.batting_avg, s.obp, s.slg, s.ops, s.ops_plus, s.iso, s.babip "
+        "SELECT SUM(s.games), SUM(s.at_bats), SUM(s.runs), SUM(s.hits), "
+        "SUM(s.doubles), SUM(s.triples), SUM(s.home_runs), SUM(s.rbi), "
+        "SUM(s.stolen_bases), SUM(s.caught_stealing), "
+        "SUM(s.walks), SUM(s.intentional_walks), SUM(s.strikeouts), SUM(s.hit_by_pitch), "
+        "SUM(s.sacrifice_flies), SUM(s.plate_appearances) "
         "FROM season_batting_stats s "
         "JOIN players p ON s.player_id = p.player_id "
-        "WHERE p.name = ? AND s.season = ? LIMIT 1",
+        "WHERE p.name = ? AND s.season = ?",
         (_sanitize(name), year),
     )
     row = cur.fetchone()
-    if not row:
+    if not row or not row[0]:
         return None
-    yr = int(row[0])
-    values = [str(v) if v is not None else "" for v in row[1:22]]
-    return yr, _format_values(BATTING_HEADERS, values)
+    g, ab, r, h, d, t, hr, rbi, sb, cs, bb, ibb, so, hbp, sf, pa = row
+    avg = h / ab if ab else 0
+    obp_d = ab + bb + (hbp or 0) + (sf or 0)
+    obp = (h + bb + (hbp or 0)) / obp_d if obp_d else 0
+    singles = h - (d or 0) - (t or 0) - (hr or 0)
+    slg = (singles + 2*(d or 0) + 3*(t or 0) + 4*(hr or 0)) / ab if ab else 0
+    ops = obp + slg
+    iso = slg - avg
+    babip_d = ab - so - hr + (sf or 0)
+    babip = (h - hr) / babip_d if babip_d > 0 else 0
+    # OPS+ from single-team row (skip for multi-team)
+    ops_plus_row = cur.execute(
+        "SELECT s.ops_plus FROM season_batting_stats s "
+        "JOIN players p ON s.player_id = p.player_id "
+        "WHERE p.name = ? AND s.season = ? ORDER BY s.plate_appearances DESC LIMIT 1",
+        (_sanitize(name), year),
+    ).fetchone()
+    ops_plus = ops_plus_row[0] if ops_plus_row and ops_plus_row[0] is not None else "--"
+    values = [str(v) if v is not None else "" for v in
+              [g, ab, r, h, d, t, hr, rbi, sb, cs, bb, ibb, so, hbp,
+               avg, obp, slg, ops, ops_plus, iso, babip]]
+    return year, _format_values(BATTING_HEADERS, values)
+
+
+def _fetch_season_row(conn, name, year):
+    """Fetch a specific season's formatted batting values. Aggregates across teams."""
+    return _aggregate_batting_season(conn, name, year)
 
 
 def _fetch_latest_season_row(conn, name):
-    """Fetch latest season's formatted batting values."""
+    """Fetch latest season's formatted batting values. Aggregates across teams."""
     cur = conn.cursor()
     cur.execute(
-        "SELECT s.season, s.games, s.at_bats, s.runs, s.hits, "
-        "s.doubles, s.triples, s.home_runs, s.rbi, s.stolen_bases, s.caught_stealing, "
-        "s.walks, s.intentional_walks, s.strikeouts, s.hit_by_pitch, "
-        "s.batting_avg, s.obp, s.slg, s.ops, s.ops_plus, s.iso, s.babip "
-        "FROM season_batting_stats s "
+        "SELECT MAX(s.season) FROM season_batting_stats s "
         "JOIN players p ON s.player_id = p.player_id "
-        "WHERE p.name = ? ORDER BY s.season DESC LIMIT 1",
+        "WHERE p.name = ?",
         (_sanitize(name),),
     )
     row = cur.fetchone()
-    if not row:
+    if not row or not row[0]:
         return None
     yr = int(row[0])
-    values = [str(v) if v is not None else "" for v in row[1:22]]
-    return yr, _format_values(BATTING_HEADERS, values)
+    return _aggregate_batting_season(conn, name, yr)
+
 
 
 def _fetch_career_row(conn, name):
@@ -765,56 +786,79 @@ def build_comparison(name1: str, name2: str, season: Optional[int] = None) -> Op
 # 4. build_pitching_comparison
 # ===================================================================
 
-def _fetch_pitching_season_row(conn, name, year):
-    """Fetch a specific season's formatted pitching values."""
+def _aggregate_pitching_season(conn, name, year):
+    """Aggregate pitching stats across teams for a season. Returns (year, display_values) or None."""
     cur = conn.cursor()
     cur.execute(
-        "SELECT sp.season, sp.wins, sp.losses, sp.saves, sp.games, sp.games_started, "
-        "sp.games_finished, sp.complete_games, sp.quality_starts, sp.innings_pitched, "
-        "sp.hits, sp.runs, sp.earned_runs, sp.home_runs, sp.walks, sp.intentional_walks, "
-        "sp.strikeouts, sp.hit_by_pitch, sp.wild_pitches, sp.balks, "
-        "sp.batters_faced, sp.sacrifice_hits, sp.sacrifice_flies, "
-        "sp.stolen_bases, sp.caught_stealing, "
-        "sp.era, sp.whip, sp.k_per_9, sp.bb_per_9, sp.k_per_bb, "
-        "sp.h_per_9, sp.hr_per_9, sp.baa, sp.era_plus "
+        "SELECT SUM(sp.wins), SUM(sp.losses), SUM(sp.saves), SUM(sp.games), SUM(sp.games_started), "
+        "SUM(sp.games_finished), SUM(sp.complete_games), SUM(sp.quality_starts), "
+        "SUM(sp.ip_outs), "
+        "SUM(sp.hits), SUM(sp.runs), SUM(sp.earned_runs), SUM(sp.home_runs), "
+        "SUM(sp.walks), SUM(sp.intentional_walks), "
+        "SUM(sp.strikeouts), SUM(sp.hit_by_pitch), SUM(sp.wild_pitches), SUM(sp.balks), "
+        "SUM(sp.batters_faced), SUM(sp.sacrifice_hits), SUM(sp.sacrifice_flies), "
+        "SUM(sp.stolen_bases), SUM(sp.caught_stealing) "
         "FROM season_pitching_stats sp "
         "JOIN players p ON sp.player_id = p.player_id "
-        "WHERE p.name = ? AND sp.season = ? LIMIT 1",
+        "WHERE p.name = ? AND sp.season = ?",
         (_sanitize(name), year),
     )
     row = cur.fetchone()
-    if not row:
+    if not row or not row[0]:
         return None
-    yr = int(row[0])
-    values = [str(v) if v is not None else "" for v in row[1:34]]
+    w, l, sv, g, gs, gf, cg, qs = row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7]
+    ip_outs = row[8] or 0
+    h, r, er, hr = row[9], row[10], row[11], row[12]
+    bb, ibb, so, hbp = row[13], row[14], row[15], row[16]
+    wp, bk, bf, sh, sf = row[17], row[18], row[19], row[20], row[21]
+    sb_p, cs_p = row[22], row[23]
+    ip = ip_outs / 3.0 if ip_outs else 0
+    ip_display = f"{ip_outs // 3}.{ip_outs % 3}" if ip_outs else "0.0"
+    era = (er * 9.0) / ip if ip > 0 else 0
+    whip = (h + bb) / ip if ip > 0 else 0
+    k9 = (so * 9.0) / ip if ip > 0 else 0
+    bb9 = (bb * 9.0) / ip if ip > 0 else 0
+    k_bb = so / bb if bb else 0
+    h9 = (h * 9.0) / ip if ip > 0 else 0
+    hr9 = (hr * 9.0) / ip if ip > 0 else 0
+    baa_d = bf - bb - (hbp or 0) - (sh or 0) - (sf or 0) if bf else 0
+    baa = h / baa_d if baa_d > 0 else 0
+    era_plus_row = cur.execute(
+        "SELECT sp.era_plus FROM season_pitching_stats sp "
+        "JOIN players p ON sp.player_id = p.player_id "
+        "WHERE p.name = ? AND sp.season = ? ORDER BY sp.ip_outs DESC LIMIT 1",
+        (_sanitize(name), year),
+    ).fetchone()
+    era_plus = era_plus_row[0] if era_plus_row and era_plus_row[0] is not None else "--"
+    values = [str(v) if v is not None else "" for v in [
+        w, l, sv, g, gs, gf, cg, qs, ip_display,
+        h, r, er, hr, bb, ibb, so, hbp, wp, bk,
+        bf, sh, sf, sb_p, cs_p,
+        f"{era:.2f}", f"{whip:.2f}", f"{k9:.1f}", f"{bb9:.1f}", f"{k_bb:.1f}",
+        f"{h9:.1f}", f"{hr9:.1f}", f"{baa:.3f}", era_plus,
+    ]]
     formatted = _format_pitching_values(PITCHING_ALL_HEADERS, values)
-    return yr, _filter_pitching_for_display(formatted)
+    return year, _filter_pitching_for_display(formatted)
+
+
+def _fetch_pitching_season_row(conn, name, year):
+    """Fetch a specific season's formatted pitching values. Aggregates across teams."""
+    return _aggregate_pitching_season(conn, name, year)
 
 
 def _fetch_pitching_latest_season_row(conn, name):
-    """Fetch latest pitching season."""
+    """Fetch latest pitching season. Aggregates across teams."""
     cur = conn.cursor()
     cur.execute(
-        "SELECT sp.season, sp.wins, sp.losses, sp.saves, sp.games, sp.games_started, "
-        "sp.games_finished, sp.complete_games, sp.quality_starts, sp.innings_pitched, "
-        "sp.hits, sp.runs, sp.earned_runs, sp.home_runs, sp.walks, sp.intentional_walks, "
-        "sp.strikeouts, sp.hit_by_pitch, sp.wild_pitches, sp.balks, "
-        "sp.batters_faced, sp.sacrifice_hits, sp.sacrifice_flies, "
-        "sp.stolen_bases, sp.caught_stealing, "
-        "sp.era, sp.whip, sp.k_per_9, sp.bb_per_9, sp.k_per_bb, "
-        "sp.h_per_9, sp.hr_per_9, sp.baa, sp.era_plus "
-        "FROM season_pitching_stats sp "
+        "SELECT MAX(sp.season) FROM season_pitching_stats sp "
         "JOIN players p ON sp.player_id = p.player_id "
-        "WHERE p.name = ? ORDER BY sp.season DESC LIMIT 1",
+        "WHERE p.name = ?",
         (_sanitize(name),),
     )
     row = cur.fetchone()
-    if not row:
+    if not row or not row[0]:
         return None
-    yr = int(row[0])
-    values = [str(v) if v is not None else "" for v in row[1:34]]
-    formatted = _format_pitching_values(PITCHING_ALL_HEADERS, values)
-    return yr, _filter_pitching_for_display(formatted)
+    return _aggregate_pitching_season(conn, name, int(row[0]))
 
 
 def _fetch_pitching_career_row(conn, name):
@@ -914,25 +958,37 @@ def build_pitching_comparison(name1: str, name2: str, season: Optional[int] = No
 # ===================================================================
 
 def build_single_stat_lookup(name: str, stat_info: StatInfo, season: int) -> Optional[str]:
-    """Single batting stat value formatted as natural-language text."""
+    """Single batting stat value formatted as natural-language text. Aggregates across teams."""
     conn = _get_db()
     try:
         season = _resolve_season(conn, name, season)
         cur = conn.cursor()
-        cur.execute(
-            f"SELECT p.name, s.team, s.{stat_info.db_column} "
-            "FROM season_batting_stats s "
-            "JOIN players p ON s.player_id = p.player_id "
-            "WHERE p.name = ? AND s.season = ? LIMIT 1",
-            (_sanitize(name), season),
-        )
-        row = cur.fetchone()
-        if not row or len(row) < 3:
-            return None
+        col = stat_info.db_column
+        if stat_info.is_rate:
+            # Rate stats need recomputation from components
+            result = _aggregate_batting_season(conn, name, season)
+            if not result:
+                return None
+            # Find the stat value from the formatted values
+            idx = BATTING_HEADERS.index(stat_info.display_abbrev) if stat_info.display_abbrev in BATTING_HEADERS else -1
+            if idx < 0:
+                return None
+            raw_value = result[1][idx]
+        else:
+            # Counting stats: simple SUM
+            cur.execute(
+                f"SELECT p.name, SUM(s.{col}) "
+                "FROM season_batting_stats s "
+                "JOIN players p ON s.player_id = p.player_id "
+                "WHERE p.name = ? AND s.season = ?",
+                (_sanitize(name), season),
+            )
+            row = cur.fetchone()
+            if not row or row[1] is None:
+                return None
+            raw_value = str(row[1])
 
-        display_name = row[0]
-        team = row[1]
-        raw_value = str(row[2]) if row[2] is not None else ""
+        display_name, team = _get_player_info(conn, name)
 
         formatted_value = _format_rate(raw_value) if stat_info.is_rate else raw_value
 
@@ -975,25 +1031,35 @@ def build_single_stat_lookup(name: str, stat_info: StatInfo, season: int) -> Opt
 # ===================================================================
 
 def build_pitching_single_stat_lookup(name: str, stat_info: StatInfo, season: int) -> Optional[str]:
-    """Single pitching stat value formatted as natural-language text."""
+    """Single pitching stat value formatted as natural-language text. Aggregates across teams."""
     conn = _get_db()
     try:
         season = _resolve_season(conn, name, season, "season_pitching_stats", "sp")
         cur = conn.cursor()
-        cur.execute(
-            f"SELECT p.name, sp.team, sp.{stat_info.db_column} "
-            "FROM season_pitching_stats sp "
-            "JOIN players p ON sp.player_id = p.player_id "
-            "WHERE p.name = ? AND sp.season = ? LIMIT 1",
-            (_sanitize(name), season),
-        )
-        row = cur.fetchone()
-        if not row or len(row) < 3:
-            return None
+        col = stat_info.db_column
+        if stat_info.is_rate:
+            result = _aggregate_pitching_season(conn, name, season)
+            if not result:
+                return None
+            # Find stat in the display values
+            idx = PITCHING_HEADERS.index(stat_info.display_abbrev) if stat_info.display_abbrev in PITCHING_HEADERS else -1
+            if idx < 0:
+                return None
+            raw_value = result[1][idx]
+        else:
+            cur.execute(
+                f"SELECT p.name, SUM(sp.{col}) "
+                "FROM season_pitching_stats sp "
+                "JOIN players p ON sp.player_id = p.player_id "
+                "WHERE p.name = ? AND sp.season = ?",
+                (_sanitize(name), season),
+            )
+            row = cur.fetchone()
+            if not row or row[1] is None:
+                return None
+            raw_value = str(row[1])
 
-        display_name = row[0]
-        team = row[1]
-        raw_value = str(row[2]) if row[2] is not None else ""
+        display_name, team = _get_player_info(conn, name)
 
         formatted_value = _format_pitching_rate(raw_value, 2) if stat_info.is_rate else raw_value
 
@@ -1030,28 +1096,24 @@ def build_pitching_single_stat_lookup(name: str, stat_info: StatInfo, season: in
 # ===================================================================
 
 def build_slash_line_lookup(name: str, season: int) -> Optional[str]:
-    """AVG/OBP/SLG formatted as a small [STATGRID]."""
+    """AVG/OBP/SLG formatted as a small [STATGRID]. Aggregates across teams."""
     conn = _get_db()
     try:
         season = _resolve_season(conn, name, season)
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT p.name, s.team, s.batting_avg, s.obp, s.slg, s.ops "
-            "FROM season_batting_stats s "
-            "JOIN players p ON s.player_id = p.player_id "
-            "WHERE p.name = ? AND s.season = ? LIMIT 1",
-            (_sanitize(name), season),
-        )
-        row = cur.fetchone()
-        if not row or len(row) < 6:
+        result = _aggregate_batting_season(conn, name, season)
+        if not result:
             return None
-
-        display_name = row[0]
-        team = row[1]
-        avg = _format_rate(row[2])
-        obp = _format_rate(row[3])
-        slg = _format_rate(row[4])
-        ops = _format_rate(row[5])
+        _, values = result
+        display_name, team = _get_player_info(conn, name)
+        # AVG, OBP, SLG, OPS indices in BATTING_HEADERS
+        avg_idx = BATTING_HEADERS.index("AVG")
+        obp_idx = BATTING_HEADERS.index("OBP")
+        slg_idx = BATTING_HEADERS.index("SLG")
+        ops_idx = BATTING_HEADERS.index("OPS")
+        avg = values[avg_idx]
+        obp = values[obp_idx]
+        slg = values[slg_idx]
+        ops = values[ops_idx]
         team_display = _team_full_name(team)
 
         result = (
