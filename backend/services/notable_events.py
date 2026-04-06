@@ -1864,17 +1864,16 @@ def detect_all(db_path=None, season=None, from_poll=False):
     events += otd_events
     print(f"    On This Date: {len(otd_events)} events")
 
-    # Remove stale streak events for the same player + type + date
-    # (a re-run with updated data should replace the old streak count)
-    streak_types = {"hitting_streak", "onbase_streak", "hr_streak", "pitching_streak",
-                    "cross_season_hitting_streak", "cross_season_on_base_streak"}
-    for e in events:
-        if e["detection_type"] in streak_types and e.get("player_names"):
-            conn.execute("""
-                DELETE FROM notable_events
-                WHERE detection_type = ? AND game_date = ? AND player_names = ?
-            """, (e["detection_type"], e["game_date"],
-                  json.dumps(e.get("player_names", []))))
+    # Remove ALL streak events for latest_date — full recompute replaces them
+    # This ensures stale streaks (from bad data) get cleaned up even if the
+    # player no longer qualifies for a streak event
+    streak_types_tuple = ("hitting_streak", "onbase_streak", "hr_streak", "pitching_streak",
+                          "cross_season_hitting_streak", "cross_season_on_base_streak")
+    placeholders = ",".join("?" * len(streak_types_tuple))
+    conn.execute(f"""
+        DELETE FROM notable_events
+        WHERE detection_type IN ({placeholders}) AND game_date = ?
+    """, (*streak_types_tuple, latest_date))
     conn.commit()
 
     # Deduplicated insert with game context
