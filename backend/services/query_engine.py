@@ -909,10 +909,10 @@ def decompose(question: str) -> QueryPlan:
 
     # Game-log counting: "most 3-hit games", "most games with 3+ RBI", "most 10-K games"
     # Pattern 1: "N-stat games" / "N+ stat games"
-    multi_game_match = re.search(r'(\d+)[+-]?\s*(?:hit|hr|home run|homer|rbi|strikeout|k)\s*game', lower)
+    multi_game_match = re.search(r'(\d+)[+-]?\s*(?:hit|hr|home run|homer|rbi|strikeout|k|xbh|extra[- ]?base[- ]?hit|walk|bb|steal|stolen base|sb|run)\s*game', lower)
     # Pattern 2: "games with N+ stat"
     if not multi_game_match:
-        multi_game_match = re.search(r'games?\s+with\s+(\d+)\+?\s*(?:hit|hr|home run|homer|rbi|strikeout|k)', lower)
+        multi_game_match = re.search(r'games?\s+with\s+(\d+)\+?\s*(?:hit|hr|home run|homer|rbi|strikeout|k|xbh|extra[- ]?base[- ]?hit|walk|bb|steal|stolen base|sb|run)', lower)
 
     if multi_game_match:
         plan.query_type = "game_log_count"
@@ -924,10 +924,34 @@ def decompose(question: str) -> QueryPlan:
             plan.game_log_stat = "rbi"
         elif any(w in context for w in ["strikeout", "k"]):
             plan.game_log_stat = "strikeouts"
+        elif any(w in context for w in ["xbh", "extra base", "extra-base"]):
+            plan.game_log_stat = "xbh"
+        elif any(w in context for w in ["walk", "bb"]):
+            plan.game_log_stat = "walks"
+        elif any(w in context for w in ["steal", "stolen", "sb"]):
+            plan.game_log_stat = "stolen_bases"
+        elif any(w in context for w in ["run ", "runs"]):
+            plan.game_log_stat = "runs"
         elif "hit" in context:
             plan.game_log_stat = "hits"
         plan.game_log_threshold = n
         _add_consumed(plan, multi_game_match.group(0).replace("+", ""))
+
+    # XBH-specific patterns: "4xbh games", "4+ xbh", "extra base hit games"
+    if not plan.game_log_stat:
+        xbh_match = re.search(r'(\d+)\+?\s*(?:xbh|extra[- ]?base[- ]?hit)', lower)
+        if xbh_match:
+            plan.query_type = "game_log_count"
+            plan.game_log_stat = "xbh"
+            plan.game_log_threshold = int(xbh_match.group(1))
+            # Consume the full matched text and all variations
+            full_match = xbh_match.group(0).replace("+", "")
+            _add_consumed(plan, f"{full_match} extra base hit xbh")
+            # Also consume combined tokens like "4xbh+" as whole words
+            for token in lower.split():
+                if "xbh" in token or "extra" in token:
+                    plan.consumed_words.add(token.strip("+-.,"))
+                    plan.consumed_words.add(token)  # include with punctuation too
 
     if "multi-hit" in lower or "multi hit" in lower:
         plan.query_type = "game_log_count"
@@ -1113,7 +1137,7 @@ def decompose(question: str) -> QueryPlan:
     # --- Check for unexplained words ---
     words = re.findall(r"[a-z0-9'+%-]+", lower)
     for w in words:
-        w_clean = w.strip("?.!,'")
+        w_clean = w.strip("?.!,'+%-")
         if not w_clean:
             continue
         if w_clean in _STOP_WORDS:
@@ -1993,7 +2017,7 @@ def _execute_split_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
 
 
 def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
-    """Game-log counting: 'most multi-hit games', 'most 3-HR games'."""
+    """Game-log counting: 'most multi-hit games', 'most 3-HR games', '4+ XBH games'."""
     if not plan.game_log_stat or not plan.game_log_threshold:
         return None
 
@@ -2001,17 +2025,25 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
     col = plan.game_log_stat
     threshold = plan.game_log_threshold
 
+    # Computed stats
+    _computed_cols = {
+        "xbh": "(g.doubles + g.triples + g.home_runs)",
+    }
+    col_expr = _computed_cols.get(col, f"g.{col}")
+
     season_filter = f" AND g.season = ?" if plan.season else ""
     params = [threshold]
     if plan.season:
         params.append(plan.season)
 
     cur = conn.cursor()
+
+    # First: get the leaderboard (who had the most such games)
     cur.execute(
         f"SELECT p.name, COUNT(*) AS game_count "
         f"FROM {table} g "
         f"JOIN players p ON g.player_id = p.player_id "
-        f"WHERE g.{col} >= ?{season_filter} "
+        f"WHERE {col_expr} >= ?{season_filter} "
         f"GROUP BY g.player_id "
         f"ORDER BY game_count DESC LIMIT ?",
         tuple(params + [plan.limit]),
@@ -2020,14 +2052,23 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
     if not rows:
         return None
 
-    scope_label = str(plan.season) if plan.season else "2016-2025"
+    # Total count of such games
+    cur.execute(
+        f"SELECT COUNT(*) FROM {table} g "
+        f"WHERE {col_expr} >= ?{season_filter}",
+        tuple(params[:1] + (params[1:2] if plan.season else [])),
+    )
+    total_games = cur.fetchone()[0]
+
+    scope_label = str(plan.season) if plan.season else "All-Time"
     _game_stat_labels = {
         "hits": "Hits", "home_runs": "HR", "rbi": "RBI", "runs": "Runs",
         "stolen_bases": "SB", "walks": "BB", "strikeouts": "K", "doubles": "2B",
-        "triples": "3B",
+        "triples": "3B", "xbh": "XBH",
     }
     stat_name = _game_stat_labels.get(col, col.replace("_", " ").title())
-    title = f"**Most Games with {threshold}+ {stat_name} ({scope_label})**\n"
+    total_players = len(rows)
+    title = f"**{total_games} games with {threshold}+ {stat_name} in {scope_label}** ({total_players} players)\n"
     parts = [title]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
@@ -2036,7 +2077,46 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
         parts.append(f"ROW {i+1}. {row[0]}: {row[1]}")
     parts.append("[/LEADERBOARD]")
 
-    # Suggestion pills for game-log counts
+    # Show individual instances (up to 25) with details
+    detail_cols = "g.date, p.name, g.doubles, g.triples, g.home_runs, g.hits, g.at_bats, g.rbi"
+    cur.execute(
+        f"SELECT {detail_cols} "
+        f"FROM {table} g "
+        f"JOIN players p ON g.player_id = p.player_id "
+        f"WHERE {col_expr} >= ?{season_filter} "
+        f"ORDER BY {col_expr} DESC, g.date DESC LIMIT 25",
+        tuple(params[:1] + (params[1:2] if plan.season else [])),
+    )
+    details = cur.fetchall()
+    if details:
+        parts.append("")
+        parts.append(f"**Individual Games ({min(len(details), 25)} of {total_games})**")
+        parts.append("[LEADERBOARD]")
+        if col == "xbh":
+            parts.append("HEADER: XBH, 2B, 3B, HR, H-AB")
+            for i, (dt, name, d, t, hr, h, ab, rbi) in enumerate(details):
+                xbh = (d or 0) + (t or 0) + (hr or 0)
+                # Format date as M/D
+                try:
+                    from datetime import datetime as _dt
+                    dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
+                except:
+                    dt_fmt = dt
+                parts.append(f"ROW {i+1}. {name} ({dt_fmt}): {xbh}, {d or 0}, {t or 0}, {hr or 0}, {h}-{ab}")
+        else:
+            parts.append(f"HEADER: {stat_name}, H-AB, Date")
+            for i, (dt, name, d, t, hr, h, ab, rbi) in enumerate(details):
+                val = {"hits": h, "home_runs": hr, "rbi": rbi, "doubles": d, "triples": t,
+                       "runs": 0, "walks": 0, "strikeouts": 0, "stolen_bases": 0}.get(col, 0)
+                try:
+                    from datetime import datetime as _dt
+                    dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
+                except:
+                    dt_fmt = dt
+                parts.append(f"ROW {i+1}. {name} ({dt_fmt}): {val}, {h}-{ab}, {dt_fmt}")
+        parts.append("[/LEADERBOARD]")
+
+    # Suggestion pills
     if col == "strikeouts" and not plan.is_pitching:
         parts.append(f"\n[SUGGEST]most {threshold}+ K games by a pitcher[/SUGGEST]")
     elif col == "strikeouts" and plan.is_pitching:
