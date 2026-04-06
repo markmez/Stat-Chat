@@ -207,6 +207,27 @@ async def load_historical_gamelogs(
         raise HTTPException(500, str(e))
 
 
+@router.delete("/clear-matchup-previews")
+async def clear_matchup_previews(
+    authorization: str | None = Header(None),
+):
+    """Delete all matchup_preview events for today so they can be regenerated."""
+    verify_admin(authorization)
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        today = date.today().isoformat()
+        cur = conn.execute(
+            "DELETE FROM notable_events WHERE detection_type = 'matchup_preview' AND game_date = ?",
+            (today,)
+        )
+        conn.commit()
+        deleted = cur.rowcount
+        conn.close()
+        return {"status": "ok", "deleted": deleted}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/detect-notable")
 async def detect_notable(
     authorization: str | None = Header(None),
