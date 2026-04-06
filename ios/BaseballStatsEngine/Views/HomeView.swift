@@ -359,10 +359,11 @@ struct HomeView: View {
                 Rectangle()
                     .fill(drawerTab == tab ? deepBlue : .clear)
                     .frame(height: 2)
+                    .frame(width: CGFloat(title.count) * 8 + 4)
             }
-            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
     }
 
     private var freeUsageIndicator: some View {

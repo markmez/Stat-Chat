@@ -3,98 +3,108 @@ import SwiftUI
 struct StatLeadersView: View {
     var onPlayerTap: ((String) -> Void)?
 
-    @State private var data: BackendService.LeadersResponse?
-    @State private var selectedLeague = "MLB"
+    @State private var leagueData: [String: BackendService.LeadersResponse] = [:]
+    @State private var selectedLeaguePerStat: [String: String] = [:]  // stat → league
     @State private var expandedStats: Set<String> = []
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
-    private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
     private let leagues = ["MLB", "AL", "NL"]
 
+    private func dataForStat(_ stat: String, from boards: [BackendService.StatLeaderboard], league: String) -> BackendService.StatLeaderboard? {
+        let targetData = leagueData[league]
+        // Find this stat in the target league's data
+        let allBoards = (targetData?.batting ?? []) + (targetData?.pitching ?? [])
+        return allBoards.first { $0.stat == stat }
+    }
+
+    private func leagueForStat(_ stat: String) -> String {
+        selectedLeaguePerStat[stat] ?? "MLB"
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // League tabs — Twitter/X style underline
-            HStack(spacing: 0) {
-                ForEach(leagues, id: \.self) { league in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            selectedLeague = league
-                        }
-                        Task { await loadLeaders(league: league) }
-                    } label: {
-                        VStack(spacing: 6) {
-                            Text(league)
-                                .font(.system(.subheadline, design: .rounded, weight: selectedLeague == league ? .bold : .medium))
-                                .foregroundStyle(selectedLeague == league ? .primary : .secondary)
-                            Rectangle()
-                                .fill(selectedLeague == league ? deepBlue : .clear)
-                                .frame(height: 2)
-                        }
-                        .frame(maxWidth: .infinity)
+        let mlbData = leagueData["MLB"]
+
+        if mlbData != nil && !(mlbData!.batting.isEmpty && mlbData!.pitching.isEmpty) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Batting
+                    ForEach(mlbData!.batting, id: \.stat) { board in
+                        leaderSection(stat: board.stat, defaultBoard: board)
                     }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 4)
 
-            if let data = data, !data.batting.isEmpty {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        // Batting
-                        ForEach(data.batting, id: \.stat) { board in
-                            leaderSection(board: board, isBatting: true)
+                    // Pitching divider
+                    if !mlbData!.pitching.isEmpty {
+                        HStack(spacing: 8) {
+                            Rectangle().fill(deepBlue.opacity(0.2)).frame(height: 1)
+                            Text("Pitching")
+                                .font(.system(.caption2, design: .rounded, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Rectangle().fill(deepBlue.opacity(0.2)).frame(height: 1)
                         }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 4)
 
-                        // Pitching divider
-                        if !data.pitching.isEmpty {
-                            HStack(spacing: 8) {
-                                Rectangle().fill(deepBlue.opacity(0.2)).frame(height: 1)
-                                Text("Pitching")
-                                    .font(.system(.caption2, design: .rounded, weight: .semibold))
-                                    .foregroundStyle(.secondary)
-                                Rectangle().fill(deepBlue.opacity(0.2)).frame(height: 1)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.top, 4)
-
-                            ForEach(data.pitching, id: \.stat) { board in
-                                leaderSection(board: board, isBatting: false)
-                            }
+                        ForEach(mlbData!.pitching, id: \.stat) { board in
+                            leaderSection(stat: board.stat, defaultBoard: board)
                         }
-
-                        Spacer().frame(height: 20)
                     }
-                    .padding(.top, 12)
+
+                    Spacer().frame(height: 20)
                 }
-            } else {
-                VStack {
-                    Spacer()
-                    ProgressView()
-                        .tint(deepBlue)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
+                .padding(.top, 8)
             }
-        }
-        .task {
-            if data == nil {
-                await loadLeaders(league: selectedLeague)
+        } else {
+            VStack {
+                Spacer()
+                ProgressView()
+                    .tint(deepBlue)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+            .task {
+                await loadLeaders(league: "MLB")
             }
         }
     }
 
     @ViewBuilder
-    private func leaderSection(board: BackendService.StatLeaderboard, isBatting: Bool) -> some View {
-        let isExpanded = expandedStats.contains(board.stat)
+    private func leaderSection(stat: String, defaultBoard: BackendService.StatLeaderboard) -> some View {
+        let league = leagueForStat(stat)
+        let board = dataForStat(stat, from: [], league: league) ?? defaultBoard
+        let isExpanded = expandedStats.contains(stat)
         let displayCount = isExpanded ? board.leaders.count : min(5, board.leaders.count)
 
         VStack(alignment: .leading, spacing: 4) {
-            // Stat header
-            Text(board.stat)
-                .font(.system(.subheadline, design: .rounded, weight: .bold))
-                .foregroundStyle(deepBlue)
-                .padding(.horizontal, 20)
+            // Stat header + league selector
+            HStack {
+                Text(stat)
+                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                    .foregroundStyle(deepBlue)
+
+                Spacer()
+
+                // Inline league pills
+                HStack(spacing: 0) {
+                    ForEach(leagues, id: \.self) { lg in
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                selectedLeaguePerStat[stat] = lg
+                            }
+                            if leagueData[lg] == nil {
+                                Task { await loadLeaders(league: lg) }
+                            }
+                        } label: {
+                            Text(lg)
+                                .font(.system(.caption2, design: .rounded, weight: league == lg ? .bold : .regular))
+                                .foregroundStyle(league == lg ? deepBlue : .secondary.opacity(0.6))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
 
             // Leader rows
             ForEach(Array(board.leaders.prefix(displayCount).enumerated()), id: \.offset) { idx, leader in
@@ -130,9 +140,9 @@ struct StatLeadersView: View {
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         if isExpanded {
-                            expandedStats.remove(board.stat)
+                            expandedStats.remove(stat)
                         } else {
-                            expandedStats.insert(board.stat)
+                            expandedStats.insert(stat)
                         }
                     }
                 } label: {
@@ -151,7 +161,7 @@ struct StatLeadersView: View {
         do {
             let result = try await BackendService().fetchLeaders(league: league)
             await MainActor.run {
-                data = result
+                leagueData[league] = result
             }
         } catch {
             // Silent fail
