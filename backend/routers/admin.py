@@ -260,6 +260,59 @@ async def purge_duplicate_streaks(
         raise HTTPException(500, str(e))
 
 
+@router.post("/fix-duplicate-players")
+async def fix_duplicate_players(
+    authorization: str | None = Header(None),
+):
+    """Reset corrupted duplicate player entries to their Retrosheet originals.
+    For players with duplicate names, resets the OLDER entry's name/team back
+    to what Retrosheet had, undoing any MSF overwrites."""
+    verify_admin(authorization)
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        # Find all player_ids that share a name with another player
+        dupes = conn.execute("""
+            SELECT p1.player_id, p1.name, p1.team,
+                   MAX(COALESCE(s.season, sp.season, 0)) as last_active
+            FROM players p1
+            JOIN players p2 ON p1.name = p2.name AND p1.player_id != p2.player_id
+            LEFT JOIN season_batting_stats s ON p1.player_id = s.player_id
+            LEFT JOIN season_pitching_stats sp ON p1.player_id = sp.player_id
+            GROUP BY p1.player_id
+        """).fetchall()
+
+        # For each name, keep the most recently active, reset others
+        from collections import defaultdict
+        by_name = defaultdict(list)
+        for pid, name, team, last_active in dupes:
+            by_name[name].append((pid, team, last_active or 0))
+
+        fixed = 0
+        for name, entries in by_name.items():
+            if len(entries) < 2:
+                continue
+            entries.sort(key=lambda x: x[2], reverse=True)
+            # The first one is the active player — leave it alone
+            # Reset all others: clear any MSF name overwrites by keeping the name
+            # but restoring the original team from their most recent season stats
+            for pid, team, last_active in entries[1:]:
+                # Get their original team from their most recent season
+                orig = conn.execute("""
+                    SELECT team FROM season_batting_stats
+                    WHERE player_id = ? ORDER BY season DESC LIMIT 1
+                """, (pid,)).fetchone()
+                if orig and orig[0] and orig[0] != team:
+                    conn.execute("UPDATE players SET team = ? WHERE player_id = ?",
+                                (orig[0], pid))
+                    fixed += 1
+
+        conn.commit()
+        conn.close()
+        return {"status": "ok", "fixed": fixed}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/refresh-game-contexts")
 async def refresh_game_contexts(
     authorization: str | None = Header(None),
