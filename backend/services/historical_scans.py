@@ -1095,7 +1095,37 @@ def template_facts(conn, facts, season, latest_date):
             runner_up = f["runner_up"]
             runner_up_val = f["runner_up_val"]
 
-            if game_line:
+            # Build stat-appropriate game intro
+            if stat in ("batting_avg", "obp", "ops", "slg") and pid:
+                # For rate stats, show the components that drive the rate
+                game_row = conn.execute("""
+                    SELECT hits, at_bats, walks, hit_by_pitch, home_runs,
+                           doubles, triples
+                    FROM game_batting_logs
+                    WHERE player_id = ? AND date = (
+                        SELECT MAX(date) FROM game_batting_logs
+                        WHERE player_id = ? AND season = ?
+                    ) AND season = ?
+                    LIMIT 1
+                """, (pid, pid, season, season)).fetchone()
+                if game_row:
+                    h, ab, bb, hbp, hr, d, t = game_row
+                    h, ab, bb = h or 0, ab or 0, bb or 0
+                    hbp, hr, d, t = hbp or 0, hr or 0, d or 0, t or 0
+                    parts = [f"{h} for {ab}"]
+                    if bb > 0:
+                        parts.append(f"{'a walk' if bb == 1 else f'{bb} walks'}")
+                    if hr > 0:
+                        parts.append(f"{'a homer' if hr == 1 else f'{hr} homers'}")
+                    elif d > 0 or t > 0:
+                        xbh_parts = []
+                        if d > 0: xbh_parts.append(f"{'a double' if d == 1 else f'{d} doubles'}")
+                        if t > 0: xbh_parts.append(f"{'a triple' if t == 1 else f'{t} triples'}")
+                        parts.extend(xbh_parts)
+                    game_intro = f"{player} went {' with '.join([parts[0]] + [', '.join(parts[1:])])} last night" if len(parts) > 1 else f"{player} went {parts[0]} last night"
+                else:
+                    game_intro = f"{player}"
+            elif game_line:
                 game_intro = f"{player} went {game_line} last night"
             elif stat == "stolen_bases":
                 game_intro = f"{player} swiped a bag last night"

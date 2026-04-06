@@ -163,7 +163,11 @@ _STOP_WORDS = {
     "struck", "walked", "walking",
     "scored", "allowed", "given", "gave",
     "during", "when", "where", "only",
-    "ago", "back", "since", "sub",
+    "ago", "back", "since", "sub", "among",
+    "between", "across", "through", "around", "about", "within",
+    "per", "into", "both", "either", "but", "so", "yet",
+    "while", "above", "below", "without", "like",
+    "really", "actually", "currently", "recently",
     "?", "!", ".",
 }
 
@@ -371,6 +375,15 @@ def _parse_stat_condition(text: str) -> Optional[StatCondition]:
         stat = match_stat(cleaned)
 
     if not stat:
+        # Last resort: if there's a rate-looking number (.XXX or 0.XXX) with no stat,
+        # infer batting average. Handles ".300 hitters", ".400 club", etc.
+        rate_match = re.search(r'\.(\d{3})\b', lower)
+        if rate_match:
+            val = float("0." + rate_match.group(1))
+            if 0.1 <= val <= 0.5:  # batting average range
+                avg_stat = stat_alias_map.get("batting average") or stat_alias_map.get("avg")
+                if avg_stat:
+                    return StatCondition(avg_stat, None, val, ">=", text)
         return None
 
     # Build consumed text from just the matched stat alias + threshold
@@ -555,6 +568,8 @@ def decompose(question: str) -> QueryPlan:
         # This handles "sub .250 AVG", "batted .300", "stole 50 bases" etc.
         # Strip age patterns first so "under 25" isn't treated as a stat threshold
         stat_text = lower
+        # Strip "top N" so the number doesn't get parsed as a stat threshold
+        stat_text = re.sub(r'\btop\s+\d+\b', '', stat_text)
         # Strip game-context phrases so "game" doesn't match as a stat
         for phrase in ["in a game", "in one game", "in a single game"]:
             stat_text = stat_text.replace(phrase, " ")

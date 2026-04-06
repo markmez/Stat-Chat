@@ -230,7 +230,16 @@ def _display_col_name(col: str) -> Optional[str]:
     # Short names (<=4 chars) → uppercase (likely abbreviations)
     if len(cleaned) <= 4:
         return cleaned.upper()
-    return cleaned.title()
+    # Join consecutive numbers with a dash: "40 47" → "40-47"
+    import re as _re2
+    cleaned = _re2.sub(r'(\d+)\s+(\d+)', r'\1-\2', cleaned)
+    # Title case, then uppercase known stat abbreviations
+    result = cleaned.title()
+    for word, abbrev in [("Hr", "HR"), ("Rbi", "RBI"), ("Sb", "SB"), ("So", "SO"),
+                          ("Bb", "BB"), ("Avg", "AVG"), ("Obp", "OBP"), ("Slg", "SLG"),
+                          ("Ops", "OPS"), ("Era", "ERA"), ("Whip", "WHIP"), ("Ip", "IP")]:
+        result = result.replace(word, abbrev)
+    return result
 
 
 def _format_haiku_result(result_text: str) -> str:
@@ -327,7 +336,9 @@ def _format_haiku_result(result_text: str) -> str:
             name = row.get("name", "")
             team = f" ({row.get('team', '')})" if use_team_in_label and row.get("team") else ""
             label_parts.append(f"{name}{team}")
-        if "season" in label_cols and has_season:
+        # Show season in label only when rows span multiple seasons
+        # (when season is NOT in label_cols, it means mixed years → show it)
+        if has_season and "season" not in label_cols:
             label_parts.append(str(row.get("season", "")))
 
         label = ", ".join(label_parts) if label_parts else ""

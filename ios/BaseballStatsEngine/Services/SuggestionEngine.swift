@@ -322,13 +322,19 @@ final class SuggestionEngine {
 
     // MARK: - Player/team extraction
 
+    // Players whose names collide with common baseball terms — exclude from suggestions
+    private static let suggestionExclusions: Set<String> = [
+        "home run baker",
+    ]
+
     private func extractSearchedPlayers(from history: [String]) -> [String] {
         var players: [String] = []
         var seen: Set<String> = []
         for query in history {
             let cleaned = query.contains("→") ? String(query.split(separator: "→").last ?? Substring(query)) : query
             if let name = PlayerNameMatcher.matchPlayer(cleaned.trimmingCharacters(in: .whitespaces)),
-               !seen.contains(name.lowercased()) {
+               !seen.contains(name.lowercased()),
+               !Self.suggestionExclusions.contains(name.lowercased()) {
                 players.append(name)
                 seen.insert(name.lowercased())
             }

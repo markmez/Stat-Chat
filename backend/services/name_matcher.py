@@ -1902,8 +1902,11 @@ def _extract_threshold(text: str, skip_years: bool = True,
             if 1900 <= int_num <= 2099 and "." not in num_str:
                 continue
         # "hitting 300" → .300  (whole-number batting avg shorthand)
+        # Only apply when no specific stat is provided, or stat IS a sub-1 rate stat.
+        # "200 hit club" has stat=hits (counting), so "hit" here is a noun, not a verb.
         if _avg_verb and 200 <= num <= 400 and "." not in num_str:
-            return num / 1000
+            if stat is None or (stat and stat.db_column in _sub_one_stats):
+                return num / 1000
         # "800 OPS", "350 OBP", etc. → divide by 1000 for sub-1 rate stats
         if (stat and stat.db_column in _sub_one_stats
                 and 100 <= num <= 999 and "." not in num_str):
@@ -2412,6 +2415,16 @@ def parse_count_query(input_str: str) -> Optional[dict]:
 def parse_catch_all_player_stat(input_str: str) -> Optional[dict]:
     """Last-resort parser: player name + stat keyword. Returns dict with name, stat, season, is_career."""
     lower = input_str.strip().lower()
+
+    # Reject queries where the player name is context, not the subject.
+    # Questions starting with interrogative words are asking about the stat broadly,
+    # not about the specific player mentioned.
+    import re
+    if re.match(r'^(who|what|how|when|has anyone|has any|have any|is there|are there|which)\b', lower):
+        return None
+    # "closest to", "since [player]" — comparative/historical
+    if re.search(r'\bclosest\b|\bsince\b', lower):
+        return None
 
     stat = match_stat(lower)
     if not stat:

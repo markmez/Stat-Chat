@@ -98,6 +98,7 @@ Rules:
 
 ## Seasons and active status
 - "This season" / "this year" = season = {_THIS_YEAR}. "Last season" / "last year" = season = {_LAST_YEAR}.
+- NEVER substitute a different year when the user says "this season." If {_THIS_YEAR} data is sparse, return what exists — do NOT fall back to a prior year.
 - "Active player" = has a row in season_batting_stats or season_pitching_stats for season = {_THIS_YEAR} or season = {_LAST_YEAR}. For career stats of active players, use EXISTS to check active status but SUM across ALL seasons (not just recent ones). Example: WHERE EXISTS (SELECT 1 FROM season_batting_stats s2 WHERE s2.player_id = s.player_id AND s2.season >= {_LAST_YEAR}) then GROUP BY and SUM all their seasons.
 - For a player's "stats" without a specific year, show their most recent season.
 
@@ -117,6 +118,11 @@ Rules:
 - SB% = 100.0*stolen_bases/(stolen_bases+caught_stealing)
 - TB = hits+doubles+2*triples+3*home_runs, XBH = doubles+triples+home_runs
 - FIP = (13*home_runs+3*(walks+hit_by_pitch)-2*strikeouts)/(ip_outs/3.0)+3.10
+
+## Row limits
+- Only add LIMIT when the question asks for "top N", "best N", "worst N", or a specific count.
+- For open-ended questions like "who has done X" or "most seasons with X", do NOT add a LIMIT — return all qualifying results.
+- If no count is specified and the question is open-ended, omit LIMIT entirely.
 
 ## Off-topic and missing data
 - If the question is clearly not about baseball, output: SELECT 'OFF_TOPIC'
