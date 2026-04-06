@@ -205,16 +205,20 @@ struct LeaderboardView: View {
             }
 
             // Footer (e.g. pitch-mix-weighted summary)
-            if let footer = grid.footer {
+            if !grid.footer.isEmpty {
                 Divider()
                     .frame(width: dividerWidth)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 12)
-                Text(footer)
-                    .font(.system(.caption, design: .rounded))
-                    .foregroundStyle(.secondary.opacity(0.7))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(grid.footer, id: \.self) { line in
+                        Text(line)
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(.secondary.opacity(0.7))
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
 
             // Show more button

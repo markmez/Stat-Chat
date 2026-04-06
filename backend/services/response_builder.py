@@ -4288,16 +4288,20 @@ def build_matchup(batter_name: str, pitcher_name: str,
 
         # Pitch mix projection table
         if mix_table_rows:
+            batter_last = batter_display.split()[-1] if batter_display else batter_display
+            pitcher_last = pitcher_display.split()[-1] if pitcher_display else pitcher_display
             parts.append(f"**Pitch Mix Projection**")
-            parts.append(f"[SUBTITLE]{batter_display}'s stats against each pitch in {pitcher_display}'s arsenal[/SUBTITLE]")
+            parts.append(f"[SUBTITLE]{batter_last}'s stats against each pitch in {pitcher_last}'s arsenal[/SUBTITLE]")
+            parts.append(f"[SUBTITLE]% is how often {pitcher_last} throws this pitch, historically.[/SUBTITLE]")
             parts.append("[LEADERBOARD]")
-            parts.append("HEADER: Mix%, PA, AVG, OBP, SLG")
+            parts.append("HEADER: PA, AVG, OBP, SLG")
             for i, (pt, pct, pa, avg, obp, slg, ops) in enumerate(mix_table_rows):
-                parts.append(f"ROW {i+1}. {pt}: {pct}%, {pa}, "
+                parts.append(f"ROW {i+1}. {pt} ({pct}%): {pa}, "
                             f"{_format_rate(avg)}, {_format_rate(obp)}, "
                             f"{_format_rate(slg)}")
             if projection:
-                parts.append(f"FOOTER: Weighted: {_format_rate(projection[0])} AVG / {_format_rate(projection[1])} OBP / {_format_rate(projection[2])} SLG ({_format_rate(projection[3])} OPS)")
+                parts.append(f"FOOTER: Weighted stats against this pitch mix")
+                parts.append(f"FOOTER: {_format_rate(projection[0])} AVG / {_format_rate(projection[1])} OBP / {_format_rate(projection[2])} SLG ({_format_rate(projection[3])} OPS)")
             parts.append("[/LEADERBOARD]\n")
 
         # Recent streak (always show — season debut note if no form data)
