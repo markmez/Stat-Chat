@@ -228,6 +228,35 @@ async def clear_matchup_previews(
         raise HTTPException(500, str(e))
 
 
+@router.post("/purge-duplicate-streaks")
+async def purge_duplicate_streaks(
+    authorization: str | None = Header(None),
+):
+    """Keep only the latest (highest streak) event per player + type + date."""
+    verify_admin(authorization)
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        # For each streak type, keep only the row with the highest id (latest insert)
+        # per player_names + detection_type + game_date combo
+        streak_types = ("hitting_streak", "onbase_streak", "hr_streak",
+                        "pitching_streak", "cross_season_hitting_streak",
+                        "cross_season_on_base_streak")
+        placeholders = ",".join("?" * len(streak_types))
+        cur = conn.execute(f"""
+            DELETE FROM notable_events WHERE id NOT IN (
+                SELECT MAX(id) FROM notable_events
+                WHERE detection_type IN ({placeholders})
+                GROUP BY detection_type, game_date, player_names
+            ) AND detection_type IN ({placeholders})
+        """, streak_types + streak_types)
+        conn.commit()
+        deleted = cur.rowcount
+        conn.close()
+        return {"status": "ok", "deleted": deleted}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/refresh-game-contexts")
 async def refresh_game_contexts(
     authorization: str | None = Header(None),
