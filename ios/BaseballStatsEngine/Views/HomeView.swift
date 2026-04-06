@@ -336,6 +336,35 @@ struct HomeView: View {
                 .padding(.horizontal, 12)
                 .ignoresSafeArea(edges: .bottom)
         )
+        // Swipe up anywhere on collapsed drawer to expand
+        .highPriorityGesture(
+            feedExpanded ? nil :
+            DragGesture(minimumDistance: 10)
+                .onEnded { value in
+                    if value.translation.height < -20 {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            feedExpanded = true
+                            NotableEventsFeed.markExpandedTrayToday()
+                        }
+                    }
+                }
+        )
+        // Swipe down when expanded + scrolled to top to collapse
+        // Uses simultaneousGesture so ScrollView still works when scrolled down
+        .simultaneousGesture(
+            feedExpanded ?
+            DragGesture(minimumDistance: 15)
+                .onEnded { value in
+                    let isDownSwipe = value.translation.height > 40
+                    let isFastSwipe = value.predictedEndTranslation.height > 100
+                    if isDownSwipe && (feedScrolledToTop || isFastSwipe) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            feedExpanded = false
+                        }
+                    }
+                }
+            : nil
+        )
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: feedExpanded)
     }
 
