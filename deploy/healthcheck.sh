@@ -4,7 +4,7 @@
 # Curls the /health endpoint and pings Healthchecks.io.
 # ──────────────────────────────────────────────────────────────────────
 
-HC_PING_URL="https://hc-ping.com/REPLACE_WITH_CHECK_UUID"
+HC_PING_URL="https://hc-ping.com/f69f410b-1774-4af4-9bb4-c57136cc59ff"
 
 # Check if API is responding and DB is queryable
 RESPONSE=$(curl -fsS -m 10 https://api.secondsignalapps.com/health 2>&1)
