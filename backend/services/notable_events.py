@@ -1339,11 +1339,19 @@ def _parse_game_time_et(start_time):
 
 
 def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
-    """Find one compelling stat for a matchup preview card."""
+    """Find one compelling stat for a matchup preview card.
+
+    Tiers (first match wins):
+    1. H2H history (any PA)
+    2. Pitch mix angle (best/worst pitch matchup from pitcher's arsenal)
+    3. Platoon split (.800+ or .650-, 50+ PA)
+    4. PELT current form (if exists — player is in a detected streak)
+    5. Fallback: season OPS vs season ERA
+    """
     try:
         cur = conn.cursor()
 
-        # Check H2H history
+        # --- Tier 1: H2H history (even 1 PA) ---
         cur.execute("""
             SELECT SUM(h.plate_appearances), SUM(h.hits), SUM(h.home_runs), SUM(h.at_bats)
             FROM head_to_head h
@@ -1352,18 +1360,68 @@ def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
             WHERE pb.name = ? AND pp.name = ?
         """, (batter_name, pitcher_name))
         h2h = cur.fetchone()
-        if h2h and h2h[0] and h2h[0] >= 5:
+        if h2h and h2h[0] and h2h[0] >= 1:
             pa, hits, hr, ab = h2h
-            avg = hits / ab if ab > 0 else 0
-            if hr and hr >= 2:
-                return f"{batter_name} has {hr} HR in {pa} career PA against {pitcher_name}."
-            elif avg >= .350 and pa >= 8:
-                return f"{batter_name} is {hits}-for-{ab} (.{int(avg*1000):03d}) career against {pitcher_name}."
-            elif avg <= .150 and pa >= 8:
-                return f"{batter_name} is just {hits}-for-{ab} (.{int(avg*1000):03d}) career against {pitcher_name}."
+            if hr and hr >= 1:
+                return f"{batter_name} is {hits}-for-{ab} with {hr} HR in {pa} career PA against {pitcher_name}."
+            elif ab and ab > 0:
+                return f"{batter_name} is {hits}-for-{ab} in {pa} career PA against {pitcher_name}."
 
-        # Check pitcher's throwing hand vs batter's platoon split
-        # Require 50+ PA for meaningful platoon data, fall back to prior season if sparse
+        # --- Tier 2: Pitch mix angle ---
+        # Find pitcher's top pitches, check batter's splits against them
+        pitcher_mix = None
+        for szn in [season, season - 1]:
+            cur.execute("""
+                SELECT pts.pitch_type, pts.plate_appearances
+                FROM pitch_type_pitching_splits pts
+                JOIN players p ON pts.player_id = p.player_id
+                WHERE p.name = ? AND pts.season = ?
+                ORDER BY pts.plate_appearances DESC
+            """, (pitcher_name, szn))
+            rows = cur.fetchall()
+            total_pa = sum(r[1] for r in rows) if rows else 0
+            if total_pa >= 50:
+                pitcher_mix = rows
+                break
+
+        if pitcher_mix:
+            total_pa = sum(r[1] for r in pitcher_mix)
+            # Check batter's splits against each pitch (use 2025 fallback)
+            batter_pitch = {}
+            for szn in [season, season - 1]:
+                cur.execute("""
+                    SELECT pts.pitch_type, pts.ops, pts.plate_appearances, pts.batting_avg
+                    FROM pitch_type_batting_splits pts
+                    JOIN players p ON pts.player_id = p.player_id
+                    WHERE p.name = ? AND pts.season = ?
+                """, (batter_name, szn))
+                rows = cur.fetchall()
+                if rows and sum(r[2] for r in rows) >= 50:
+                    batter_pitch = {r[0]: r for r in rows}
+                    break
+
+            if batter_pitch:
+                # Find most extreme matchup among pitcher's top pitches (>= 10% of mix)
+                best_angle = None
+                for pitch_type, pitcher_pa in pitcher_mix:
+                    mix_pct = pitcher_pa / total_pa
+                    if mix_pct < 0.10:
+                        continue
+                    bp = batter_pitch.get(pitch_type)
+                    if not bp or bp[2] < 10:
+                        continue
+                    ops = bp[1]
+                    pct_label = round(mix_pct * 100)
+                    if ops >= 0.800:
+                        if not best_angle or ops > best_angle[0]:
+                            best_angle = (ops, f"{batter_name} has hit {ops:.3f} OPS against {pitch_type.lower()}s — {pct_label}% of {pitcher_name}'s pitches.")
+                    elif ops <= 0.650:
+                        if not best_angle or ops < best_angle[0]:
+                            best_angle = (-ops, f"{batter_name} has struggled against {pitch_type.lower()}s ({ops:.3f} OPS) — {pct_label}% of {pitcher_name}'s pitches.")
+                if best_angle:
+                    return best_angle[1]
+
+        # --- Tier 3: Platoon split (.800+ or .650-) ---
         cur.execute("SELECT throws FROM players WHERE name = ?", (pitcher_name,))
         hand_row = cur.fetchone()
         if hand_row and hand_row[0]:
@@ -1383,14 +1441,14 @@ def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
                     break
 
             if split and split[0]:
-                ops, hr, pa = split
+                ops = split[0]
                 hand_label = "lefties" if pitcher_hand == "L" else "righties"
-                if ops >= 0.900:
-                    return f"{batter_name} has crushed {hand_label} ({ops:.3f} OPS) — {pitcher_name} throws {pitcher_hand}HP."
-                elif ops <= 0.550:
-                    return f"{batter_name} has struggled against {hand_label} ({ops:.3f} OPS) — {pitcher_name} throws {pitcher_hand}HP."
+                if ops >= 0.800:
+                    return f"{batter_name} has hit {ops:.3f} OPS against {hand_label} — {pitcher_name} throws {pitcher_hand}HP."
+                elif ops <= 0.650:
+                    return f"{batter_name} has hit just {ops:.3f} OPS against {hand_label} — {pitcher_name} throws {pitcher_hand}HP."
 
-        # Check if batter is hot
+        # --- Tier 4: PELT current form ---
         cur.execute("""
             SELECT cf.ops, cf.num_games, cf.batting_avg
             FROM current_form cf
@@ -1398,8 +1456,29 @@ def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
             WHERE p.name = ? AND cf.season = ?
         """, (batter_name, season))
         form = cur.fetchone()
-        if form and form[0] and form[0] >= 1.000:
-            return f"{batter_name} is red hot ({form[0]:.3f} OPS over last {form[1]} games) heading into tonight against {pitcher_name}."
+        if form and form[0]:
+            return f"{batter_name} is hitting {form[0]:.3f} OPS over his last {form[1]} games heading into tonight."
+
+        # --- Tier 5: Fallback — season OPS vs season ERA ---
+        cur.execute("""
+            SELECT s.ops FROM season_batting_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name = ? AND s.season = ?
+            ORDER BY s.plate_appearances DESC LIMIT 1
+        """, (batter_name, season))
+        batter_ops_row = cur.fetchone()
+        cur.execute("""
+            SELECT s.era FROM season_pitching_stats s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE p.name = ? AND s.season = ?
+            ORDER BY s.ip_outs DESC LIMIT 1
+        """, (pitcher_name, season))
+        pitcher_era_row = cur.fetchone()
+        if batter_ops_row and pitcher_era_row:
+            bops = batter_ops_row[0]
+            pera = pitcher_era_row[0]
+            if bops and pera:
+                return f"{batter_name} ({bops:.3f} OPS) faces {pitcher_name} ({pera:.2f} ERA) tonight."
 
     except Exception:
         pass
