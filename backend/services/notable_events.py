@@ -14,6 +14,7 @@ Tiered detection:
 import json
 import sqlite3
 import os
+import time
 from datetime import date, datetime
 
 DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
@@ -1566,8 +1567,210 @@ def detect_on_this_date(conn, season, latest_date):
 # Orchestrator
 # ---------------------------------------------------------------------------
 
-def detect_all(db_path=None, season=None):
-    """Run all detectors, insert results, prune old events."""
+DETECTION_LOCK = "/tmp/statchat_detection.lock"
+
+
+def detect_for_players(db_path, season, player_ids):
+    """Targeted event detection for specific players whose games just ended.
+
+    Called by the poll after new game logs are added. Only computes streaks
+    and milestones for the given player_ids, not the full slate.
+    """
+    import time as _time
+
+    if is_detection_locked():
+        print("  Detection locked (daily pipeline running) — skipping")
+        return 0
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = None
+    ensure_table(conn)
+
+    latest_date = _get_latest_date(conn, season)
+    if not latest_date:
+        conn.close()
+        return 0
+
+    print(f"  Targeted detection for {len(player_ids)} players, latest_date={latest_date}")
+
+    events = []
+
+    # Streaks — only for the specific players
+    for pid in player_ids:
+        name = _player_name(conn, pid)
+        if not name:
+            continue
+
+        # Hitting streak
+        games = conn.execute("""
+            SELECT date, hits, at_bats FROM game_batting_logs
+            WHERE player_id = ? AND season = ? AND at_bats > 0
+            ORDER BY date DESC
+        """, (pid, season)).fetchall()
+
+        if games:
+            streak = 0
+            for gd, hits, ab in games:
+                if hits > 0:
+                    streak += 1
+                else:
+                    break
+            if streak >= 8:
+                team = _player_team_display(conn, pid, season)
+                context = _historical_context(conn, streak, "hits > 0",
+                                              exclude_season=season, exclude_player=pid)
+                headline = f"{name} has hit safely in {streak} straight games"
+                if context:
+                    headline += f", {context.lower()}"
+                else:
+                    headline += "."
+                events.append({
+                    "headline": headline, "detail": "", "category": "Streak",
+                    "game_date": latest_date, "player_names": [name],
+                    "team_names": [team] if team else [],
+                    "detection_type": "hitting_streak", "priority": 1,
+                })
+
+            # On-base streak
+            ob_games = conn.execute("""
+                SELECT date, hits, walks, COALESCE(hit_by_pitch, 0) as hbp
+                FROM game_batting_logs
+                WHERE player_id = ? AND season = ?
+                    AND (at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)
+                ORDER BY date DESC
+            """, (pid, season)).fetchall()
+
+            ob_streak = 0
+            for gd, hits, walks, hbp in ob_games:
+                if (hits + walks + hbp) > 0:
+                    ob_streak += 1
+                else:
+                    break
+            if ob_streak >= 12:
+                team = _player_team_display(conn, pid, season)
+                context = _historical_context(
+                    conn, ob_streak, "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
+                    exclude_season=season, exclude_player=pid)
+                headline = f"{name} has reached base in {ob_streak} straight games"
+                if context:
+                    headline += f", {context.lower()}"
+                else:
+                    headline += "."
+                events.append({
+                    "headline": headline, "detail": "", "category": "Streak",
+                    "game_date": latest_date, "player_names": [name],
+                    "team_names": [team] if team else [],
+                    "detection_type": "onbase_streak", "priority": 1,
+                })
+
+            # HR streak
+            hr_streak = 0
+            for gd, hits, ab in games:
+                hr = conn.execute("""
+                    SELECT home_runs FROM game_batting_logs
+                    WHERE player_id = ? AND date = ? AND season = ?
+                    LIMIT 1
+                """, (pid, gd, season)).fetchone()
+                if hr and hr[0] and hr[0] > 0:
+                    hr_streak += 1
+                else:
+                    break
+            if hr_streak >= 4:
+                context = _historical_context(conn, hr_streak, "home_runs > 0",
+                                              exclude_season=season, exclude_player=pid)
+                headline = f"{name} has homered in {hr_streak} straight games"
+                if context:
+                    headline += f", {context.lower()}"
+                else:
+                    headline += "."
+                events.append({
+                    "headline": headline, "detail": "", "category": "Streak",
+                    "game_date": latest_date, "player_names": [name],
+                    "team_names": [],
+                    "detection_type": "hr_streak", "priority": 1,
+                })
+
+    if not events:
+        print("  No notable events for these players")
+        conn.close()
+        return 0
+
+    # Remove stale streak events for these players on this date, then insert
+    streak_types = {"hitting_streak", "onbase_streak", "hr_streak"}
+    cursor = conn.cursor()
+    for e in events:
+        if e["detection_type"] in streak_types:
+            cursor.execute("""
+                DELETE FROM notable_events
+                WHERE detection_type = ? AND game_date = ? AND player_names = ?
+            """, (e["detection_type"], e["game_date"],
+                  json.dumps(e.get("player_names", []))))
+
+    inserted = 0
+    for e in events:
+        # Look up game context
+        player_names = e.get("player_names", [])
+        game_context = None
+        if player_names:
+            pid_row = conn.execute(
+                "SELECT player_id FROM players WHERE name = ?", (player_names[0],)
+            ).fetchone()
+            if pid_row:
+                game_context = _get_game_context(conn, pid_row[0], e["game_date"], season)
+        if not game_context:
+            try:
+                from datetime import datetime
+                dt = datetime.strptime(e["game_date"], "%Y-%m-%d")
+                game_context = dt.strftime("%B %-d")
+            except:
+                game_context = e["game_date"]
+
+        try:
+            cursor.execute("""
+                INSERT OR IGNORE INTO notable_events
+                (headline, detail, category, game_date, player_names, team_names,
+                 detection_type, priority, game_context)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                e["headline"], e["detail"], e["category"], e["game_date"],
+                json.dumps(e.get("player_names", [])),
+                json.dumps(e.get("team_names", [])),
+                e["detection_type"], e["priority"], game_context,
+            ))
+            if cursor.rowcount > 0:
+                inserted += 1
+        except sqlite3.IntegrityError:
+            pass
+
+    conn.commit()
+    print(f"  Inserted {inserted} targeted events")
+    conn.close()
+    return inserted
+
+
+def is_detection_locked():
+    """Check if the full pipeline is running (polls should skip detection)."""
+    import os
+    if not os.path.exists(DETECTION_LOCK):
+        return False
+    # Stale lock (older than 30 min) — ignore it
+    age = time.time() - os.path.getmtime(DETECTION_LOCK)
+    if age > 1800:
+        os.remove(DETECTION_LOCK)
+        return False
+    return True
+
+
+def detect_all(db_path=None, season=None, from_poll=False):
+    """Run all detectors, insert results, prune old events.
+
+    from_poll=True: called from the 15-min poll. Will skip if the daily
+    pipeline is running (lock file present).
+    """
+    if from_poll and is_detection_locked():
+        print("  Detection locked (daily pipeline running) — skipping")
+        return 0
+
     if db_path is None:
         db_path = DB_PATH
 
@@ -1660,6 +1863,19 @@ def detect_all(db_path=None, season=None):
     otd_events = detect_on_this_date(conn, season, latest_date)
     events += otd_events
     print(f"    On This Date: {len(otd_events)} events")
+
+    # Remove stale streak events for the same player + type + date
+    # (a re-run with updated data should replace the old streak count)
+    streak_types = {"hitting_streak", "onbase_streak", "hr_streak", "pitching_streak",
+                    "cross_season_hitting_streak", "cross_season_on_base_streak"}
+    for e in events:
+        if e["detection_type"] in streak_types and e.get("player_names"):
+            conn.execute("""
+                DELETE FROM notable_events
+                WHERE detection_type = ? AND game_date = ? AND player_names = ?
+            """, (e["detection_type"], e["game_date"],
+                  json.dumps(e.get("player_names", []))))
+    conn.commit()
 
     # Deduplicated insert with game context
     cursor = conn.cursor()

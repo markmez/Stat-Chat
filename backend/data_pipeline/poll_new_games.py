@@ -74,10 +74,17 @@ def main():
         yesterday = (eastern_now - timedelta(days=1)).strftime("%Y%m%d")
         dates_to_pull.insert(0, yesterday)
 
-    # Count existing game logs before pull
-    before_count = conn.execute("""
-        SELECT COUNT(*) FROM game_batting_logs WHERE season = ?
-    """, (season_year,)).fetchone()[0]
+    # Track existing game logs before pull — (player_id, date, game_number)
+    existing_batting = set(
+        (r[0], r[1], r[2]) for r in conn.execute("""
+            SELECT player_id, date, game_number FROM game_batting_logs WHERE season = ?
+        """, (season_year,)).fetchall()
+    )
+    existing_pitching = set(
+        (r[0], r[1], r[2]) for r in conn.execute("""
+            SELECT player_id, date, game_number FROM game_pitching_logs WHERE season = ?
+        """, (season_year,)).fetchall()
+    )
 
     # Pull season totals (fast — single API call each)
     print("  Pulling season totals...")
@@ -98,6 +105,8 @@ def main():
 
     cursor = conn.cursor()
     new_logs = 0
+    new_batting_players = set()  # player_ids with genuinely new batting game logs
+    new_pitching_players = set()  # player_ids with genuinely new pitching game logs
 
     for gdate in dates_to_pull:
         game_date_formatted = f"{gdate[:4]}-{gdate[4:6]}-{gdate[6:8]}"
@@ -145,6 +154,8 @@ def main():
                 sf = safe_int(bat.get("batterSacrificeFlies", 0))
                 pa, avg, obp, slg, ops, _, _ = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so)
 
+                is_new_game = (pid, game_date_formatted, game_num) not in existing_batting
+
                 cursor.execute("""
                     INSERT OR REPLACE INTO game_batting_logs
                     (player_id, season, date, game_number, opponent, vishome,
@@ -161,6 +172,8 @@ def main():
                     bb, so, hbp, sf, avg, obp, slg, ops,
                 ))
                 new_logs += 1
+                if is_new_game:
+                    new_batting_players.add(pid)
 
             # Pitching log
             pitch = all_stats.get("pitching", {})
@@ -171,6 +184,8 @@ def main():
                 if pkey not in player_date_game_num:
                     player_date_game_num[pkey] = 0
                 game_num = player_date_game_num[pkey]
+
+                is_new_pitch_game = (pid, game_date_formatted, game_num) not in existing_pitching
 
                 ip_raw = safe_float(pitch.get("inningsPitched"), 0)
                 ip_whole = int(ip_raw)
@@ -205,25 +220,23 @@ def main():
                     safe_int(pitch.get("saves")),
                     era,
                 ))
+                if is_new_pitch_game:
+                    new_pitching_players.add(pid)
 
         conn.commit()
 
-    after_count = conn.execute("""
-        SELECT COUNT(*) FROM game_batting_logs WHERE season = ?
-    """, (season_year,)).fetchone()[0]
+    all_new_players = new_batting_players | new_pitching_players
+    print(f"  {new_logs} log entries processed, {len(all_new_players)} players with new games")
 
-    new_games = after_count - before_count
-    print(f"  {new_logs} log entries processed, {new_games} net new games")
-
-    # If new games found, run event detection
-    if new_games > 0:
-        print("  New games detected — running event detection...")
+    # If new games found, run targeted event detection for those players only
+    if all_new_players:
+        print(f"  Running targeted event detection for {len(all_new_players)} players...")
         try:
             services_parent = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
             if services_parent not in sys.path:
                 sys.path.insert(0, services_parent)
-            from services.notable_events import detect_all
-            detect_all(args.db, season_year)
+            from services.notable_events import detect_for_players
+            detect_for_players(args.db, season_year, all_new_players)
         except Exception as e:
             print(f"  Event detection failed: {e}")
 

@@ -18,8 +18,14 @@ INTEGRITY=/opt/statchat/repo/backend/data_pipeline/fix_doubleheader_schema.py
 DB=/data/baseball_stats_full.db
 HC_PING_URL="https://hc-ping.com/d3f0c82b-235a-477f-8ed5-3f6ac4c6daa7"
 
+LOCK="/tmp/statchat_detection.lock"
+
 echo ""
 echo "=== Pipeline refresh starting at $(date) ==="
+
+# Lock detection so polls don't run event detection on partial data
+touch "$LOCK"
+trap 'rm -f "$LOCK"' EXIT
 
 # Run pipeline (pass through any extra args like --full-refresh)
 if $VENV $PIPELINE --db $DB "$@"; then
