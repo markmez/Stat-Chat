@@ -79,7 +79,7 @@ struct StatLeadersView: View {
             HStack {
                 Text(stat)
                     .font(.system(.subheadline, design: .rounded, weight: .bold))
-                    .foregroundStyle(deepBlue)
+                    .foregroundStyle(.primary)
 
                 Spacer()
 
