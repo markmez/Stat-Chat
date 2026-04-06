@@ -4242,13 +4242,36 @@ def build_matchup(batter_name: str, pitcher_name: str,
 
         parts = []
         parts.append(f"**{batter_display} vs. {pitcher_display}**")
-        parts.append("Matchup Preview")
 
-        # Aggregate slash line — only shown when pitch-mix projection is available
+        # --- Blended projection (43% pitch mix, 43% platoon, 14% current form) ---
+        # Compute blend from whichever components are available, reweighting if missing
+        blend_components = []  # (weight, avg, obp, slg)
         if projection:
-            avg, obp, slg, ops = projection
+            blend_components.append((0.43, *projection[:3]))
+        if platoon_line:
+            pl = platoon_line
+            blend_components.append((0.43, pl['avg'], pl['obp'], pl['slg']))
+        if batter_form:
+            bf = batter_form
+            blend_components.append((0.14, bf[8], bf[9], bf[10]))
+
+        blended = None
+        if blend_components:
+            # Reweight to sum to 1.0 if some components missing
+            total_w = sum(c[0] for c in blend_components)
+            if total_w > 0:
+                b_avg = sum(c[0] * c[1] for c in blend_components) / total_w
+                b_obp = sum(c[0] * c[2] for c in blend_components) / total_w
+                b_slg = sum(c[0] * c[3] for c in blend_components) / total_w
+                b_ops = b_obp + b_slg
+                blended = (b_avg, b_obp, b_slg, b_ops)
+
+        if blended:
+            parts.append("[SUBTITLE]Matchup Preview — blending pitch mix, platoon, and recent performance[/SUBTITLE]")
             parts.append("**Projected:**")
-            parts.append(f"**{_format_rate(avg)} AVG / {_format_rate(obp)} OBP / {_format_rate(slg)} SLG ({_format_rate(ops)} OPS)**")
+            parts.append(f"**{_format_rate(blended[0])} AVG / {_format_rate(blended[1])} OBP / {_format_rate(blended[2])} SLG ({_format_rate(blended[3])} OPS)**")
+        else:
+            parts.append("[SUBTITLE]Matchup Preview[/SUBTITLE]")
         parts.append("")
 
         # Platoon
@@ -4273,6 +4296,8 @@ def build_matchup(batter_name: str, pitcher_name: str,
                 parts.append(f"ROW {i+1}. {pt}: {pct}%, {pa}, "
                             f"{_format_rate(avg)}, {_format_rate(obp)}, "
                             f"{_format_rate(slg)}")
+            if projection:
+                parts.append(f"FOOTER: Weighted: {_format_rate(projection[0])} AVG / {_format_rate(projection[1])} OBP / {_format_rate(projection[2])} SLG ({_format_rate(projection[3])} OPS)")
             parts.append("[/LEADERBOARD]\n")
 
         # Recent streak (always show — season debut note if no form data)
@@ -4288,7 +4313,7 @@ def build_matchup(batter_name: str, pitcher_name: str,
                             f"{_format_rate(bf[10])}, {_format_rate(bf[11])}")
                 parts.append("[/STATGRID]")
             else:
-                parts.append(f"[TIP]This is {batter_display}'s season debut.[/TIP]")
+                parts.append(f"[SUBTITLE]This is {batter_display}'s season debut.[/SUBTITLE]")
             if pitcher_form:
                 pf = pitcher_form
                 parts.append("[STATGRID]")
@@ -4301,7 +4326,7 @@ def build_matchup(batter_name: str, pitcher_name: str,
                             f"{_format_pitching_rate(pf[5], 1)}")
                 parts.append("[/STATGRID]")
             else:
-                parts.append(f"[TIP]This is {pitcher_display}'s season debut.[/TIP]")
+                parts.append(f"[SUBTITLE]This is {pitcher_display}'s season debut.[/SUBTITLE]")
             parts.append("")
 
         # H2H

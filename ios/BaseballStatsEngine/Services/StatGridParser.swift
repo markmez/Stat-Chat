@@ -6,6 +6,7 @@ enum StatGridParser {
         let headers: [String]
         let rows: [Row]
         let formMetadata: FormMetadata?
+        let footer: String?
 
         struct Row: Sendable {
             let label: String
@@ -21,10 +22,11 @@ enum StatGridParser {
             let teamGames: Int
         }
 
-        init(headers: [String], rows: [Row], formMetadata: FormMetadata? = nil) {
+        init(headers: [String], rows: [Row], formMetadata: FormMetadata? = nil, footer: String? = nil) {
             self.headers = headers
             self.rows = rows
             self.formMetadata = formMetadata
+            self.footer = footer
         }
     }
 
@@ -193,6 +195,7 @@ enum StatGridParser {
         var headers: [String] = []
         var rows: [StatGrid.Row] = []
         var formMetadata: StatGrid.FormMetadata?
+        var footer: String?
 
         for line in lines {
             if line.hasPrefix("HEADER:") {
@@ -222,6 +225,8 @@ enum StatGridParser {
                     let noteText = String(line.dropFirst("NOTE:".count)).trimmingCharacters(in: .whitespaces)
                     rows[rows.count - 1].note = noteText
                 }
+            } else if line.hasPrefix("FOOTER:") {
+                footer = String(line.dropFirst("FOOTER:".count)).trimmingCharacters(in: .whitespaces)
             } else if line.hasPrefix("FORM:") {
                 // Parse FORM: Player Name, season, autoDetectedGameNumber, totalGames[, teamGames]
                 let formContent = String(line.dropFirst("FORM:".count))
@@ -248,7 +253,7 @@ enum StatGridParser {
             ? Array(headers.dropFirst())
             : headers
 
-        return StatGrid(headers: finalHeaders, rows: rows, formMetadata: formMetadata)
+        return StatGrid(headers: finalHeaders, rows: rows, formMetadata: formMetadata, footer: footer)
     }
 
     /// Check if a string looks like a stat value (number, rate stat, or rank)

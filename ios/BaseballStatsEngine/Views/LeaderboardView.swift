@@ -204,6 +204,19 @@ struct LeaderboardView: View {
                 .padding(.vertical, 4)
             }
 
+            // Footer (e.g. pitch-mix-weighted summary)
+            if let footer = grid.footer {
+                Divider()
+                    .frame(width: dividerWidth)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 12)
+                Text(footer)
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.secondary.opacity(0.7))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+            }
+
             // Show more button
             if hasMore {
                 let totalRemaining = sortedRows.count - visibleCount
