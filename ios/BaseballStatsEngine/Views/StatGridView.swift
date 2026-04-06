@@ -45,6 +45,8 @@ struct StatGridView: View {
     /// Debounced slider value — only updates display after drag settles
     @State private var formSliderDisplayGames: Int? = nil
     @State private var sliderDebounceTask: Task<Void, Never>? = nil
+    /// Cache of recently computed grids by game number
+    @State private var recomputeCache: [Int: [StatGridParser.StatGrid.Row]] = [:]
     @State private var formGameLogs: [GameLog]? = nil
     /// 0 = 162-Game Pace, 1 = Season Forecast (always visible when form present)
     @State private var formProjectionMode: Int = 0
@@ -185,10 +187,29 @@ struct StatGridView: View {
               let logs = formGameLogs, !logs.isEmpty else {
             return displayRows
         }
-        // Use debounced value for expensive recomputation, slider value for label display
-        let numGamesShown = formSliderDisplayGames ?? formSliderNumGames ?? (meta.totalGames - meta.autoDetectedGameNumber + 1)
+        let numGamesShown = formSliderNumGames ?? (meta.totalGames - meta.autoDetectedGameNumber + 1)
         let effectiveGameNumber = meta.totalGames - numGamesShown + 1
-        if let reGrid = Self.recomputeFromLogs(logs, fromGameNumber: effectiveGameNumber) {
+
+        // Check cache first — instant if we've computed this before
+        if let cached = recomputeCache[effectiveGameNumber] {
+            return cached
+        }
+
+        // Use debounced value for uncached recomputation
+        let debouncedGames = formSliderDisplayGames ?? numGamesShown
+        let debouncedGameNumber = meta.totalGames - debouncedGames + 1
+        if let cached = recomputeCache[debouncedGameNumber] {
+            return cached
+        }
+
+        if let reGrid = Self.recomputeFromLogs(logs, fromGameNumber: debouncedGameNumber) {
+            // Cache the result (limit cache size to 30 entries)
+            DispatchQueue.main.async {
+                recomputeCache[debouncedGameNumber] = reGrid.rows
+                if recomputeCache.count > 30 {
+                    recomputeCache.removeAll()
+                }
+            }
             return reGrid.rows
         }
         return displayRows
@@ -396,7 +417,7 @@ struct StatGridView: View {
                                 // Debounce the expensive recomputation
                                 sliderDebounceTask?.cancel()
                                 sliderDebounceTask = Task { @MainActor in
-                                    try? await Task.sleep(for: .milliseconds(80))
+                                    try? await Task.sleep(for: .milliseconds(40))
                                     guard !Task.isCancelled else { return }
                                     formSliderDisplayGames = clamped
                                 }
