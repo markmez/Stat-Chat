@@ -4305,30 +4305,43 @@ def build_matchup(batter_name: str, pitcher_name: str,
         # Recent streak (always show — season debut note if no form data)
         if True:
             parts.append("**Recent Streak**")
+            # Build one combined statgrid with both players' form + debut notes
+            streak_rows = []
+            streak_notes = []
             if batter_form:
                 bf = batter_form
-                parts.append("[STATGRID]")
-                parts.append("HEADER: G, AB, H, HR, RBI, BB, SO, AVG, OBP, SLG, OPS")
-                parts.append(f"ROW {batter_display} (last {bf[0]}G): "
-                            f"{bf[1]}, {bf[2]}, {bf[3]}, {bf[5]}, {bf[6]}, {bf[7]}, "
-                            f"{_format_rate(bf[8])}, {_format_rate(bf[9])}, "
-                            f"{_format_rate(bf[10])}, {_format_rate(bf[11])}")
-                parts.append("[/STATGRID]")
+                streak_rows.append(("batting", bf))
             else:
-                parts.append(f"[SUBTITLE]This is {batter_display}'s season debut.[/SUBTITLE]")
+                streak_notes.append(f"This is {batter_display}'s season debut.")
             if pitcher_form:
                 pf = pitcher_form
-                parts.append("[STATGRID]")
-                parts.append("HEADER: G, IP, ERA, WHIP, K/9, BB/9")
-                ip_str = _format_pitching_rate(pf[1], 1) if pf[1] else "0"
-                parts.append(f"ROW {pitcher_display} (last {pf[0]}G): "
-                            f"{ip_str}, {_format_pitching_rate(pf[2])}, "
-                            f"{_format_pitching_rate(pf[3])}, "
-                            f"{_format_pitching_rate(pf[4], 1)}, "
-                            f"{_format_pitching_rate(pf[5], 1)}")
-                parts.append("[/STATGRID]")
+                streak_rows.append(("pitching", pf))
             else:
-                parts.append(f"[SUBTITLE]This is {pitcher_display}'s season debut.[/SUBTITLE]")
+                streak_notes.append(f"This is {pitcher_display}'s season debut.")
+
+            if streak_rows:
+                # Emit batter form grid
+                for kind, form in streak_rows:
+                    parts.append("[STATGRID]")
+                    if kind == "batting":
+                        parts.append("HEADER: G, AB, H, HR, RBI, BB, SO, AVG, OBP, SLG, OPS")
+                        parts.append(f"ROW {batter_display} (last {form[0]}G): "
+                                    f"{form[1]}, {form[2]}, {form[3]}, {form[5]}, {form[6]}, {form[7]}, "
+                                    f"{_format_rate(form[8])}, {_format_rate(form[9])}, "
+                                    f"{_format_rate(form[10])}, {_format_rate(form[11])}")
+                    else:
+                        parts.append("HEADER: G, IP, ERA, WHIP, K/9, BB/9")
+                        ip_str = _format_pitching_rate(form[1], 1) if form[1] else "0"
+                        parts.append(f"ROW {pitcher_display} (last {form[0]}G): "
+                                    f"{ip_str}, {_format_pitching_rate(form[2])}, "
+                                    f"{_format_pitching_rate(form[3])}, "
+                                    f"{_format_pitching_rate(form[4], 1)}, "
+                                    f"{_format_pitching_rate(form[5], 1)}")
+                    # Append debut notes as footers in the last grid
+                    if kind == streak_rows[-1][0] and streak_notes:
+                        for note in streak_notes:
+                            parts.append(f"FOOTER: {note}")
+                    parts.append("[/STATGRID]")
             parts.append("")
 
         # H2H

@@ -694,6 +694,20 @@ struct StatGridView: View {
                     .padding(.bottom, 10)
                 }
             }
+
+            // Footer lines (e.g. season debut note)
+            if !grid.footer.isEmpty {
+                Divider().padding(.horizontal, 12)
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(grid.footer, id: \.self) { line in
+                        Text(line)
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(.secondary.opacity(0.7))
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {

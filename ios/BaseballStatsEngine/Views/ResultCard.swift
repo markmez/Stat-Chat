@@ -59,10 +59,10 @@ struct ResultCard: View {
             } else {
                 let segments = StatGridParser.parse(message.content, isStreaming: isStreaming)
                 let grouped = groupedSegments(segments)
-                ForEach(Array(grouped.enumerated()), id: \.offset) { _, group in
+                ForEach(Array(grouped.enumerated()), id: \.offset) { idx, group in
                     switch group {
                     case .single(let segment):
-                        renderSegment(segment)
+                        renderSegment(segment, isFirst: idx == 0)
 
                     case .suggestions(let queries):
                         if let tap = onQueryTap {
@@ -103,12 +103,12 @@ struct ResultCard: View {
     }
 
     @ViewBuilder
-    private func renderSegment(_ segment: StatGridParser.Segment) -> some View {
+    private func renderSegment(_ segment: StatGridParser.Segment, isFirst: Bool = false) -> some View {
         switch segment {
         case .text(let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
-                let isSectionHeader = trimmed.hasPrefix("**")
+                let isSectionHeader = trimmed.hasPrefix("**") && !isFirst
                 // addLinks/addTeamLinks are internally cached — safe to call on every render
                 let displayText = isStreaming ? trimmed : PlayerNameMatcher.addTeamLinks(to: PlayerNameMatcher.addLinks(to: trimmed))
                 Text(LocalizedStringKey(displayText))
