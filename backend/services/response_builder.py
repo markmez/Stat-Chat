@@ -4040,6 +4040,187 @@ def _format_stat_value(val, stat_abbrev: str) -> str:
 
 
 # ===================================================================
+# 30a. build_player_game_window — first/last N games of a player's season(s)
+# ===================================================================
+
+def build_player_game_window(name: str, window_type: str, n_games: int,
+                              stat_info=None, season: Optional[int] = None) -> Optional[str]:
+    """Build a response for 'first/last N games' queries.
+
+    If season is None, compares across all seasons (which season had the most X
+    in the first/last N games). If season is set, shows the stat line for that
+    specific window.
+    """
+    conn = _get_db()
+    if not conn:
+        return None
+    display_name, _ = _get_player_info(conn, name)
+    # Get player_id
+    row = conn.execute("SELECT player_id FROM players WHERE name = ? LIMIT 1",
+                       (_sanitize(name),)).fetchone()
+    if not row:
+        conn.close()
+        return None
+    pid = row[0]
+
+    order = "ASC" if window_type == "first" else "DESC"
+    label = "First" if window_type == "first" else "Last"
+
+    cur = conn.cursor()
+
+    if season is None:
+        # Compare across all seasons: for each season, compute stats in the window
+        cur.execute(f"""
+            SELECT g.season, g.hits, g.at_bats, g.doubles, g.triples, g.home_runs,
+                   g.runs, g.rbi, g.walks, g.strikeouts, g.plate_appearances,
+                   g.game_num
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY season ORDER BY date {order}) as game_num
+                FROM game_batting_logs
+                WHERE player_id = ? AND at_bats > 0
+            ) g
+            WHERE g.game_num <= ?
+            ORDER BY g.season, g.game_num
+        """, (pid, n_games))
+        rows = cur.fetchall()
+        if not rows:
+            conn.close()
+            return None
+
+        # Aggregate per season
+        from collections import defaultdict
+        seasons = defaultdict(lambda: {"g": 0, "ab": 0, "h": 0, "2b": 0, "3b": 0,
+                                        "hr": 0, "r": 0, "rbi": 0, "bb": 0, "so": 0, "pa": 0})
+        for row in rows:
+            szn = row[0]
+            s = seasons[szn]
+            s["g"] += 1
+            s["h"] += row[1] or 0
+            s["ab"] += row[2] or 0
+            s["2b"] += row[3] or 0
+            s["3b"] += row[4] or 0
+            s["hr"] += row[5] or 0
+            s["r"] += row[6] or 0
+            s["rbi"] += row[7] or 0
+            s["bb"] += row[8] or 0
+            s["so"] += row[9] or 0
+            s["pa"] += row[10] or 0
+
+        # Sort by the target stat (or OPS if no specific stat)
+        if stat_info and stat_info.db_column in ("hits", "home_runs", "doubles", "triples",
+                                                   "runs", "rbi", "walks", "strikeouts"):
+            col_map = {"hits": "h", "home_runs": "hr", "doubles": "2b", "triples": "3b",
+                       "runs": "r", "rbi": "rbi", "walks": "bb", "strikeouts": "so"}
+            sort_key = col_map.get(stat_info.db_column, "h")
+            sorted_seasons = sorted(seasons.items(), key=lambda x: x[1][sort_key], reverse=True)
+            stat_label = stat_info.display_abbrev
+        else:
+            # Sort by OPS
+            def _ops(s):
+                obp_num = s["h"] + s["bb"]
+                obp_den = s["ab"] + s["bb"] + s["pa"] - s["ab"]  # rough
+                slg_num = (s["h"] - s["2b"] - s["3b"] - s["hr"]) + 2*s["2b"] + 3*s["3b"] + 4*s["hr"]
+                obp = obp_num / max(obp_den, 1)
+                slg = slg_num / max(s["ab"], 1)
+                return obp + slg
+            sorted_seasons = sorted(seasons.items(), key=lambda x: _ops(x[1]), reverse=True)
+            stat_label = None
+
+        # Build output
+        if stat_info and stat_label:
+            title = f"**{display_name} — {label} {n_games} Games by Season ({stat_label})**\n"
+        else:
+            title = f"**{display_name} — {label} {n_games} Games by Season**\n"
+
+        parts = [title]
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+        parts.append("[LEADERBOARD]")
+        parts.append("HEADER: G, AB, H, HR, RBI, BB, SO, AVG, OPS")
+
+        for szn, s in sorted_seasons:
+            if s["g"] == 0:
+                continue
+            avg = s["h"] / max(s["ab"], 1)
+            obp_num = s["h"] + s["bb"]
+            obp_den = s["ab"] + s["bb"]
+            obp = obp_num / max(obp_den, 1)
+            slg_num = (s["h"] - s["2b"] - s["3b"] - s["hr"]) + 2*s["2b"] + 3*s["3b"] + 4*s["hr"]
+            slg = slg_num / max(s["ab"], 1)
+            ops = obp + slg
+            parts.append(f"ROW {szn}: {s['g']}, {s['ab']}, {s['h']}, {s['hr']}, "
+                        f"{s['rbi']}, {s['bb']}, {s['so']}, "
+                        f"{_format_rate(avg)}, {_format_rate(ops)}")
+        parts.append("[/LEADERBOARD]")
+
+        # Best season callout
+        best_szn, best_s = sorted_seasons[0]
+        if stat_label:
+            col_map = {"H": "h", "HR": "hr", "2B": "2b", "3B": "3b",
+                       "R": "r", "RBI": "rbi", "BB": "bb", "SO": "so"}
+            val = best_s[col_map.get(stat_label, "h")]
+            parts.append(f"\n{display_name}'s best {label.lower()} {n_games} games by {stat_label}: "
+                        f"**{best_szn}** with **{val} {stat_label}**.")
+        parts.append(f"\n[SUGGEST]{display_name} career stats[/SUGGEST]")
+        parts.append(f"[SUGGEST]{display_name} this season[/SUGGEST]")
+
+        conn.close()
+        return "\n".join(parts)
+
+    else:
+        # Specific season — show the stat line for that window
+        cur.execute(f"""
+            SELECT g.date, g.hits, g.at_bats, g.doubles, g.triples, g.home_runs,
+                   g.runs, g.rbi, g.walks, g.strikeouts
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (ORDER BY date {order}) as game_num
+                FROM game_batting_logs
+                WHERE player_id = ? AND season = ? AND at_bats > 0
+            ) g
+            WHERE g.game_num <= ?
+            ORDER BY g.date
+        """, (pid, season, n_games))
+        rows = cur.fetchall()
+        if not rows:
+            conn.close()
+            return None
+
+        # Aggregate
+        totals = {"g": len(rows), "ab": 0, "h": 0, "2b": 0, "3b": 0, "hr": 0,
+                  "r": 0, "rbi": 0, "bb": 0, "so": 0}
+        for row in rows:
+            totals["h"] += row[1] or 0
+            totals["ab"] += row[2] or 0
+            totals["2b"] += row[3] or 0
+            totals["3b"] += row[4] or 0
+            totals["hr"] += row[5] or 0
+            totals["r"] += row[6] or 0
+            totals["rbi"] += row[7] or 0
+            totals["bb"] += row[8] or 0
+            totals["so"] += row[9] or 0
+
+        avg = totals["h"] / max(totals["ab"], 1)
+        slg_num = (totals["h"] - totals["2b"] - totals["3b"] - totals["hr"]) + \
+                  2*totals["2b"] + 3*totals["3b"] + 4*totals["hr"]
+        slg = slg_num / max(totals["ab"], 1)
+        obp = (totals["h"] + totals["bb"]) / max(totals["ab"] + totals["bb"], 1)
+        ops = obp + slg
+
+        title = f"**{display_name} — {label} {n_games} Games of {season}**\n"
+        parts = [title]
+        parts.append("[STATGRID]")
+        parts.append("HEADER: G, AB, H, 2B, 3B, HR, R, RBI, BB, SO, AVG, OPS")
+        parts.append(f"ROW {label} {n_games}G: {totals['g']}, {totals['ab']}, {totals['h']}, "
+                    f"{totals['2b']}, {totals['3b']}, {totals['hr']}, {totals['r']}, "
+                    f"{totals['rbi']}, {totals['bb']}, {totals['so']}, "
+                    f"{_format_rate(avg)}, {_format_rate(ops)}")
+        parts.append("[/STATGRID]")
+        parts.append(f"\n[SUGGEST]{display_name} {season}[/SUGGEST]")
+        parts.append(f"[SUGGEST]{display_name} career stats[/SUGGEST]")
+
+        conn.close()
+        return "\n".join(parts)
+
+
 # 30. build_matchup — batter vs pitcher matchup preview
 # ===================================================================
 

@@ -266,6 +266,16 @@ def try_intercept(question: str):
         if response:
             return response
 
+    # Player game window — "first/last N games" per season
+    game_window = nm.parse_player_game_window(trimmed)
+    if game_window:
+        response = rb.build_player_game_window(
+            game_window["name"], game_window["window_type"],
+            game_window["n_games"], game_window.get("stat"),
+            game_window.get("season"))
+        if response:
+            return response
+
     # --- Query Engine — the primary stat query handler ---
     # Handles leaderboards, thresholds, counts, superlatives, game-log queries,
     # split leaderboards, team rankings, derived stats, multi-threshold,
