@@ -80,12 +80,14 @@ struct StatGridView: View {
     static func recomputeFromLogs(_ logs: [GameLog], fromGameNumber: Int) -> StatGridParser.StatGrid? {
         let startIdx = max(0, fromGameNumber - 1)
         guard startIdx < logs.count else { return nil }
-        let slice = Array(logs[startIdx...])
-        guard !slice.isEmpty else { return nil }
+        // Use slice directly — no array copy
+        let gameCount = logs.count - startIdx
+        guard gameCount > 0 else { return nil }
 
         var totalAB = 0, totalH = 0, total2B = 0, total3B = 0, totalHR = 0
         var totalR = 0, totalRBI = 0, totalBB = 0, totalSO = 0, totalPA = 0
-        for g in slice {
+        for i in startIdx..<logs.count {
+            let g = logs[i]
             totalAB += g.atBats; totalH += g.hits
             total2B += g.doubles; total3B += g.triples; totalHR += g.homeRuns
             totalR += g.runs; totalRBI += g.rbi
@@ -105,7 +107,7 @@ struct StatGridView: View {
 
         let headers = ["G", "AB", "R", "H", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
         let values = [
-            String(slice.count), String(totalAB), String(totalR), String(totalH),
+            String(gameCount), String(totalAB), String(totalR), String(totalH),
             String(totalHR), String(totalRBI), String(totalBB), String(totalSO),
             fmtRate(avg), fmtRate(obp), fmtRate(slg), fmtRate(ops)
         ]
