@@ -56,19 +56,24 @@ struct SuggestionPillsView: View {
             }
             .onChange(of: matchupPills) { _, newPills in
                 // Inject matchup pills when feed loads (may arrive after initial pool build)
-                let matchupSuggestions = newPills.map { Suggestion(id: "matchup_\($0)", text: $0) }
                 pool.removeAll { $0.id.hasPrefix("matchup_") }
-                pool.insert(contentsOf: matchupSuggestions, at: 0)
+                for pill in newPills {
+                    let s = Suggestion(id: "matchup_\(pill)", text: pill)
+                    let idx = pool.isEmpty ? 0 : Int.random(in: 0..<pool.count)
+                    pool.insert(s, at: idx)
+                }
             }
         } else {
             Color.clear.frame(height: 20)
                 .task {
                     pool = SuggestionEngine.shared.buildPool(searchHistory: searchHistory)
-                    // Inject matchup preview pills at the front of the pool
-                    let matchupSuggestions = matchupPills.map {
-                        Suggestion(id: "matchup_\($0)", text: $0)
+                    // Inject matchup preview pills scattered through the pool
+                    // so at most 1 appears on initial load
+                    for pill in matchupPills {
+                        let s = Suggestion(id: "matchup_\(pill)", text: pill)
+                        let idx = pool.isEmpty ? 0 : Int.random(in: 0..<pool.count)
+                        pool.insert(s, at: idx)
                     }
-                    pool.insert(contentsOf: matchupSuggestions, at: 0)
                     let initial = Array(pool.prefix(maxVisible))
                     visible = initial
                     visibleSet = Set(initial.map(\.id))
