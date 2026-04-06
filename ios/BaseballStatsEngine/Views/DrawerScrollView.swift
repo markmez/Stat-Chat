@@ -33,6 +33,10 @@ struct DrawerScrollView<Content: View>: UIViewRepresentable {
         let host = UIHostingController(rootView: content)
         host.view.backgroundColor = .clear
         host.view.translatesAutoresizingMaskIntoConstraints = false
+
+        // Size the host to fit its content
+        host.sizingOptions = .intrinsicContentSize
+
         scrollView.addSubview(host.view)
 
         NSLayoutConstraint.activate([
@@ -50,6 +54,9 @@ struct DrawerScrollView<Content: View>: UIViewRepresentable {
         scrollView.isScrollEnabled = isEnabled
         context.coordinator.parent = self
         context.coordinator.hostController?.rootView = content
+        // Force layout update so content size is correct
+        context.coordinator.hostController?.view.setNeedsLayout()
+        context.coordinator.hostController?.view.layoutIfNeeded()
     }
 
     class Coordinator: NSObject, UIScrollViewDelegate {
