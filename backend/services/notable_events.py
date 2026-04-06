@@ -1867,13 +1867,15 @@ def detect_all(db_path=None, season=None, from_poll=False):
     # Remove ALL streak events for latest_date — full recompute replaces them
     # This ensures stale streaks (from bad data) get cleaned up even if the
     # player no longer qualifies for a streak event
-    streak_types_tuple = ("hitting_streak", "onbase_streak", "hr_streak", "pitching_streak",
-                          "cross_season_hitting_streak", "cross_season_on_base_streak")
-    placeholders = ",".join("?" * len(streak_types_tuple))
-    conn.execute(f"""
-        DELETE FROM notable_events
-        WHERE detection_type IN ({placeholders}) AND game_date = ?
-    """, (*streak_types_tuple, latest_date))
+    # Wipe ALL events for latest_date — full recompute replaces them.
+    # This is the only safe approach: each poll/pipeline run produces a complete
+    # set of events for the latest date from the current DB state. Any events
+    # from prior runs (which may have been computed on incomplete data) are removed.
+    # Events for prior dates are NOT touched — they were computed when that date
+    # was latest_date and the data was complete.
+    conn.execute("""
+        DELETE FROM notable_events WHERE game_date = ?
+    """, (latest_date,))
     conn.commit()
 
     # Deduplicated insert with game context
