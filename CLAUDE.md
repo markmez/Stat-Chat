@@ -263,11 +263,57 @@ Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The ma
 - **MSF team mapping**: `MSF_TO_RETRO_TEAM` dict maps MSF abbreviations (NYY, LAD) → Retrosheet codes (NYA, LAN)
 - **Player matching**: Name-based lookup against existing Retrosheet players. New players get Retrosheet-style IDs (`last5first1001`).
 - **Admin endpoints**: See Backend section above for full list.
-- **Cron service**: Railway service `cron-refresh`, root directory `cron/`, schedule `0 11,15,19,23,3 * * *` (every 4 hours: 6 AM, 10 AM, 2 PM, 6 PM, 10 PM ET). Runs `cron_refresh.py` which POSTs to `/admin/refresh`. Graceful error handling — exits 0 on connection errors/timeouts to avoid crash notifications. Full pipeline takes ~4.5 minutes. Pings Healthchecks.io on success/failure for alerting.
-- **Cron deploy**: NOT connected to GitHub — must deploy manually. `railway up` from the project `cron/` directory will timeout because Railway indexes the ~680MB of DB files in the parent directory. **Workaround**: copy `cron/` contents to `/tmp/cron-deploy`, then `railway service cron-refresh && railway up` from there.
+- **Cron**: Lightsail system cron (`/etc/cron.d/statchat`). Auto-installed on deploy via GitHub Actions. See "Polling & Notable Events Feed" section below for full schedule.
+- **Health monitor**: `deploy/healthcheck.sh` — curls `/health` every 5 min, pings Healthchecks.io (`f69f410b-1774-4af4-9bb4-c57136cc59ff`). Alerts after 10-min grace.
 - **ADMIN_KEY**: `I9-NNJ-GBen3SZ-wf8JkZX5-_zvvt8Qri2EtTxWUo-I`
 - **Pipeline flow**: season batting → league averages + OPS+ → season pitching → pitching averages + ERA+ → daily game logs → home/away splits (from game logs) → platoon splits (from play-by-play) → streak detection (all 8 passes filtered by season) → record freshness timestamp
 - **Play-by-play derived splits (2025-2026)**: Pitch type splits (4-Seam, Sinker, Slider, etc.), count splits (all 12 ball-strike counts), RISP splits (runners in scoring position vs non-RISP) — all derived from MSF play-by-play `atBat` data. Tables: `pitch_type_batting_splits`, `pitch_type_pitching_splits`, `count_batting_splits`, `count_pitching_splits`, `risp_batting_splits`, `risp_pitching_splits`. Player card tabs: "By Pitch", "By Count", "RISP".
+
+### Polling & Notable Events Feed
+
+#### Data flow: daily pipeline vs polls
+- **Daily pipeline** (`deploy/refresh.sh`, 5:35 AM ET): Full MSF pull — season totals, game logs (cumulative, only new dates since `last_game_date_pulled`), splits, play-by-play, streaks, integrity check. Creates `/tmp/statchat_detection.lock` for duration. Authoritative — DB has complete game logs through yesterday after this runs.
+- **15-min polls** (`poll_new_games.py`): Lightweight — pulls today's game logs + season totals only. Tracks which `(player_id, date, game_number)` tuples are genuinely new inserts vs updates. Runs `detect_all(from_poll=True)` when new games found. Skips detection if lock file present (daily pipeline running).
+- **Weekly reconciliation** (Sunday 6 AM ET): `refresh.sh --full-refresh` — wipes and re-pulls all game logs for full integrity.
+
+#### Event detection (`detect_all` in `notable_events.py`)
+- **Tier 1**: Hitting streaks (8+ games), on-base streaks (12+), HR streaks (4+), pitching streaks, season pace milestones
+- **Tier 2**: Career milestones, single-game rarities, hot streaks (PELT)
+- **Tier 3 backfill**: Relaxed hitting streaks, league leaders (only if < 3 events from T1+T2)
+- **Historical scans** (`historical_scans.py`): DB-verified "first since" facts — cross-season streaks, career-start stats, leaderboard changes, debut records
+- **Matchup previews**: Tonight's games — pitcher-first selection (career ERA < 3.50 / 240+ IP, or `pitcher_prominence_list` in `stat_config.json`). 12-day suppression rotation. Batter by career OPS (800+ PA). Time-gated: weekdays noon ET+, weekends 9 AM ET+.
+- **On This Date**: Historic performances on today's month-day from past years
+- **AI insights** (`ai_notable_events.py`): Sonnet narrative layer — runs once per game date (deduped). Finds connections rules can't.
+
+#### Streak integrity protections
+- **Streak wipe on recompute**: `detect_all` deletes ALL streak events for `latest_date` before inserting new ones. Prevents stale/impossible streaks from persisting when a player no longer qualifies.
+- **Lock file**: Daily pipeline creates `/tmp/statchat_detection.lock`, polls check and skip detection while locked. Auto-expires after 30 min. Prevents detection running on partially-loaded data during full pipeline.
+- **New game tracking**: Poll tracks which player game logs are genuinely new (not updates to existing). Only triggers detection when new games appear.
+
+#### Event persistence & dedup
+- Events persist in `notable_events` table — NOT wiped on each run
+- `UNIQUE(detection_type, game_date, headline)` prevents exact duplicate headlines
+- Retention: 7-day window (14-day if fewer than 5 events). 50-event display limit.
+- Matchup previews: `INSERT OR IGNORE` for non-streak events. Streaks: delete-then-insert per date.
+
+#### Feed API (`/notable-events`)
+- Returns events ordered by `game_date DESC, priority ASC, id DESC`
+- Matchup previews interleaved among today's events only (never push past older dates)
+- Game scores fetched from MLB Stats API (`statsapi.mlb.com/schedule` with linescore hydration), cached per date. Winning team listed first.
+
+#### Cron schedule (`deploy/statchat-cron`)
+- Weekday polls: every 15 min, 9:35 PM – 2:20 AM ET
+- Weekend polls: every 15 min, 3:35 PM – 2:20 AM ET
+- Daily full pipeline: 5:35 AM ET
+- Weekly reconciliation: Sunday 6:00 AM ET
+- Health monitor: every 5 min, pings Healthchecks.io
+
+#### iOS feed display (`NotableEventsFeed.swift`)
+- Loads from `/notable-events` on first appear + `willEnterForegroundNotification` (5-min cooldown)
+- "Tonight" category events: inline CTA link to matchup preview, both player names linked (not bold), "matchup preview" text bold
+- Game context shown as superheader (e.g. "April 5 · Dodgers 4 - Astros 3")
+- Gradient separators between events, invisible on last item for alignment
+- Matchup pill suggestions ("Judge tonight") extracted from feed events, scattered into suggestion pool
 
 ### iOS backend integration (backend-only, 2026-03-18)
 - `BackendService.swift`: POST /query (SSE streaming), GET /player-card (structured JSON with career splits), 10s timeout on player card requests
