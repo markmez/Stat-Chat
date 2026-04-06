@@ -66,8 +66,10 @@ struct HomeView: View {
 
     /// Height of the peeking drawer
     private let peekHeight: CGFloat = 140
-    /// Height when fully expanded
-    private let expandedHeight: CGFloat = 480
+    /// Height when fully expanded — near full screen
+    private var expandedHeight: CGFloat {
+        UIScreen.main.bounds.height * 0.85
+    }
 
     private var drawerHeight: CGFloat {
         feedExpanded ? expandedHeight : peekHeight
@@ -242,28 +244,44 @@ struct HomeView: View {
 
     private var notableDrawer: some View {
         VStack(spacing: 0) {
-            // Drag handle
-            Capsule()
-                .fill(Color(.separator))
-                .frame(width: 36, height: 4)
-                .padding(.top, 10)
+            // Drag handle + tab bar — this is the collapse/expand target
+            VStack(spacing: 0) {
+                Capsule()
+                    .fill(Color(.separator))
+                    .frame(width: 36, height: 4)
+                    .padding(.top, 10)
 
-            // Tab bar — Twitter/X style underline
-            HStack(spacing: 0) {
-                drawerTabButton("Events", tab: .notable)
-                drawerTabButton("Leaders", tab: .leaders)
+                HStack(spacing: 0) {
+                    drawerTabButton("Events", tab: .notable)
+                    drawerTabButton("Leaders", tab: .leaders)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
             .contentShape(Rectangle())
             .onTapGesture {
-                if !feedExpanded {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    if feedExpanded {
+                        feedExpanded = false
+                    } else {
                         feedExpanded = true
                         NotableEventsFeed.markExpandedTrayToday()
                     }
                 }
             }
+            .gesture(
+                DragGesture(minimumDistance: 10)
+                    .onEnded { value in
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            if value.translation.height < -20 && !feedExpanded {
+                                feedExpanded = true
+                                NotableEventsFeed.markExpandedTrayToday()
+                            } else if value.translation.height > 20 && feedExpanded {
+                                feedExpanded = false
+                            }
+                        }
+                    }
+            )
 
             // Tab content
             if drawerTab == .notable {
@@ -317,30 +335,6 @@ struct HomeView: View {
                 .shadow(color: .black.opacity(0.10), radius: 8, y: -6)
                 .padding(.horizontal, 12)
                 .ignoresSafeArea(edges: .bottom)
-        )
-        .highPriorityGesture(
-            feedExpanded ? nil :
-            DragGesture(minimumDistance: 8)
-                .onEnded { value in
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                        if value.translation.height < -20 {
-                            feedExpanded = true
-                            NotableEventsFeed.markExpandedTrayToday()
-                        }
-                    }
-                }
-        )
-        .gesture(
-            feedExpanded && feedScrolledToTop ?
-            DragGesture(minimumDistance: 20)
-                .onEnded { value in
-                    if value.translation.height > 40 {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            feedExpanded = false
-                        }
-                    }
-                }
-            : nil
         )
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: feedExpanded)
     }
