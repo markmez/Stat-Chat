@@ -1536,6 +1536,7 @@ def main():
     try:
         t0 = time.time()
         season_year = detect_season(args.season)
+        print(f"  Season year: {season_year}, full_refresh: {args.full_refresh}")
         # Player info comes from stats responses (players.json requires higher tier)
         pull_season_batting(conn, args.season)
         compute_league_averages_and_ops_plus(conn, season_year)
@@ -1621,4 +1622,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        print(f"FATAL ERROR: {e}")
+        traceback.print_exc()
+        sys.exit(1)
