@@ -14,7 +14,7 @@ import os
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from .name_matcher import (
@@ -28,6 +28,82 @@ from .name_matcher import (
 )
 
 logger = logging.getLogger("statchat.query_engine")
+
+# Month name → number mapping
+_MONTH_MAP = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+    "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6,
+    "july": 7, "jul": 7, "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+    "october": 10, "oct": 10, "november": 11, "nov": 11, "december": 12, "dec": 12,
+}
+
+
+def _detect_since_date(lower: str) -> Optional[str]:
+    """Detect sub-season date ranges: 'since June 16, 2025', 'since May 2025',
+    'in the last 30 days', 'since the all-star break'.
+    Returns 'YYYY-MM-DD' or None."""
+    import re
+    from datetime import timedelta
+
+    today = date.today()
+
+    # "in the last N days"
+    m = re.search(r'\b(?:in|over)\s+the\s+last\s+(\d+)\s+days?\b', lower)
+    if m:
+        days = int(m.group(1))
+        return (today - timedelta(days=days)).isoformat()
+
+    # "since the all-star break" — roughly July 15
+    if "all-star break" in lower or "all star break" in lower:
+        # Use current year if after July, previous year if before
+        year = today.year if today.month >= 7 else today.year - 1
+        return f"{year}-07-15"
+
+    # "since [Month] [day], [year]" or "since [Month] [day] [year]"
+    # or "since [Month] [year]" or "since [Month] [day]"
+    since_match = re.search(
+        r'\bsince\s+([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\s*,?\s*(\d{4})\b', lower
+    )
+    if since_match:
+        month_str, day, year = since_match.group(1), int(since_match.group(2)), int(since_match.group(3))
+        month = _MONTH_MAP.get(month_str)
+        if month:
+            return f"{year}-{month:02d}-{day:02d}"
+
+    # "since [Month] [day]" (no year — assume current season)
+    since_md = re.search(
+        r'\bsince\s+([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b', lower
+    )
+    if since_md:
+        month_str, day = since_md.group(1), int(since_md.group(2))
+        month = _MONTH_MAP.get(month_str)
+        if month:
+            year = today.year if month <= today.month else today.year - 1
+            return f"{year}-{month:02d}-{day:02d}"
+
+    # "since [Month] [year]" (no day — first of month)
+    since_my = re.search(
+        r'\bsince\s+([a-z]+)\.?\s+(\d{4})\b', lower
+    )
+    if since_my:
+        month_str, year = since_my.group(1), int(since_my.group(2))
+        month = _MONTH_MAP.get(month_str)
+        if month:
+            return f"{year}-{month:02d}-01"
+
+    # "since [Month]" (no day, no year — first of that month, current year)
+    since_m = re.search(r'\bsince\s+([a-z]+)\.?\s*$', lower)
+    if not since_m:
+        since_m = re.search(r'\bsince\s+([a-z]+)\b', lower)
+    if since_m:
+        month_str = since_m.group(1)
+        month = _MONTH_MAP.get(month_str)
+        if month:
+            year = today.year if month <= today.month else today.year - 1
+            return f"{year}-{month:02d}-01"
+
+    return None
+
 
 DB_PATH = os.getenv(
     "DB_PATH",
@@ -184,10 +260,11 @@ class QueryPlan:
     derived_stat: Optional[str] = None  # key into _DERIVED_STATS
 
     # Where to look
-    scope: str = "current_season"  # "current_season", "all_time", "career", "since_YYYY"
+    scope: str = "current_season"  # "current_season", "all_time", "career", "since_YYYY", "date_range"
     season: Optional[int] = None
     since_year: Optional[int] = None
     end_year: Optional[int] = None  # For decade ranges: "last decade" = 2010-2019
+    since_date: Optional[str] = None  # "YYYY-MM-DD" for sub-season date ranges
 
     # Filters
     league: Optional[str] = None
@@ -199,6 +276,7 @@ class QueryPlan:
     age_min: Optional[int] = None
     split_context: Optional[SplitContext] = None
     team_code: Optional[str] = None
+    active_only: bool = False
 
     # Query shape
     query_type: str = "leaderboard"  # "leaderboard", "threshold", "count", "superlative", "game_log_count", "game_log_extreme", "team_ranking"
@@ -620,8 +698,16 @@ def decompose(question: str) -> QueryPlan:
                             break
 
     # --- Detect scope/season ---
+
+    # Date-range detection (sub-season granularity) — check before since_year
+    since_date = _detect_since_date(lower)
+    if since_date:
+        plan.since_date = since_date
+        plan.scope = "date_range"
+        _add_consumed(plan, "since from after starting the all star break last days")
+
     since_year = _detect_since_year(lower)
-    if since_year:
+    if since_year and not plan.since_date:
         plan.since_year = since_year
         plan.scope = f"since_{since_year}"
         _add_consumed(plan, "since this last past decade century years year the in over for during")
@@ -638,6 +724,16 @@ def decompose(question: str) -> QueryPlan:
     if any(t in lower for t in career_phrase_triggers) or any(re.search(t, lower) for t in career_word_triggers):
         plan.scope = "career"
         _add_consumed(plan, "all time all-time in history ever career record")
+
+    # "active" filter — current or previous year has stats
+    active_triggers = ["active", "still playing", "playing today", "current players"]
+    if any(t in lower for t in active_triggers):
+        plan.active_only = True
+        _add_consumed(plan, "active still playing playing today current players among")
+        # "active" implies career scope if no other scope set
+        if plan.scope == "current_season":
+            plan.scope = "career"
+            _add_consumed(plan, "career")
 
     # "single season" / "in a season" / "in a year" = best single season
     # This OVERRIDES career if both present ("most HR in a season ever")
@@ -1308,6 +1404,15 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             where_parts.append(filters_str)
         if pa:
             where_parts.append(pa[5:])  # strip " AND "
+        if plan.active_only:
+            this_year = date.today().year
+            last_year = this_year - 1
+            active_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+            where_parts.append(
+                f"EXISTS (SELECT 1 FROM {active_table} act "
+                f"WHERE act.player_id = {prefix}.player_id AND act.season >= ?)"
+            )
+            query_params.append(last_year)
 
         where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
         if plan.since_year and plan.end_year:
@@ -1353,12 +1458,106 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             )
         rows = cur.fetchall()
 
+    elif plan.scope == "date_range":
+        # Aggregate from game logs between since_date and today
+        gl_table = "game_pitching_logs" if is_pitching else "game_batting_logs"
+        gl = "gl"
+        query_params = [plan.since_date]
+
+        # Rate stat formulas from game log columns
+        if is_pitching:
+            _gl_rate_formulas = {
+                "era": f"9.0 * SUM({gl}.earned_runs) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
+                "whip": f"CAST(SUM({gl}.hits) + SUM({gl}.walks) AS REAL) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
+                "k_per_9": f"9.0 * SUM({gl}.strikeouts) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
+                "bb_per_9": f"9.0 * SUM({gl}.walks) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
+            }
+            min_pa_sql = f"HAVING SUM({gl}.ip_outs) >= 30"  # ~10 IP minimum
+        else:
+            _gl_rate_formulas = {
+                "batting_avg": f"CAST(SUM({gl}.hits) AS REAL) / NULLIF(SUM({gl}.at_bats), 0)",
+                "obp": (f"CAST(SUM({gl}.hits) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) AS REAL) / "
+                        f"NULLIF(SUM({gl}.at_bats) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) + SUM(COALESCE({gl}.sacrifice_flies, 0)), 0)"),
+                "slg": (f"CAST(SUM({gl}.hits) - SUM({gl}.doubles) - SUM({gl}.triples) - SUM({gl}.home_runs) "
+                        f"+ 2*SUM({gl}.doubles) + 3*SUM({gl}.triples) + 4*SUM({gl}.home_runs) AS REAL) / NULLIF(SUM({gl}.at_bats), 0)"),
+                "ops": (f"(CAST(SUM({gl}.hits) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) AS REAL) / "
+                        f"NULLIF(SUM({gl}.at_bats) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) + SUM(COALESCE({gl}.sacrifice_flies, 0)), 0)) + "
+                        f"(CAST(SUM({gl}.hits) - SUM({gl}.doubles) - SUM({gl}.triples) - SUM({gl}.home_runs) "
+                        f"+ 2*SUM({gl}.doubles) + 3*SUM({gl}.triples) + 4*SUM({gl}.home_runs) AS REAL) / NULLIF(SUM({gl}.at_bats), 0))"),
+                "iso": (f"CAST(SUM({gl}.doubles) + 2*SUM({gl}.triples) + 3*SUM({gl}.home_runs) AS REAL) / NULLIF(SUM({gl}.at_bats), 0)"),
+            }
+            # Prorated PA minimum: ~3.1 PA per game day in range
+            try:
+                start = datetime.strptime(plan.since_date, "%Y-%m-%d").date()
+                days_in_range = (date.today() - start).days
+                min_pa = max(30, int(days_in_range * 2.5))  # ~2.5 PA/day as floor
+            except:
+                min_pa = 50
+            min_pa_sql = f"HAVING SUM({gl}.plate_appearances) >= {min_pa}"
+
+        stat_col = plan.stat.db_column if plan.stat else (plan.derived_stat or "")
+
+        if is_rate and stat_col in _gl_rate_formulas:
+            stat_expr = _gl_rate_formulas[stat_col]
+        elif plan.stat and not is_rate:
+            stat_expr = f"SUM({gl}.{stat_col})"
+            min_pa_sql = ""  # No PA minimum for counting stats
+        else:
+            # Try derived stat
+            if plan.derived_stat and plan.derived_stat in _gl_rate_formulas:
+                stat_expr = _gl_rate_formulas[plan.derived_stat]
+            else:
+                return None  # Can't compute this stat from game logs
+
+        # Build WHERE
+        where_parts = [f"{gl}.date >= ?"]
+        if plan.active_only:
+            this_year = date.today().year
+            last_year = this_year - 1
+            active_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+            where_parts.append(
+                f"EXISTS (SELECT 1 FROM {active_table} act "
+                f"WHERE act.player_id = {gl}.player_id AND act.season >= ?)"
+            )
+            query_params.append(last_year)
+
+        where = f"WHERE {' AND '.join(where_parts)}"
+
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT p.name, {stat_expr} AS stat_val "
+            f"FROM {gl_table} {gl} "
+            f"JOIN players p ON {gl}.player_id = p.player_id "
+            f"{where} "
+            f"GROUP BY {gl}.player_id "
+            f"{min_pa_sql} "
+            f"ORDER BY stat_val {order} LIMIT ?",
+            tuple(query_params + [plan.limit]),
+        )
+        rows = cur.fetchall()
+        # Format date for display
+        try:
+            start_dt = datetime.strptime(plan.since_date, "%Y-%m-%d")
+            scope_label = f"Since {start_dt.strftime('%B %-d, %Y')}"
+        except:
+            scope_label = f"Since {plan.since_date}"
+
     elif plan.scope == "career":
         # Career needs GROUP BY with aggregate formulas for rate stats
         where_parts = []
         query_params = list(params)
         if filters_str:
             where_parts.append(filters_str)
+        # Active player filter: has stats in current or previous year
+        if plan.active_only:
+            this_year = date.today().year
+            last_year = this_year - 1
+            active_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+            where_parts.append(
+                f"EXISTS (SELECT 1 FROM {active_table} act "
+                f"WHERE act.player_id = {prefix}.player_id AND act.season >= ?)"
+            )
+            query_params.append(last_year)
         where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
         if is_rate:
@@ -1423,7 +1622,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
                 tuple(query_params + [plan.limit]),
             )
         rows = cur.fetchall()
-        scope_label = "Career"
+        scope_label = "Career (Active)" if plan.active_only else "Career"
     else:
         return None
 
