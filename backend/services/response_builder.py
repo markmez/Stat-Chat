@@ -4457,8 +4457,7 @@ def build_matchup(batter_name: str, pitcher_name: str,
         # H2H — show even with 1 PA
         if h2h and h2h[0]:
             pa = h2h[0]
-            caveat = " — small sample" if pa < 50 else ""
-            parts.append(f"**Head-to-Head ({pa} PA{caveat})**")
+            parts.append(f"**Head-to-Head ({pa} PA)**")
             parts.append("[STATGRID]")
             parts.append("HEADER: PA, AB, H, HR, BB, SO, AVG, OBP, SLG, OPS")
             parts.append(f"ROW {batter_display}: {h2h[0]}, {h2h[1]}, {h2h[2]}, {h2h[3]}, "
