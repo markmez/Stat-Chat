@@ -549,6 +549,10 @@ def pull_game_logs(conn, season_str, full_refresh=False):
             bat = all_stats.get("batting", {})
             if bat and (safe_int(bat.get("atBats")) > 0 or safe_int(bat.get("batterWalks")) > 0 or safe_int(bat.get("hitByPitch")) > 0):
                 pid = find_or_create_player(cursor, player, team_abbrev, season_year)
+                # Debug: log matching for players we know are problematic
+                _debug_name = f"{player.get('firstName','')} {player.get('lastName','')}"
+                if 'ramírez' in _debug_name.lower() and 'josé' in _debug_name.lower():
+                    print(f"    DEBUG: {_debug_name} ({team_abbrev}) → {pid} on {game_date}")
 
                 # Determine game number for doubleheaders
                 pkey = (pid, game_date)
