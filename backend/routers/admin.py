@@ -319,22 +319,15 @@ async def repair_game_logs(
     season: str = "2025-regular",
     authorization: str | None = Header(None),
 ):
-    """Re-pull game logs only for a specific season. No season stats, no splits, no streaks."""
+    """Re-pull game logs only for a specific season. Runs in background — returns immediately."""
     verify_admin(authorization)
     try:
-        # Use the pipeline script directly with a special flag
         pipeline_dir = os.path.dirname(PIPELINE_SCRIPT)
         repair_script = os.path.join(pipeline_dir, "repair_game_logs.py")
-        cmd = [sys.executable, repair_script, "--season", season, "--db", DB_PATH]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800,
-                                env={**os.environ})
-        return {
-            "status": "ok" if result.returncode == 0 else "error",
-            "stdout": result.stdout[-10000:] if result.stdout else "",
-            "stderr": result.stderr[-5000:] if result.stderr else "",
-        }
-    except subprocess.TimeoutExpired:
-        raise HTTPException(504, "Timed out")
+        log_file = "/data/repair_game_logs.log"
+        cmd = f"{sys.executable} {repair_script} --season {season} --db {DB_PATH} > {log_file} 2>&1 &"
+        os.system(cmd)
+        return {"status": "started", "log": log_file, "season": season}
     except Exception as e:
         raise HTTPException(500, str(e))
 
