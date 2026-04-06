@@ -349,15 +349,12 @@ struct HomeView: View {
                     }
                 }
         )
-        // Swipe down when expanded + scrolled to top to collapse
-        // Uses simultaneousGesture so ScrollView still works when scrolled down
+        // Swipe down to collapse — only when already scrolled to top BEFORE the gesture starts
         .simultaneousGesture(
-            feedExpanded ?
+            feedExpanded && feedScrolledToTop ?
             DragGesture(minimumDistance: 15)
                 .onEnded { value in
-                    let isDownSwipe = value.translation.height > 40
-                    let isFastSwipe = value.predictedEndTranslation.height > 100
-                    if isDownSwipe && (feedScrolledToTop || isFastSwipe) {
+                    if value.translation.height > 40 {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                             feedExpanded = false
                         }
