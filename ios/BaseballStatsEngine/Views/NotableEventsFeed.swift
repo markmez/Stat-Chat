@@ -40,11 +40,52 @@ struct NotableEventsFeed: View {
     var onMatchupTap: ((String) -> Void)?  // Query string for matchup preview
     var showHeader: Bool = true
     @Binding var matchupPills: [String]
+    var hasExpandedTrayToday: Bool = false
 
     @State private var events: [NotableEvent] = []
     @State private var lastLoadTime: Date?
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+
+    /// Check if user has visited the feed today (Eastern time, daylight hours)
+    private static func hasVisitedToday() -> Bool {
+        let key = "feedLastVisitDate"
+        let stored = UserDefaults.standard.string(forKey: key) ?? ""
+        return stored == Self.todayETString()
+    }
+
+    /// Mark that the user visited the feed today
+    private static func markVisitedToday() {
+        UserDefaults.standard.set(Self.todayETString(), forKey: "feedLastVisitDate")
+    }
+
+    /// Mark that the user expanded the tray today
+    static func markExpandedTrayToday() {
+        UserDefaults.standard.set(Self.todayETString(), forKey: "feedLastExpandDate")
+    }
+
+    /// Check if user has expanded the tray today
+    static func hasExpandedTray() -> Bool {
+        let stored = UserDefaults.standard.string(forKey: "feedLastExpandDate") ?? ""
+        return stored == Self.todayETString()
+    }
+
+    /// Today's date in ET as "YYYY-MM-DD", rolling over at 6 AM ET
+    /// (late night games before 6 AM count as "yesterday")
+    private static func todayETString() -> String {
+        let et = TimeZone(identifier: "America/New_York")!
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = et
+        var date = Date()
+        let hour = cal.component(.hour, from: date)
+        if hour < 6 {
+            date = cal.date(byAdding: .day, value: -1, to: date)!
+        }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        fmt.timeZone = et
+        return fmt.string(from: date)
+    }
 
     var body: some View {
         if !events.isEmpty {
@@ -123,8 +164,66 @@ struct NotableEventsFeed: View {
                     return "\(lastName) tonight"
                 }
 
+            // Interleave matchup previews based on user engagement today:
+            // - First visit today: interleave (every 3rd slot among today's events)
+            // - Visited but not expanded tray: first matchup at top, interleave rest
+            // - Expanded tray: all matchups at top (user is engaged, wants tonight's games)
+            let isFirstVisitToday = !Self.hasVisitedToday()
+            let previews = loaded.filter { $0.category == "Tonight" }
+            let others = loaded.filter { $0.category != "Tonight" }
+
+            // Find the boundary between today's and older events
+            let todayDate = others.first?.gameDate ?? ""
+            let todayOthers = others.filter { $0.gameDate == todayDate }
+            let older = others.filter { $0.gameDate != todayDate }
+
+            var merged: [NotableEvent]
+            if hasExpandedTrayToday {
+                // All previews at top, then today's events, then older
+                merged = previews + todayOthers + older
+            } else if !isFirstVisitToday {
+                // First preview at top, interleave rest among today's events
+                var result: [NotableEvent] = []
+                var pi = 0
+                if !previews.isEmpty {
+                    result.append(previews[0])
+                    pi = 1
+                }
+                for (i, event) in todayOthers.enumerated() {
+                    if pi < previews.count && i > 0 && i % 3 == 2 {
+                        result.append(previews[pi])
+                        pi += 1
+                    }
+                    result.append(event)
+                }
+                while pi < previews.count {
+                    result.append(previews[pi])
+                    pi += 1
+                }
+                merged = result + older
+            } else {
+                // First visit: interleave all among today's events
+                var result: [NotableEvent] = []
+                var pi = 0
+                for (i, event) in todayOthers.enumerated() {
+                    if pi < previews.count && i > 0 && i % 3 == 2 {
+                        result.append(previews[pi])
+                        pi += 1
+                    }
+                    result.append(event)
+                }
+                while pi < previews.count {
+                    result.append(previews[pi])
+                    pi += 1
+                }
+                merged = result + older
+            }
+
+            // Mark as visited today
+            Self.markVisitedToday()
+
             await MainActor.run {
-                events = loaded
+                events = merged
                 matchupPills = pills
                 lastLoadTime = Date()
             }

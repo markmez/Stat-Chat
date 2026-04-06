@@ -267,6 +267,9 @@ struct HomeView: View {
             .onTapGesture {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                     feedExpanded.toggle()
+                    if feedExpanded {
+                        NotableEventsFeed.markExpandedTrayToday()
+                    }
                 }
             }
 
@@ -293,7 +296,8 @@ struct HomeView: View {
                             path.append(ResultsDestination(question: query))
                         },
                         showHeader: false,
-                        matchupPills: $matchupPills
+                        matchupPills: $matchupPills,
+                        hasExpandedTrayToday: NotableEventsFeed.hasExpandedTray()
                     )
                 }
             }
@@ -320,6 +324,7 @@ struct HomeView: View {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                         if value.translation.height < -20 {
                             feedExpanded = true
+                            NotableEventsFeed.markExpandedTrayToday()
                         }
                     }
                 }
