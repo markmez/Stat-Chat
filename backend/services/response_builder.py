@@ -4267,6 +4267,7 @@ def build_matchup(batter_name: str, pitcher_name: str,
                 blended = (b_avg, b_obp, b_slg, b_ops)
 
         if blended:
+            parts.append("[SUBTITLE] [/SUBTITLE]")  # segment break for spacing
             parts.append("**Projected:**")
             parts.append(f"**{_format_rate(blended[0])} AVG / {_format_rate(blended[1])} OBP / {_format_rate(blended[2])} SLG ({_format_rate(blended[3])} OPS)**")
             parts.append("[SUBTITLE]Blending pitch mix, platoon, and recent performance[/SUBTITLE]")

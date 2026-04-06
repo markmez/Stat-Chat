@@ -118,7 +118,7 @@ struct ResultCard: View {
                     .textSelection(.enabled)
                     .lineSpacing(3)
                     .padding(.horizontal, 20)
-                    .padding(.top, isSectionHeader ? 12 : 0)
+                    .padding(.top, isSectionHeader ? 16 : 0)
                     .environment(\.openURL, OpenURLAction { url in
                         if url.scheme == "statchat",
                            url.host == "player",
