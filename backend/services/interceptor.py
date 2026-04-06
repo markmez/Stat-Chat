@@ -274,6 +274,8 @@ def try_intercept(question: str):
     # If it bails, go straight to Haiku/Sonnet — no old parsers.
     from services.query_engine import decompose, execute as qe_execute
     plan = decompose(trimmed)
+    logger.info("query_engine_plan question=%r valid=%s scope=%s stat=%s unexplained=%s active=%s since_date=%s",
+                trimmed, plan.is_valid, plan.scope, plan.stat, plan.unexplained_words, plan.active_only, plan.since_date)
     if plan.is_valid:
         response = qe_execute(plan)
         if response:
