@@ -1919,12 +1919,17 @@ enum PlayerNameMatcher {
             return candidates
         }
 
-        // If an exact full name matches (accent-insensitive), it's not ambiguous
-        // (Skip single-word names that collide with last names shared by multiple players)
-        if let match = nameExactLookup[ascii] {
-            if match.contains(" ") || (lastNameIndex[ascii]?.count ?? 0) <= 1 {
-                return nil
+        // If an exact full name matches (accent-insensitive), check if multiple players share it
+        if let match = nameExactLookup[ascii], match.contains(" ") {
+            // Check if multiple players have this exact full name
+            let lastName = ascii.components(separatedBy: " ").last ?? ascii
+            let candidates = lastNameIndex[lastName] ?? []
+            let sameFullName = candidates.filter { stripDiacritics($0.lowercased()) == ascii }
+            if sameFullName.count > 1 {
+                // Multiple players with the same full name — need disambiguation
+                return sameFullName
             }
+            return nil
         }
 
         // Also check normalized suffix against full names
