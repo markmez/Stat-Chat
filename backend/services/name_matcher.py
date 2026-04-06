@@ -546,7 +546,17 @@ def match_player(text: str) -> Optional[str]:
         match = name_exact_lookup[ascii_lower]
         is_single_word = " " not in match
         lookup_key = strip_diacritics(match.split()[-1].lower())
-        if not is_single_word or len(last_name_index.get(lookup_key, [])) <= 1:
+        if not is_single_word:
+            # Check for multiple players with same full name
+            candidates = last_name_index.get(lookup_key, [])
+            same_full = [c for c in candidates if strip_diacritics(c.lower()) == ascii_lower]
+            if len(same_full) > 1:
+                # Multiple players with same name — pick most prominent
+                result = match_player_with_prominence(lower)
+                if result:
+                    return result[0]
+            return match
+        elif len(last_name_index.get(lookup_key, [])) <= 1:
             return match
 
     # Try with normalized suffix
