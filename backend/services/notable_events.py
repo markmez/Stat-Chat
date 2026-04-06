@@ -1292,6 +1292,9 @@ def detect_matchup_previews(conn, season):
         if not compelling:
             compelling = f"{batter_name} faces {pitcher_name} tonight."
 
+        # Append CTA intro — iOS looks for "matchup preview." in detail
+        compelling += " See more in this"
+
         away_team = game.get("away", "")
         home_team = game.get("home", "")
         away_display = team_display(away_team)
@@ -1306,7 +1309,7 @@ def detect_matchup_previews(conn, season):
 
         events.append({
             "headline": compelling,
-            "detail": "",
+            "detail": " matchup preview.",
             "category": "Tonight",
             "game_date": today,
             "player_names": [batter_name, pitcher_name],
