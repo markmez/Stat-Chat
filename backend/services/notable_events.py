@@ -1414,10 +1414,10 @@ def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
                     pct_label = round(mix_pct * 100)
                     if ops >= 0.800:
                         if not best_angle or ops > best_angle[0]:
-                            best_angle = (ops, f"{batter_name} has hit {ops:.3f} OPS against {pitch_type.lower()}s — {pct_label}% of {pitcher_name}'s pitches.")
+                            best_angle = (ops, f"{batter_name} has hit {ops:.3f} OPS against {pitch_type.lower()}s — {pct_label}% of {pitcher_name}'s pitch mix.")
                     elif ops <= 0.650:
                         if not best_angle or ops < best_angle[0]:
-                            best_angle = (-ops, f"{batter_name} has struggled against {pitch_type.lower()}s ({ops:.3f} OPS) — {pct_label}% of {pitcher_name}'s pitches.")
+                            best_angle = (-ops, f"{batter_name} has struggled against {pitch_type.lower()}s ({ops:.3f} OPS) — {pct_label}% of {pitcher_name}'s pitch mix.")
                 if best_angle:
                     return best_angle[1]
 

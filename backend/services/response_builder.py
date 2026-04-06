@@ -4454,6 +4454,19 @@ def build_matchup(batter_name: str, pitcher_name: str,
             parts.append("[SUBTITLE]Blending pitch mix, platoon, and recent performance[/SUBTITLE]")
         parts.append("")
 
+        # H2H — show even with 1 PA
+        if h2h and h2h[0]:
+            pa = h2h[0]
+            caveat = " — small sample" if pa < 50 else ""
+            parts.append(f"**Head-to-Head ({pa} PA{caveat})**")
+            parts.append("[STATGRID]")
+            parts.append("HEADER: PA, AB, H, HR, BB, SO, AVG, OBP, SLG, OPS")
+            parts.append(f"ROW {batter_display}: {h2h[0]}, {h2h[1]}, {h2h[2]}, {h2h[3]}, "
+                        f"{h2h[4]}, {h2h[5]}, "
+                        f"{_format_rate(h2h[6])}, {_format_rate(h2h[7])}, "
+                        f"{_format_rate(h2h[8])}, {_format_rate(h2h[9])}")
+            parts.append("[/STATGRID]\n")
+
         # Platoon
         if platoon_line:
             pl = platoon_line
@@ -4524,22 +4537,6 @@ def build_matchup(batter_name: str, pitcher_name: str,
                         for note in streak_notes:
                             parts.append(f"FOOTER: {note}")
                     parts.append("[/STATGRID]")
-            parts.append("")
-
-        # H2H
-        if h2h:
-            pa = h2h[0]
-            caveat = " \u2014 small sample" if pa < 50 else ""
-            parts.append(f"**Head-to-Head ({pa} PA{caveat})**")
-            parts.append("[STATGRID]")
-            parts.append("HEADER: PA, AB, H, HR, BB, SO, AVG, OBP, SLG, OPS")
-            parts.append(f"ROW H2H: {h2h[0]}, {h2h[1]}, {h2h[2]}, {h2h[3]}, "
-                        f"{h2h[4]}, {h2h[5]}, "
-                        f"{_format_rate(h2h[6])}, {_format_rate(h2h[7])}, "
-                        f"{_format_rate(h2h[8])}, {_format_rate(h2h[9])}")
-            parts.append("[/STATGRID]")
-            if pa < 50:
-                parts.append("[TIP]Small sample \u2014 use pitch mix projection for better signal.[/TIP]")
             parts.append("")
 
         # Suggestion pills
