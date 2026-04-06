@@ -35,6 +35,7 @@
 		6B88067E643A4E86CA80F3E5 /* BackendService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4799F2E0A3FC480D16A23C9F /* BackendService.swift */; };
 		6DA656C612FFFC98992595AE /* StatGridParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12ED36FBBADEE2968B59C872 /* StatGridParser.swift */; };
 		725F4CA20FCDCC9874494AA9 /* DatabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94B9C740E67CB61B571A0B35 /* DatabaseService.swift */; };
+		775D2818E5A1C587FCFE659B /* DrawerScrollView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F91684173936C656325701F4 /* DrawerScrollView.swift */; };
 		7980858E751450598B53AA57 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A161890890E908E9407731BF /* Assets.xcassets */; };
 		7BB97C5EF392F16371B99621 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E27B973CF2B1F2C0AA67E7 /* SettingsView.swift */; };
 		7D8C7E36E07C12B7988BC18D /* AnalyticsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DB639422C8087E5F65B68F8 /* AnalyticsService.swift */; };
@@ -90,6 +91,7 @@
 		E517A58248A8BCD73B86CF8E /* SuggestionConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionConfig.swift; sourceTree = "<group>"; };
 		E5808AF2D60EBEB36D9CE0A5 /* TeamCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamCardView.swift; sourceTree = "<group>"; };
 		ECFC73592230A429A6330F03 /* LaunchAnimationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAnimationView.swift; sourceTree = "<group>"; };
+		F91684173936C656325701F4 /* DrawerScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerScrollView.swift; sourceTree = "<group>"; };
 		FAD8EDD4EE7274139F6B565D /* PlayerCardService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerCardService.swift; sourceTree = "<group>"; };
 		FB9F66CC0E8964519268C478 /* baseball_stats.db */ = {isa = PBXFileReference; path = baseball_stats.db; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -189,6 +191,7 @@
 			isa = PBXGroup;
 			children = (
 				7CB091836D4207BE27DEBA70 /* AnimatedPlaceholder.swift */,
+				F91684173936C656325701F4 /* DrawerScrollView.swift */,
 				6788FF565D12FAFC3C30AD38 /* HomeView.swift */,
 				ECFC73592230A429A6330F03 /* LaunchAnimationView.swift */,
 				797994603DE35696E898BBDA /* LeaderboardView.swift */,
@@ -296,6 +299,7 @@
 				6B88067E643A4E86CA80F3E5 /* BackendService.swift in Sources */,
 				BE54E2C20003B4AF94BE524E /* BaseballStatsEngineApp.swift in Sources */,
 				725F4CA20FCDCC9874494AA9 /* DatabaseService.swift in Sources */,
+				775D2818E5A1C587FCFE659B /* DrawerScrollView.swift in Sources */,
 				27359D246F5CF799D5EF74CA /* HomeView.swift in Sources */,
 				27E8F31F18C8C0D76DE297ED /* LaunchAnimationView.swift in Sources */,
 				5CCE38BE8D7080E8700D1E0B /* LeaderboardView.swift in Sources */,
