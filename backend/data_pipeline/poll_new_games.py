@@ -228,15 +228,17 @@ def main():
     all_new_players = new_batting_players | new_pitching_players
     print(f"  {new_logs} log entries processed, {len(all_new_players)} players with new games")
 
-    # If new games found, run targeted event detection for those players only
+    # If new games found, run full event detection
+    # Safe because: prior dates are complete (daily pipeline), lock prevents
+    # running during daily pipeline, streak wipe prevents duplicates
     if all_new_players:
-        print(f"  Running targeted event detection for {len(all_new_players)} players...")
+        print(f"  New games detected — running event detection...")
         try:
             services_parent = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
             if services_parent not in sys.path:
                 sys.path.insert(0, services_parent)
-            from services.notable_events import detect_for_players
-            detect_for_players(args.db, season_year, all_new_players)
+            from services.notable_events import detect_all
+            detect_all(args.db, season_year, from_poll=True)
         except Exception as e:
             print(f"  Event detection failed: {e}")
 
