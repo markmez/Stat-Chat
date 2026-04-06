@@ -440,35 +440,43 @@
     },
     {
       "text": "Most 3-hit games in 2025",
-      "weight": 1.0
+      "weight": 1.0,
+      "id": "d78"
     },
     {
       "text": "4+ XBH games last year",
-      "weight": 1.0
+      "weight": 1.0,
+      "id": "d79"
     },
     {
       "text": "Best career ERA active players",
-      "weight": 1.0
+      "weight": 1.0,
+      "id": "d80"
     },
     {
       "text": "Active home run leaders",
-      "weight": 1.0
+      "weight": 1.0,
+      "id": "d81"
     },
     {
       "text": "Sub-3 ERA relievers each of last 3 years",
-      "weight": 1.0
+      "weight": 1.0,
+      "id": "d82"
     },
     {
       "text": "Left-handed hitters with 30+ HR last year",
-      "weight": 1.0
+      "weight": 1.0,
+      "id": "d83"
     },
     {
       "text": "Rookie pitchers with ERA under 3",
-      "weight": 1.0
+      "weight": 1.0,
+      "id": "d84"
     },
     {
       "text": "Switch hitters with over .800 OPS this season",
-      "weight": 1.0
+      "weight": 1.0,
+      "id": "d85"
     }
   ],
   "templates": {
