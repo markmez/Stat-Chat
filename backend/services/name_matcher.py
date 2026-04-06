@@ -326,7 +326,10 @@ def _load_names() -> None:
     last_name_index = index
     first_name_index = fn_index
 
-    # Build exact lookup: ASCII-lowered -> canonical name (first match wins, longest first)
+    # Build exact lookup: ASCII-lowered -> canonical name
+    # sorted_names is longest first, so accented names win over ASCII versions
+    # (e.g., "José Ramírez" over "Jose Ramirez")
+    # When duplicates exist with same length, prefer one with more career games
     exact: dict[str, str] = {}
     for name in sorted_names:
         key = strip_diacritics(name.lower())
