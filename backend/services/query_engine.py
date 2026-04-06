@@ -704,7 +704,14 @@ def decompose(question: str) -> QueryPlan:
     if since_date:
         plan.since_date = since_date
         plan.scope = "date_range"
-        _add_consumed(plan, "since from after starting the all star break last days")
+        # Consume all date-related words: month names, day numbers, year, keywords
+        month_names = " ".join(_MONTH_MAP.keys())
+        _add_consumed(plan, f"since from after starting the all star all-star break last days {month_names}")
+        # Also consume any 4-digit year and 1-2 digit day numbers in the query
+        for token in lower.split():
+            cleaned = token.strip(",.;")
+            if re.match(r'^\d{1,4}(st|nd|rd|th)?$', cleaned):
+                _add_consumed(plan, cleaned)
 
     since_year = _detect_since_year(lower)
     if since_year and not plan.since_date:
@@ -742,8 +749,8 @@ def decompose(question: str) -> QueryPlan:
         plan.scope = "all_time"  # all_time = best single season records
         _add_consumed(plan, "single season in a season in a year")
 
-    # Only detect explicit season if since_year didn't already claim the year
-    if not plan.since_year:
+    # Only detect explicit season if since_year/since_date didn't already claim the year
+    if not plan.since_year and not plan.since_date:
         season = detect_season(lower, default_to_most_recent=False)
         if season:
             plan.season = season
