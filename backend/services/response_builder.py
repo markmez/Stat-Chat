@@ -4052,17 +4052,13 @@ def build_matchup(batter_name: str, pitcher_name: str,
         pitcher_display, _ = _get_player_info(conn, pitcher_name)
         cur = conn.cursor()
 
-        # Resolve season — find the most recent where both have data
+        # Resolve season — use current year, fall back to last year for components
         if season:
             resolved_season = season
+            fallback_season = None
         else:
-            cur.execute(
-                "SELECT MAX(s.season) FROM season_batting_stats s "
-                "JOIN players p ON s.player_id = p.player_id WHERE p.name = ?",
-                (_sanitize(batter_name),),
-            )
-            r = cur.fetchone()
-            resolved_season = r[0] if r and r[0] else _current_year()
+            resolved_season = _current_year()
+            fallback_season = resolved_season - 1
 
         # --- Pitcher's throwing hand ---
         cur.execute("SELECT throws FROM players WHERE name = ?", (_sanitize(pitcher_name),))
@@ -4070,27 +4066,39 @@ def build_matchup(batter_name: str, pitcher_name: str,
         pitcher_hand = r[0] if r and r[0] else None
 
         # --- Section 1 & 3: Pitcher's pitch mix + batter's pitch-type splits ---
+        # Try current season first, fall back to last season if no data
+        def _query_with_fallback(sql, params_template, name, seasons):
+            """Run a query trying each season until results are found."""
+            for szn in seasons:
+                cur.execute(sql, (*params_template, szn))
+                rows = cur.fetchall()
+                if rows:
+                    return rows
+            return []
+
+        seasons_to_try = [resolved_season]
+        if fallback_season:
+            seasons_to_try.append(fallback_season)
+
         # Get pitcher pitch mix from pitching pitch-type splits (PA distribution)
-        cur.execute(
+        pitcher_mix_rows = _query_with_fallback(
             "SELECT pts.pitch_type, pts.plate_appearances "
             "FROM pitch_type_pitching_splits pts "
             "JOIN players p ON pts.player_id = p.player_id "
             "WHERE p.name = ? AND pts.season = ? "
             "ORDER BY pts.plate_appearances DESC",
-            (_sanitize(pitcher_name), resolved_season),
+            (_sanitize(pitcher_name),), pitcher_name, seasons_to_try,
         )
-        pitcher_mix_rows = cur.fetchall()
 
         # Get batter's pitch-type batting splits
-        cur.execute(
+        batter_pitch_rows = _query_with_fallback(
             "SELECT pts.pitch_type, pts.plate_appearances, "
             "pts.batting_avg, pts.obp, pts.slg, pts.ops "
             "FROM pitch_type_batting_splits pts "
             "JOIN players p ON pts.player_id = p.player_id "
             "WHERE p.name = ? AND pts.season = ?",
-            (_sanitize(batter_name), resolved_season),
+            (_sanitize(batter_name),), batter_name, seasons_to_try,
         )
-        batter_pitch_rows = cur.fetchall()
         batter_by_pitch = {row[0]: row for row in batter_pitch_rows}
 
         # Compute pitch-mix-weighted projection
@@ -4138,16 +4146,20 @@ def build_matchup(batter_name: str, pitcher_name: str,
         platoon_line = None
         if pitcher_hand:
             split_key = "vs_LHP" if pitcher_hand == "L" else "vs_RHP"
-            cur.execute(
-                "SELECT ps.plate_appearances, ps.at_bats, ps.hits, "
-                "ps.home_runs, ps.walks, ps.strikeouts, "
-                "ps.batting_avg, ps.obp, ps.slg, ps.ops "
-                "FROM platoon_splits ps "
-                "JOIN players p ON ps.player_id = p.player_id "
-                "WHERE p.name = ? AND ps.season = ? AND ps.split = ?",
-                (_sanitize(batter_name), resolved_season, split_key),
-            )
-            pr = cur.fetchone()
+            pr = None
+            for szn in seasons_to_try:
+                cur.execute(
+                    "SELECT ps.plate_appearances, ps.at_bats, ps.hits, "
+                    "ps.home_runs, ps.walks, ps.strikeouts, "
+                    "ps.batting_avg, ps.obp, ps.slg, ps.ops "
+                    "FROM platoon_splits ps "
+                    "JOIN players p ON ps.player_id = p.player_id "
+                    "WHERE p.name = ? AND ps.season = ? AND ps.split = ?",
+                    (_sanitize(batter_name), szn, split_key),
+                )
+                pr = cur.fetchone()
+                if pr:
+                    break
             if pr:
                 platoon_line = {
                     "hand": "LHP" if pitcher_hand == "L" else "RHP",
@@ -4184,18 +4196,23 @@ def build_matchup(batter_name: str, pitcher_name: str,
         if pf:
             pitcher_form = pf
 
-        # --- Section 5: H2H ---
+        # --- Section 5: H2H (combine all available seasons) ---
         h2h = None
         try:
             cur.execute(
-                "SELECT h.plate_appearances, h.at_bats, h.hits, "
-                "h.home_runs, h.walks, h.strikeouts, "
-                "h.batting_avg, h.obp, h.slg, h.ops "
+                "SELECT SUM(h.plate_appearances), SUM(h.at_bats), SUM(h.hits), "
+                "SUM(h.home_runs), SUM(h.walks), SUM(h.strikeouts), "
+                "CASE WHEN SUM(h.at_bats) > 0 THEN CAST(SUM(h.hits) AS REAL) / SUM(h.at_bats) END, "
+                "CASE WHEN SUM(h.at_bats) + SUM(h.walks) > 0 THEN "
+                "  CAST(SUM(h.hits) + SUM(h.walks) AS REAL) / (SUM(h.at_bats) + SUM(h.walks)) END, "
+                "CASE WHEN SUM(h.at_bats) > 0 THEN "
+                "  CAST(SUM(h.hits) + SUM(h.home_runs) * 3 AS REAL) / SUM(h.at_bats) END, "
+                "NULL "  # OPS computed below
                 "FROM head_to_head h "
                 "JOIN players pb ON h.batter_id = pb.player_id "
                 "JOIN players pp ON h.pitcher_id = pp.player_id "
-                "WHERE pb.name = ? AND pp.name = ? AND h.season = ?",
-                (_sanitize(batter_name), _sanitize(pitcher_name), resolved_season),
+                "WHERE pb.name = ? AND pp.name = ?",
+                (_sanitize(batter_name), _sanitize(pitcher_name)),
             )
             hr = cur.fetchone()
             if hr and hr[0] and hr[0] > 0:
@@ -4208,7 +4225,7 @@ def build_matchup(batter_name: str, pitcher_name: str,
             return None  # No useful data
 
         parts = []
-        parts.append(f"**{batter_display} vs. {pitcher_display}** \u2014 {resolved_season} Matchup Preview")
+        parts.append(f"**{batter_display} vs. {pitcher_display}** \u2014 Matchup Preview")
 
         # Aggregate slash line — only shown when pitch-mix projection is available
         if projection:
@@ -4268,7 +4285,7 @@ def build_matchup(batter_name: str, pitcher_name: str,
         if h2h:
             pa = h2h[0]
             caveat = " \u2014 small sample" if pa < 50 else ""
-            parts.append(f"**Head-to-Head ({resolved_season}, {pa} PA{caveat})**")
+            parts.append(f"**Head-to-Head ({pa} PA{caveat})**")
             parts.append("[STATGRID]")
             parts.append("HEADER: PA, AB, H, HR, BB, SO, AVG, OBP, SLG, OPS")
             parts.append(f"ROW H2H: {h2h[0]}, {h2h[1]}, {h2h[2]}, {h2h[3]}, "
@@ -4281,8 +4298,8 @@ def build_matchup(batter_name: str, pitcher_name: str,
             parts.append("")
 
         # Suggestion pills
-        parts.append(f"[SUGGEST]{batter_display} {resolved_season}[/SUGGEST]")
-        parts.append(f"[SUGGEST]{pitcher_display} {resolved_season}[/SUGGEST]")
+        parts.append(f"[SUGGEST]{batter_display} this season[/SUGGEST]")
+        parts.append(f"[SUGGEST]{pitcher_display} this season[/SUGGEST]")
         parts.append(f"[SUGGEST]{batter_display} by pitch type[/SUGGEST]")
 
         return "\n".join(parts)
