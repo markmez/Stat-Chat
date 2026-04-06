@@ -2477,18 +2477,20 @@ def parse_player_game_window(input_str: str) -> Optional[dict]:
     if n_games < 1 or n_games > 162:
         return None
 
-    # Find player name — try with and without possessive 's' stripped
-    player = find_player_in_text(cleaned)
+    # Find player name — try possessive-stripped version first (more likely to match
+    # full names like "McMahon" vs "McMahons"), then original
+    player = find_player_in_text(cleaned_no_s)
     if not player:
-        player = find_player_in_text(cleaned_no_s)
+        player = find_player_in_text(cleaned)
     if not player:
         for prefix in ["most ", "best ", "how did ", "how many ", "what were "]:
-            if cleaned.startswith(prefix):
-                player = find_player_in_text(cleaned[len(prefix):])
-                if not player:
-                    player = find_player_in_text(cleaned_no_s[len(prefix):] if cleaned_no_s.startswith(prefix) else cleaned_no_s)
-                if player:
-                    break
+            for text in [cleaned_no_s, cleaned]:
+                if text.startswith(prefix):
+                    player = find_player_in_text(text[len(prefix):])
+                    if player:
+                        break
+            if player:
+                break
     if not player:
         return None
 
