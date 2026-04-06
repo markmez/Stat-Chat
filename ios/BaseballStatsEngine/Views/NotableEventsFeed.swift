@@ -113,39 +113,6 @@ struct NotableEventsFeed: View {
             let data = try await BackendService().fetchNotableEvents()
             var loaded = data.map { NotableEvent(from: $0) }
 
-            // DEBUG: stub matchup preview cards for simulator testing
-            #if DEBUG
-            let stubs: [NotableEvent] = [
-                NotableEvent(
-                    headline: "Tonight Aaron Judge takes on RHP Tanner Houck. Despite the platoon mismatch, Judge has been crushing righties with a 1.050 OPS. See more in this",
-                    detail: " matchup preview.",
-                    category: "Tonight",
-                    gameDate: "2026-04-06",
-                    playerNames: ["Aaron Judge", "Tanner Houck"],
-                    teamNames: ["Yankees", "Red Sox"],
-                    gameContext: "Matchup Preview"
-                ),
-                NotableEvent(
-                    headline: "Tonight Shohei Ohtani faces RHP Max Scherzer. Ohtani is 3-for-8 (.375) career against Scherzer with a home run. See more in this",
-                    detail: " matchup preview.",
-                    category: "Tonight",
-                    gameDate: "2026-04-06",
-                    playerNames: ["Shohei Ohtani", "Max Scherzer"],
-                    teamNames: ["Dodgers", "Rangers"],
-                    gameContext: "Matchup Preview"
-                ),
-                NotableEvent(
-                    headline: "Tonight Kyle Tucker takes on RHP Sonny Gray. Tucker is red hot with a 1.100 OPS over his last 12 games. See more in this",
-                    detail: " matchup preview.",
-                    category: "Tonight",
-                    gameDate: "2026-04-06",
-                    playerNames: ["Kyle Tucker", "Sonny Gray"],
-                    teamNames: ["Cubs", "Cardinals"],
-                    gameContext: "Matchup Preview"
-                ),
-            ]
-            loaded = stubs + loaded
-            #endif
 
             // Extract matchup pill strings from "Tonight" events
             let pills = loaded
