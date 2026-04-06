@@ -108,6 +108,7 @@ struct ResultCard: View {
         case .text(let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
+                let isSectionHeader = trimmed.hasPrefix("**") && !trimmed.hasPrefix("**Projected")
                 // addLinks/addTeamLinks are internally cached — safe to call on every render
                 let displayText = isStreaming ? trimmed : PlayerNameMatcher.addTeamLinks(to: PlayerNameMatcher.addLinks(to: trimmed))
                 Text(LocalizedStringKey(displayText))
@@ -117,6 +118,7 @@ struct ResultCard: View {
                     .textSelection(.enabled)
                     .lineSpacing(3)
                     .padding(.horizontal, 20)
+                    .padding(.top, isSectionHeader ? 12 : 0)
                     .environment(\.openURL, OpenURLAction { url in
                         if url.scheme == "statchat",
                            url.host == "player",
