@@ -55,7 +55,7 @@
         { "id": "d79", "text": "Last player to steal 80 bases", "weight": 0.8 },
         { "id": "d80", "text": "How did Ozzie Albies hit against sliders last season?", "weight": 0.8, "inSeasonText": "How has Ozzie Albies hit against sliders this season?" },
         { "id": "d81", "text": "Willy Adames with two strikes last season", "weight": 0.8, "inSeasonText": "Willy Adames with two strikes this season" },
-        { "id": "d82", "text": "William Contreras with runners in scoring position last season", "weight": 0.8, "inSeasonText": "William Contreras with runners in scoring position this season" },
+        { "id": "d82", "text": "William Contreras RISP stats last season", "weight": 0.8, "inSeasonText": "William Contreras RISP stats this season" },
 
         { "id": "d41", "text": "Compare Soto and Judge last season", "weight": 0.9, "inSeasonText": "Compare Soto and Judge this season" },
         { "id": "d42", "text": "Compare Devers and Jose Ramirez last season", "weight": 0.8, "inSeasonText": "Compare Devers and Jose Ramirez this season" },
