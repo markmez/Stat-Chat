@@ -523,7 +523,14 @@ def match_player(text: str) -> Optional[str]:
     trimmed = text.strip()
     if not trimmed:
         return None
+    # Strip possessive 's
     lower = trimmed.lower()
+    if lower.endswith("'s") or lower.endswith("\u2019s"):
+        lower = lower[:-2]
+    elif lower.endswith("s'") or lower.endswith("s\u2019"):
+        lower = lower[:-1]
+    # Also try without trailing 's' for possessives like "stantons"
+    lower_no_s = lower.rstrip("s") if lower != lower.rstrip("s") else None
 
     # Check nickname/alias map first
     if lower in nickname_aliases:
@@ -578,6 +585,10 @@ def match_player(text: str) -> Optional[str]:
         fn_matches = first_name_index.get(ascii_lower, [])
         if len(fn_matches) == 1:
             return fn_matches[0]
+
+    # Try without trailing 's' for possessives like "stantons" → "stanton"
+    if lower_no_s and lower_no_s != lower:
+        return match_player(lower_no_s)
 
     return None
 
@@ -2409,6 +2420,74 @@ def parse_count_query(input_str: str) -> Optional[dict]:
     return {
         "stat": stat, "threshold": threshold, "season": season,
         "is_pitching": is_pitching, "position": position,
+    }
+
+
+def parse_player_game_window(input_str: str) -> Optional[dict]:
+    """Detect player + game-window queries like:
+    - 'most hits in first 13 games of any Stanton season'
+    - 'Judge stats in his last 20 games'
+    - 'how did Ohtani do in his first 5 games this year'
+    - 'Soto first 10 games 2025'
+
+    Returns dict with name, window_type ('first' or 'last'), n_games, stat (optional),
+    season (optional, None = all seasons), or None.
+    """
+    lower = input_str.strip().lower()
+    # Strip possessives for player matching
+    # "stanton's" → "stanton", "stantons" → "stanton"
+    cleaned = re.sub(r"'s\b|\u2019s\b", "", lower)
+    cleaned = re.sub(r"s'\b|s\u2019\b", "s", cleaned)
+    # Also handle bare possessive without apostrophe: "stantons seasons" → "stanton seasons"
+    # Try to find player both with and without trailing 's' stripped from each word
+    cleaned_no_s = re.sub(r'(\w+)s\b', r'\1', cleaned)
+
+    # Detect "first N games" or "last N games"
+    window_match = re.search(r'\b(first|last|opening|final)\s+(\d+)\s*games?\b', cleaned)
+    if not window_match:
+        return None
+
+    window_type = "first" if window_match.group(1) in ("first", "opening") else "last"
+    n_games = int(window_match.group(2))
+    if n_games < 1 or n_games > 162:
+        return None
+
+    # Find player name — try with and without possessive 's' stripped
+    player = find_player_in_text(cleaned)
+    if not player:
+        player = find_player_in_text(cleaned_no_s)
+    if not player:
+        for prefix in ["most ", "best ", "how did ", "how many ", "what were "]:
+            if cleaned.startswith(prefix):
+                player = find_player_in_text(cleaned[len(prefix):])
+                if not player:
+                    player = find_player_in_text(cleaned_no_s[len(prefix):] if cleaned_no_s.startswith(prefix) else cleaned_no_s)
+                if player:
+                    break
+    if not player:
+        return None
+
+    # Detect stat (optional — None means show full stat line)
+    # Strip the window phrase before matching to avoid "games" being matched as a stat
+    stat_text = re.sub(r'\b(first|last|opening|final)\s+\d+\s*games?\b', '', cleaned)
+    stat = match_stat(stat_text)
+    # "games" as a stat is almost never what the user means here
+    if stat and stat.db_column == "games":
+        stat = None
+
+    # Detect season (None = compare across all seasons)
+    season = detect_season(cleaned, default_to_most_recent=False)
+
+    # "any season" / "any of his seasons" / "each season" = all seasons comparison
+    if any(p in lower for p in ["any season", "any of", "each season", "every season", "per season"]):
+        season = None
+
+    return {
+        "name": player,
+        "window_type": window_type,
+        "n_games": n_games,
+        "stat": stat,
+        "season": season,
     }
 
 
