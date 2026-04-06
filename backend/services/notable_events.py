@@ -1882,16 +1882,19 @@ def detect_all(db_path=None, season=None, from_poll=False):
     cursor = conn.cursor()
     inserted = 0
     for e in events:
-        # Look up game context for the first player
-        game_context = None
-        player_names = e.get("player_names", [])
-        if player_names:
-            first_name = player_names[0]
-            pid_row = conn.execute(
-                "SELECT player_id FROM players WHERE name = ?", (first_name,)
-            ).fetchone()
-            if pid_row:
-                game_context = _get_game_context(conn, pid_row[0], e["game_date"], season)
+        # Use event's own game_context if provided (e.g. matchup previews set theirs)
+        game_context = e.get("game_context")
+
+        # Otherwise look up from game logs
+        if not game_context:
+            player_names = e.get("player_names", [])
+            if player_names:
+                first_name = player_names[0]
+                pid_row = conn.execute(
+                    "SELECT player_id FROM players WHERE name = ?", (first_name,)
+                ).fetchone()
+                if pid_row:
+                    game_context = _get_game_context(conn, pid_row[0], e["game_date"], season)
 
         if not game_context:
             try:
