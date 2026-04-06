@@ -32,8 +32,11 @@ struct SuggestionPillsView: View {
                         Text(suggestion.text)
                             .font(.system(.caption, design: .rounded, weight: .medium))
                             .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
+                            .frame(maxWidth: UIScreen.main.bounds.width - 56)
                             .background(
                                 LinearGradient(
                                     colors: [lightBlue, deepBlue],

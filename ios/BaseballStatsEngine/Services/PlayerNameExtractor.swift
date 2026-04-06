@@ -21,6 +21,25 @@ enum PlayerNameExtractor {
         // Skip split labels like "vs_LHP", "vs_RHP"
         if name.hasPrefix("vs_") || name.hasPrefix("vs ") { return nil }
 
+        // Skip stat category labels (count splits, situational splits, etc.)
+        let skipLabels: Set<String> = [
+            "two strikes", "ahead in count", "behind in count", "even count",
+            "full count", "first pitch", "home", "away", "day", "night",
+            "vs lhp", "vs rhp", "vs left", "vs right", "risp", "bases empty",
+            "scoring position", "hot", "cold", "average",
+            "0-0", "0-1", "0-2", "1-0", "1-1", "1-2", "2-0", "2-1", "2-2", "3-0", "3-1", "3-2",
+        ]
+        if skipLabels.contains(name.lowercased()) { return nil }
+
+        // Skip if it looks like a split label (all words are common English, not a name)
+        let splitWords: Set<String> = [
+            "two", "three", "strikes", "balls", "count", "ahead", "behind", "even",
+            "full", "first", "pitch", "scoring", "position", "runners", "bases",
+            "empty", "loaded", "with", "in", "on", "no", "outs",
+        ]
+        let words = name.lowercased().split(separator: " ").map(String.init)
+        if words.count >= 2 && words.allSatisfy({ splitWords.contains($0) }) { return nil }
+
         // Strip leaderboard prefix: "#1 ", "#12 ", etc.
         if name.hasPrefix("#") {
             let rest = name.dropFirst()
