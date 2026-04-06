@@ -35,7 +35,11 @@ struct LeaderboardView: View {
 
     /// Fixed name column width — 98% of player names are ≤17 chars.
     /// At .callout rounded ~8pt/char, 17 chars ≈ 136pt. Add a little breathing room.
-    private let nameWidth: CGFloat = 148
+    /// Compact mode (pitch mix etc.) uses shorter labels, so narrower name + no rank.
+    private var isCompact: Bool {
+        grid.headers.first?.lowercased().contains("mix") == true
+    }
+    private var nameWidth: CGFloat { isCompact ? 80 : 148 }
     private let rankWidth: CGFloat = 30
     private let rankNameGap: CGFloat = 6
     private let nameStatGap: CGFloat = 8
@@ -71,8 +75,9 @@ struct LeaderboardView: View {
     /// Divider spans rank through the last value column
     private var dividerWidth: CGFloat {
         let widths = columnWidths
-        guard !widths.isEmpty else { return rankWidth + rankNameGap + nameWidth }
-        var w = rankWidth + rankNameGap + nameWidth + nameStatGap + widths[0]
+        let rankSpace: CGFloat = isCompact ? 0 : rankWidth + rankNameGap
+        guard !widths.isEmpty else { return rankSpace + nameWidth }
+        var w = rankSpace + nameWidth + nameStatGap + widths[0]
         for i in 1..<widths.count {
             w += valueGap + widths[i]
         }
@@ -83,7 +88,7 @@ struct LeaderboardView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Column headers
             HStack(spacing: 0) {
-                Spacer().frame(width: rankWidth + rankNameGap + nameWidth + nameStatGap)
+                Spacer().frame(width: (isCompact ? 0 : rankWidth + rankNameGap) + nameWidth + nameStatGap)
                 let widths = columnWidths
                 ForEach(Array(grid.headers.enumerated()), id: \.offset) { idx, header in
                     let colWidth = idx < widths.count ? widths[idx] : defaultStatColumnWidth
@@ -137,11 +142,13 @@ struct LeaderboardView: View {
                 let displayRank = sortColumn != nil ? "\(index + 1)." : parseLabel(row.label).rank
 
                 HStack(spacing: 0) {
-                    // Rank
-                    Text(displayRank)
-                        .font(.system(.callout, design: .monospaced, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: rankWidth, alignment: .trailing)
+                    // Rank (hidden in compact mode)
+                    if !isCompact {
+                        Text(displayRank)
+                            .font(.system(.callout, design: .monospaced, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: rankWidth, alignment: .trailing)
+                    }
 
                     // Player or team name (tappable)
                     if let teamCode = PlayerCardService.teamCodeFromFullName(playerName),
@@ -156,7 +163,7 @@ struct LeaderboardView: View {
                         }
                         .buttonStyle(.plain)
                         .frame(width: nameWidth, alignment: .leading)
-                        .padding(.leading, rankNameGap)
+                        .padding(.leading, isCompact ? 0 : rankNameGap)
                     } else if let extractedName = PlayerNameExtractor.extract(playerName),
                        let tap = onPlayerTap {
                         Button {
@@ -169,14 +176,14 @@ struct LeaderboardView: View {
                         }
                         .buttonStyle(.plain)
                         .frame(width: nameWidth, alignment: .leading)
-                        .padding(.leading, rankNameGap)
+                        .padding(.leading, isCompact ? 0 : rankNameGap)
                     } else {
                         Text(playerName)
                             .font(.system(.callout, design: .rounded, weight: .medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                             .frame(width: nameWidth, alignment: .leading)
-                            .padding(.leading, rankNameGap)
+                            .padding(.leading, isCompact ? 0 : rankNameGap)
                     }
 
                     // Stat values — all primary color

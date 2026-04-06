@@ -32,6 +32,8 @@ struct NotableEvent: Identifiable {
     }
 }
 
+private enum BoldMode { case firstOnly, all, none }
+
 struct NotableEventsFeed: View {
     var onPlayerTap: ((String) -> Void)?
     var onTeamTap: ((String) -> Void)?
@@ -114,8 +116,8 @@ struct NotableEventsFeed: View {
             #if DEBUG
             let stubs: [NotableEvent] = [
                 NotableEvent(
-                    headline: "Tonight Aaron Judge takes on RHP Tanner Houck. Despite the platoon mismatch, Judge has been crushing righties with a 1.050 OPS. See more about this matchup in this ",
-                    detail: "matchup preview.",
+                    headline: "Tonight Aaron Judge takes on RHP Tanner Houck. Despite the platoon mismatch, Judge has been crushing righties with a 1.050 OPS. See more in this",
+                    detail: " matchup preview.",
                     category: "Tonight",
                     gameDate: "2026-04-06",
                     playerNames: ["Aaron Judge", "Tanner Houck"],
@@ -123,8 +125,8 @@ struct NotableEventsFeed: View {
                     gameContext: "Matchup Preview"
                 ),
                 NotableEvent(
-                    headline: "Tonight Shohei Ohtani faces RHP Max Scherzer. Ohtani is 3-for-8 (.375) career against Scherzer with a home run. See more about this matchup in this ",
-                    detail: "matchup preview.",
+                    headline: "Tonight Shohei Ohtani faces RHP Max Scherzer. Ohtani is 3-for-8 (.375) career against Scherzer with a home run. See more in this",
+                    detail: " matchup preview.",
                     category: "Tonight",
                     gameDate: "2026-04-06",
                     playerNames: ["Shohei Ohtani", "Max Scherzer"],
@@ -132,8 +134,8 @@ struct NotableEventsFeed: View {
                     gameContext: "Matchup Preview"
                 ),
                 NotableEvent(
-                    headline: "Tonight Kyle Tucker takes on RHP Sonny Gray. Tucker is red hot with a 1.100 OPS over his last 12 games. See more about this matchup in this ",
-                    detail: "matchup preview.",
+                    headline: "Tonight Kyle Tucker takes on RHP Sonny Gray. Tucker is red hot with a 1.100 OPS over his last 12 games. See more in this",
+                    detail: " matchup preview.",
                     category: "Tonight",
                     gameDate: "2026-04-06",
                     playerNames: ["Kyle Tucker", "Sonny Gray"],
@@ -173,6 +175,7 @@ struct NotableEventsFeed: View {
                         playerNames: event.playerNames,
                         teamNames: event.teamNames,
                         ctaText: "matchup preview.",
+
                         ctaURL: "statchat://matchup/\(event.playerNames[0]) vs \(event.playerNames[1])"
                     )
                     Text(attributed)
@@ -205,12 +208,12 @@ struct NotableEventsFeed: View {
     /// Build an AttributedString with tappable names + inline CTA for matchup previews.
     private func highlightedTextWithCTA(_ text: String, playerNames: [String], teamNames: [String],
                                          ctaText: String, ctaURL: String) -> AttributedString {
-        var result = highlightedText(text, playerNames: playerNames, teamNames: teamNames, allBold: true)
+        var result = highlightedText(text, playerNames: playerNames, teamNames: teamNames, boldMode: .none)
 
-        // Make the CTA text a tappable link
+        // Make the CTA text a tappable bold link
         if let range = result.range(of: ctaText) {
             result[range].foregroundColor = deepBlue
-            result[range].font = .system(.subheadline, design: .rounded, weight: .semibold)
+            result[range].font = .system(.subheadline, design: .rounded, weight: .bold)
             if let encoded = ctaURL.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
                 result[range].link = URL(string: encoded)
             }
@@ -222,14 +225,14 @@ struct NotableEventsFeed: View {
     /// Build an AttributedString with tappable player/team names.
     /// First player is bold + linked (primary). Subsequent players are linked but not bold.
     /// When allBold is true, ALL player names are bold (used for matchup preview cards).
-    private func highlightedText(_ text: String, playerNames: [String], teamNames: [String], allBold: Bool = false) -> AttributedString {
+    private func highlightedText(_ text: String, playerNames: [String], teamNames: [String], boldMode: BoldMode = .firstOnly) -> AttributedString {
         var result = AttributedString(text)
 
         // Highlight + link player names
         for (index, name) in playerNames.enumerated() {
             if let range = result.range(of: name) {
                 result[range].foregroundColor = deepBlue
-                if index == 0 || allBold {
+                if boldMode == .all || (boldMode == .firstOnly && index == 0) {
                     result[range].font = .system(.subheadline, design: .rounded, weight: .bold)
                 }
                 if let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {

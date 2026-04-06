@@ -1063,14 +1063,24 @@ def detect_league_leaders(conn, season, latest_date=None):
 def detect_matchup_previews(conn, season):
     """Generate matchup preview feed cards for tonight's games.
 
-    Picks 2-3 matchups: user favorites (from search history, future) + marquee.
-    Each card has one compelling stat + CTA to see full preview.
+    Selection: pick top 3 pitchers by career ERA (240+ IP, sub-3.50 ERA) or from
+    the manual prominence list. Suppress pitchers featured in last 12 days.
+    Then find the best opposing batter by career OPS (800+ PA).
+    Time-gated: weekdays noon ET+, weekends 9 AM ET+.
     """
     events = []
 
+    # Time gate — don't show previews too early in the day
+    from datetime import datetime, timedelta, timezone
+    et_now = datetime.now(timezone(timedelta(hours=-4)))
+    is_weekend = et_now.weekday() >= 5  # Saturday=5, Sunday=6
+    earliest_hour = 9 if is_weekend else 12
+    if et_now.hour < earliest_hour:
+        return events
+
     try:
         from services.daily_games import get_todays_games
-        from services.response_builder import build_matchup, _get_db
+        from services.name_matcher import match_player
     except ImportError:
         return events
 
@@ -1078,8 +1088,36 @@ def detect_matchup_previews(conn, season):
     if not games:
         return events
 
-    today = date.today().isoformat()
+    # Load prominence list from config
+    import json, os
+    config_path = os.path.join(os.path.dirname(__file__), "stat_config.json")
+    prominence_list = set()
+    try:
+        with open(config_path) as f:
+            cfg = json.load(f)
+        prominence_list = set(cfg.get("pitcher_prominence_list", []))
+    except Exception:
+        pass
 
+    today = date.today().isoformat()
+    suppression_cutoff = (date.today() - timedelta(days=12)).isoformat()
+
+    # Step 1: Get recently featured pitchers (suppress for 12 days)
+    suppressed = set()
+    try:
+        rows = conn.execute("""
+            SELECT player_names FROM notable_events
+            WHERE detection_type = 'matchup_preview' AND game_date > ?
+        """, (suppression_cutoff,)).fetchall()
+        for r in rows:
+            names = json.loads(r[0]) if r[0] else []
+            if len(names) >= 2:
+                suppressed.add(names[1])  # pitcher is second in player_names
+    except Exception:
+        pass
+
+    # Step 2: Collect all tonight's starters with game info
+    starters = []  # (pitcher_name, matched_pitcher, batting_team, pitcher_team, game)
     for game in games:
         away_starter = game.get("away_starter")
         home_starter = game.get("home_starter")
@@ -1089,80 +1127,154 @@ def detect_matchup_previews(conn, season):
         if not away_starter or not home_starter:
             continue
 
-        # For each game, find top batters to preview against the starter
-        # Use the away team's best hitters vs home starter, and vice versa
-        for batting_team, pitcher_name, pitcher_team in [
-            (away_team, home_starter, home_team),
-            (home_team, away_starter, away_team),
+        # Home starter faces away batters, away starter faces home batters
+        for pitcher_raw, pitcher_team, batting_team in [
+            (home_starter, home_team, away_team),
+            (away_starter, away_team, home_team),
         ]:
-            # Find top batter on this team by OPS
-            top_batter = conn.execute("""
-                SELECT p.name, s.ops, s.home_runs, s.plate_appearances
-                FROM season_batting_stats s
-                JOIN players p ON s.player_id = p.player_id
-                WHERE s.season = ? AND s.team = ? AND s.plate_appearances >= 10
-                ORDER BY s.ops DESC LIMIT 1
-            """, (season, batting_team)).fetchone()
+            matched = match_player(pitcher_raw)
+            if matched:
+                starters.append((pitcher_raw, matched, batting_team, pitcher_team, game))
 
-            if not top_batter:
+    if not starters:
+        return events
+
+    # Step 3: Bulk career ERA query for all matched pitcher names
+    pitcher_names = list(set(s[1] for s in starters))
+    placeholders = ",".join("?" * len(pitcher_names))
+    career_rows = conn.execute(f"""
+        SELECT p.name,
+               SUM(s.innings_pitched) as career_ip,
+               SUM(s.earned_runs) * 9.0 / NULLIF(SUM(s.innings_pitched), 0) as career_era
+        FROM season_pitching_stats s
+        JOIN players p ON s.player_id = p.player_id
+        WHERE p.name IN ({placeholders})
+        GROUP BY p.name
+    """, pitcher_names).fetchall()
+    career_stats = {r[0]: (r[1], r[2]) for r in career_rows}
+
+    # Step 4: Score and rank pitchers
+    # Qualified: career ERA < 3.50 with 240+ IP, OR on prominence list
+    def pitcher_score(matched_name):
+        ip, era = career_stats.get(matched_name, (0, 99))
+        on_prominence = matched_name in prominence_list
+        qualified = (ip >= 240 and era < 3.50) or on_prominence
+        if not qualified:
+            return None
+        # Prominence list pitchers without enough IP sort after qualified pitchers
+        # but before unqualified ones — use a synthetic ERA of 3.49
+        sort_era = era if ip >= 240 else 3.49
+        return sort_era
+
+    scored = []
+    for pitcher_raw, matched, batting_team, pitcher_team, game in starters:
+        score = pitcher_score(matched)
+        if score is not None:
+            scored.append((score, matched, batting_team, pitcher_team, game))
+
+    # Sort by ERA (best first)
+    scored.sort(key=lambda x: x[0])
+
+    # Step 5: Pick top 3, respecting suppression
+    selected = []
+    for score, matched, batting_team, pitcher_team, game in scored:
+        if matched in suppressed:
+            continue
+        # Avoid two matchups from the same game
+        if any(s[4] is game for s in selected):
+            continue
+        selected.append((score, matched, batting_team, pitcher_team, game))
+        if len(selected) >= 3:
+            break
+
+    # Step 6: If fewer than 3, relax suppression
+    if len(selected) < 3:
+        for score, matched, batting_team, pitcher_team, game in scored:
+            if any(s[1] == matched for s in selected):
                 continue
-
-            batter_name, batter_ops, batter_hr, batter_pa = top_batter
-
-            # Match pitcher name to our DB
-            from services.name_matcher import match_player
-            matched_pitcher = match_player(pitcher_name)
-            if not matched_pitcher:
+            if any(s[4] is game for s in selected):
                 continue
+            selected.append((score, matched, batting_team, pitcher_team, game))
+            if len(selected) >= 3:
+                break
 
-            # Find one compelling stat for the card
-            compelling = _find_compelling_matchup_stat(
-                conn, batter_name, matched_pitcher, season
-            )
+    # Step 7: For each selected pitcher, find best opposing batter by career OPS (800+ PA)
+    for _, pitcher_name, batting_team, pitcher_team, game in selected:
+        top_batter = conn.execute("""
+            SELECT p.name
+            FROM season_batting_stats cur
+            JOIN players p ON cur.player_id = p.player_id
+            JOIN (
+                SELECT player_id,
+                       (SUM(hits)+SUM(walks)+SUM(hit_by_pitch))*1.0
+                           /NULLIF(SUM(at_bats)+SUM(walks)+SUM(hit_by_pitch)+SUM(sacrifice_flies),0)
+                       + (SUM(hits)-SUM(doubles)-SUM(triples)-SUM(home_runs)
+                          +2*SUM(doubles)+3*SUM(triples)+4*SUM(home_runs))*1.0
+                           /NULLIF(SUM(at_bats),0) as career_ops,
+                       SUM(plate_appearances) as career_pa
+                FROM season_batting_stats
+                GROUP BY player_id
+                HAVING career_pa >= 800
+            ) career ON cur.player_id = career.player_id
+            WHERE cur.season = ? AND cur.team = ?
+            ORDER BY career.career_ops DESC LIMIT 1
+        """, (season, batting_team)).fetchone()
 
-            if not compelling:
-                compelling = f"{batter_name} faces {matched_pitcher} tonight."
+        if not top_batter:
+            continue
 
-            away_display = team_display(away_team)
-            home_display = team_display(home_team)
+        batter_name = top_batter[0]
 
-            # Parse start time for display
-            start_time = game.get("start_time", "")
-            time_str = ""
-            if start_time:
-                try:
-                    from datetime import datetime
-                    dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-                    # Convert to ET (UTC-4)
-                    from datetime import timedelta
-                    et = dt - timedelta(hours=4)
-                    hour = et.hour
-                    minute = et.minute
-                    ampm = "PM" if hour >= 12 else "AM"
-                    if hour > 12: hour -= 12
-                    if hour == 0: hour = 12
-                    time_str = f"{hour}:{minute:02d} {ampm} ET"
-                except:
-                    pass
+        # Find one compelling stat for the card
+        compelling = _find_compelling_matchup_stat(
+            conn, batter_name, pitcher_name, season
+        )
+        if not compelling:
+            compelling = f"{batter_name} faces {pitcher_name} tonight."
 
-            game_context = f"Matchup Preview · {away_display} vs {home_display}"
-            if time_str:
-                game_context += f", {time_str}"
+        away_team = game.get("away", "")
+        home_team = game.get("home", "")
+        away_display = team_display(away_team)
+        home_display = team_display(home_team)
 
-            events.append({
-                "headline": compelling,
-                "detail": "",
-                "category": "Tonight",
-                "game_date": today,
-                "player_names": [batter_name, matched_pitcher],
-                "team_names": [team_display(batting_team), team_display(pitcher_team)],
-                "detection_type": "matchup_preview",
-                "priority": 0,  # Show at top of feed
-                "game_context": game_context,
-            })
+        # Parse start time for display
+        time_str = _parse_game_time_et(game.get("start_time", ""))
 
-    # Limit to top 3 most interesting (by batter prominence)
-    return events[:3]
+        game_context = f"Matchup Preview · {away_display} vs {home_display}"
+        if time_str:
+            game_context += f", {time_str}"
+
+        events.append({
+            "headline": compelling,
+            "detail": "",
+            "category": "Tonight",
+            "game_date": today,
+            "player_names": [batter_name, pitcher_name],
+            "team_names": [team_display(batting_team), team_display(pitcher_team)],
+            "detection_type": "matchup_preview",
+            "priority": 1,
+            "game_context": game_context,
+        })
+
+    return events
+
+
+def _parse_game_time_et(start_time):
+    """Parse ISO start time to 'H:MM AM/PM ET' string."""
+    if not start_time:
+        return ""
+    try:
+        from datetime import datetime, timedelta, timezone
+        dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        et = dt - timedelta(hours=4)
+        hour = et.hour
+        minute = et.minute
+        ampm = "PM" if hour >= 12 else "AM"
+        if hour > 12: hour -= 12
+        if hour == 0: hour = 12
+        return f"{hour}:{minute:02d} {ampm} ET"
+    except Exception:
+        return ""
 
 
 def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
@@ -1190,26 +1302,24 @@ def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
                 return f"{batter_name} is just {hits}-for-{ab} (.{int(avg*1000):03d}) career against {pitcher_name}."
 
         # Check pitcher's throwing hand vs batter's platoon split
+        # Require 50+ PA for meaningful platoon data, fall back to prior season if sparse
         cur.execute("SELECT throws FROM players WHERE name = ?", (pitcher_name,))
         hand_row = cur.fetchone()
         if hand_row and hand_row[0]:
             pitcher_hand = hand_row[0]
             split_key = "vs_LHP" if pitcher_hand == "L" else "vs_RHP"
-            cur.execute("""
-                SELECT ps.ops, ps.home_runs, ps.plate_appearances
-                FROM platoon_splits ps
-                JOIN players p ON ps.player_id = p.player_id
-                WHERE p.name = ? AND ps.season = ? AND ps.split = ?
-            """, (batter_name, season, split_key))
-            split = cur.fetchone()
-            if not split:
+            split = None
+            for szn in [season, season - 1]:
                 cur.execute("""
                     SELECT ps.ops, ps.home_runs, ps.plate_appearances
                     FROM platoon_splits ps
                     JOIN players p ON ps.player_id = p.player_id
                     WHERE p.name = ? AND ps.season = ? AND ps.split = ?
-                """, (batter_name, season - 1, split_key))
-                split = cur.fetchone()
+                """, (batter_name, szn, split_key))
+                row = cur.fetchone()
+                if row and row[2] and row[2] >= 50:
+                    split = row
+                    break
 
             if split and split[0]:
                 ops, hr, pa = split

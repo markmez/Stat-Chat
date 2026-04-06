@@ -270,5 +270,10 @@
     "Wade Boggs", "Walter Johnson", "Warren Spahn", "Whitey Ford", "Willie Mays",
     "Willie McCovey", "Willie Stargell", "Yadier Molina", "Yogi Berra", "Yu Darvish",
     "Zack Greinke"
+  ],
+  "pitcher_prominence_list": [
+    "Roki Sasaki", "Jackson Jobe", "Andrew Painter", "Tatsuya Imai",
+    "AJ Smith-Shawver", "Chase Burns", "Cade Horton", "Bobby Miller",
+    "Jared Jones", "Hurston Waldrep"
   ]
 }

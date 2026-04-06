@@ -4241,12 +4241,14 @@ def build_matchup(batter_name: str, pitcher_name: str,
             return None  # No useful data
 
         parts = []
-        parts.append(f"**{batter_display} vs. {pitcher_display}** \u2014 Matchup Preview")
+        parts.append(f"**{batter_display} vs. {pitcher_display}**")
+        parts.append("Matchup Preview")
 
         # Aggregate slash line — only shown when pitch-mix projection is available
         if projection:
             avg, obp, slg, ops = projection
-            parts.append(f"**Projected: {_format_rate(avg)}/{_format_rate(obp)}/{_format_rate(slg)} ({_format_rate(ops)} OPS)**")
+            parts.append("**Projected:**")
+            parts.append(f"**{_format_rate(avg)} AVG / {_format_rate(obp)} OBP / {_format_rate(slg)} SLG ({_format_rate(ops)} OPS)**")
         parts.append("")
 
         # Platoon
@@ -4255,7 +4257,7 @@ def build_matchup(batter_name: str, pitcher_name: str,
             parts.append(f"**vs {pl['hand']} This Season**")
             parts.append("[STATGRID]")
             parts.append("HEADER: PA, H, HR, BB, SO, AVG, OBP, SLG, OPS")
-            parts.append(f"ROW vs {pl['hand']}: {pl['pa']}, {pl['h']}, {pl['hr']}, "
+            parts.append(f"ROW {batter_display}: {pl['pa']}, {pl['h']}, {pl['hr']}, "
                         f"{pl['bb']}, {pl['so']}, "
                         f"{_format_rate(pl['avg'])}, {_format_rate(pl['obp'])}, "
                         f"{_format_rate(pl['slg'])}, {_format_rate(pl['ops'])}")
@@ -4266,15 +4268,15 @@ def build_matchup(batter_name: str, pitcher_name: str,
             parts.append(f"**Pitch Mix Projection**")
             parts.append(f"[SUBTITLE]{batter_display}'s stats against each pitch in {pitcher_display}'s arsenal[/SUBTITLE]")
             parts.append("[LEADERBOARD]")
-            parts.append("HEADER: Mix%, PA, AVG, OBP, SLG, OPS")
+            parts.append("HEADER: Mix%, PA, AVG, OBP, SLG")
             for i, (pt, pct, pa, avg, obp, slg, ops) in enumerate(mix_table_rows):
                 parts.append(f"ROW {i+1}. {pt}: {pct}%, {pa}, "
                             f"{_format_rate(avg)}, {_format_rate(obp)}, "
-                            f"{_format_rate(slg)}, {_format_rate(ops)}")
+                            f"{_format_rate(slg)}")
             parts.append("[/LEADERBOARD]\n")
 
-        # Recent streak
-        if batter_form or pitcher_form:
+        # Recent streak (always show — season debut note if no form data)
+        if True:
             parts.append("**Recent Streak**")
             if batter_form:
                 bf = batter_form
@@ -4285,6 +4287,8 @@ def build_matchup(batter_name: str, pitcher_name: str,
                             f"{_format_rate(bf[8])}, {_format_rate(bf[9])}, "
                             f"{_format_rate(bf[10])}, {_format_rate(bf[11])}")
                 parts.append("[/STATGRID]")
+            else:
+                parts.append(f"[TIP]This is {batter_display}'s season debut.[/TIP]")
             if pitcher_form:
                 pf = pitcher_form
                 parts.append("[STATGRID]")
@@ -4296,6 +4300,8 @@ def build_matchup(batter_name: str, pitcher_name: str,
                             f"{_format_pitching_rate(pf[4], 1)}, "
                             f"{_format_pitching_rate(pf[5], 1)}")
                 parts.append("[/STATGRID]")
+            else:
+                parts.append(f"[TIP]This is {pitcher_display}'s season debut.[/TIP]")
             parts.append("")
 
         # H2H
