@@ -913,12 +913,19 @@ def _get_game_line(conn, player_id, date, season):
     """, (player_id, date, season)).fetchone()
     if row and (row[0] or 0) + (row[6] or 0) > 0:
         h, ab, hr, rbi, d, t, bb = row
-        parts = [f"{h}-for-{ab}"]
-        if hr: parts.append(f"{hr} HR")
-        if d: parts.append(f"{d} 2B")
-        if rbi: parts.append(f"{rbi} RBI")
-        if bb and h == 0: parts.append(f"{bb} BB")  # Show walks when hitless
-        return ", ".join(parts), "batting"
+        base = f"{h}-for-{ab}"
+        extras = []
+        if hr: extras.append(f"{hr} HR")
+        if d: extras.append(f"{d} 2B")
+        if t: extras.append(f"{t} 3B")
+        if rbi: extras.append(f"{rbi} RBI")
+        if bb and h == 0: extras.append(f"{bb} BB")
+        if not extras:
+            return base, "batting"
+        elif len(extras) == 1:
+            return f"{base} with {extras[0]}", "batting"
+        else:
+            return f"{base} with {', '.join(extras[:-1])} and {extras[-1]}", "batting"
 
     return None, None
 
@@ -1122,7 +1129,13 @@ def template_facts(conn, facts, season, latest_date):
                         if d > 0: xbh_parts.append(f"{'a double' if d == 1 else f'{d} doubles'}")
                         if t > 0: xbh_parts.append(f"{'a triple' if t == 1 else f'{t} triples'}")
                         parts.extend(xbh_parts)
-                    game_intro = f"{player} went {' with '.join([parts[0]] + [', '.join(parts[1:])])} last night" if len(parts) > 1 else f"{player} went {parts[0]} last night"
+                    if len(parts) == 1:
+                        game_intro = f"{player} went {parts[0]} last night"
+                    elif len(parts) == 2:
+                        game_intro = f"{player} went {parts[0]} with {parts[1]} last night"
+                    else:
+                        extras = parts[1:]
+                        game_intro = f"{player} went {parts[0]} with {', '.join(extras[:-1])} and {extras[-1]} last night"
                 else:
                     game_intro = f"{player}"
             elif game_line:
