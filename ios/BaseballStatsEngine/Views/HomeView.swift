@@ -312,10 +312,10 @@ struct HomeView: View {
                     }
                 }
                 .coordinateSpace(name: "feedScroll")
-            .onPreferenceChange(ScrollOffsetKey.self) { offset in
-                feedScrolledToTop = offset >= -5
-            }
-            .scrollDisabled(!feedExpanded)
+                .onPreferenceChange(ScrollOffsetKey.self) { offset in
+                    feedScrolledToTop = offset >= -5
+                }
+                .scrollDisabled(!feedExpanded)
             } else {
                 // Leaders tab
                 StatLeadersView(
@@ -348,19 +348,6 @@ struct HomeView: View {
                         }
                     }
                 }
-        )
-        // Swipe down to collapse — only when already scrolled to top BEFORE the gesture starts
-        .simultaneousGesture(
-            feedExpanded && feedScrolledToTop ?
-            DragGesture(minimumDistance: 15)
-                .onEnded { value in
-                    if value.translation.height > 40 {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            feedExpanded = false
-                        }
-                    }
-                }
-            : nil
         )
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: feedExpanded)
     }
