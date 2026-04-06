@@ -291,6 +291,10 @@ class QueryPlan:
     # Multi-threshold filters (e.g., ".300 with 30 HR")
     extra_filters: list = field(default_factory=list)  # [{stat, threshold, comparison}]
 
+    # Multi-season consistency ("50+ games in each of the last 3 seasons")
+    per_season: bool = False  # condition must hold in EVERY season individually
+    season_count: Optional[int] = None  # number of consecutive seasons required
+
     # Sequential game-log queries ("hit in N consecutive games", "reached base in first 10 PAs")
     streak_conditions: list = field(default_factory=list)  # List of SQL conditions per game, ANDed together
     streak_condition_labels: list = field(default_factory=list)  # Display labels for each condition
@@ -752,6 +756,32 @@ def decompose(question: str) -> QueryPlan:
     if any(t in lower for t in single_season_triggers):
         plan.scope = "all_time"  # all_time = best single season records
         _add_consumed(plan, "single season in a season in a year")
+
+    # Multi-season consistency: "in each of the last N seasons", "every year since",
+    # "N straight seasons", "back to back", "consecutive seasons",
+    # "over the last N years ... in seasons" (implied per-season)
+    per_season_match = re.search(
+        r'(?:each|every|all)\s+(?:of\s+)?(?:the\s+)?(?:last|past)\s+(\d+)\s*(?:season|year)',
+        lower
+    )
+    if not per_season_match:
+        per_season_match = re.search(r'(\d+)\s+(?:straight|consecutive)\s+(?:season|year)', lower)
+    if not per_season_match:
+        if "back to back" in lower or "back-to-back" in lower:
+            per_season_match = type('M', (), {'group': lambda self, n: '2'})()
+    if not per_season_match:
+        # "over/in the last N years" + "in seasons" or "in each season" or per-season context
+        last_n = re.search(r'(?:over|in|during)\s+(?:the\s+)?(?:last|past)\s+(\d+)\s*(?:season|year)', lower)
+        if last_n and any(p in lower for p in ["in seasons", "in each", "every season", "per season", "each season"]):
+            per_season_match = last_n
+    if per_season_match:
+        plan.per_season = True
+        plan.season_count = int(per_season_match.group(1))
+        plan.query_type = "threshold"
+        current_year = datetime.now().year
+        plan.since_year = current_year - plan.season_count + 1
+        plan.scope = f"since_{plan.since_year}"
+        _add_consumed(plan, "each every all of the last past over in during straight consecutive seasons years back to back back-to-back season year")
 
     # Only detect explicit season if since_year/since_date didn't already claim the year
     if not plan.since_year and not plan.since_date:
@@ -1781,8 +1811,142 @@ def _build_suggestions(plan: QueryPlan, stat_name: str, scope_label: str) -> lis
     return pills
 
 
+def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
+    """Multi-season consistency: find players meeting criteria in EVERY season."""
+    table, prefix = _table_and_prefix(plan)
+    current_year = date.today().year
+    n_seasons = plan.season_count or 3
+    start_year = current_year - n_seasons + 1
+    seasons = list(range(start_year, current_year + 1))
+
+    # Build the per-season condition
+    conditions = []
+    if plan.stat:
+        stat_col = plan.stat.db_column
+        if plan.threshold is not None:
+            conditions.append((stat_col, plan.comparison, plan.threshold, plan.stat.is_rate))
+    for ef in plan.extra_filters:
+        if ef.get("stat"):
+            conditions.append((ef["stat"].db_column, ef.get("comparison", ">="), ef["threshold"], ef["stat"].is_rate))
+
+    if not conditions:
+        return None
+
+    # Find players who qualify in EACH season
+    qualifying = None  # set of player_ids
+    season_data = {}  # {player_id: {season: {col: val}}}
+
+    filters_str, params = _build_filters(plan, prefix)
+
+    for szn in seasons:
+        where_parts = [f"{prefix}.season = ?"]
+        query_params = [szn]
+        for col, comp, thresh, is_r in conditions:
+            where_parts.append(f"{prefix}.{col} {comp} ?")
+            query_params.append(thresh)
+        if filters_str:
+            where_parts.append(filters_str)
+            query_params.extend(params)
+
+        where = "WHERE " + " AND ".join(where_parts)
+
+        # Collect all relevant stat columns
+        stat_cols = list(set(c[0] for c in conditions))
+        select_cols = ", ".join(f"{prefix}.{c}" for c in stat_cols)
+
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT {prefix}.player_id, p.name, {prefix}.season, {prefix}.games, {select_cols} "
+            f"FROM {table} {prefix} "
+            f"JOIN players p ON {prefix}.player_id = p.player_id "
+            f"{where}",
+            tuple(query_params),
+        )
+        rows = cur.fetchall()
+
+        season_pids = set()
+        for row in rows:
+            pid, pname, yr, games = row[0], row[1], row[2], row[3]
+            season_pids.add(pid)
+            if pid not in season_data:
+                season_data[pid] = {"name": pname}
+            season_data[pid][szn] = {"games": games}
+            for i, col in enumerate(stat_cols):
+                season_data[pid][szn][col] = row[4 + i]
+
+        if qualifying is None:
+            qualifying = season_pids
+        else:
+            qualifying &= season_pids
+
+    if not qualifying:
+        return None
+
+    # Format results
+    results = []
+    for pid in qualifying:
+        info = season_data[pid]
+        results.append(info)
+
+    # Sort by first condition's value in the most recent season
+    first_col = conditions[0][0]
+    results.sort(
+        key=lambda r: r.get(seasons[-1], {}).get(first_col, 0) or 0,
+        reverse=(conditions[0][1] == ">="),
+    )
+
+    # Build output
+    stat_cols = list(set(c[0] for c in conditions))
+    _labels = {
+        "games": "G", "home_runs": "HR", "hits": "H", "rbi": "RBI", "runs": "R",
+        "stolen_bases": "SB", "walks": "BB", "strikeouts": "K", "wins": "W",
+        "saves": "SV", "batting_avg": "AVG", "obp": "OBP", "slg": "SLG", "ops": "OPS",
+        "era": "ERA", "whip": "WHIP", "k_per_9": "K/9", "innings_pitched": "IP",
+    }
+
+    title = f"**Players meeting criteria in each of the last {n_seasons} seasons** ({start_year}-{current_year})\n"
+    parts = [title]
+    parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+
+    # Build header: G 'YR, STAT 'YR for each season
+    headers = []
+    for szn in seasons:
+        yr_label = f"'{str(szn)[-2:]}"
+        headers.append(f"G {yr_label}")
+        for col in stat_cols:
+            if col != "games":
+                headers.append(f"{_labels.get(col, col)} {yr_label}")
+    parts.append("[LEADERBOARD]")
+    parts.append("HEADER: " + ", ".join(headers))
+
+    for i, info in enumerate(results[:plan.limit]):
+        name = info["name"]
+        vals = []
+        for szn in seasons:
+            szn_data = info.get(szn, {})
+            vals.append(str(szn_data.get("games", 0)))
+            for col in stat_cols:
+                if col != "games":
+                    v = szn_data.get(col, 0)
+                    if isinstance(v, float) and v < 1:
+                        vals.append(_format_rate(v))
+                    elif isinstance(v, float):
+                        vals.append(f"{v:.2f}")
+                    else:
+                        vals.append(str(v or 0))
+        parts.append(f"ROW {i+1}. {name}: " + ", ".join(vals))
+
+    parts.append("[/LEADERBOARD]")
+    parts.append(f"\n{len(results)} player{'s' if len(results) != 1 else ''} qualified.")
+
+    return "\n".join(parts)
+
+
 def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
     """Threshold query: 'who hit 40 HR', 'players with .800 OPS'."""
+    if plan.per_season:
+        return _execute_per_season_threshold(conn, plan)
+
     table, prefix = _table_and_prefix(plan)
     stat_expr, abbrev, name, is_rate = _stat_expr(plan, prefix)
     filters_str, params = _build_filters(plan, prefix)
