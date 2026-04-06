@@ -4267,11 +4267,9 @@ def build_matchup(batter_name: str, pitcher_name: str,
                 blended = (b_avg, b_obp, b_slg, b_ops)
 
         if blended:
-            parts.append("[SUBTITLE]Matchup Preview — blending pitch mix, platoon, and recent performance[/SUBTITLE]")
             parts.append("**Projected:**")
             parts.append(f"**{_format_rate(blended[0])} AVG / {_format_rate(blended[1])} OBP / {_format_rate(blended[2])} SLG ({_format_rate(blended[3])} OPS)**")
-        else:
-            parts.append("[SUBTITLE]Matchup Preview[/SUBTITLE]")
+            parts.append("[SUBTITLE]Blending pitch mix, platoon, and recent performance[/SUBTITLE]")
         parts.append("")
 
         # Platoon
@@ -4292,15 +4290,15 @@ def build_matchup(batter_name: str, pitcher_name: str,
             pitcher_last = pitcher_display.split()[-1] if pitcher_display else pitcher_display
             parts.append(f"**Pitch Mix Projection**")
             parts.append(f"[SUBTITLE]{batter_last}'s stats against each pitch in {pitcher_last}'s arsenal[/SUBTITLE]")
-            parts.append(f"[SUBTITLE]% is how often {pitcher_last} throws this pitch, historically.[/SUBTITLE]")
+            parts.append(f"[SUBTITLE]% is how often {pitcher_last} throws this pitch historically.[/SUBTITLE]")
             parts.append("[LEADERBOARD]")
             parts.append("HEADER: PA, AVG, OBP, SLG")
             for i, (pt, pct, pa, avg, obp, slg, ops) in enumerate(mix_table_rows):
-                parts.append(f"ROW {i+1}. {pt} ({pct}%): {pa}, "
+                parts.append(f"ROW {pt} ({pct}%): {pa}, "
                             f"{_format_rate(avg)}, {_format_rate(obp)}, "
                             f"{_format_rate(slg)}")
             if projection:
-                parts.append(f"FOOTER: Weighted stats against this pitch mix")
+                parts.append(f"FOOTER: Weighted stats for {batter_last} against this pitch mix")
                 parts.append(f"FOOTER: {_format_rate(projection[0])} AVG / {_format_rate(projection[1])} OBP / {_format_rate(projection[2])} SLG ({_format_rate(projection[3])} OPS)")
             parts.append("[/LEADERBOARD]\n")
 

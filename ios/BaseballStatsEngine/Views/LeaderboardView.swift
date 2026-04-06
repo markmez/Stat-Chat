@@ -37,9 +37,10 @@ struct LeaderboardView: View {
     /// At .callout rounded ~8pt/char, 17 chars ≈ 136pt. Add a little breathing room.
     /// Compact mode (pitch mix etc.) uses shorter labels, so narrower name + no rank.
     private var isCompact: Bool {
-        grid.headers.first?.lowercased().contains("mix") == true
+        // Detect pitch mix tables by label pattern: "Sinker (61%)" etc.
+        grid.rows.first.map { $0.label.contains("%") } ?? false
     }
-    private var nameWidth: CGFloat { isCompact ? 80 : 148 }
+    private var nameWidth: CGFloat { isCompact ? 100 : 148 }
     private let rankWidth: CGFloat = 30
     private let rankNameGap: CGFloat = 6
     private let nameStatGap: CGFloat = 8
