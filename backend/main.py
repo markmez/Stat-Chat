@@ -112,6 +112,8 @@ app.include_router(player_card.router)
 app.include_router(stats.router)
 app.include_router(admin.router)
 app.include_router(notable.router)
+from routers import leaders
+app.include_router(leaders.router)
 
 if __name__ == "__main__":
     import uvicorn
