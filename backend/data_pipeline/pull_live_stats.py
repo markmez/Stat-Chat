@@ -174,19 +174,40 @@ def find_or_create_player(cursor, player_info, team_abbrev, season):
     ascii_name = _strip_accents(full_name)
 
     # Try exact name match first (including accent-insensitive)
+    # When multiple matches exist, prefer the most recently active player
     cursor.execute("SELECT player_id, name FROM players WHERE name = ? OR name = ?",
                    (full_name, ascii_name))
     rows = cursor.fetchall()
-    for row in rows:
-        if _is_temporally_plausible(cursor, row[0], season):
-            # Update name to MSF version (may have accents/Jr.) and team
-            if row[1] != full_name:
-                cursor.execute("UPDATE players SET name = ?, team = ? WHERE player_id = ?",
-                               (full_name, retro_team(team_abbrev), row[0]))
-            else:
-                cursor.execute("UPDATE players SET team = ? WHERE player_id = ?",
-                               (retro_team(team_abbrev), row[0]))
-            return row[0]
+    plausible_exact = [(r[0], r[1]) for r in rows if _is_temporally_plausible(cursor, r[0], season)]
+    if plausible_exact:
+        # Pick the most recently active player
+        if len(plausible_exact) > 1:
+            best = None
+            best_season = -1
+            for pid, pname in plausible_exact:
+                cursor.execute("""
+                    SELECT MAX(season) FROM (
+                        SELECT MAX(season) as season FROM season_batting_stats WHERE player_id = ?
+                        UNION ALL
+                        SELECT MAX(season) FROM season_pitching_stats WHERE player_id = ?
+                    )
+                """, (pid, pid))
+                last = cursor.fetchone()
+                last_season = last[0] if last and last[0] else 0
+                if last_season > best_season:
+                    best_season = last_season
+                    best = (pid, pname)
+            if best:
+                plausible_exact = [best]
+
+        pid, pname = plausible_exact[0]
+        if pname != full_name:
+            cursor.execute("UPDATE players SET name = ?, team = ? WHERE player_id = ?",
+                           (full_name, retro_team(team_abbrev), pid))
+        else:
+            cursor.execute("UPDATE players SET team = ? WHERE player_id = ?",
+                           (retro_team(team_abbrev), pid))
+        return pid
 
     # Try last name + first initial match (with temporal check)
     cursor.execute("SELECT player_id, name FROM players WHERE name LIKE ?",
