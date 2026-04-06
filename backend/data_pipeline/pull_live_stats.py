@@ -159,9 +159,16 @@ def _is_temporally_plausible(cursor, player_id, season):
     """, (player_id, player_id))
     row = cursor.fetchone()
     if row and row[0]:
-        return (season - row[0]) < 15
+        return (season - row[0]) < 5
     # No stats yet — could be a newly created entry, allow match
     return True
+
+
+def _get_stored_team(cursor, player_id):
+    """Get the team currently stored in the players table for this ID."""
+    cursor.execute("SELECT team FROM players WHERE player_id = ?", (player_id,))
+    row = cursor.fetchone()
+    return row[0] if row else None
 
 
 def find_or_create_player(cursor, player_info, team_abbrev, season):
@@ -180,25 +187,32 @@ def find_or_create_player(cursor, player_info, team_abbrev, season):
     rows = cursor.fetchall()
     plausible_exact = [(r[0], r[1]) for r in rows if _is_temporally_plausible(cursor, r[0], season)]
     if plausible_exact:
-        # Pick the most recently active player
         if len(plausible_exact) > 1:
-            best = None
-            best_season = -1
-            for pid, pname in plausible_exact:
-                cursor.execute("""
-                    SELECT MAX(season) FROM (
-                        SELECT MAX(season) as season FROM season_batting_stats WHERE player_id = ?
-                        UNION ALL
-                        SELECT MAX(season) FROM season_pitching_stats WHERE player_id = ?
-                    )
-                """, (pid, pid))
-                last = cursor.fetchone()
-                last_season = last[0] if last and last[0] else 0
-                if last_season > best_season:
-                    best_season = last_season
-                    best = (pid, pname)
-            if best:
-                plausible_exact = [best]
+            # Tiebreak 1: prefer player whose stored team matches the incoming team
+            retro_team_code = retro_team(team_abbrev)
+            team_matches = [(pid, pname) for pid, pname in plausible_exact
+                           if _get_stored_team(cursor, pid) == retro_team_code]
+            if len(team_matches) == 1:
+                plausible_exact = team_matches
+            else:
+                # Tiebreak 2: most recently active
+                best = None
+                best_season = -1
+                for pid, pname in plausible_exact:
+                    cursor.execute("""
+                        SELECT MAX(season) FROM (
+                            SELECT MAX(season) as season FROM season_batting_stats WHERE player_id = ?
+                            UNION ALL
+                            SELECT MAX(season) FROM season_pitching_stats WHERE player_id = ?
+                        )
+                    """, (pid, pid))
+                    last = cursor.fetchone()
+                    last_season = last[0] if last and last[0] else 0
+                    if last_season > best_season:
+                        best_season = last_season
+                        best = (pid, pname)
+                if best:
+                    plausible_exact = [best]
 
         pid, pname = plausible_exact[0]
         if pname != full_name:
