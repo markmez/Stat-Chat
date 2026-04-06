@@ -418,4 +418,39 @@ final class BackendService: Sendable {
         }
         return (try? JSONDecoder().decode([NotableEventData].self, from: data)) ?? []
     }
+
+    // MARK: - Leaders
+
+    struct LeadersResponse: Codable {
+        let season: Int
+        let league: String
+        let batting: [StatLeaderboard]
+        let pitching: [StatLeaderboard]
+    }
+
+    struct StatLeaderboard: Codable {
+        let stat: String
+        let leaders: [LeaderEntry]
+    }
+
+    struct LeaderEntry: Codable {
+        let name: String
+        let value: String
+        let team: String
+    }
+
+    func fetchLeaders(league: String = "MLB", limit: Int = 10) async throws -> LeadersResponse {
+        var components = URLComponents(url: baseURL.appendingPathComponent("leaders"),
+                                       resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "league", value: league),
+            URLQueryItem(name: "limit", value: "\(limit)"),
+        ]
+        let (data, response) = try await URLSession.shared.data(from: components.url!)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            return LeadersResponse(season: 0, league: league, batting: [], pitching: [])
+        }
+        return (try? JSONDecoder().decode(LeadersResponse.self, from: data))
+            ?? LeadersResponse(season: 0, league: league, batting: [], pitching: [])
+    }
 }

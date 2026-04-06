@@ -22,6 +22,8 @@ struct HomeView: View {
     @FocusState private var isInputFocused: Bool
     @State private var lastNameSearchCount: Int = UserDefaults.standard.integer(forKey: "lastNameSearchCount")
     @State private var matchupPills: [String] = []
+    @State private var drawerTab: DrawerTab = .notable
+    private enum DrawerTab { case notable, leaders }
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
@@ -240,72 +242,71 @@ struct HomeView: View {
 
     private var notableDrawer: some View {
         VStack(spacing: 0) {
-            // Drag handle + header
-            VStack(spacing: 8) {
-                Capsule()
-                    .fill(Color(.separator))
-                    .frame(width: 36, height: 4)
-                    .padding(.top, 10)
+            // Drag handle
+            Capsule()
+                .fill(Color(.separator))
+                .frame(width: 36, height: 4)
+                .padding(.top, 10)
 
-                HStack(spacing: 6) {
-                    Image(systemName: "flame.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [.orange, .red],
-                                startPoint: .top, endPoint: .bottom
-                            )
-                        )
-                    Text("Notable")
-                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
+            // Tab bar — Twitter/X style underline
+            HStack(spacing: 0) {
+                drawerTabButton("Notable", tab: .notable)
+                drawerTabButton("Leaders", tab: .leaders)
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
             .contentShape(Rectangle())
             .onTapGesture {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                    feedExpanded.toggle()
-                    if feedExpanded {
+                if !feedExpanded {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        feedExpanded = true
                         NotableEventsFeed.markExpandedTrayToday()
                     }
                 }
             }
 
-            // Feed content
-            ScrollView {
-                VStack(spacing: 0) {
-                    // Scroll position sentinel
-                    GeometryReader { geo in
-                        Color.clear.preference(
-                            key: ScrollOffsetKey.self,
-                            value: geo.frame(in: .named("feedScroll")).minY
+            // Tab content
+            if drawerTab == .notable {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: ScrollOffsetKey.self,
+                                value: geo.frame(in: .named("feedScroll")).minY
+                            )
+                        }
+                        .frame(height: 0)
+
+                        NotableEventsFeed(
+                            onPlayerTap: { name in
+                                path.append(PlayerCardDestination(name: name))
+                            },
+                            onTeamTap: { code in
+                                path.append(TeamCardDestination(code: code))
+                            },
+                            onMatchupTap: { query in
+                                path.append(ResultsDestination(question: query))
+                            },
+                            showHeader: false,
+                            matchupPills: $matchupPills,
+                            hasExpandedTrayToday: NotableEventsFeed.hasExpandedTray()
                         )
                     }
-                    .frame(height: 0)
-
-                    NotableEventsFeed(
-                        onPlayerTap: { name in
-                            path.append(PlayerCardDestination(name: name))
-                        },
-                        onTeamTap: { code in
-                            path.append(TeamCardDestination(code: code))
-                        },
-                        onMatchupTap: { query in
-                            path.append(ResultsDestination(question: query))
-                        },
-                        showHeader: false,
-                        matchupPills: $matchupPills,
-                        hasExpandedTrayToday: NotableEventsFeed.hasExpandedTray()
-                    )
                 }
-            }
-            .coordinateSpace(name: "feedScroll")
+                .coordinateSpace(name: "feedScroll")
             .onPreferenceChange(ScrollOffsetKey.self) { offset in
-                feedScrolledToTop = offset >= -5  // small tolerance
+                feedScrolledToTop = offset >= -5
             }
             .scrollDisabled(!feedExpanded)
+            } else {
+                // Leaders tab
+                StatLeadersView(
+                    onPlayerTap: { name in
+                        path.append(PlayerCardDestination(name: name))
+                    }
+                )
+                .scrollDisabled(!feedExpanded)
+            }
         }
         .frame(height: drawerHeight)
         .padding(.horizontal, 12)
@@ -342,6 +343,26 @@ struct HomeView: View {
             : nil
         )
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: feedExpanded)
+    }
+
+    @ViewBuilder
+    private func drawerTabButton(_ title: String, tab: DrawerTab) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                drawerTab = tab
+            }
+        } label: {
+            VStack(spacing: 6) {
+                Text(title)
+                    .font(.system(.subheadline, design: .rounded, weight: drawerTab == tab ? .bold : .medium))
+                    .foregroundStyle(drawerTab == tab ? .primary : .secondary)
+                Rectangle()
+                    .fill(drawerTab == tab ? deepBlue : .clear)
+                    .frame(height: 2)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
     }
 
     private var freeUsageIndicator: some View {
