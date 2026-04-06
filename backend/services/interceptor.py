@@ -65,6 +65,17 @@ def try_intercept(question: str):
         if response:
             return response
 
+    # 0c. Player game window — "first/last N games" (must be before single stat/season lookup
+    # which would incorrectly match "games" as a stat and "ryan" as Joe Ryan)
+    game_window = nm.parse_player_game_window(trimmed)
+    if game_window:
+        response = rb.build_player_game_window(
+            game_window["name"], game_window["window_type"],
+            game_window["n_games"], game_window.get("stat"),
+            game_window.get("season"))
+        if response:
+            return response
+
     # 1. Comparison — "Judge vs Soto", "Compare Lindor and Witt"
     comp = nm.parse_comparison(trimmed)
     if comp:
@@ -263,16 +274,6 @@ def try_intercept(question: str):
         else:
             response = rb.build_team_stats(
                 team_stats["team_code"], stat, team_stats["season"])
-        if response:
-            return response
-
-    # Player game window — "first/last N games" per season
-    game_window = nm.parse_player_game_window(trimmed)
-    if game_window:
-        response = rb.build_player_game_window(
-            game_window["name"], game_window["window_type"],
-            game_window["n_games"], game_window.get("stat"),
-            game_window.get("season"))
         if response:
             return response
 
