@@ -704,6 +704,10 @@ def decompose(question: str) -> QueryPlan:
     if since_date:
         plan.since_date = since_date
         plan.scope = "date_range"
+        # Date-range queries are always leaderboards (aggregate from game logs)
+        plan.query_type = "leaderboard"
+        # Clear any threshold that was extracted from date numbers (e.g. "16" from "june 16")
+        plan.threshold = None
         # Consume all date-related words: month names, day numbers, year, keywords
         month_names = " ".join(_MONTH_MAP.keys())
         _add_consumed(plan, f"since from after starting the all star all-star break last days {month_names}")
@@ -1135,6 +1139,13 @@ def decompose(question: str) -> QueryPlan:
                 continue
         plan.unexplained_words.append(w_clean)
 
+    # Final overrides for date_range scope — must run last since earlier steps
+    # may have set threshold from date numbers (e.g. "16" from "june 16")
+    # and reclassified query_type to "threshold"
+    if plan.scope == "date_range":
+        plan.threshold = None
+        plan.query_type = "leaderboard"
+
     return plan
 
 
@@ -1414,7 +1425,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         if plan.active_only:
             this_year = date.today().year
             last_year = this_year - 1
-            active_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+            active_table = "season_pitching_stats" if plan.is_pitching else "season_batting_stats"
             where_parts.append(
                 f"EXISTS (SELECT 1 FROM {active_table} act "
                 f"WHERE act.player_id = {prefix}.player_id AND act.season >= ?)"
@@ -1467,12 +1478,12 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
 
     elif plan.scope == "date_range":
         # Aggregate from game logs between since_date and today
-        gl_table = "game_pitching_logs" if is_pitching else "game_batting_logs"
+        gl_table = "game_pitching_logs" if plan.is_pitching else "game_batting_logs"
         gl = "gl"
         query_params = [plan.since_date]
 
         # Rate stat formulas from game log columns
-        if is_pitching:
+        if plan.is_pitching:
             _gl_rate_formulas = {
                 "era": f"9.0 * SUM({gl}.earned_runs) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
                 "whip": f"CAST(SUM({gl}.hits) + SUM({gl}.walks) AS REAL) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
@@ -1493,11 +1504,13 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
                         f"+ 2*SUM({gl}.doubles) + 3*SUM({gl}.triples) + 4*SUM({gl}.home_runs) AS REAL) / NULLIF(SUM({gl}.at_bats), 0))"),
                 "iso": (f"CAST(SUM({gl}.doubles) + 2*SUM({gl}.triples) + 3*SUM({gl}.home_runs) AS REAL) / NULLIF(SUM({gl}.at_bats), 0)"),
             }
-            # Prorated PA minimum: ~3.1 PA per game day in range
+            # Prorated PA minimum based on date range
+            # ~2.7 PA per calendar day for a full-time player (162G × 4PA / 243 days)
+            # Use 1.5 PA/day as qualification floor (catches most regulars)
             try:
                 start = datetime.strptime(plan.since_date, "%Y-%m-%d").date()
                 days_in_range = (date.today() - start).days
-                min_pa = max(30, int(days_in_range * 2.5))  # ~2.5 PA/day as floor
+                min_pa = max(10, min(int(days_in_range * 1.5), 400))
             except:
                 min_pa = 50
             min_pa_sql = f"HAVING SUM({gl}.plate_appearances) >= {min_pa}"
@@ -1521,7 +1534,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         if plan.active_only:
             this_year = date.today().year
             last_year = this_year - 1
-            active_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+            active_table = "season_pitching_stats" if plan.is_pitching else "season_batting_stats"
             where_parts.append(
                 f"EXISTS (SELECT 1 FROM {active_table} act "
                 f"WHERE act.player_id = {gl}.player_id AND act.season >= ?)"
@@ -1559,7 +1572,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         if plan.active_only:
             this_year = date.today().year
             last_year = this_year - 1
-            active_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+            active_table = "season_pitching_stats" if plan.is_pitching else "season_batting_stats"
             where_parts.append(
                 f"EXISTS (SELECT 1 FROM {active_table} act "
                 f"WHERE act.player_id = {prefix}.player_id AND act.season >= ?)"
