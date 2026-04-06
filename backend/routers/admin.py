@@ -46,13 +46,14 @@ async def refresh_live_data(
         cmd.extend(["--season", season])
     if full_refresh:
         cmd.append("--full-refresh")
+    print(f"REFRESH CMD: {cmd}")
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         return {
             "status": "ok" if result.returncode == 0 else "error",
             "season": season or "auto-detected",
-            "stdout": result.stdout[-2000:] if result.stdout else "",
-            "stderr": result.stderr[-1000:] if result.stderr else "",
+            "stdout": result.stdout[-10000:] if result.stdout else "",
+            "stderr": result.stderr[-5000:] if result.stderr else "",
         }
     except subprocess.TimeoutExpired:
         raise HTTPException(504, "Refresh timed out (30 min limit)")
