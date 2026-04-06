@@ -42,6 +42,9 @@ struct StatGridView: View {
     @State private var showProjection = false
     /// Slider value: "last N games" (nil = auto-detected from FORM metadata)
     @State private var formSliderNumGames: Int? = nil
+    /// Debounced slider value — only updates display after drag settles
+    @State private var formSliderDisplayGames: Int? = nil
+    @State private var sliderDebounceTask: Task<Void, Never>? = nil
     @State private var formGameLogs: [GameLog]? = nil
     /// 0 = 162-Game Pace, 1 = Season Forecast (always visible when form present)
     @State private var formProjectionMode: Int = 0
@@ -182,7 +185,8 @@ struct StatGridView: View {
               let logs = formGameLogs, !logs.isEmpty else {
             return displayRows
         }
-        let numGamesShown = formSliderNumGames ?? (meta.totalGames - meta.autoDetectedGameNumber + 1)
+        // Use debounced value for expensive recomputation, slider value for label display
+        let numGamesShown = formSliderDisplayGames ?? formSliderNumGames ?? (meta.totalGames - meta.autoDetectedGameNumber + 1)
         let effectiveGameNumber = meta.totalGames - numGamesShown + 1
         if let reGrid = Self.recomputeFromLogs(logs, fromGameNumber: effectiveGameNumber) {
             return reGrid.rows
@@ -387,7 +391,15 @@ struct StatGridView: View {
                         value: Binding<Double>(
                             get: { Double(numGames) },
                             set: { newValue in
-                                formSliderNumGames = max(1, min(Int(newValue.rounded()), meta.totalGames))
+                                let clamped = max(1, min(Int(newValue.rounded()), meta.totalGames))
+                                formSliderNumGames = clamped
+                                // Debounce the expensive recomputation
+                                sliderDebounceTask?.cancel()
+                                sliderDebounceTask = Task { @MainActor in
+                                    try? await Task.sleep(for: .milliseconds(80))
+                                    guard !Task.isCancelled else { return }
+                                    formSliderDisplayGames = clamped
+                                }
                             }
                         ),
                         in: 1...Double(max(meta.totalGames, 2)),
