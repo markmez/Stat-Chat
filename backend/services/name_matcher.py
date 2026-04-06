@@ -505,6 +505,15 @@ def find_player_in_text(text: str) -> Optional[str]:
     for name in sorted_names:
         name_lower = name.lower()
         if contains_word(name_lower, lower) or contains_word(strip_diacritics(name_lower), ascii_lower):
+            # Check for duplicate full names — pick most prominent
+            ascii_name = strip_diacritics(name_lower)
+            last_part = ascii_name.split()[-1] if " " in ascii_name else ascii_name
+            candidates = last_name_index.get(last_part, [])
+            same_full = [c for c in candidates if strip_diacritics(c.lower()) == ascii_name]
+            if len(same_full) > 1:
+                sorted_players, dominant = _sort_by_prominence(same_full)
+                if dominant is not None:
+                    return _resolve_embedded_name(sorted_players[dominant])
             return _resolve_embedded_name(name)
 
     # Try unambiguous last name
