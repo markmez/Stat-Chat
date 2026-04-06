@@ -33,6 +33,7 @@ def verify_admin(authorization: str | None, key: str | None = None):
 @router.post("/refresh")
 async def refresh_live_data(
     season: str | None = None,
+    full_refresh: bool = False,
     authorization: str | None = Header(None),
 ):
     """Trigger a live data refresh from MySportsFeeds."""
@@ -43,6 +44,8 @@ async def refresh_live_data(
     cmd = [sys.executable, PIPELINE_SCRIPT, "--db", DB_PATH]
     if season is not None:
         cmd.extend(["--season", season])
+    if full_refresh:
+        cmd.append("--full-refresh")
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         return {
