@@ -1057,6 +1057,186 @@ def detect_league_leaders(conn, season, latest_date=None):
 
 
 # ---------------------------------------------------------------------------
+# Tonight's Matchup Previews
+# ---------------------------------------------------------------------------
+
+def detect_matchup_previews(conn, season):
+    """Generate matchup preview feed cards for tonight's games.
+
+    Picks 2-3 matchups: user favorites (from search history, future) + marquee.
+    Each card has one compelling stat + CTA to see full preview.
+    """
+    events = []
+
+    try:
+        from services.daily_games import get_todays_games
+        from services.response_builder import build_matchup, _get_db
+    except ImportError:
+        return events
+
+    games = get_todays_games()
+    if not games:
+        return events
+
+    today = date.today().isoformat()
+
+    for game in games:
+        away_starter = game.get("away_starter")
+        home_starter = game.get("home_starter")
+        away_team = game.get("away", "")
+        home_team = game.get("home", "")
+
+        if not away_starter or not home_starter:
+            continue
+
+        # For each game, find top batters to preview against the starter
+        # Use the away team's best hitters vs home starter, and vice versa
+        for batting_team, pitcher_name, pitcher_team in [
+            (away_team, home_starter, home_team),
+            (home_team, away_starter, away_team),
+        ]:
+            # Find top batter on this team by OPS
+            top_batter = conn.execute("""
+                SELECT p.name, s.ops, s.home_runs, s.plate_appearances
+                FROM season_batting_stats s
+                JOIN players p ON s.player_id = p.player_id
+                WHERE s.season = ? AND s.team = ? AND s.plate_appearances >= 10
+                ORDER BY s.ops DESC LIMIT 1
+            """, (season, batting_team)).fetchone()
+
+            if not top_batter:
+                continue
+
+            batter_name, batter_ops, batter_hr, batter_pa = top_batter
+
+            # Match pitcher name to our DB
+            from services.name_matcher import match_player
+            matched_pitcher = match_player(pitcher_name)
+            if not matched_pitcher:
+                continue
+
+            # Find one compelling stat for the card
+            compelling = _find_compelling_matchup_stat(
+                conn, batter_name, matched_pitcher, season
+            )
+
+            if not compelling:
+                compelling = f"{batter_name} faces {matched_pitcher} tonight."
+
+            away_display = team_display(away_team)
+            home_display = team_display(home_team)
+
+            # Parse start time for display
+            start_time = game.get("start_time", "")
+            time_str = ""
+            if start_time:
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                    # Convert to ET (UTC-4)
+                    from datetime import timedelta
+                    et = dt - timedelta(hours=4)
+                    hour = et.hour
+                    minute = et.minute
+                    ampm = "PM" if hour >= 12 else "AM"
+                    if hour > 12: hour -= 12
+                    if hour == 0: hour = 12
+                    time_str = f"{hour}:{minute:02d} {ampm} ET"
+                except:
+                    pass
+
+            game_context = f"Matchup Preview · {away_display} vs {home_display}"
+            if time_str:
+                game_context += f", {time_str}"
+
+            events.append({
+                "headline": compelling,
+                "detail": "",
+                "category": "Tonight",
+                "game_date": today,
+                "player_names": [batter_name, matched_pitcher],
+                "team_names": [team_display(batting_team), team_display(pitcher_team)],
+                "detection_type": "matchup_preview",
+                "priority": 0,  # Show at top of feed
+                "game_context": game_context,
+            })
+
+    # Limit to top 3 most interesting (by batter prominence)
+    return events[:3]
+
+
+def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
+    """Find one compelling stat for a matchup preview card."""
+    try:
+        cur = conn.cursor()
+
+        # Check H2H history
+        cur.execute("""
+            SELECT SUM(h.plate_appearances), SUM(h.hits), SUM(h.home_runs), SUM(h.at_bats)
+            FROM head_to_head h
+            JOIN players pb ON h.batter_id = pb.player_id
+            JOIN players pp ON h.pitcher_id = pp.player_id
+            WHERE pb.name = ? AND pp.name = ?
+        """, (batter_name, pitcher_name))
+        h2h = cur.fetchone()
+        if h2h and h2h[0] and h2h[0] >= 5:
+            pa, hits, hr, ab = h2h
+            avg = hits / ab if ab > 0 else 0
+            if hr and hr >= 2:
+                return f"{batter_name} has {hr} HR in {pa} career PA against {pitcher_name}."
+            elif avg >= .350 and pa >= 8:
+                return f"{batter_name} is {hits}-for-{ab} (.{int(avg*1000):03d}) career against {pitcher_name}."
+            elif avg <= .150 and pa >= 8:
+                return f"{batter_name} is just {hits}-for-{ab} (.{int(avg*1000):03d}) career against {pitcher_name}."
+
+        # Check pitcher's throwing hand vs batter's platoon split
+        cur.execute("SELECT throws FROM players WHERE name = ?", (pitcher_name,))
+        hand_row = cur.fetchone()
+        if hand_row and hand_row[0]:
+            pitcher_hand = hand_row[0]
+            split_key = "vs_LHP" if pitcher_hand == "L" else "vs_RHP"
+            cur.execute("""
+                SELECT ps.ops, ps.home_runs, ps.plate_appearances
+                FROM platoon_splits ps
+                JOIN players p ON ps.player_id = p.player_id
+                WHERE p.name = ? AND ps.season = ? AND ps.split = ?
+            """, (batter_name, season, split_key))
+            split = cur.fetchone()
+            if not split:
+                cur.execute("""
+                    SELECT ps.ops, ps.home_runs, ps.plate_appearances
+                    FROM platoon_splits ps
+                    JOIN players p ON ps.player_id = p.player_id
+                    WHERE p.name = ? AND ps.season = ? AND ps.split = ?
+                """, (batter_name, season - 1, split_key))
+                split = cur.fetchone()
+
+            if split and split[0]:
+                ops, hr, pa = split
+                hand_label = "lefties" if pitcher_hand == "L" else "righties"
+                if ops >= 0.900:
+                    return f"{batter_name} has crushed {hand_label} ({ops:.3f} OPS) — {pitcher_name} throws {pitcher_hand}HP."
+                elif ops <= 0.550:
+                    return f"{batter_name} has struggled against {hand_label} ({ops:.3f} OPS) — {pitcher_name} throws {pitcher_hand}HP."
+
+        # Check if batter is hot
+        cur.execute("""
+            SELECT cf.ops, cf.num_games, cf.batting_avg
+            FROM current_form cf
+            JOIN players p ON cf.player_id = p.player_id
+            WHERE p.name = ? AND cf.season = ?
+        """, (batter_name, season))
+        form = cur.fetchone()
+        if form and form[0] and form[0] >= 1.000:
+            return f"{batter_name} is red hot ({form[0]:.3f} OPS over last {form[1]} games) heading into tonight against {pitcher_name}."
+
+    except Exception:
+        pass
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # On This Date — historic moments from today's date in past years
 # ---------------------------------------------------------------------------
 
@@ -1296,6 +1476,15 @@ def detect_all(db_path=None, season=None):
         print(f"    Historical: {len(hist_events)} events")
     except Exception as e:
         print(f"    Historical scans failed: {e}")
+
+    # Tonight's matchup previews
+    print("  Running matchup previews...")
+    try:
+        preview_events = detect_matchup_previews(conn, season)
+        events += preview_events
+        print(f"    Matchup previews: {len(preview_events)} events")
+    except Exception as e:
+        print(f"    Matchup previews failed: {e}")
 
     # On This Date — historic moments from today's date in past years
     print("  Running On This Date...")

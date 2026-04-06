@@ -35,6 +35,7 @@ struct NotableEvent: Identifiable {
 struct NotableEventsFeed: View {
     var onPlayerTap: ((String) -> Void)?
     var onTeamTap: ((String) -> Void)?
+    var onMatchupTap: ((String) -> Void)?  // Query string for matchup preview
     var showHeader: Bool = true
 
     @State private var events: [NotableEvent] = []
@@ -80,6 +81,9 @@ struct NotableEventsFeed: View {
                     onPlayerTap?(name)
                 } else if url.host == "team" {
                     onTeamTap?(name)
+                } else if url.host == "matchup" {
+                    let query = url.path.dropFirst().removingPercentEncoding ?? String(url.path.dropFirst())
+                    onMatchupTap?(query)
                 }
                 return .handled
             })
@@ -104,7 +108,42 @@ struct NotableEventsFeed: View {
     private func loadEvents() async {
         do {
             let data = try await BackendService().fetchNotableEvents()
-            let loaded = data.map { NotableEvent(from: $0) }
+            var loaded = data.map { NotableEvent(from: $0) }
+
+            // DEBUG: stub matchup preview cards for simulator testing
+            #if DEBUG
+            let stubs: [NotableEvent] = [
+                NotableEvent(
+                    headline: "Tonight Aaron Judge takes on RHP Tanner Houck. Despite the platoon mismatch, Judge has been crushing righties with a 1.050 OPS. See more about this matchup in this ",
+                    detail: "matchup preview.",
+                    category: "Tonight",
+                    gameDate: "2026-04-06",
+                    playerNames: ["Aaron Judge", "Tanner Houck"],
+                    teamNames: ["Yankees", "Red Sox"],
+                    gameContext: "Matchup Preview"
+                ),
+                NotableEvent(
+                    headline: "Tonight Shohei Ohtani faces RHP Max Scherzer. Ohtani is 3-for-8 (.375) career against Scherzer with a home run. See more about this matchup in this ",
+                    detail: "matchup preview.",
+                    category: "Tonight",
+                    gameDate: "2026-04-06",
+                    playerNames: ["Shohei Ohtani", "Max Scherzer"],
+                    teamNames: ["Dodgers", "Rangers"],
+                    gameContext: "Matchup Preview"
+                ),
+                NotableEvent(
+                    headline: "Tonight Kyle Tucker takes on RHP Sonny Gray. Tucker is red hot with a 1.100 OPS over his last 12 games. See more about this matchup in this ",
+                    detail: "matchup preview.",
+                    category: "Tonight",
+                    gameDate: "2026-04-06",
+                    playerNames: ["Kyle Tucker", "Sonny Gray"],
+                    teamNames: ["Cubs", "Cardinals"],
+                    gameContext: "Matchup Preview"
+                ),
+            ]
+            loaded = stubs + loaded
+            #endif
+
             await MainActor.run {
                 events = loaded
                 lastLoadTime = Date()
@@ -126,12 +165,28 @@ struct NotableEventsFeed: View {
                 }
 
                 // Combined text — tweet-style
-                Text(highlightedText(
-                    event.detail.isEmpty ? event.headline : event.headline + " " + event.detail,
-                    playerNames: event.playerNames, teamNames: event.teamNames))
-                    .font(.system(.subheadline, design: .rounded))
-                    .foregroundStyle(.primary)
-                    .lineSpacing(3)
+                if event.category == "Tonight" && event.playerNames.count >= 2 {
+                    // Matchup preview: headline text + inline CTA
+                    let fullText = event.headline + event.detail
+                    let attributed = highlightedTextWithCTA(
+                        fullText,
+                        playerNames: event.playerNames,
+                        teamNames: event.teamNames,
+                        ctaText: "matchup preview.",
+                        ctaURL: "statchat://matchup/\(event.playerNames[0]) vs \(event.playerNames[1])"
+                    )
+                    Text(attributed)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.primary)
+                        .lineSpacing(3)
+                } else {
+                    Text(highlightedText(
+                        event.detail.isEmpty ? event.headline : event.headline + " " + event.detail,
+                        playerNames: event.playerNames, teamNames: event.teamNames))
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(.primary)
+                        .lineSpacing(3)
+                }
             }
             .padding(.horizontal, 4)
             .padding(.vertical, 14)
@@ -147,17 +202,34 @@ struct NotableEventsFeed: View {
         }
     }
 
+    /// Build an AttributedString with tappable names + inline CTA for matchup previews.
+    private func highlightedTextWithCTA(_ text: String, playerNames: [String], teamNames: [String],
+                                         ctaText: String, ctaURL: String) -> AttributedString {
+        var result = highlightedText(text, playerNames: playerNames, teamNames: teamNames, allBold: true)
+
+        // Make the CTA text a tappable link
+        if let range = result.range(of: ctaText) {
+            result[range].foregroundColor = deepBlue
+            result[range].font = .system(.subheadline, design: .rounded, weight: .semibold)
+            if let encoded = ctaURL.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+                result[range].link = URL(string: encoded)
+            }
+        }
+
+        return result
+    }
+
     /// Build an AttributedString with tappable player/team names.
     /// First player is bold + linked (primary). Subsequent players are linked but not bold.
-    private func highlightedText(_ text: String, playerNames: [String], teamNames: [String]) -> AttributedString {
+    /// When allBold is true, ALL player names are bold (used for matchup preview cards).
+    private func highlightedText(_ text: String, playerNames: [String], teamNames: [String], allBold: Bool = false) -> AttributedString {
         var result = AttributedString(text)
 
         // Highlight + link player names
         for (index, name) in playerNames.enumerated() {
             if let range = result.range(of: name) {
                 result[range].foregroundColor = deepBlue
-                if index == 0 {
-                    // Primary player: bold
+                if index == 0 || allBold {
                     result[range].font = .system(.subheadline, design: .rounded, weight: .bold)
                 }
                 if let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {

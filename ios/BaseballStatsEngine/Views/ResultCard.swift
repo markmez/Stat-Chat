@@ -158,6 +158,13 @@ struct ResultCard: View {
             }
             .padding(.horizontal, 20)
 
+        case .subtitle(let text):
+            Text(text)
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(.secondary.opacity(0.55))
+                .padding(.horizontal, 20)
+                .padding(.top, -2)
+
         case .seeAlso(let names):
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {

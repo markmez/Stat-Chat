@@ -4067,13 +4067,22 @@ def build_matchup(batter_name: str, pitcher_name: str,
 
         # --- Section 1 & 3: Pitcher's pitch mix + batter's pitch-type splits ---
         # Try current season first, fall back to last season if no data
-        def _query_with_fallback(sql, params_template, name, seasons):
-            """Run a query trying each season until results are found."""
+        def _query_with_fallback(sql, params_template, name, seasons, min_pa=0):
+            """Run a query trying each season until rich-enough results are found.
+            min_pa: minimum total PA across all rows to consider the result sufficient.
+            If the first season has fewer total PA, try the next season.
+            """
             for szn in seasons:
                 cur.execute(sql, (*params_template, szn))
                 rows = cur.fetchall()
                 if rows:
-                    return rows
+                    total_pa = sum(r[1] for r in rows)  # column 1 is always PA
+                    if total_pa >= min_pa:
+                        return rows
+            # If no season met min_pa, return whatever the first season had
+            if seasons:
+                cur.execute(sql, (*params_template, seasons[0]))
+                return cur.fetchall()
             return []
 
         seasons_to_try = [resolved_season]
@@ -4081,6 +4090,7 @@ def build_matchup(batter_name: str, pitcher_name: str,
             seasons_to_try.append(fallback_season)
 
         # Get pitcher pitch mix from pitching pitch-type splits (PA distribution)
+        # Need 50+ total PA for a meaningful mix — fall back to prior season early in the year
         pitcher_mix_rows = _query_with_fallback(
             "SELECT pts.pitch_type, pts.plate_appearances "
             "FROM pitch_type_pitching_splits pts "
@@ -4088,9 +4098,11 @@ def build_matchup(batter_name: str, pitcher_name: str,
             "WHERE p.name = ? AND pts.season = ? "
             "ORDER BY pts.plate_appearances DESC",
             (_sanitize(pitcher_name),), pitcher_name, seasons_to_try,
+            min_pa=50,
         )
 
         # Get batter's pitch-type batting splits
+        # Need 50+ total PA for meaningful per-pitch stats — fall back to prior season early
         batter_pitch_rows = _query_with_fallback(
             "SELECT pts.pitch_type, pts.plate_appearances, "
             "pts.batting_avg, pts.obp, pts.slg, pts.ops "
@@ -4098,6 +4110,7 @@ def build_matchup(batter_name: str, pitcher_name: str,
             "JOIN players p ON pts.player_id = p.player_id "
             "WHERE p.name = ? AND pts.season = ?",
             (_sanitize(batter_name),), batter_name, seasons_to_try,
+            min_pa=50,
         )
         batter_by_pitch = {row[0]: row for row in batter_pitch_rows}
 
@@ -4105,6 +4118,9 @@ def build_matchup(batter_name: str, pitcher_name: str,
         total_pitcher_pa = sum(r[1] for r in pitcher_mix_rows) if pitcher_mix_rows else 0
         projection = None
         mix_table_rows = []
+
+        # Dynamic PA minimum: 10 if we have a full season of data, 5 early in season
+        min_pa_per_pitch = 10 if total_pitcher_pa >= 200 else 5
 
         if total_pitcher_pa > 0 and batter_by_pitch:
             weighted_avg = 0.0
@@ -4115,7 +4131,7 @@ def build_matchup(batter_name: str, pitcher_name: str,
             for pitch_type, pitcher_pa in pitcher_mix_rows:
                 mix_pct = pitcher_pa / total_pitcher_pa
                 batter_row = batter_by_pitch.get(pitch_type)
-                if not batter_row or batter_row[1] < 10:  # Min 10 PA
+                if not batter_row or batter_row[1] < min_pa_per_pitch:
                     continue
 
                 b_pa, b_avg, b_obp, b_slg, b_ops = batter_row[1], batter_row[2], batter_row[3], batter_row[4], batter_row[5]
@@ -4248,6 +4264,7 @@ def build_matchup(batter_name: str, pitcher_name: str,
         # Pitch mix projection table
         if mix_table_rows:
             parts.append(f"**Pitch Mix Projection**")
+            parts.append(f"[SUBTITLE]{batter_display}'s stats against each pitch in {pitcher_display}'s arsenal[/SUBTITLE]")
             parts.append("[LEADERBOARD]")
             parts.append("HEADER: Mix%, PA, AVG, OBP, SLG, OPS")
             for i, (pt, pct, pa, avg, obp, slg, ops) in enumerate(mix_table_rows):

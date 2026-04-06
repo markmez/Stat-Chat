@@ -36,10 +36,11 @@ enum StatGridParser {
         case querySuggestion(String)
         case seeAlso([String])
         case didYouMean(query: String)
+        case subtitle(String)
         case partialGrid(String)
     }
 
-    private static let tagTypes = ["STATGRID", "LEADERBOARD", "TIP", "SUGGEST", "SEEALSO", "DIDYOUMEAN"]
+    private static let tagTypes = ["STATGRID", "LEADERBOARD", "TIP", "SUGGEST", "SEEALSO", "DIDYOUMEAN", "SUBTITLE"]
 
     static func parse(_ content: String, isStreaming: Bool) -> [Segment] {
         var segments: [Segment] = []
@@ -82,6 +83,9 @@ enum StatGridParser {
                 case "DIDYOUMEAN":
                     let trimmed = blockContent.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty { segments.append(.didYouMean(query: trimmed)) }
+                case "SUBTITLE":
+                    let trimmed = blockContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { segments.append(.subtitle(trimmed)) }
                 case "LEADERBOARD":
                     if let grid = parseGrid(blockContent) {
                         segments.append(.leaderboard(grid))
