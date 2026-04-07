@@ -26,14 +26,27 @@ async def get_notable_events(limit: int = QueryParam(50, le=200)):
         if not table_check:
             return []
 
-        rows = conn.execute("""
-            SELECT headline, detail, category, game_date, player_names, team_names,
-                   game_context, expires_at
-            FROM notable_events
-            WHERE expires_at IS NULL OR expires_at = '' OR expires_at > ?
-            ORDER BY game_date DESC, priority ASC, id DESC
-            LIMIT ?
-        """, (now_utc, limit)).fetchall()
+        # Check if expires_at column exists
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(notable_events)").fetchall()}
+        has_expires = "expires_at" in cols
+
+        if has_expires:
+            rows = conn.execute("""
+                SELECT headline, detail, category, game_date, player_names, team_names,
+                       game_context
+                FROM notable_events
+                WHERE expires_at IS NULL OR expires_at = '' OR expires_at > ?
+                ORDER BY game_date DESC, priority ASC, id DESC
+                LIMIT ?
+            """, (now_utc, limit)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT headline, detail, category, game_date, player_names, team_names,
+                       game_context
+                FROM notable_events
+                ORDER BY game_date DESC, priority ASC, id DESC
+                LIMIT ?
+            """, (limit,)).fetchall()
     finally:
         conn.close()
 
