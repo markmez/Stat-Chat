@@ -4220,6 +4220,11 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
 
     cur = conn.cursor()
 
+    # "last N games" without a season = most recent N games (current season)
+    if season is None and window_type == "last":
+        from datetime import date as _date
+        season = _date.today().year
+
     if season is None:
         # Compare across all seasons: for each season, compute stats in the window
         cur.execute(f"""
@@ -4287,7 +4292,7 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
         parts = [title]
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
-        parts.append("HEADER: G, AB, H, HR, RBI, BB, SO, AVG, OPS")
+        parts.append("HEADER: G, AB, H, HR, AVG, OPS")
 
         for szn, s in sorted_seasons:
             if s["g"] == 0:
@@ -4300,7 +4305,6 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
             slg = slg_num / max(s["ab"], 1)
             ops = obp + slg
             parts.append(f"ROW {szn}: {s['g']}, {s['ab']}, {s['h']}, {s['hr']}, "
-                        f"{s['rbi']}, {s['bb']}, {s['so']}, "
                         f"{_format_rate(avg)}, {_format_rate(ops)}")
         parts.append("[/LEADERBOARD]")
 
