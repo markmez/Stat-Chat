@@ -690,15 +690,16 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
         # Convert UTC timestamp to Eastern
         ts_display = _to_eastern(last_seen) if last_seen else ""
         # Build type badges
+        type_list = [t.strip() for t in (types or "").split(",")]
         type_badges = " ".join(
-            f'<span class="badge {t.strip().replace(" ", "-")}">{t.strip()}</span>'
-            for t in (types or "").split(",")
+            f'<span class="badge {t.replace(" ", "-")}" onclick="filterBy(\'{t}\')">{t}</span>'
+            for t in type_list
         )
         escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        # Store raw timestamp for sorting
         raw_ts = last_seen or ""
+        types_attr = ",".join(type_list)
         query_rows += f"""
-        <tr data-count="{cnt}" data-ts="{raw_ts}">
+        <tr data-count="{cnt}" data-ts="{raw_ts}" data-types="{types_attr}">
             <td class="query-text">{escaped}</td>
             <td class="count">{cnt}</td>
             <td class="types">{type_badges}</td>
@@ -747,7 +748,19 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
   .stat-card .value {{ font-size: 24px; font-weight: 700; color: #fff; }}
   th.sortable {{ cursor: pointer; user-select: none; }}
   th.sortable:active {{ opacity: 0.6; }}
-  th .arrow {{ font-size: 20px; margin-left: 3px; vertical-align: middle; }}
+  th .arrow {{ font-size: 20px; margin-left: 3px; vertical-align: text-top; line-height: 1; }}
+  .types .badge {{ cursor: pointer; }}
+  .types .badge:active {{ opacity: 0.6; }}
+  .filter-bar {{
+    display: none; align-items: center; gap: 8px; margin-bottom: 8px;
+    padding: 6px 10px; background: #f5f7fa; border-radius: 6px; font-size: 13px;
+  }}
+  .filter-bar.active {{ display: flex; }}
+  .filter-bar .filter-x {{
+    cursor: pointer; font-size: 16px; color: #999; margin-left: 2px;
+    line-height: 1; font-weight: 600;
+  }}
+  .filter-bar .filter-x:active {{ color: #333; }}
 </style>
 </head>
 <body>
@@ -773,6 +786,10 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
 </div>
 
 <h2>All Queries</h2>
+<div class="filter-bar" id="filter-bar">
+  Showing: <span id="filter-label"></span>
+  <span class="filter-x" onclick="clearFilter()">&times;</span>
+</div>
 <table id="qtable">
   <tr>
     <th>Query</th>
@@ -784,20 +801,39 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
 </table>
 <script>
 let currentSort = 'count';
+let currentFilter = null;
+
 function sortBy(mode) {{
   currentSort = mode;
   const table = document.getElementById('qtable');
   const rows = Array.from(table.querySelectorAll('tr[data-count]'));
   rows.sort((a, b) => {{
-    if (mode === 'time') {{
-      return b.dataset.ts.localeCompare(a.dataset.ts);
-    }}
+    if (mode === 'time') return b.dataset.ts.localeCompare(a.dataset.ts);
     const dc = parseInt(b.dataset.count) - parseInt(a.dataset.count);
     return dc !== 0 ? dc : b.dataset.ts.localeCompare(a.dataset.ts);
   }});
   rows.forEach(r => table.appendChild(r));
   document.getElementById('th-count').innerHTML = 'Count' + (mode === 'count' ? '<span class="arrow"> &#x25BE;</span>' : '');
   document.getElementById('th-time').innerHTML = 'Last (ET)' + (mode === 'time' ? '<span class="arrow"> &#x25BE;</span>' : '');
+}}
+
+function filterBy(type) {{
+  currentFilter = type;
+  const rows = document.querySelectorAll('#qtable tr[data-count]');
+  rows.forEach(r => {{
+    r.style.display = r.dataset.types.split(',').includes(type) ? '' : 'none';
+  }});
+  const bar = document.getElementById('filter-bar');
+  const label = document.getElementById('filter-label');
+  const css = type.replace(' ', '-');
+  label.innerHTML = '<span class="badge ' + css + '">' + type + '</span>';
+  bar.classList.add('active');
+}}
+
+function clearFilter() {{
+  currentFilter = null;
+  document.querySelectorAll('#qtable tr[data-count]').forEach(r => r.style.display = '');
+  document.getElementById('filter-bar').classList.remove('active');
 }}
 </script>
 </body>
