@@ -53,8 +53,8 @@ struct DrawerScrollView<Content: View>: UIViewRepresentable {
     func updateUIView(_ scrollView: UIScrollView, context: Context) {
         scrollView.isScrollEnabled = isEnabled
         context.coordinator.parent = self
-        // Only update content if not mid-scroll (layout during deceleration kills momentum)
-        if !scrollView.isDecelerating && !scrollView.isDragging {
+        // Only update content if not mid-scroll (layout during scroll kills momentum)
+        if !context.coordinator.isScrolling {
             context.coordinator.hostController?.rootView = content
             context.coordinator.hostController?.view.invalidateIntrinsicContentSize()
         }
@@ -66,6 +66,7 @@ struct DrawerScrollView<Content: View>: UIViewRepresentable {
         private var didTriggerCollapse = false
         private var wasAtTopWhenDragStarted = false
         private var isDragging = false
+        var isScrolling = false
 
         init(parent: DrawerScrollView) {
             self.parent = parent
@@ -93,12 +94,24 @@ struct DrawerScrollView<Content: View>: UIViewRepresentable {
 
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
             isDragging = true
+            isScrolling = true
             didTriggerCollapse = false
             wasAtTopWhenDragStarted = scrollView.contentOffset.y <= 0
         }
 
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
             isDragging = false
+            if !decelerate {
+                isScrolling = false
+                // Update content now that scrolling stopped
+                hostController?.view.invalidateIntrinsicContentSize()
+            }
+        }
+
+        func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+            isScrolling = false
+            // Update content now that momentum stopped
+            hostController?.view.invalidateIntrinsicContentSize()
         }
     }
 }
