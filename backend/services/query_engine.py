@@ -2038,14 +2038,12 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
     parts = [title]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
-    # Build header: G 'YR, STAT 'YR for each season
+    # Build header: STAT 'YR for each season (no Games column — keeps it compact)
     headers = []
     for szn in seasons:
         yr_label = f"'{str(szn)[-2:]}"
-        headers.append(f"G {yr_label}")
         for col in stat_cols:
-            if col != "games":
-                headers.append(f"{_labels.get(col, col)} {yr_label}")
+            headers.append(f"{_labels.get(col, col)} {yr_label}")
     parts.append("[LEADERBOARD]")
     parts.append("HEADER: " + ", ".join(headers))
 
@@ -2054,16 +2052,14 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
         vals = []
         for szn in seasons:
             szn_data = info.get(szn, {})
-            vals.append(str(szn_data.get("games", 0)))
             for col in stat_cols:
-                if col != "games":
-                    v = szn_data.get(col, 0)
-                    if isinstance(v, float) and v < 1:
-                        vals.append(_format_rate(v))
-                    elif isinstance(v, float):
-                        vals.append(f"{v:.2f}")
-                    else:
-                        vals.append(str(v or 0))
+                v = szn_data.get(col, 0)
+                if isinstance(v, float) and v < 1:
+                    vals.append(_format_rate(v))
+                elif isinstance(v, float):
+                    vals.append(f"{v:.2f}")
+                else:
+                    vals.append(str(v or 0))
         parts.append(f"ROW {i+1}. {name}: " + ", ".join(vals))
 
     parts.append("[/LEADERBOARD]")
