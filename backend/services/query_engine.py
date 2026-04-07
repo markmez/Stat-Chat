@@ -1571,7 +1571,22 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         # Aggregate from game logs between since_date and today
         gl_table = "game_pitching_logs" if plan.is_pitching else "game_batting_logs"
         gl = "gl"
-        query_params = [plan.since_date]
+
+        # Floor the start date at the season opener (March 25) to avoid spring training
+        since_date = plan.since_date
+        date_was_floored = False
+        try:
+            requested_start = datetime.strptime(since_date, "%Y-%m-%d").date()
+            current_year = date.today().year
+            # Season opener is typically March 25 (could store per year later)
+            season_opener = date(current_year, 3, 25)
+            if requested_start.year == current_year and requested_start < season_opener:
+                since_date = season_opener.isoformat()
+                date_was_floored = True
+        except:
+            pass
+
+        query_params = [since_date]
 
         # Rate stat formulas from game log columns
         if plan.is_pitching:
@@ -1648,10 +1663,12 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         rows = cur.fetchall()
         # Format date for display
         try:
-            start_dt = datetime.strptime(plan.since_date, "%Y-%m-%d")
+            start_dt = datetime.strptime(since_date, "%Y-%m-%d")
             scope_label = f"Since {start_dt.strftime('%B %-d, %Y')}"
+            if date_was_floored:
+                scope_label += " (season opener)"
         except:
-            scope_label = f"Since {plan.since_date}"
+            scope_label = f"Since {since_date}"
 
     elif plan.scope == "career":
         # Career needs GROUP BY with aggregate formulas for rate stats
