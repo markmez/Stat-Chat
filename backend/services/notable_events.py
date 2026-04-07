@@ -1155,6 +1155,7 @@ def detect_matchup_previews(conn, season):
     except Exception:
         pass
 
+    from datetime import timedelta
     today = date.today().isoformat()
     suppression_cutoff = (date.today() - timedelta(days=12)).isoformat()
 
