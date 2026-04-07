@@ -40,7 +40,14 @@ struct LeaderboardView: View {
         // Detect pitch mix tables by label pattern: "Sinker (61%)" etc.
         grid.rows.first.map { $0.label.contains("%") } ?? false
     }
-    private var nameWidth: CGFloat { isCompact ? 100 : 148 }
+    /// Compute name column width from longest label — at .callout rounded ~7.5pt/char
+    private var nameWidth: CGFloat {
+        if isCompact {
+            let maxChars = grid.rows.map { $0.label.count }.max() ?? 10
+            return max(80, CGFloat(maxChars) * 7.5 + 8)
+        }
+        return 148
+    }
     private let rankWidth: CGFloat = 30
     private let rankNameGap: CGFloat = 6
     private let nameStatGap: CGFloat = 8
