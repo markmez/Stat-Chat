@@ -285,30 +285,38 @@ struct HomeView: View {
 
             // Tab content
             if drawerTab == .notable {
-                DrawerScrollView(
-                    isEnabled: feedExpanded,
-                    isAtTop: $feedScrolledToTop,
-                    onPullDown: {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            feedExpanded = false
+                ScrollView {
+                    VStack(spacing: 0) {
+                        // Scroll position sentinel
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: ScrollOffsetKey.self,
+                                value: geo.frame(in: .named("feedScroll")).minY
+                            )
                         }
+                        .frame(height: 0)
+
+                        NotableEventsFeed(
+                            onPlayerTap: { name in
+                                path.append(PlayerCardDestination(name: name))
+                            },
+                            onTeamTap: { code in
+                                path.append(TeamCardDestination(code: code))
+                            },
+                            onMatchupTap: { query in
+                                path.append(ResultsDestination(question: query))
+                            },
+                            showHeader: false,
+                            matchupPills: $matchupPills,
+                            hasExpandedTrayToday: NotableEventsFeed.hasExpandedTray()
+                        )
                     }
-                ) {
-                    NotableEventsFeed(
-                        onPlayerTap: { name in
-                            path.append(PlayerCardDestination(name: name))
-                        },
-                        onTeamTap: { code in
-                            path.append(TeamCardDestination(code: code))
-                        },
-                        onMatchupTap: { query in
-                            path.append(ResultsDestination(question: query))
-                        },
-                        showHeader: false,
-                        matchupPills: $matchupPills,
-                        hasExpandedTrayToday: NotableEventsFeed.hasExpandedTray()
-                    )
                 }
+                .coordinateSpace(name: "feedScroll")
+                .onPreferenceChange(ScrollOffsetKey.self) { offset in
+                    feedScrolledToTop = offset >= -5
+                }
+                .scrollDisabled(!feedExpanded)
             } else {
                 // Leaders tab
                 StatLeadersView(
