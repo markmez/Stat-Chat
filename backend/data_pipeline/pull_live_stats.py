@@ -516,6 +516,8 @@ def pull_game_logs(conn, season_str, full_refresh=False):
     # return games that store under the same date (e.g., 2026-03-27 due to UTC offset).
     player_date_game_num = {}
 
+    dates_with_data = []  # Track which dates actually returned game logs
+
     for i, gdate in enumerate(game_dates):
         time.sleep(2)  # Rate limit courtesy
         try:
@@ -526,6 +528,8 @@ def pull_game_logs(conn, season_str, full_refresh=False):
         if not data:
             continue
         logs = data.get("gamelogs", [])
+        if logs:
+            dates_with_data.append(gdate)
 
         for entry in logs:
             player = entry.get("player", {})
@@ -636,9 +640,10 @@ def pull_game_logs(conn, season_str, full_refresh=False):
 
         conn.commit()
 
-    # Record the last date we pulled so next run can be incremental
-    if game_dates:
-        last_date = f"{game_dates[-1][:4]}-{game_dates[-1][4:6]}-{game_dates[-1][6:8]}"
+    # Record the last date that actually returned data (not just attempted)
+    # This prevents skipping dates that MSF hasn't published yet
+    if dates_with_data:
+        last_date = f"{dates_with_data[-1][:4]}-{dates_with_data[-1][4:6]}-{dates_with_data[-1][6:8]}"
         _set_last_game_date_pulled(conn, season_year, last_date)
 
     print(f"    Loaded {bat_count} batting + {pitch_count} pitching game logs across {len(game_dates)} days")
