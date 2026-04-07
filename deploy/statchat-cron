@@ -23,6 +23,9 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # Full pipeline: 5:35 AM ET daily (9:35 UTC) — catch-all + integrity check
 35 9 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 
+# Backup pipeline: 10:00 AM ET (14:00 UTC) — catches data MSF publishes late
+0 14 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+
 # Weekly full reconciliation: Sunday 6:00 AM ET (10:00 UTC)
 0 10 * * 0 statchat /opt/statchat/repo/deploy/refresh.sh --full-refresh >> /data/refresh.log 2>&1
 
