@@ -292,6 +292,7 @@ _STOP_WORDS = {
     "really", "actually", "currently", "recently",
     "appeared", "appearing", "recorded", "posted", "put",
     "league", "led", "leading", "leads", "leader", "leaders",
+    "outing", "outings", "start", "starts", "appearance", "appearances",
     "?", "!", ".",
 }
 
@@ -1055,7 +1056,9 @@ def decompose(question: str) -> QueryPlan:
     _streak_conditions = {
         # Reaching base
         "reached base": ("(g.hits + g.walks + COALESCE(g.hit_by_pitch, 0)) >= 1", "reaching base"),
+        "reaching base": ("(g.hits + g.walks + COALESCE(g.hit_by_pitch, 0)) >= 1", "reaching base"),
         "got on base": ("(g.hits + g.walks + COALESCE(g.hit_by_pitch, 0)) >= 1", "reaching base"),
+        "on-base streak": ("(g.hits + g.walks + COALESCE(g.hit_by_pitch, 0)) >= 1", "reaching base"),
         "on base": ("(g.hits + g.walks + COALESCE(g.hit_by_pitch, 0)) >= 1", "reaching base"),
         # Multiple hits
         "multiple hits": ("g.hits >= 2", "multiple hits"),
@@ -1072,6 +1075,8 @@ def decompose(question: str) -> QueryPlan:
         "homered": ("g.home_runs >= 1", "a HR"),
         "hit a homer": ("g.home_runs >= 1", "a HR"),
         "hit a home run": ("g.home_runs >= 1", "a HR"),
+        "with a home run": ("g.home_runs >= 1", "a HR"),
+        "with a hr": ("g.home_runs >= 1", "a HR"),
         "home run": ("g.home_runs >= 1", "a HR"),
         "hr in": ("g.home_runs >= 1", "a HR"),
         # Extra base hits
@@ -1080,21 +1085,42 @@ def decompose(question: str) -> QueryPlan:
         "extra-base hit": ("(g.doubles + g.triples + g.home_runs) >= 1", "an XBH"),
         # RBI
         "drove in a run": ("g.rbi >= 1", "an RBI"),
+        "with an rbi": ("g.rbi >= 1", "an RBI"),
+        "with a rbi": ("g.rbi >= 1", "an RBI"),
+        "an rbi": ("g.rbi >= 1", "an RBI"),
         "rbi in": ("g.rbi >= 1", "an RBI"),
         "had an rbi": ("g.rbi >= 1", "an RBI"),
         # Stolen bases
         "stole a base": ("g.stolen_bases >= 1", "a SB"),
+        "with a stolen base": ("g.stolen_bases >= 1", "a SB"),
         "stolen base": ("g.stolen_bases >= 1", "a SB"),
         # Strikeouts (pitching)
         "struck out": ("g.strikeouts >= 1", "a K"),
         # Walks
         "walked": ("g.walks >= 1", "a BB"),
+        "with a walk": ("g.walks >= 1", "a BB"),
+        # Scoreless (pitching)
+        "scoreless": ("g.earned_runs = 0", "scoreless"),
+        "shutout innings": ("g.earned_runs = 0", "scoreless"),
+        "scoreless innings": ("g.earned_runs = 0", "scoreless"),
+        # Wins (pitching)
+        "wins": ("g.win >= 1", "a W"),
+        "consecutive wins": ("g.win >= 1", "a W"),
+        "winning streak": ("g.win >= 1", "a W"),
+        "win streak": ("g.win >= 1", "a W"),
     }
 
     # Only detect streaks when streak-context words are present
     streak_context_words = ["consecutive", "straight", "in a row", "streak", "streaks",
                             "first", "opening", "current", "longest"]
     has_streak_context = any(w in lower for w in streak_context_words)
+
+    # "3 straight seasons" / "consecutive years" = per-season threshold, NOT game-level streak.
+    # Skip streak parsing entirely — per_season detection (above) already handles this.
+    season_level_streak = has_streak_context and re.search(
+        r'(?:consecutive|straight|back.to.back)\s+(?:season|year)', lower)
+    if season_level_streak:
+        has_streak_context = False
 
     streak_detected = False
     if has_streak_context:
@@ -1336,6 +1362,10 @@ def execute(plan: QueryPlan) -> Optional[str]:
     conn = _get_db()
     try:
         if plan.query_type == "streak_sequence":
+            # "100 RBI in 3 straight seasons" — per_season + streak_sequence
+            # means season-level consistency, not game-level streaks
+            if plan.per_season:
+                return _execute_per_season_threshold(conn, plan)
             return _execute_streak_sequence(conn, plan)
         elif plan.query_type == "game_log_count":
             return _execute_game_log_count(conn, plan)
@@ -2477,7 +2507,7 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
     condition = " AND ".join(plan.streak_conditions)
 
     # Auto-detect pitching if conditions reference pitching columns
-    pitching_cols = {"g.ip_outs", "g.earned_runs", "g.is_start"}
+    pitching_cols = {"g.ip_outs", "g.earned_runs", "g.is_start", "g.win", "g.loss", "g.save"}
     is_pitching = plan.is_pitching or any(pc in c for c in plan.streak_conditions for pc in pitching_cols)
     table = "game_pitching_logs" if is_pitching else "game_batting_logs"
 
