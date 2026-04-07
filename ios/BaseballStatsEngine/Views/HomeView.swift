@@ -10,7 +10,7 @@ private struct ScrollOffsetKey: PreferenceKey {
 
 // Shared navigation destination types
 struct ResultsDestination: Hashable { let question: String }
-struct PlayerCardDestination: Hashable { let name: String; var alternatives: [String] = [] }
+struct PlayerCardDestination: Hashable { let name: String; var alternatives: [String] = []; var source: String = "link" }
 struct TeamCardDestination: Hashable { let code: String }
 
 struct HomeView: View {
@@ -36,7 +36,7 @@ struct HomeView: View {
                     ResultsView(initialQuestion: dest.question, navigationPath: $path)
                 }
                 .navigationDestination(for: PlayerCardDestination.self) { dest in
-                    PlayerCardView(playerName: dest.name, alternatives: dest.alternatives, navigationPath: $path)
+                    PlayerCardView(playerName: dest.name, alternatives: dest.alternatives, source: dest.source, navigationPath: $path)
                 }
                 .navigationDestination(for: TeamCardDestination.self) { dest in
                     TeamCardView(teamCode: dest.code, navigationPath: $path)
@@ -453,7 +453,7 @@ struct HomeView: View {
         switch PlayerNameMatcher.resolveSearch(trimmed, history: appState) {
         case .player(let name, let alternatives):
             lastNameSearchCount = UserDefaults.standard.integer(forKey: "lastNameSearchCount")
-            path.append(PlayerCardDestination(name: name, alternatives: alternatives))
+            path.append(PlayerCardDestination(name: name, alternatives: alternatives, source: "search"))
         case .team(let code):
             path.append(TeamCardDestination(code: code))
         case .question(let query):

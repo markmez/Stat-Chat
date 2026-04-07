@@ -3,6 +3,7 @@ import SwiftUI
 struct PlayerCardView: View {
     let playerName: String
     var alternatives: [String] = []
+    var source: String = "link"
     @Binding var navigationPath: NavigationPath
 
     @Environment(AppState.self) private var appState
@@ -333,7 +334,7 @@ struct PlayerCardView: View {
         }
         .task {
             AnalyticsService.trackPlayerCardView(name: playerName)
-            playerCard = await PlayerCardService.fetch(name: playerName)
+            playerCard = await PlayerCardService.fetch(name: playerName, source: source, deviceId: AppState.deviceId)
             isLoading = false
         }
     }

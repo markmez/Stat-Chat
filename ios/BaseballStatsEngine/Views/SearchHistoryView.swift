@@ -15,7 +15,7 @@ struct SearchHistoryView: View {
                         Button {
                             appState.addToSearchHistory(query)
                             if let playerName = PlayerNameMatcher.matchPlayer(query) {
-                                navigationPath.append(PlayerCardDestination(name: playerName))
+                                navigationPath.append(PlayerCardDestination(name: playerName, source: "search"))
                             } else if let teamCode = PlayerNameMatcher.matchTeamExact(query) {
                                 navigationPath.append(TeamCardDestination(code: teamCode))
                             } else {

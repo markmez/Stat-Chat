@@ -233,9 +233,13 @@ final class BackendService: Sendable {
     }
 
     /// Fetch structured player card data from the backend.
-    func fetchPlayerCard(name: String) async throws -> PlayerCardData {
+    func fetchPlayerCard(name: String, source: String = "link", deviceId: String = "") async throws -> PlayerCardData {
         var components = URLComponents(url: baseURL.appendingPathComponent("player-card"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "name", value: name)]
+        components.queryItems = [
+            URLQueryItem(name: "name", value: name),
+            URLQueryItem(name: "source", value: source),
+            URLQueryItem(name: "device_id", value: deviceId),
+        ]
         let url = components.url!
 
         var request = URLRequest(url: url)

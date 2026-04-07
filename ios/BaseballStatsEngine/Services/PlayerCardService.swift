@@ -419,7 +419,7 @@ enum PlayerCardService {
         "AVG", "OBP", "SLG", "OPS", "OPS+", "ISO", "BABIP"
     ]
 
-    static func fetch(name: String) async -> PlayerCard {
+    static func fetch(name: String, source: String = "link", deviceId: String = "") async -> PlayerCard {
         let playerInfo = fetchPlayerInfo(name: name)
         let team = playerInfo?.team ?? ""
         let displayName = playerInfo?.name ?? name
@@ -431,7 +431,7 @@ enum PlayerCardService {
         // Always try the backend first — it has cron-refreshed current season data.
         // The bundled DB is a release-time snapshot and may be missing 2026+ data.
         // Fall back to local only if the backend request fails.
-        if let card = await fetchFromBackend(name: name) {
+        if let card = await fetchFromBackend(name: name, source: source, deviceId: deviceId) {
             return card
         }
 
@@ -531,8 +531,8 @@ enum PlayerCardService {
     // MARK: - Backend fallback for historical players
 
     /// Fetch player card data from the backend for players not in the local DB.
-    private static func fetchFromBackend(name: String) async -> PlayerCard? {
-        guard let data = try? await backendService.fetchPlayerCard(name: name) else {
+    private static func fetchFromBackend(name: String, source: String = "link", deviceId: String = "") async -> PlayerCard? {
+        guard let data = try? await backendService.fetchPlayerCard(name: name, source: source, deviceId: deviceId) else {
             return nil
         }
         // Must have actual season data from backend
