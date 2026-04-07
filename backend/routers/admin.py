@@ -605,6 +605,40 @@ async def historical_scans(
         raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
 
 
+BACKFILL_SB_CS_SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                     "data_pipeline", "backfill_sb_cs.py")
+
+
+@router.post("/backfill-sb-cs")
+async def backfill_sb_cs(
+    start: int | None = None,
+    end: int | None = None,
+    dry_run: bool = False,
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """One-time: backfill stolen_bases/caught_stealing in game_batting_logs from Retrosheet."""
+    verify_admin(authorization, key)
+    cmd = [sys.executable, BACKFILL_SB_CS_SCRIPT, "--db", DB_PATH]
+    if start is not None:
+        cmd.extend(["--start", str(start)])
+    if end is not None:
+        cmd.extend(["--end", str(end)])
+    if dry_run:
+        cmd.append("--dry-run")
+    try:
+        result = await _run_subprocess(cmd, timeout=3600)
+        return {
+            "status": "ok" if result.returncode == 0 else "error",
+            "stdout": result.stdout[-5000:] if result.stdout else "",
+            "stderr": result.stderr[-2000:] if result.stderr else "",
+        }
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Backfill timed out (60 min limit)")
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 METERING_DB_PATH = os.getenv(
     "METERING_DB_PATH",
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "metering.db"),
