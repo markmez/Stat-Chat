@@ -1768,7 +1768,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
                 filter_label += f" (on pace for ≤{ef_val} {unit})"
             else:
                 filter_label += f" (on pace for {ef_val}+ {unit})"
-            proration_subtitle = f"Showing players with {prorated_val}+ {unit} through {_max_team_games} games, prorated from {ef_val} {unit} over 162 games"
+            proration_subtitle = f"Pro-rating {ef_val} {unit} for current season"
         elif ef["comparison"] == "<=":
             filter_label += f" with ≤{ef_val} {ef_stat.display_abbrev}"
         else:
