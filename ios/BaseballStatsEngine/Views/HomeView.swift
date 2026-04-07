@@ -227,73 +227,35 @@ struct HomeView: View {
             }
             .onTapGesture {
                 isInputFocused = false
-                if feedExpanded {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                        feedExpanded = false
-                    }
-                }
             }
 
-            // Notable events drawer
-            notableDrawer
-                .transition(.move(edge: .bottom))
         }
         .ignoresSafeArea(.keyboard)
         .navigationBarHidden(true)
+        .sheet(isPresented: .constant(true)) {
+            drawerSheet
+                .presentationDetents([.height(peekHeight), .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackgroundInteraction(.enabled(upThrough: .height(peekHeight)))
+                .presentationCornerRadius(28)
+                .interactiveDismissDisabled()
+        }
     }
 
-    private var notableDrawer: some View {
+    private var drawerSheet: some View {
         VStack(spacing: 0) {
-            // Drag handle + tab bar — this is the collapse/expand target
-            VStack(spacing: 0) {
-                Capsule()
-                    .fill(Color(.separator))
-                    .frame(width: 36, height: 4)
-                    .padding(.top, 10)
-
-                HStack(spacing: 0) {
-                    drawerTabButton("Events", tab: .notable)
-                    drawerTabButton("Leaders", tab: .leaders)
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
+            // Tab bar
+            HStack(spacing: 0) {
+                drawerTabButton("Events", tab: .notable)
+                drawerTabButton("Leaders", tab: .leaders)
             }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                    if feedExpanded {
-                        feedExpanded = false
-                    } else {
-                        feedExpanded = true
-                        NotableEventsFeed.markExpandedTrayToday()
-                    }
-                }
-            }
-            .gesture(
-                DragGesture(minimumDistance: 10)
-                    .onEnded { value in
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            if value.translation.height < -20 && !feedExpanded {
-                                feedExpanded = true
-                                NotableEventsFeed.markExpandedTrayToday()
-                            } else if value.translation.height > 20 && feedExpanded {
-                                feedExpanded = false
-                            }
-                        }
-                    }
-            )
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
+            .padding(.bottom, 8)
 
             // Tab content
             if drawerTab == .notable {
-                DrawerScrollView(
-                    isEnabled: feedExpanded,
-                    isAtTop: $feedScrolledToTop,
-                    onPullDown: {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            feedExpanded = false
-                        }
-                    }
-                ) {
+                ScrollView {
                     NotableEventsFeed(
                         onPlayerTap: { name in
                             path.append(PlayerCardDestination(name: name))
@@ -310,39 +272,13 @@ struct HomeView: View {
                     )
                 }
             } else {
-                // Leaders tab
                 StatLeadersView(
                     onPlayerTap: { name in
                         path.append(PlayerCardDestination(name: name))
                     }
                 )
-                .scrollDisabled(!feedExpanded)
             }
         }
-        .frame(height: drawerHeight)
-        .padding(.horizontal, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 28)
-                .fill(Color(.secondarySystemBackground))
-                .shadow(color: .black.opacity(0.15), radius: 20, y: 0)
-                .shadow(color: .black.opacity(0.10), radius: 8, y: -6)
-                .padding(.horizontal, 12)
-                .ignoresSafeArea(edges: .bottom)
-        )
-        // Swipe up anywhere on collapsed drawer to expand
-        .highPriorityGesture(
-            feedExpanded ? nil :
-            DragGesture(minimumDistance: 10)
-                .onEnded { value in
-                    if value.translation.height < -20 {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            feedExpanded = true
-                            NotableEventsFeed.markExpandedTrayToday()
-                        }
-                    }
-                }
-        )
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: feedExpanded)
     }
 
     @ViewBuilder
