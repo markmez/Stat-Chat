@@ -1731,24 +1731,45 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     # Format
     title_prefix = f"{direction_label}{age_label}{bats_label}{position_label}{rookie_label}{role_label}"
     # Extra filter label: "with ≤10 HR", "with 30+ SB"
+    # Build filter labels — detect prorated IP/PA thresholds early in season
     filter_label = ""
+    proration_subtitle = ""
+    # Check if we're early in the season (max team games < 140)
+    _max_team_games = 162
+    if plan.season:
+        try:
+            _tg = conn.execute("SELECT MAX(games) FROM season_batting_stats WHERE season = ?", (plan.season,)).fetchone()
+            _max_team_games = int(_tg[0]) if _tg and _tg[0] else 162
+        except:
+            pass
+
     for ef in plan.extra_filters:
         ef_stat = ef["stat"]
         ef_val = int(ef["threshold"]) if ef["threshold"] == int(ef["threshold"]) else ef["threshold"]
-        if ef["comparison"] == "<=":
+        is_ip_pa = ef_stat.db_column in ("innings_pitched", "plate_appearances", "ip_outs")
+
+        if is_ip_pa and _max_team_games < 140:
+            # Prorated — change title to "on pace for" and add explainer
+            prorated_val = max(1, int(ef_val * _max_team_games / 162))
+            unit = "IP" if "inn" in ef_stat.db_column or "ip" in ef_stat.db_column else "PA"
+            if ef["comparison"] == "<=":
+                filter_label += f" (on pace for ≤{ef_val} {unit})"
+            else:
+                filter_label += f" (on pace for {ef_val}+ {unit})"
+            proration_subtitle = f"Showing players with {prorated_val}+ {unit} through {_max_team_games} games, prorated from {ef_val} {unit} over 162 games"
+        elif ef["comparison"] == "<=":
             filter_label += f" with ≤{ef_val} {ef_stat.display_abbrev}"
         else:
             filter_label += f" with {ef_val}+ {ef_stat.display_abbrev}"
+
     has_year = plan.scope in ("all_time",) or plan.scope.startswith("since_")
     title = f"**{scope_label} {title_prefix}{name} Leaders{filter_label}**\n" if not has_year else f"**{title_prefix}{name} Leaders{filter_label} ({scope_label})**\n"
 
-    # Show proration explainer, but skip if user already specified their own IP/PA threshold
-    user_has_ip_pa_filter = any(
-        ef["stat"].db_column in ("innings_pitched", "plate_appearances", "ip_outs")
-        for ef in plan.extra_filters if ef.get("stat")
-    )
+    user_has_ip_pa_filter = bool(proration_subtitle)
     parts = [title]
-    if pa_label and "on pace" in pa_label and not user_has_ip_pa_filter:
+    if proration_subtitle:
+        parts.append(f"[SUBTITLE]{proration_subtitle}[/SUBTITLE]")
+    elif pa_label and "on pace" in pa_label:
         parts.append(f"[SUBTITLE]{pa_label}[/SUBTITLE]")
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
