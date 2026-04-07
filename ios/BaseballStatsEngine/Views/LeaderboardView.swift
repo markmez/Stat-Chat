@@ -40,11 +40,14 @@ struct LeaderboardView: View {
         // Detect pitch mix tables by label pattern: "Sinker (61%)" etc.
         grid.rows.first.map { $0.label.contains("%") } ?? false
     }
-    /// Compute name column width from longest label — at .callout rounded ~7.5pt/char
+    /// Compute name column width from longest label using actual font measurement
     private var nameWidth: CGFloat {
         if isCompact {
-            let maxChars = grid.rows.map { $0.label.count }.max() ?? 10
-            return max(80, CGFloat(maxChars) * 7.5 + 8)
+            let font = UIFont.systemFont(ofSize: UIFont.preferredFont(forTextStyle: .callout).pointSize,
+                                          weight: .medium)
+            let longest = grid.rows.map(\.label).max(by: { $0.count < $1.count }) ?? ""
+            let size = (longest as NSString).size(withAttributes: [.font: font])
+            return max(80, ceil(size.width) + 12)
         }
         return 148
     }
