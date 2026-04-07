@@ -19,7 +19,7 @@ FREE_QUERIES_PER_WEEK = int(os.getenv("FREE_QUERIES_PER_WEEK", "5"))
 
 
 def init_metering_db() -> None:
-    """Create the quota table if it doesn't exist. Called at app startup."""
+    """Create the quota and query_log tables if they don't exist. Called at app startup."""
     conn = sqlite3.connect(METERING_DB_PATH)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS device_quota (
@@ -30,8 +30,33 @@ def init_metering_db() -> None:
             paid_expires_at TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS query_log (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            query_text      TEXT NOT NULL,
+            device_id       TEXT,
+            response_type   TEXT NOT NULL,
+            timestamp       TEXT NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
+
+
+def log_query(query_text: str, device_id: str, response_type: str) -> None:
+    """Log a query with its response type. response_type: 'intercepted', 'haiku', 'sonnet'."""
+    conn = sqlite3.connect(METERING_DB_PATH)
+    conn.execute(
+        "INSERT INTO query_log (query_text, device_id, response_type, timestamp) VALUES (?, ?, ?, ?)",
+        (query_text, device_id, response_type, _now_iso()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
 
 
 def check_quota(device_id: str) -> dict:

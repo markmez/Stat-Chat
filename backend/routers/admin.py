@@ -13,6 +13,7 @@ import sys
 from datetime import date
 
 from fastapi import APIRouter, Header, HTTPException
+from fastapi.responses import HTMLResponse
 
 
 async def _run_subprocess(cmd: list[str], timeout: int = 1800) -> subprocess.CompletedProcess:
@@ -602,3 +603,157 @@ async def historical_scans(
     except Exception as e:
         import traceback
         raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
+
+
+METERING_DB_PATH = os.getenv(
+    "METERING_DB_PATH",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "metering.db"),
+)
+
+# Cost estimates per query by response type
+_COST_PER_QUERY = {"intercepted": 0.0, "haiku": 0.002, "sonnet": 0.02}
+
+
+@router.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(key: str | None = None, authorization: str | None = Header(None)):
+    """Admin dashboard showing query analytics."""
+    verify_admin(authorization, key)
+
+    conn = sqlite3.connect(METERING_DB_PATH)
+
+    # All queries ranked by count, tiebroken by recency
+    queries = conn.execute("""
+        SELECT query_text, COUNT(*) as cnt,
+               MAX(timestamp) as last_seen,
+               GROUP_CONCAT(DISTINCT response_type) as types
+        FROM query_log
+        GROUP BY query_text
+        ORDER BY cnt DESC, last_seen DESC
+        LIMIT 1000
+    """).fetchall()
+
+    # Breakdown by response type
+    breakdown = conn.execute("""
+        SELECT response_type, COUNT(*) as cnt
+        FROM query_log
+        GROUP BY response_type
+        ORDER BY cnt DESC
+    """).fetchall()
+
+    total = sum(r[1] for r in breakdown)
+    conn.close()
+
+    # Build breakdown rows
+    breakdown_html = ""
+    total_cost = 0.0
+    for rtype, cnt in breakdown:
+        pct = (cnt / total * 100) if total else 0
+        cost = cnt * _COST_PER_QUERY.get(rtype, 0)
+        total_cost += cost
+        breakdown_html += f"""
+        <tr>
+            <td><span class="badge {rtype}">{rtype}</span></td>
+            <td>{cnt:,}</td>
+            <td>{pct:.1f}%</td>
+            <td>${cost:.2f}</td>
+        </tr>"""
+
+    breakdown_html += f"""
+    <tr class="total-row">
+        <td><strong>Total</strong></td>
+        <td><strong>{total:,}</strong></td>
+        <td><strong>100%</strong></td>
+        <td><strong>${total_cost:.2f}</strong></td>
+    </tr>"""
+
+    # Build query rows
+    query_rows = ""
+    for text, cnt, last_seen, types in queries:
+        # Format timestamp for display
+        ts_display = last_seen[:16].replace("T", " ") if last_seen else ""
+        # Build type badges
+        type_badges = " ".join(
+            f'<span class="badge {t.strip()}">{t.strip()}</span>'
+            for t in (types or "").split(",")
+        )
+        escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        query_rows += f"""
+        <tr>
+            <td class="query-text">{escaped}</td>
+            <td class="count">{cnt}</td>
+            <td class="types">{type_badges}</td>
+            <td class="timestamp">{ts_display}</td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StatChat Dashboard</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: -apple-system, system-ui, sans-serif; background: #0a0a0a; color: #e0e0e0; padding: 16px; }}
+  h1 {{ font-size: 20px; margin-bottom: 16px; color: #fff; }}
+  h2 {{ font-size: 16px; margin: 24px 0 8px; color: #ccc; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+  th {{ text-align: left; padding: 8px 6px; border-bottom: 1px solid #333; color: #999; font-weight: 500; position: sticky; top: 0; background: #0a0a0a; }}
+  td {{ padding: 6px; border-bottom: 1px solid #1a1a1a; vertical-align: top; }}
+  .count {{ text-align: center; font-variant-numeric: tabular-nums; }}
+  .timestamp {{ color: #666; font-size: 11px; white-space: nowrap; }}
+  .query-text {{ max-width: 55vw; word-break: break-word; }}
+  .types {{ white-space: nowrap; }}
+  .badge {{
+    display: inline-block; padding: 2px 6px; border-radius: 4px;
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+  }}
+  .badge.intercepted {{ background: #1a3a1a; color: #4ade80; }}
+  .badge.haiku {{ background: #1a2a3a; color: #60a5fa; }}
+  .badge.sonnet {{ background: #3a1a3a; color: #c084fc; }}
+  .breakdown {{ margin-bottom: 24px; }}
+  .breakdown table {{ max-width: 500px; }}
+  .breakdown td, .breakdown th {{ padding: 8px 12px; }}
+  .total-row td {{ border-top: 2px solid #333; }}
+  .stat-cards {{ display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }}
+  .stat-card {{
+    background: #151515; border: 1px solid #222; border-radius: 8px;
+    padding: 12px 16px; min-width: 100px;
+  }}
+  .stat-card .label {{ font-size: 11px; color: #888; text-transform: uppercase; }}
+  .stat-card .value {{ font-size: 24px; font-weight: 600; color: #fff; }}
+</style>
+</head>
+<body>
+<h1>StatChat Dashboard</h1>
+
+<div class="stat-cards">
+  <div class="stat-card">
+    <div class="label">Total Queries</div>
+    <div class="value">{total:,}</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Unique Queries</div>
+    <div class="value">{len(queries):,}</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Est. Cost</div>
+    <div class="value">${total_cost:.2f}</div>
+  </div>
+</div>
+
+<h2>Cost Breakdown by Response Type</h2>
+<div class="breakdown">
+<table>
+  <tr><th>Type</th><th>Count</th><th>%</th><th>Est. Cost</th></tr>
+  {breakdown_html}
+</table>
+</div>
+
+<h2>All Queries (by count, then recency)</h2>
+<table>
+  <tr><th>Query</th><th>Count</th><th>Type</th><th>Last Seen</th></tr>
+  {query_rows}
+</table>
+</body>
+</html>"""
+
+    return HTMLResponse(content=html)

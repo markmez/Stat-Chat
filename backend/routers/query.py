@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from services.llm import LLMService
 from services.sql_runner import SqlRunner
-from services.metering import check_quota, increment_count
+from services.metering import check_quota, increment_count, log_query
 from services.interceptor import try_intercept
 
 logger = logging.getLogger("statchat.query")
@@ -452,6 +452,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             return
         yield event({"type": "done"})
         increment_count(device_id)
+        log_query(question, device_id, "sonnet")
         return
 
     # 2. Try local intercept first — zero Claude API cost
@@ -465,6 +466,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         yield event({"type": "text", "text": intercepted})
         yield event({"type": "done", "intercepted": True})
         increment_count(device_id)
+        log_query(question, device_id, "intercepted")
         return
 
     # 2a. Follow-up rewrite — if history is present and question is short,
@@ -497,6 +499,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                         done_event["rewritten_query"] = rewritten_query
                     yield event(done_event)
                     increment_count(device_id)
+                    log_query(rewritten, device_id, "intercepted")
                     return
             # Use rewritten question for the rest of the pipeline
             question = rewritten
@@ -512,6 +515,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             # Analytical follow-ups don't get rewritten queries in history
             yield event({"type": "done"})
             increment_count(device_id)
+            log_query(question, device_id, "sonnet")
             return
 
     # 3. Haiku SQL fallback — cheap SQL generation, no Sonnet needed
@@ -526,6 +530,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             done_event["rewritten_query"] = rewritten_query
         yield event(done_event)
         increment_count(device_id)
+        log_query(question, device_id, "haiku")
         return
 
     # 4. Knowledge mode — answer from Claude's baseball knowledge
@@ -544,3 +549,4 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         done_event["rewritten_query"] = rewritten_query
     yield event(done_event)
     increment_count(device_id)
+    log_query(question, device_id, "sonnet")
