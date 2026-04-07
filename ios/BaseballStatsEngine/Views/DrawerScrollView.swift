@@ -53,13 +53,11 @@ struct DrawerScrollView<Content: View>: UIViewRepresentable {
     func updateUIView(_ scrollView: UIScrollView, context: Context) {
         scrollView.isScrollEnabled = isEnabled
         context.coordinator.parent = self
-        context.coordinator.hostController?.rootView = content
-        // Force layout so content size updates as SwiftUI content changes
-        context.coordinator.hostController?.view.invalidateIntrinsicContentSize()
-        context.coordinator.hostController?.view.setNeedsLayout()
-        context.coordinator.hostController?.view.layoutIfNeeded()
-        scrollView.setNeedsLayout()
-        scrollView.layoutIfNeeded()
+        // Only update content if not mid-scroll (layout during deceleration kills momentum)
+        if !scrollView.isDecelerating && !scrollView.isDragging {
+            context.coordinator.hostController?.rootView = content
+            context.coordinator.hostController?.view.invalidateIntrinsicContentSize()
+        }
     }
 
     class Coordinator: NSObject, UIScrollViewDelegate {
