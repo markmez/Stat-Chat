@@ -4220,10 +4220,67 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
 
     cur = conn.cursor()
 
-    # "last N games" without a season = most recent N games (current season)
+    # "last N games" without a season = most recent N games across all seasons
     if season is None and window_type == "last":
-        from datetime import date as _date
-        season = _date.today().year
+        cur.execute(f"""
+            SELECT g.date, g.hits, g.at_bats, g.doubles, g.triples, g.home_runs,
+                   g.runs, g.rbi, g.walks, g.strikeouts
+            FROM game_batting_logs g
+            WHERE g.player_id = ? AND g.at_bats > 0
+            ORDER BY g.date DESC
+            LIMIT ?
+        """, (pid, n_games))
+        rows = cur.fetchall()
+        if not rows:
+            conn.close()
+            return None
+
+        totals = {"g": len(rows), "ab": 0, "h": 0, "2b": 0, "3b": 0, "hr": 0,
+                  "r": 0, "rbi": 0, "bb": 0, "so": 0}
+        for row in rows:
+            totals["h"] += row[1] or 0
+            totals["ab"] += row[2] or 0
+            totals["2b"] += row[3] or 0
+            totals["3b"] += row[4] or 0
+            totals["hr"] += row[5] or 0
+            totals["r"] += row[6] or 0
+            totals["rbi"] += row[7] or 0
+            totals["bb"] += row[8] or 0
+            totals["so"] += row[9] or 0
+
+        avg = totals["h"] / max(totals["ab"], 1)
+        slg_num = (totals["h"] - totals["2b"] - totals["3b"] - totals["hr"]) + \
+                  2*totals["2b"] + 3*totals["3b"] + 4*totals["hr"]
+        slg = slg_num / max(totals["ab"], 1)
+        obp = (totals["h"] + totals["bb"]) / max(totals["ab"] + totals["bb"], 1)
+        ops = obp + slg
+
+        # Date range for display
+        earliest = rows[-1][0] if rows else ""
+        latest = rows[0][0] if rows else ""
+
+        title = f"**{display_name} — Last {n_games} Games**\n"
+        parts = [title]
+        if earliest and latest:
+            try:
+                from datetime import datetime as _dt
+                e_fmt = _dt.strptime(earliest, "%Y-%m-%d").strftime("%b %-d, %Y")
+                l_fmt = _dt.strptime(latest, "%Y-%m-%d").strftime("%b %-d, %Y")
+                parts.append(f"[SUBTITLE]{e_fmt} – {l_fmt}[/SUBTITLE]")
+            except:
+                pass
+        parts.append("[STATGRID]")
+        parts.append("HEADER: G, AB, H, 2B, 3B, HR, R, RBI, BB, SO, AVG, OPS")
+        parts.append(f"ROW Last {n_games} Games: {totals['g']}, {totals['ab']}, {totals['h']}, "
+                    f"{totals['2b']}, {totals['3b']}, {totals['hr']}, {totals['r']}, "
+                    f"{totals['rbi']}, {totals['bb']}, {totals['so']}, "
+                    f"{_format_rate(avg)}, {_format_rate(ops)}")
+        parts.append("[/STATGRID]")
+        parts.append(f"\n[SUGGEST]{display_name} this season[/SUGGEST]")
+        parts.append(f"[SUGGEST]{display_name} career stats[/SUGGEST]")
+
+        conn.close()
+        return "\n".join(parts)
 
     if season is None:
         # Compare across all seasons: for each season, compute stats in the window
