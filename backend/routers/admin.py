@@ -422,9 +422,12 @@ async def detect_notable(
     """Re-run just the notable events detection (no stats pull or streak detection)."""
     verify_admin(authorization)
     try:
+        import io, contextlib
         from services.notable_events import detect_all
-        count = detect_all(DB_PATH)
-        return {"status": "ok", "events_detected": count}
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            count = detect_all(DB_PATH)
+        return {"status": "ok", "events_detected": count, "stdout": buf.getvalue()[-3000:]}
     except Exception as e:
         raise HTTPException(500, str(e))
 
