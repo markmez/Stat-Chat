@@ -23,7 +23,7 @@ struct HomeView: View {
     @State private var lastNameSearchCount: Int = UserDefaults.standard.integer(forKey: "lastNameSearchCount")
     @State private var matchupPills: [String] = []
     @State private var drawerTab: DrawerTab = .notable
-    private enum DrawerTab { case notable, leaders }
+    private enum DrawerTab { case notable, leaders, history }
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
@@ -254,6 +254,9 @@ struct HomeView: View {
                 HStack(spacing: 0) {
                     drawerTabButton("Events", tab: .notable)
                     drawerTabButton("Leaders", tab: .leaders)
+                    if !appState.searchHistory.isEmpty {
+                        drawerTabButton("History", tab: .history)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
@@ -316,6 +319,39 @@ struct HomeView: View {
                         path.append(PlayerCardDestination(name: name))
                     }
                 )
+                .scrollDisabled(!feedExpanded)
+            } else if drawerTab == .history {
+                // History tab — embedded in drawer, not a separate navigation
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(appState.searchHistory, id: \.self) { query in
+                            Button {
+                                path.append(ResultsDestination(question: query))
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "magnifyingglass")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.secondary.opacity(0.5))
+                                    Text(query)
+                                        .font(.system(.subheadline, design: .rounded))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 10)
+                            }
+                            .buttonStyle(.plain)
+
+                            LinearGradient(
+                                colors: [lightBlue.opacity(0.4), deepBlue.opacity(0.4)],
+                                startPoint: .leading, endPoint: .trailing
+                            )
+                            .frame(height: 1)
+                            .padding(.horizontal, 20)
+                        }
+                    }
+                }
                 .scrollDisabled(!feedExpanded)
             }
         }
