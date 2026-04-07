@@ -695,8 +695,10 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
             for t in (types or "").split(",")
         )
         escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        # Store raw timestamp for sorting
+        raw_ts = last_seen or ""
         query_rows += f"""
-        <tr>
+        <tr data-count="{cnt}" data-ts="{raw_ts}">
             <td class="query-text">{escaped}</td>
             <td class="count">{cnt}</td>
             <td class="types">{type_badges}</td>
@@ -743,6 +745,9 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
   }}
   .stat-card .label {{ font-size: 11px; color: rgba(255,255,255,0.8); text-transform: uppercase; }}
   .stat-card .value {{ font-size: 24px; font-weight: 700; color: #fff; }}
+  th.sortable {{ cursor: pointer; user-select: none; }}
+  th.sortable:active {{ opacity: 0.6; }}
+  th .arrow {{ font-size: 10px; margin-left: 3px; }}
 </style>
 </head>
 <body>
@@ -767,11 +772,34 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
 </table>
 </div>
 
-<h2>All Queries (by count, then recency)</h2>
-<table>
-  <tr><th>Query</th><th>Count</th><th>Type</th><th>Last (ET)</th></tr>
+<h2>All Queries</h2>
+<table id="qtable">
+  <tr>
+    <th>Query</th>
+    <th class="sortable" onclick="sortBy('count')" id="th-count">Count<span class="arrow"> &#x25BE;</span></th>
+    <th>Type</th>
+    <th class="sortable" onclick="sortBy('time')" id="th-time">Last (ET)</th>
+  </tr>
   {query_rows}
 </table>
+<script>
+let currentSort = 'count';
+function sortBy(mode) {{
+  currentSort = mode;
+  const table = document.getElementById('qtable');
+  const rows = Array.from(table.querySelectorAll('tr[data-count]'));
+  rows.sort((a, b) => {{
+    if (mode === 'time') {{
+      return b.dataset.ts.localeCompare(a.dataset.ts);
+    }}
+    const dc = parseInt(b.dataset.count) - parseInt(a.dataset.count);
+    return dc !== 0 ? dc : b.dataset.ts.localeCompare(a.dataset.ts);
+  }});
+  rows.forEach(r => table.appendChild(r));
+  document.getElementById('th-count').innerHTML = 'Count' + (mode === 'count' ? '<span class="arrow"> &#x25BE;</span>' : '');
+  document.getElementById('th-time').innerHTML = 'Last (ET)' + (mode === 'time' ? '<span class="arrow"> &#x25BE;</span>' : '');
+}}
+</script>
 </body>
 </html>"""
 
