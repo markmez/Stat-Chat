@@ -17,21 +17,21 @@ _NL_TEAMS = {"NYN", "ATL", "MIA", "PHI", "WAS", "CHN", "CIN", "MIL", "PIT", "SLN
              "ARI", "COL", "LAN", "SDN", "SFN"}
 
 BATTING_STATS = [
-    {"col": "home_runs", "label": "HR", "min_pa": 0, "is_rate": False, "order": "DESC"},
-    {"col": "batting_avg", "label": "AVG", "min_pa": 100, "is_rate": True, "order": "DESC"},
+    {"col": "home_runs", "label": "Home Runs", "min_pa": 0, "is_rate": False, "order": "DESC"},
+    {"col": "batting_avg", "label": "Batting Avg", "min_pa": 100, "is_rate": True, "order": "DESC"},
     {"col": "rbi", "label": "RBI", "min_pa": 0, "is_rate": False, "order": "DESC"},
-    {"col": "hits", "label": "H", "min_pa": 0, "is_rate": False, "order": "DESC"},
-    {"col": "stolen_bases", "label": "SB", "min_pa": 0, "is_rate": False, "order": "DESC"},
-    {"col": "runs", "label": "R", "min_pa": 0, "is_rate": False, "order": "DESC"},
+    {"col": "hits", "label": "Hits", "min_pa": 0, "is_rate": False, "order": "DESC"},
+    {"col": "stolen_bases", "label": "Stolen Bases", "min_pa": 0, "is_rate": False, "order": "DESC"},
+    {"col": "runs", "label": "Runs", "min_pa": 0, "is_rate": False, "order": "DESC"},
     {"col": "ops", "label": "OPS", "min_pa": 100, "is_rate": True, "order": "DESC"},
 ]
 
 PITCHING_STATS = [
     {"col": "era", "label": "ERA", "min_ip": 20, "is_rate": True, "order": "ASC"},
-    {"col": "wins", "label": "W", "min_ip": 0, "is_rate": False, "order": "DESC"},
-    {"col": "strikeouts", "label": "K", "min_ip": 0, "is_rate": False, "order": "DESC"},
-    {"col": "saves", "label": "SV", "min_ip": 0, "is_rate": False, "order": "DESC"},
-    {"col": "whip", "label": "WHIP", "min_ip": 20, "is_rate": True, "order": "ASC"},
+    {"col": "wins", "label": "Wins", "min_ip": 0, "is_rate": False, "order": "DESC"},
+    {"col": "strikeouts", "label": "Strikeouts", "min_ip": 0, "is_rate": False, "order": "DESC"},
+    {"col": "saves", "label": "Saves", "min_ip": 0, "is_rate": False, "order": "DESC"},
+    {"col": "whip", "label": "WHIP", "min_pa": 20, "is_rate": True, "order": "ASC"},
 ]
 
 
