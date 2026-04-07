@@ -28,7 +28,6 @@ struct HomeView: View {
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
-    private struct HistoryDestination: Hashable {}
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -41,9 +40,6 @@ struct HomeView: View {
                 }
                 .navigationDestination(for: TeamCardDestination.self) { dest in
                     TeamCardView(teamCode: dest.code, navigationPath: $path)
-                }
-                .navigationDestination(for: HistoryDestination.self) { _ in
-                    SearchHistoryView(navigationPath: $path)
                 }
         }
         .sheet(isPresented: Binding(
@@ -65,7 +61,7 @@ struct HomeView: View {
     }
 
     /// Height of the peeking drawer
-    private let peekHeight: CGFloat = 150
+    private let peekHeight: CGFloat = 170
     /// Height when fully expanded — near full screen
     private var expandedHeight: CGFloat {
         UIScreen.main.bounds.height * 0.85
@@ -79,17 +75,8 @@ struct HomeView: View {
         ZStack(alignment: .bottom) {
             // Main search area — centered
             VStack(spacing: 0) {
-                // History + Settings buttons
+                // Settings button
                 HStack {
-                    if !appState.searchHistory.isEmpty {
-                        Button {
-                            path.append(HistoryDestination())
-                        } label: {
-                            Image(systemName: "clock.arrow.circlepath")
-                                .font(.system(size: 17))
-                                .foregroundStyle(.primary.opacity(0.7))
-                        }
-                    }
                     Spacer()
                     NavigationLink {
                         SettingsView()
