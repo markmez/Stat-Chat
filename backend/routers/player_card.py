@@ -21,7 +21,7 @@ DB_PATH = os.getenv(
 
 
 def _get_conn():
-    return sqlite3.connect(DB_PATH)
+    return sqlite3.connect(DB_PATH, timeout=10)
 
 
 def _sanitize(name: str) -> str:

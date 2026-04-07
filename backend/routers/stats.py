@@ -47,7 +47,7 @@ LOWER_IS_BETTER = {"era", "whip", "bb_per_9", "hits_per_9", "hr_per_9"}
 
 
 def _get_conn():
-    return sqlite3.connect(DB_PATH)
+    return sqlite3.connect(DB_PATH, timeout=10)
 
 
 def _is_valid_column(col: str) -> bool:

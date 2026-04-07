@@ -17,7 +17,7 @@ async def get_notable_events(limit: int = QueryParam(50, le=200)):
     """Return recent notable baseball events, ordered by date and priority.
     Filters out expired matchup previews (past game start time).
     Matchup preview interleaving is handled client-side based on user engagement."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     now_utc = datetime.now(timezone.utc).isoformat()
     try:
         table_check = conn.execute(

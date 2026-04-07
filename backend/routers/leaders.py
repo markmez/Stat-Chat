@@ -53,7 +53,7 @@ async def get_leaders(
 ):
     """Return current season stat leaders for the feed drawer."""
     season = date.today().year
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     try:
         # Determine league filter
         if league == "AL":

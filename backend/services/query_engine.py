@@ -1267,7 +1267,7 @@ def decompose(question: str) -> QueryPlan:
 # ---------------------------------------------------------------------------
 
 def _get_db() -> sqlite3.Connection:
-    return sqlite3.connect(DB_PATH)
+    return sqlite3.connect(DB_PATH, timeout=10)
 
 
 def _format_rate(value) -> str:

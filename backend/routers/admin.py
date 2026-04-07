@@ -5,6 +5,7 @@ POST /admin/refresh — triggers a live data pull from MySportsFeeds.
 GET  /admin/freshness — returns when data was last updated.
 """
 
+import asyncio
 import os
 import sqlite3
 import subprocess
@@ -12,6 +13,25 @@ import sys
 from datetime import date
 
 from fastapi import APIRouter, Header, HTTPException
+
+
+async def _run_subprocess(cmd: list[str], timeout: int = 1800) -> subprocess.CompletedProcess:
+    """Run a subprocess without blocking the event loop (so queries keep working)."""
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        raise subprocess.TimeoutExpired(cmd, timeout)
+    # Mimic CompletedProcess
+    return subprocess.CompletedProcess(
+        cmd, proc.returncode, stdout.decode(), stderr.decode()
+    )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -48,7 +68,7 @@ async def refresh_live_data(
         cmd.append("--full-refresh")
     print(f"REFRESH CMD: {cmd}")
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+        result = await _run_subprocess(cmd, timeout=1800)
         return {
             "status": "ok" if result.returncode == 0 else "error",
             "season": season or "auto-detected",
@@ -216,7 +236,7 @@ async def load_historical_gamelogs(
     cmd = [sys.executable, HISTORICAL_SCRIPT, "--db", DB_PATH,
            "--start", str(start), "--end", str(end)]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        result = await _run_subprocess(cmd, timeout=3600)
         return {
             "status": "ok" if result.returncode == 0 else "error",
             "range": f"{start}-{end}",
@@ -445,9 +465,9 @@ async def poll_new_games(
     poll_script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                "data_pipeline", "poll_new_games.py")
     try:
-        result = subprocess.run(
+        result = await _run_subprocess(
             [sys.executable, poll_script, "--db", DB_PATH],
-            capture_output=True, text=True, timeout=120,
+            timeout=120,
         )
         return {
             "status": "ok" if result.returncode == 0 else "error",
@@ -514,9 +534,9 @@ async def fix_doubleheader_schema(
     script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "data_pipeline", "fix_doubleheader_schema.py")
     try:
-        result = subprocess.run(
+        result = await _run_subprocess(
             [sys.executable, script, "--db", DB_PATH],
-            capture_output=True, text=True, timeout=600,
+            timeout=600,
         )
         return {
             "status": "ok" if result.returncode == 0 else "error",
@@ -537,9 +557,9 @@ async def build_historical_index(
     script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "data_pipeline", "build_historical_index.py")
     try:
-        result = subprocess.run(
+        result = await _run_subprocess(
             [sys.executable, script, "--db", DB_PATH],
-            capture_output=True, text=True, timeout=3600,
+            timeout=3600,
         )
         return {
             "status": "ok" if result.returncode == 0 else "error",

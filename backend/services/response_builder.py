@@ -80,7 +80,7 @@ _LOWER_IS_BETTER_COLUMNS = {"era", "whip", "bb_per_9", "hits_per_9", "hr_per_9"}
 
 def _get_db() -> sqlite3.Connection:
     """Return a read-only connection to the stats DB."""
-    return sqlite3.connect(DB_PATH)
+    return sqlite3.connect(DB_PATH, timeout=10)
 
 
 def _sanitize(name: str) -> str:

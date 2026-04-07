@@ -14,7 +14,7 @@ async def health():
     if not os.path.exists(DB_PATH):
         return {"status": "degraded", "reason": "database missing"}
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=10)
         conn.execute("SELECT 1 FROM players LIMIT 1")
         conn.close()
     except Exception as e:
