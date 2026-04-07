@@ -466,7 +466,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         yield event({"type": "text", "text": intercepted})
         yield event({"type": "done", "intercepted": True})
         increment_count(device_id)
-        log_query(question, device_id, "intercepted")
+        log_query(question, device_id, "query engine")
         return
 
     # 2a. Follow-up rewrite — if history is present and question is short,

@@ -611,7 +611,7 @@ METERING_DB_PATH = os.getenv(
 )
 
 # Cost estimates per query by response type
-_COST_PER_QUERY = {"intercepted": 0.0, "haiku": 0.002, "sonnet": 0.02}
+_COST_PER_QUERY = {"query engine": 0.0, "intercepted": 0.0, "player card": 0.0, "haiku": 0.002, "sonnet": 0.02}
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
@@ -673,7 +673,7 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
         ts_display = last_seen[:16].replace("T", " ") if last_seen else ""
         # Build type badges
         type_badges = " ".join(
-            f'<span class="badge {t.strip()}">{t.strip()}</span>'
+            f'<span class="badge {t.strip().replace(" ", "-")}">{t.strip()}</span>'
             for t in (types or "").split(",")
         )
         escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -710,9 +710,10 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
     display: inline-block; padding: 2px 6px; border-radius: 4px;
     font-size: 10px; font-weight: 600; text-transform: uppercase;
   }}
-  .badge.intercepted {{ background: #dcfce7; color: #166534; }}
+  .badge.intercepted, .badge.query-engine {{ background: #dcfce7; color: #166534; }}
   .badge.haiku {{ background: #dbeafe; color: #1A40B3; }}
   .badge.sonnet {{ background: #f3e8ff; color: #6b21a8; }}
+  .badge.player-card {{ background: #fef3c7; color: #92400e; }}
   .breakdown {{ margin-bottom: 24px; }}
   .breakdown table {{ max-width: 500px; }}
   .breakdown td, .breakdown th {{ padding: 8px 12px; }}

@@ -12,6 +12,8 @@ from typing import Optional, List
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+from services.metering import log_query, check_quota, increment_count
+
 router = APIRouter()
 
 DB_PATH = os.getenv(
@@ -1167,7 +1169,16 @@ def _fetch_pitching_game_logs(conn, name, season):
 # ---------------------------------------------------------------------------
 
 @router.get("/player-card")
-async def player_card(name: str = Query(..., description="Player name to look up")):
+async def player_card(
+    name: str = Query(..., description="Player name to look up"),
+    source: str = Query("link", description="'search' if user typed it, 'link' if tapped a name"),
+    device_id: str = Query("", description="Device ID for metering (required when source=search)"),
+):
+    # Log and meter player card searches (not link navigations)
+    if source == "search" and device_id:
+        log_query(name, device_id, "player card")
+        increment_count(device_id)
+
     conn = _get_conn()
     try:
         info = _fetch_player_info(conn, name)
