@@ -58,10 +58,12 @@ def ensure_table(conn):
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_notable_date ON notable_events(game_date)
     """)
-    # Migrate: add game_context if missing
+    # Migrate: add columns if missing
     cols = {row[1] for row in conn.execute("PRAGMA table_info(notable_events)").fetchall()}
     if "game_context" not in cols:
         conn.execute("ALTER TABLE notable_events ADD COLUMN game_context TEXT")
+    if "expires_at" not in cols:
+        conn.execute("ALTER TABLE notable_events ADD COLUMN expires_at TEXT")
     conn.commit()
 
 
@@ -1310,6 +1312,7 @@ def detect_matchup_previews(conn, season):
             "detail": " matchup preview.",
             "category": "Tonight",
             "game_date": today,
+            "expires_at": game.get("start_time", ""),  # ISO timestamp — hide after game starts
             "player_names": [batter_name, pitcher_name],
             "team_names": [team_display(batting_team), team_display(pitcher_team)],
             "detection_type": "matchup_preview",
@@ -1809,13 +1812,14 @@ def detect_for_players(db_path, season, player_ids):
             cursor.execute("""
                 INSERT OR IGNORE INTO notable_events
                 (headline, detail, category, game_date, player_names, team_names,
-                 detection_type, priority, game_context)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 detection_type, priority, game_context, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 e["headline"], e["detail"], e["category"], e["game_date"],
                 json.dumps(e.get("player_names", [])),
                 json.dumps(e.get("team_names", [])),
                 e["detection_type"], e["priority"], game_context,
+                e.get("expires_at", ""),
             ))
             if cursor.rowcount > 0:
                 inserted += 1
@@ -1988,13 +1992,14 @@ def detect_all(db_path=None, season=None, from_poll=False):
             cursor.execute("""
                 INSERT OR IGNORE INTO notable_events
                 (headline, detail, category, game_date, player_names, team_names,
-                 detection_type, priority, game_context)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 detection_type, priority, game_context, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 e["headline"], e["detail"], e["category"], e["game_date"],
                 json.dumps(e.get("player_names", [])),
                 json.dumps(e.get("team_names", [])),
                 e["detection_type"], e["priority"], game_context,
+                e.get("expires_at", ""),
             ))
             if cursor.rowcount > 0:
                 inserted += 1

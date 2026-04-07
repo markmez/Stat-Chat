@@ -3,6 +3,7 @@
 import json
 import os
 import sqlite3
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query as QueryParam
 
@@ -14,8 +15,10 @@ DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
 @router.get("/notable-events")
 async def get_notable_events(limit: int = QueryParam(50, le=200)):
     """Return recent notable baseball events, ordered by date and priority.
+    Filters out expired matchup previews (past game start time).
     Matchup preview interleaving is handled client-side based on user engagement."""
     conn = sqlite3.connect(DB_PATH)
+    now_utc = datetime.now(timezone.utc).isoformat()
     try:
         table_check = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='notable_events'"
@@ -25,11 +28,12 @@ async def get_notable_events(limit: int = QueryParam(50, le=200)):
 
         rows = conn.execute("""
             SELECT headline, detail, category, game_date, player_names, team_names,
-                   game_context
+                   game_context, expires_at
             FROM notable_events
+            WHERE expires_at IS NULL OR expires_at = '' OR expires_at > ?
             ORDER BY game_date DESC, priority ASC, id DESC
             LIMIT ?
-        """, (limit,)).fetchall()
+        """, (now_utc, limit)).fetchall()
     finally:
         conn.close()
 
