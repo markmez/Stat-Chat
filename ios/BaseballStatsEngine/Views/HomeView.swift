@@ -65,7 +65,7 @@ struct HomeView: View {
     }
 
     /// Height of the peeking drawer
-    private let peekHeight: CGFloat = 140
+    private let peekHeight: CGFloat = 150
     /// Height when fully expanded — near full screen
     private var expandedHeight: CGFloat {
         UIScreen.main.bounds.height * 0.85
@@ -260,6 +260,7 @@ struct HomeView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
+                .padding(.bottom, 10)
             }
             .contentShape(Rectangle())
             .onTapGesture {
@@ -324,23 +325,37 @@ struct HomeView: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(appState.searchHistory, id: \.self) { query in
-                            Button {
-                                path.append(ResultsDestination(question: query))
-                            } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: "magnifyingglass")
-                                        .font(.system(size: 13))
-                                        .foregroundStyle(.secondary.opacity(0.5))
-                                    Text(query)
-                                        .font(.system(.subheadline, design: .rounded))
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(1)
-                                    Spacer()
+                            HStack(spacing: 0) {
+                                Button {
+                                    path.append(ResultsDestination(question: query))
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "magnifyingglass")
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(.secondary.opacity(0.5))
+                                        Text(query)
+                                            .font(.system(.subheadline, design: .rounded))
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(1)
+                                        Spacer()
+                                    }
                                 }
-                                .padding(.horizontal, 20)
-                                .padding(.vertical, 10)
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    withAnimation(.easeOut(duration: 0.2)) {
+                                        appState.removeFromSearchHistory(query)
+                                    }
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(.secondary.opacity(0.4))
+                                        .padding(8)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 4)
 
                             LinearGradient(
                                 colors: [lightBlue.opacity(0.4), deepBlue.opacity(0.4)],

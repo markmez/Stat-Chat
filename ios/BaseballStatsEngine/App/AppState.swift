@@ -407,6 +407,11 @@ final class AppState: SearchHistoryTracking {
         UserDefaults.standard.set(searchHistory, forKey: historyKey)
     }
 
+    func removeFromSearchHistory(_ query: String) {
+        searchHistory.removeAll { $0 == query }
+        UserDefaults.standard.set(searchHistory, forKey: historyKey)
+    }
+
     func clearSearchHistory() {
         searchHistory.removeAll()
         UserDefaults.standard.removeObject(forKey: historyKey)
