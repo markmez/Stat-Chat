@@ -1136,11 +1136,9 @@ def detect_matchup_previews(conn, season):
         from services.daily_games import get_todays_games
         from services.name_matcher import match_player
     except ImportError:
-        print("    matchup_preview: BAIL — import failed")
         return events
 
     games = get_todays_games()
-    print(f"    matchup_preview: {len(games)} games today")
     if not games:
         return events
 
@@ -1193,9 +1191,7 @@ def detect_matchup_previews(conn, season):
             if matched:
                 starters.append((pitcher_raw, matched, batting_team, pitcher_team, game))
 
-    print(f"    matchup_preview: {len(starters)} starters matched")
     if not starters:
-        print("    matchup_preview: BAIL — no starters matched")
         return events
 
     # Step 3: Bulk career ERA query for all matched pitcher names
@@ -1230,11 +1226,6 @@ def detect_matchup_previews(conn, season):
         score = pitcher_score(matched)
         if score is not None:
             scored.append((score, matched, batting_team, pitcher_team, game))
-        else:
-            ip, era = career_stats.get(matched, (0, 99))
-            print(f"    matchup_preview: {matched} NOT qualified (IP={ip}, ERA={era}, prominence={matched in prominence_list})")
-
-    print(f"    matchup_preview: {len(scored)} qualified pitchers")
     # Sort by ERA (best first)
     scored.sort(key=lambda x: x[0])
 
@@ -1284,11 +1275,9 @@ def detect_matchup_previews(conn, season):
         """, (season, batting_team)).fetchone()
 
         if not top_batter:
-            print(f"    matchup_preview: no qualifying batter found for {batting_team} vs {pitcher_name}")
             continue
 
         batter_name = top_batter[0]
-        print(f"    matchup_preview: GENERATING {batter_name} vs {pitcher_name}")
 
         # Find one compelling stat for the card
         compelling = _find_compelling_matchup_stat(
