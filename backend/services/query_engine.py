@@ -1798,7 +1798,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         return None
 
     if not rows:
-        return None  # Fall through to Haiku/Sonnet
+        return f"No results found ({scope_label})."
 
     # Format
     title_prefix = f"{direction_label}{age_label}{bats_label}{position_label}{rookie_label}{role_label}"
@@ -2009,7 +2009,8 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
             qualifying &= season_pids
 
     if not qualifying:
-        return None
+        stat_label = conditions[0][0].replace("_", " ") if conditions else "criteria"
+        return f"No players met that criteria in each of the last {n_seasons} seasons ({start_year}-{most_recent})."
 
     # Format results
     results = []
@@ -2131,7 +2132,7 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
     op = "with" if plan.comparison == ">=" else "with no more than"
 
     if not rows:
-        return None
+        return f"No {rookie_label.lower()} {op} {threshold_display} {abbrev} found ({scope_label})."
 
     # Build title with extra filters
     filter_parts = [f"{threshold_display}+ {abbrev}"]
@@ -2277,7 +2278,7 @@ def _execute_superlative(conn, plan: QueryPlan) -> Optional[str]:
     )
     rows = cur.fetchall()
     if not rows:
-        return None
+        return f"No players found matching that criteria."
 
     sup_labels = {"youngest": "Youngest", "oldest": "Oldest", "first": "First", "last": "Most Recent"}
     sup_label = sup_labels.get(plan.superlative, "")
@@ -2343,7 +2344,8 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
     )
     rows = cur.fetchall()
     if not rows:
-        return None
+        season_note = f" in {plan.season}" if plan.season else ""
+        return f"No players found with games meeting that criteria{season_note}."
 
     # Total count of such games
     cur.execute(
@@ -2500,7 +2502,7 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
     rows = cur.fetchall()
 
     if not rows:
-        return None
+        return f"No game log data found to search for that streak."
 
     label = " + ".join(plan.streak_condition_labels) if plan.streak_condition_labels else "success"
     target_length = plan.streak_length
