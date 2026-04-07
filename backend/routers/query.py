@@ -524,6 +524,16 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         haiku_sql, haiku_result_text, haiku_is_streak = haiku_result
         logger.info("query_haiku_sql question=%r", question)
         formatted = _format_haiku_result(haiku_result_text)
+        # Guard: never send more than one container — iOS renders each as a separate card
+        for tag in ["[LEADERBOARD]", "[STATGRID]"]:
+            first = formatted.find(tag)
+            if first >= 0:
+                end_tag = tag.replace("[", "[/")
+                first_end = formatted.find(end_tag, first)
+                if first_end >= 0:
+                    second = formatted.find(tag, first_end)
+                    if second >= 0:
+                        formatted = formatted[:first_end + len(end_tag)]
         yield event({"type": "text", "text": formatted})
         done_event = {"type": "done", "haiku_sql": True}
         if rewritten_query:
