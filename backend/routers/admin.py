@@ -611,7 +611,21 @@ METERING_DB_PATH = os.getenv(
 )
 
 # Cost estimates per query by response type
-_COST_PER_QUERY = {"query engine": 0.0, "intercepted": 0.0, "player card": 0.0, "haiku": 0.002, "sonnet": 0.02}
+_COST_PER_QUERY = {"query engine": 0.0, "intercepted": 0.0, "haiku": 0.002, "sonnet": 0.02}
+
+
+def _to_eastern(iso_ts: str) -> str:
+    """Convert an ISO UTC timestamp to Eastern Time display string."""
+    from datetime import datetime, timezone, timedelta
+    try:
+        dt = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        # Eastern = UTC-4 (EDT) or UTC-5 (EST). Use -4 for Apr-Nov.
+        eastern = dt.astimezone(timezone(timedelta(hours=-4)))
+        return eastern.strftime("%-m/%-d %I:%M %p").lstrip("0")
+    except Exception:
+        return iso_ts[:16].replace("T", " ")
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
@@ -620,6 +634,10 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
     verify_admin(authorization, key)
 
     conn = sqlite3.connect(METERING_DB_PATH)
+
+    # Migrate legacy "intercepted" rows
+    conn.execute("UPDATE query_log SET response_type = 'query engine' WHERE response_type = 'intercepted'")
+    conn.commit()
 
     # All queries ranked by count, tiebroken by recency
     queries = conn.execute("""
@@ -652,10 +670,10 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
         total_cost += cost
         breakdown_html += f"""
         <tr>
-            <td><span class="badge {rtype}">{rtype}</span></td>
+            <td><span class="badge {rtype.replace(' ', '-')}">{rtype}</span></td>
             <td>{cnt:,}</td>
             <td>{pct:.1f}%</td>
-            <td>${cost:.2f}</td>
+            <td>${cost:.3f}</td>
         </tr>"""
 
     breakdown_html += f"""
@@ -663,14 +681,14 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
         <td><strong>Total</strong></td>
         <td><strong>{total:,}</strong></td>
         <td><strong>100%</strong></td>
-        <td><strong>${total_cost:.2f}</strong></td>
+        <td><strong>${total_cost:.3f}</strong></td>
     </tr>"""
 
     # Build query rows
     query_rows = ""
     for text, cnt, last_seen, types in queries:
-        # Format timestamp for display
-        ts_display = last_seen[:16].replace("T", " ") if last_seen else ""
+        # Convert UTC timestamp to Eastern
+        ts_display = _to_eastern(last_seen) if last_seen else ""
         # Build type badges
         type_badges = " ".join(
             f'<span class="badge {t.strip().replace(" ", "-")}">{t.strip()}</span>'
@@ -713,7 +731,6 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
   .badge.intercepted, .badge.query-engine {{ background: #dcfce7; color: #166534; }}
   .badge.haiku {{ background: #dbeafe; color: #1A40B3; }}
   .badge.sonnet {{ background: #f3e8ff; color: #6b21a8; }}
-  .badge.player-card {{ background: #fef3c7; color: #92400e; }}
   .breakdown {{ margin-bottom: 24px; }}
   .breakdown table {{ max-width: 500px; }}
   .breakdown td, .breakdown th {{ padding: 8px 12px; }}
@@ -752,7 +769,7 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
 
 <h2>All Queries (by count, then recency)</h2>
 <table>
-  <tr><th>Query</th><th>Count</th><th>Type</th><th>Last Seen</th></tr>
+  <tr><th>Query</th><th>Count</th><th>Type</th><th>Last (ET)</th></tr>
   {query_rows}
 </table>
 </body>

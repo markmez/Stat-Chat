@@ -1176,7 +1176,7 @@ async def player_card(
 ):
     # Log and meter player card searches (not link navigations)
     if source == "search" and device_id:
-        log_query(name, device_id, "player card")
+        log_query(name, device_id, "query engine")
         increment_count(device_id)
 
     conn = _get_conn()
