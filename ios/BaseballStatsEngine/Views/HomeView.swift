@@ -65,7 +65,7 @@ struct HomeView: View {
     }
 
     /// Height of the peeking drawer
-    private let peekHeight: CGFloat = 150
+    private let peekHeight: CGFloat = 148
     /// Height when fully expanded — near full screen
     private var expandedHeight: CGFloat {
         UIScreen.main.bounds.height * 0.85
@@ -259,8 +259,7 @@ struct HomeView: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 10)
+                .padding(.top, 16)
             }
             .contentShape(Rectangle())
             .onTapGesture {
