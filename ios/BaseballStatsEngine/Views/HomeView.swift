@@ -61,7 +61,7 @@ struct HomeView: View {
     }
 
     /// Height of the peeking drawer
-    private let peekHeight: CGFloat = 195
+    private let peekHeight: CGFloat = 150
     /// Height when fully expanded — near full screen
     private var expandedHeight: CGFloat {
         UIScreen.main.bounds.height * 0.85
