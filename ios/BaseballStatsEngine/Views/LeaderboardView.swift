@@ -40,6 +40,10 @@ struct LeaderboardView: View {
         // Detect pitch mix tables by label pattern: "Sinker (61%)" etc.
         grid.rows.first.map { $0.label.contains("%") } ?? false
     }
+    /// Whether any rows have a numbered rank (e.g. "1. Aaron Judge")
+    private var hasRanks: Bool {
+        grid.rows.contains { $0.label.contains(".") && $0.label.first?.isNumber == true }
+    }
     /// Compute name column width from longest label using actual font measurement
     private var nameWidth: CGFloat {
         let font = UIFont.systemFont(ofSize: UIFont.preferredFont(forTextStyle: .callout).pointSize,
@@ -78,7 +82,7 @@ struct LeaderboardView: View {
     /// Divider spans rank through the last value column
     private var dividerWidth: CGFloat {
         let widths = columnWidths
-        let rankSpace: CGFloat = isCompact ? 0 : rankWidth + rankNameGap
+        let rankSpace: CGFloat = hasRanks ? rankWidth + rankNameGap : 0
         guard !widths.isEmpty else { return rankSpace + nameWidth }
         var w = rankSpace + nameWidth + nameStatGap + widths[0]
         for i in 1..<widths.count {
@@ -91,7 +95,7 @@ struct LeaderboardView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Column headers
             HStack(spacing: 0) {
-                Spacer().frame(width: (isCompact ? 0 : rankWidth + rankNameGap) + nameWidth + nameStatGap)
+                Spacer().frame(width: (hasRanks ? rankWidth + rankNameGap : 0) + nameWidth + nameStatGap)
                 let widths = columnWidths
                 ForEach(Array(grid.headers.enumerated()), id: \.offset) { idx, header in
                     let colWidth = idx < widths.count ? widths[idx] : defaultStatColumnWidth
@@ -145,8 +149,8 @@ struct LeaderboardView: View {
                 let displayRank = sortColumn != nil ? "\(index + 1)." : parseLabel(row.label).rank
 
                 HStack(spacing: 0) {
-                    // Rank (hidden in compact mode)
-                    if !isCompact {
+                    // Rank (only shown when rows have numbered ranks)
+                    if hasRanks {
                         Text(displayRank)
                             .font(.system(.callout, design: .monospaced, weight: .medium))
                             .foregroundStyle(.secondary)
@@ -173,7 +177,7 @@ struct LeaderboardView: View {
                         }
                         .buttonStyle(.plain)
                         .frame(width: nameWidth, alignment: .leading)
-                        .padding(.leading, isCompact ? 0 : rankNameGap)
+                        .padding(.leading, hasRanks ? rankNameGap : 0)
                     } else if let extractedName = PlayerNameExtractor.extract(playerName),
                        let tap = onPlayerTap {
                         Button {
@@ -186,14 +190,14 @@ struct LeaderboardView: View {
                         }
                         .buttonStyle(.plain)
                         .frame(width: nameWidth, alignment: .leading)
-                        .padding(.leading, isCompact ? 0 : rankNameGap)
+                        .padding(.leading, hasRanks ? rankNameGap : 0)
                     } else {
                         Text(playerName)
                             .font(.system(.callout, design: .rounded, weight: .medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                             .frame(width: nameWidth, alignment: .leading)
-                            .padding(.leading, isCompact ? 0 : rankNameGap)
+                            .padding(.leading, hasRanks ? rankNameGap : 0)
                     }
 
                     // Stat values — all primary color
