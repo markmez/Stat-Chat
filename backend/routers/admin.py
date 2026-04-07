@@ -748,7 +748,7 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
   .stat-card .value {{ font-size: 24px; font-weight: 700; color: #fff; }}
   th.sortable {{ cursor: pointer; user-select: none; }}
   th.sortable:active {{ opacity: 0.6; }}
-  th .arrow {{ font-size: 20px; margin-left: 3px; display: inline-block; transform: translateY(-2px); }}
+  th .arrow {{ font-size: 20px; margin-left: 3px; display: inline-block; transform: translateY(2px); }}
   .types .badge {{ cursor: pointer; }}
   .types .badge:active {{ opacity: 0.6; }}
   .filter-bar {{
