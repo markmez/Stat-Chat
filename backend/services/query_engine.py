@@ -1401,18 +1401,26 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
         else:
             ip_min = 162 * 3  # full season: 162 IP
         ip_display = f"{ip_min // 3}.{ip_min % 3}"
-        return f" AND {prefix}.ip_outs >= {ip_min}", f"Min. {ip_display} IP."
+        full_season_ip = 162
+        if season and max_games < 140:
+            label = f"Showing pitchers on pace for {full_season_ip}+ IP ({ip_display} IP minimum through {max_games} games)"
+        else:
+            label = f"Min. {ip_display} IP."
+        return f" AND {prefix}.ip_outs >= {ip_min}", label
     else:
         if season:
             cur = conn.cursor()
             cur.execute(f"SELECT MAX(games) FROM season_batting_stats WHERE season = ?", (season,))
             r = cur.fetchone()
             max_games = int(r[0]) if r and r[0] else 162
-            # Prorate: 400 PA for 162 games
             pa_min = max(1, int(400 * max_games / 162))
         else:
             pa_min = 400
-        return f" AND {prefix}.plate_appearances >= {pa_min}", f"Min. {pa_min} PA."
+        if season and max_games < 140:
+            label = f"Showing hitters on pace for 400+ PA ({pa_min} PA minimum through {max_games} games)"
+        else:
+            label = f"Min. {pa_min} PA."
+        return f" AND {prefix}.plate_appearances >= {pa_min}", label
 
 
 # ---------------------------------------------------------------------------
@@ -1735,6 +1743,8 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     title = f"**{scope_label} {title_prefix}{name} Leaders{filter_label}**\n" if not has_year else f"**{title_prefix}{name} Leaders{filter_label} ({scope_label})**\n"
 
     parts = [title]
+    if pa_label and "on pace" in pa_label:
+        parts.append(f"[SUBTITLE]{pa_label}[/SUBTITLE]")
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
     stat_col_key = plan.stat.db_column if plan.stat else (plan.derived_stat or "")
@@ -1773,7 +1783,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
                 parts.append(f"\n_Min. 1,000 IP._")
             else:
                 parts.append(f"\n_Min. 5,000 AB._")
-        elif pa_label:
+        elif pa_label and "on pace" not in pa_label:
             parts.append(f"\n_{pa_label}_")
 
     # Suggestion pills
