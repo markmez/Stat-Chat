@@ -4361,7 +4361,7 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
         parts = [title]
         parts.append("[STATGRID]")
         parts.append("HEADER: G, AB, H, 2B, 3B, HR, R, RBI, BB, SO, AVG, OPS")
-        parts.append(f"ROW {label} {n_games}G: {totals['g']}, {totals['ab']}, {totals['h']}, "
+        parts.append(f"ROW {label} {n_games} Games: {totals['g']}, {totals['ab']}, {totals['h']}, "
                     f"{totals['2b']}, {totals['3b']}, {totals['hr']}, {totals['r']}, "
                     f"{totals['rbi']}, {totals['bb']}, {totals['so']}, "
                     f"{_format_rate(avg)}, {_format_rate(ops)}")
