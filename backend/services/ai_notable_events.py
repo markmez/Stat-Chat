@@ -204,12 +204,13 @@ def generate_ai_insights(conn, season, latest_date, dry_run=False):
     prompt = f"""You are a baseball analyst writing for a notable events feed in a stats app.
 The current date is {date.today().isoformat()}. The current year is {date.today().year}.
 
-Write notable events from yesterday's games. Think like the best stat-nerd
+Write notable events from the latest games. Think like the best stat-nerd
 baseball Twitter account — insightful, punchy, data-driven.
 
 CRITICAL RULES:
-1. Every event MUST lead with what happened yesterday (the triggering game
-   performance), then connect it to the bigger narrative.
+1. Every event MUST lead with what happened in the game (the triggering
+   performance), then connect it to the bigger narrative. Do NOT use
+   "last night" or "yesterday" — the date context is shown separately.
 2. Use the DB-VERIFIED HISTORICAL CONTEXT — these are confirmed facts from our
    database. Cite them confidently.
 3. Do NOT invent historical comparisons beyond what's provided. If the data

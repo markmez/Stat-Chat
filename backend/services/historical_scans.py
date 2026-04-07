@@ -1051,7 +1051,7 @@ def template_facts(conn, facts, season, latest_date):
             # Batting start-of-season streak
             streak = f["streak"]
             label = f["label"]
-            game_intro = f"{player} went {game_line} last night" if game_line else f"{player}"
+            game_intro = f"{player} went {game_line}" if game_line else f"{player}"
 
             if hist_count == 0:
                 context = f"no other player has done this in over 100 years"
@@ -1069,14 +1069,14 @@ def template_facts(conn, facts, season, latest_date):
         elif f["type"].startswith("cross_season_"):
             streak = f["streak"]
             label = f["label"]
-            game_intro = f"{player} went {game_line} last night" if game_line else f"{player}"
+            game_intro = f"{player} went {game_line}" if game_line else f"{player}"
             ctx = "dating back to last season" if f["spans_seasons"] else "this season"
 
             headline = f"{game_intro}, extending the longest active {label} in MLB to {streak} games, {ctx}."
 
         elif f["type"] == "10k_0bb_first_2_starts":
             k = f["k"]
-            game_intro = f"{player} went {game_line} last night" if game_line else f"{player}"
+            game_intro = f"{player} went {game_line}" if game_line else f"{player}"
 
             if not hist:
                 context = f"the only pitcher to do this in over 100 years"
@@ -1091,7 +1091,7 @@ def template_facts(conn, facts, season, latest_date):
             ip = f["ip"]
             k = f["k"]
             starts = f["starts"]
-            game_intro = f"{player} went {game_line} last night" if game_line else f"{player}"
+            game_intro = f"{player} went {game_line}" if game_line else f"{player}"
 
             headline = f"{game_intro}, and has now thrown {starts} consecutive scoreless starts to open the season ({ip} IP, {k} K, 0 ER)."
 
@@ -1132,7 +1132,7 @@ def template_facts(conn, facts, season, latest_date):
             stat_label = f["stat_label"]
             cg = f["career_games"]
             rank = f["rank"]
-            game_intro = f"{player} went {game_line} last night" if game_line else f"{player}"
+            game_intro = f"{player} went {game_line}" if game_line else f"{player}"
 
             # Build the "passing" context
             tied = f.get("tied_with", [])
@@ -1158,7 +1158,7 @@ def template_facts(conn, facts, season, latest_date):
             xbh = f["xbh"]
             rbi = f["rbi"]
             prev = f.get("previous_youngest")
-            game_intro = f"{player} went {game_line} last night in his MLB debut" if game_line else f"{player} made his MLB debut"
+            game_intro = f"{player} went {game_line} in his MLB debut" if game_line else f"{player} made his MLB debut"
 
             if prev:
                 headline = f"{game_intro}, becoming the youngest player ({age}) with an extra-base hit and an RBI in his debut in over 100 years, surpassing {prev['player']} in {prev['season']}."
@@ -1203,18 +1203,18 @@ def template_facts(conn, facts, season, latest_date):
                         if t > 0: xbh_parts.append(f"{'a triple' if t == 1 else f'{t} triples'}")
                         parts.extend(xbh_parts)
                     if len(parts) == 1:
-                        game_intro = f"{player} went {parts[0]} last night"
+                        game_intro = f"{player} went {parts[0]}"
                     elif len(parts) == 2:
-                        game_intro = f"{player} went {parts[0]} with {parts[1]} last night"
+                        game_intro = f"{player} went {parts[0]} with {parts[1]}"
                     else:
                         extras = parts[1:]
-                        game_intro = f"{player} went {parts[0]} with {', '.join(extras[:-1])} and {extras[-1]} last night"
+                        game_intro = f"{player} went {parts[0]} with {', '.join(extras[:-1])} and {extras[-1]}"
                 else:
                     game_intro = f"{player}"
             elif game_line:
-                game_intro = f"{player} went {game_line} last night"
+                game_intro = f"{player} went {game_line}"
             elif stat == "stolen_bases":
-                game_intro = f"{player} swiped a bag last night"
+                game_intro = f"{player} swiped a bag"
             else:
                 game_intro = f"{player}"
 
@@ -1267,16 +1267,16 @@ def template_facts(conn, facts, season, latest_date):
                         if t > 0: xbh_parts.append(f"{'a triple' if t == 1 else f'{t} triples'}")
                         parts.extend(xbh_parts)
                     if len(parts) == 1:
-                        game_intro = f"{player} went {parts[0]} last night"
+                        game_intro = f"{player} went {parts[0]}"
                     elif len(parts) == 2:
-                        game_intro = f"{player} went {parts[0]} with {parts[1]} last night"
+                        game_intro = f"{player} went {parts[0]} with {parts[1]}"
                     else:
                         extras = parts[1:]
-                        game_intro = f"{player} went {parts[0]} with {', '.join(extras[:-1])} and {extras[-1]} last night"
+                        game_intro = f"{player} went {parts[0]} with {', '.join(extras[:-1])} and {extras[-1]}"
                 else:
                     game_intro = f"{player}"
             elif game_line:
-                game_intro = f"{player} went {game_line} last night"
+                game_intro = f"{player} went {game_line}"
             else:
                 game_intro = f"{player}"
 
@@ -1291,7 +1291,7 @@ def template_facts(conn, facts, season, latest_date):
         elif f["type"] == "youngest_debut_since":
             age = f["age_years"]
             last = f["last_younger"]
-            game_intro = f"{player} went {game_line} last night in his MLB debut" if game_line else f"{player} made his MLB debut"
+            game_intro = f"{player} went {game_line} in his MLB debut" if game_line else f"{player} made his MLB debut"
 
             headline = f"{game_intro}, becoming the youngest player ({age}) with an extra-base hit and an RBI in his debut since {last['player']} in {last['season']}."
             secondary_names.append(last["player"])
