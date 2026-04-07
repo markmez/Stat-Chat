@@ -23,6 +23,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
 MSF_API_KEY = os.getenv("MSF_API_KEY", "")
+POLL_LOG = "/data/poll_timeline.log"
+
+
+def poll_log(msg):
+    """Append a timestamped line to the poll timeline log."""
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    line = f"[{ts}] {msg}"
+    print(line)
+    try:
+        with open(POLL_LOG, "a") as f:
+            f.write(line + "\n")
+    except:
+        pass
 
 
 def main():
@@ -59,7 +72,7 @@ def main():
         season_str = f"{year - 1}-regular"
 
     season_year = detect_season(season_str)
-    print(f"Lightweight poll for {season_str}")
+    poll_log(f"=== Poll start for {season_str} ===")
 
     # Determine today's game date(s) to pull
     # Use Eastern time to determine game dates
@@ -113,12 +126,14 @@ def main():
         try:
             data = msf_get(f"{season_str}/date/{gdate}/player_gamelogs.json")
         except Exception as e:
-            print(f"    Skipping {gdate}: {e}")
+            poll_log(f"  Skipping {gdate}: {e}")
             continue
         if not data:
+            poll_log(f"  {gdate}: no data from MSF (HTTP 204 or empty)")
             continue
 
         logs = data.get("gamelogs", [])
+        poll_log(f"  {gdate}: MSF returned {len(logs)} game log entries")
 
         for entry in logs:
             player = entry.get("player", {})
@@ -226,21 +241,32 @@ def main():
         conn.commit()
 
     all_new_players = new_batting_players | new_pitching_players
-    print(f"  {new_logs} log entries processed, {len(all_new_players)} players with new games")
+    poll_log(f"  {new_logs} log entries processed, {len(new_batting_players)} new batters, {len(new_pitching_players)} new pitchers")
+
+    # Log which players had new games (for debugging)
+    if all_new_players:
+        # Look up names for the new player IDs
+        new_names = []
+        for pid in list(all_new_players)[:20]:  # cap at 20 to avoid huge logs
+            row = conn.execute("SELECT name FROM players WHERE player_id = ?", (pid,)).fetchone()
+            if row:
+                new_names.append(row[0])
+        poll_log(f"  New game players: {', '.join(new_names[:10])}{'...' if len(new_names) > 10 else ''}")
 
     # If new games found, run full event detection
     # Safe because: prior dates are complete (daily pipeline), lock prevents
     # running during daily pipeline, streak wipe prevents duplicates
     if all_new_players:
-        print(f"  New games detected — running event detection...")
+        poll_log(f"  Running event detection for {len(all_new_players)} players...")
         try:
             services_parent = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
             if services_parent not in sys.path:
                 sys.path.insert(0, services_parent)
             from services.notable_events import detect_all
-            detect_all(args.db, season_year, from_poll=True)
+            count = detect_all(args.db, season_year, from_poll=True)
+            poll_log(f"  Event detection complete: {count} events")
         except Exception as e:
-            print(f"  Event detection failed: {e}")
+            poll_log(f"  Event detection failed: {e}")
 
         # AI insights (once per game date)
         print("  Running AI insights...")
@@ -254,18 +280,18 @@ def main():
                 ai_events = result.get("events", [])
                 skipped = result.get("skipped", False)
                 if skipped:
-                    print(f"  AI insights already exist for {latest}")
+                    poll_log(f"  AI insights already exist for {latest}")
                 else:
-                    print(f"  AI insights: {len(ai_events)} generated")
+                    poll_log(f"  AI insights: {len(ai_events)} generated")
                 ai_conn.close()
         except Exception as e:
-            print(f"  AI insights failed: {e}")
+            poll_log(f"  AI insights failed: {e}")
     else:
-        print("  No new games — skipping event detection")
+        poll_log(f"  No new games — skipping event detection")
 
     conn.close()
     elapsed = time.time() - t0
-    print(f"  Poll complete in {elapsed:.1f}s")
+    poll_log(f"=== Poll complete in {elapsed:.1f}s ===")
 
 
 if __name__ == "__main__":

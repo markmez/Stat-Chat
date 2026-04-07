@@ -87,6 +87,24 @@ async def redownload_db(
         raise HTTPException(500, str(e))
 
 
+@router.get("/poll-timeline")
+async def poll_timeline(
+    lines: int = 50,
+    authorization: str | None = Header(None),
+):
+    """Read the last N lines of the poll timeline log."""
+    verify_admin(authorization)
+    log_path = "/data/poll_timeline.log"
+    if not os.path.exists(log_path):
+        return {"lines": []}
+    try:
+        with open(log_path) as f:
+            all_lines = f.readlines()
+        return {"lines": [l.rstrip() for l in all_lines[-lines:]]}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.get("/schedule")
 async def refresh_schedule():
     """Return the current refresh schedule configuration (informational)."""
