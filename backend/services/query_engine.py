@@ -1335,7 +1335,7 @@ def _table_and_prefix(plan: QueryPlan) -> tuple[str, str]:
     return "season_batting_stats", "s"
 
 
-def _build_filters(plan: QueryPlan, prefix: str) -> tuple[str, list]:
+def _build_filters(plan: QueryPlan, prefix: str, conn=None) -> tuple[str, list]:
     """Build WHERE clause fragments and params from plan filters."""
     clauses = []
     params = []
@@ -1373,8 +1373,20 @@ def _build_filters(plan: QueryPlan, prefix: str) -> tuple[str, list]:
 
     # Extra stat filters: "with under 10 HR", "with 30+ SB"
     for ef in plan.extra_filters:
+        threshold = ef['threshold']
+        # Prorate IP/PA thresholds early in season
+        if conn and ef['stat'].db_column in ("innings_pitched", "plate_appearances", "ip_outs"):
+            try:
+                tbl = "season_pitching_stats" if "ip" in ef['stat'].db_column or "inn" in ef['stat'].db_column else "season_batting_stats"
+                _tg = conn.execute(f"SELECT MAX(games) FROM {tbl} WHERE season = ?",
+                                   (date.today().year,)).fetchone()
+                _mg = int(_tg[0]) if _tg and _tg[0] else 162
+                if _mg < 140:
+                    threshold = max(1, int(threshold * _mg / 162))
+            except:
+                pass
         clauses.append(f"{prefix}.{ef['stat'].db_column} {ef['comparison']} ?")
-        params.append(ef['threshold'])
+        params.append(threshold)
 
     return " AND ".join(clauses), params
 
@@ -1431,7 +1443,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     """Standard stat leaderboard."""
     table, prefix = _table_and_prefix(plan)
     stat_expr, abbrev, name, is_rate = _stat_expr(plan, prefix)
-    filters_str, params = _build_filters(plan, prefix)
+    filters_str, params = _build_filters(plan, prefix, conn)
     pa_label = ""  # Will be set by _pa_filter if applicable
 
     # Determine sort
@@ -1893,7 +1905,7 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
     qualifying = None  # set of player_ids
     season_data = {}  # {player_id: {season: {col: val}}}
 
-    filters_str, params = _build_filters(plan, prefix)
+    filters_str, params = _build_filters(plan, prefix, conn)
 
     for szn in seasons:
         where_parts = [f"{prefix}.season = ?"]
@@ -2006,7 +2018,7 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
 
     table, prefix = _table_and_prefix(plan)
     stat_expr, abbrev, name, is_rate = _stat_expr(plan, prefix)
-    filters_str, params = _build_filters(plan, prefix)
+    filters_str, params = _build_filters(plan, prefix, conn)
 
     season = plan.season
     if season:
@@ -2120,7 +2132,7 @@ def _execute_count(conn, plan: QueryPlan) -> Optional[str]:
     """Count query: 'how many players hit 30 HR in 2025'."""
     table, prefix = _table_and_prefix(plan)
     stat_expr, abbrev, name, is_rate = _stat_expr(plan, prefix)
-    filters_str, params = _build_filters(plan, prefix)
+    filters_str, params = _build_filters(plan, prefix, conn)
 
     where_parts = [f"{stat_expr} >= ?"]
     query_params = [plan.threshold] + params
@@ -2175,7 +2187,7 @@ def _execute_superlative(conn, plan: QueryPlan) -> Optional[str]:
     """Superlative query: 'youngest player to hit 50 HR'."""
     table, prefix = _table_and_prefix(plan)
     stat_expr, abbrev, name, is_rate = _stat_expr(plan, prefix)
-    filters_str, params = _build_filters(plan, prefix)
+    filters_str, params = _build_filters(plan, prefix, conn)
 
     if plan.superlative in ("youngest", "oldest"):
         age_select = f", {prefix}.season - CAST(SUBSTR(p.birthdate, 1, 4) AS INT) AS age_at_season"
