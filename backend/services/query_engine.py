@@ -90,7 +90,12 @@ def _detect_since_date(lower: str) -> Optional[str]:
             2021: "2021-07-13", 2022: "2022-07-19", 2023: "2023-07-11",
             2024: "2024-07-16", 2025: "2025-07-15", 2026: "2026-07-14",
         }
-        year = today.year if today.month >= 7 else today.year - 1
+        # Check if user specified a year: "2024 all star break"
+        year_match = re.search(r'\b((?:19|20)\d{2})\b', lower)
+        if year_match:
+            year = int(year_match.group(1))
+        else:
+            year = today.year if today.month >= 7 else today.year - 1
         # Skip years with no ASG (1945, 2020)
         while year not in _ASG_DATES and year > 1933:
             year -= 1
