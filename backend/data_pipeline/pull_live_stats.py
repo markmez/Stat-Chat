@@ -262,7 +262,8 @@ def pull_season_batting(conn, season_str):
     season_year = detect_season(season_str)
     print(f"  Pulling season batting stats for {season_str}...")
 
-    data = msf_get(f"{season_str}/player_stats_totals.json", {"position": "C,1B,2B,3B,SS,LF,CF,RF,DH,OF"})
+    # Include P for two-way players like Ohtani (primaryPosition=P but also bats)
+    data = msf_get(f"{season_str}/player_stats_totals.json", {"position": "C,1B,2B,3B,SS,LF,CF,RF,DH,OF,P"})
     if not data:
         print("    No new data (304)")
         return 0
@@ -1527,7 +1528,7 @@ def main():
             # MSF actually has regular season data. Avoids wiping spring training
             # before any regular season games have been played.
             try:
-                probe = msf_get(f"{year}-regular/player_stats_totals.json", {"position": "C,1B,2B,3B,SS,LF,CF,RF,DH,OF", "limit": "1"})
+                probe = msf_get(f"{year}-regular/player_stats_totals.json", {"position": "C,1B,2B,3B,SS,LF,CF,RF,DH,OF,P", "limit": "1"})
                 totals = (probe or {}).get("playerStatsTotals", [])
                 if totals:
                     args.season = f"{year}-regular"
