@@ -29,5 +29,8 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # Weekly full reconciliation: Sunday 6:00 AM ET (10:00 UTC)
 0 10 * * 0 statchat /opt/statchat/repo/deploy/refresh.sh --full-refresh >> /data/refresh.log 2>&1
 
+# Weekly VACUUM: Sunday 5:00 AM ET (09:00 UTC) — reclaim wasted DB space
+0 9 * * 0 statchat /opt/statchat/repo/deploy/vacuum.sh >> /data/refresh.log 2>&1
+
 # Health monitor: every 5 min, pings Healthchecks.io if API + DB are up
 */5 * * * * statchat /opt/statchat/repo/deploy/healthcheck.sh
