@@ -256,6 +256,10 @@ _RATE_STATS = {
 _LOWER_IS_BETTER = {"era", "whip", "bb_per_9", "h_per_9", "hr_per_9", "baa", "earned_run_avg"}
 
 # Stop words — these are always ignored in the unexplained-words check
+# Max stat columns in leaderboard output — iOS overflows beyond 4.
+# Matches the cap in query.py's Haiku SQL formatter.
+_MAX_DISPLAY_COLS = 4
+
 _STOP_WORDS = {
     "the", "a", "an", "in", "of", "by", "for", "to", "and", "or", "with",
     "who", "what", "which", "how", "many", "much", "did", "do", "does", "has",
@@ -1850,13 +1854,16 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     n_extra = len(plan.extra_filters)
     extra_headers = [ef["stat"].display_abbrev for ef in plan.extra_filters if ef.get("stat")]
 
-    # Build header
+    # Build header (cap at _MAX_DISPLAY_COLS)
     header_parts = [abbrev]
     if has_year:
         header_parts.append("Year")
     elif has_age_col:
         header_parts.append("Age")
     header_parts.extend(extra_headers)
+    if len(header_parts) > _MAX_DISPLAY_COLS:
+        header_parts = header_parts[:_MAX_DISPLAY_COLS]
+        n_extra = len(header_parts) - (2 if (has_year or has_age_col) else 1)
     parts.append(f"HEADER: {', '.join(header_parts)}")
 
     # Build rows
@@ -2039,8 +2046,16 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
     # Build header: STAT 'YR for each season (no Games column — keeps it compact)
+    # If total columns would exceed max, trim oldest seasons first
+    total_cols = len(seasons) * len(stat_cols)
+    display_seasons = seasons
+    if total_cols > _MAX_DISPLAY_COLS and len(stat_cols) > 0:
+        max_seasons = _MAX_DISPLAY_COLS // len(stat_cols)
+        if max_seasons < len(seasons):
+            display_seasons = seasons[-max_seasons:]  # keep most recent
+
     headers = []
-    for szn in seasons:
+    for szn in display_seasons:
         yr_label = f"'{str(szn)[-2:]}"
         for col in stat_cols:
             headers.append(f"{_labels.get(col, col)} {yr_label}")
@@ -2050,7 +2065,7 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
     for i, info in enumerate(results[:plan.limit]):
         name = info["name"]
         vals = []
-        for szn in seasons:
+        for szn in display_seasons:
             szn_data = info.get(szn, {})
             for col in stat_cols:
                 v = szn_data.get(col, 0)
@@ -2152,10 +2167,12 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
 
     if has_year and len(rows[0]) > 2:
         all_headers = ["Year", abbrev] + extra_headers
-        parts.append(f"HEADER: {', '.join(all_headers)}")
     else:
         all_headers = [abbrev] + extra_headers
-        parts.append(f"HEADER: {', '.join(all_headers)}")
+    if len(all_headers) > _MAX_DISPLAY_COLS:
+        all_headers = all_headers[:_MAX_DISPLAY_COLS]
+        n_extra = len(all_headers) - (2 if has_year else 1)
+    parts.append(f"HEADER: {', '.join(all_headers)}")
 
     stat_col_key = plan.stat.db_column if plan.stat else (plan.derived_stat or "")
     n_extra = len(plan.extra_filters)
