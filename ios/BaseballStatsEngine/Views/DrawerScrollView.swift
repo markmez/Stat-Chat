@@ -54,9 +54,12 @@ struct DrawerScrollView<Content: View>: UIViewRepresentable {
         scrollView.isScrollEnabled = isEnabled
         context.coordinator.parent = self
         context.coordinator.hostController?.rootView = content
-        // Force layout update so content size is correct
+        // Force layout so content size updates as SwiftUI content changes
+        context.coordinator.hostController?.view.invalidateIntrinsicContentSize()
         context.coordinator.hostController?.view.setNeedsLayout()
         context.coordinator.hostController?.view.layoutIfNeeded()
+        scrollView.setNeedsLayout()
+        scrollView.layoutIfNeeded()
     }
 
     class Coordinator: NSObject, UIScrollViewDelegate {
