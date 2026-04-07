@@ -1132,14 +1132,6 @@ def detect_matchup_previews(conn, season):
     """
     events = []
 
-    # Time gate — don't show previews too early in the day
-    from datetime import datetime, timedelta, timezone
-    et_now = datetime.now(timezone(timedelta(hours=-4)))
-    is_weekend = et_now.weekday() >= 5  # Saturday=5, Sunday=6
-    earliest_hour = 9 if is_weekend else 12
-    if et_now.hour < earliest_hour:
-        return events
-
     try:
         from services.daily_games import get_todays_games
         from services.name_matcher import match_player

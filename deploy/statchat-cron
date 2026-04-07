@@ -26,10 +26,6 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # Backup pipeline: 10:00 AM ET (14:00 UTC) — catches data MSF publishes late
 0 14 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 
-# Midday matchup previews: 12:15 PM ET weekdays, 9:15 AM ET weekends
-15 16 * * 1,2,3,4,5 statchat /opt/statchat/repo/deploy/matchup-previews.sh >> /data/matchup.log 2>&1
-15 13 * * 0,6 statchat /opt/statchat/repo/deploy/matchup-previews.sh >> /data/matchup.log 2>&1
-
 # Weekly full reconciliation: Sunday 6:00 AM ET (10:00 UTC)
 0 10 * * 0 statchat /opt/statchat/repo/deploy/refresh.sh --full-refresh >> /data/refresh.log 2>&1
 
