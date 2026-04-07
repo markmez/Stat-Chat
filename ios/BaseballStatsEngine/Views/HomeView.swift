@@ -287,7 +287,8 @@ struct HomeView: View {
             )
 
             // Tab content
-            if drawerTab == .notable {
+            switch drawerTab {
+            case .notable:
                 DrawerScrollView(
                     isEnabled: feedExpanded,
                     isAtTop: $feedScrolledToTop,
@@ -312,16 +313,14 @@ struct HomeView: View {
                         hasExpandedTrayToday: NotableEventsFeed.hasExpandedTray()
                     )
                 }
-            } else {
-                // Leaders tab
+            case .leaders:
                 StatLeadersView(
                     onPlayerTap: { name in
                         path.append(PlayerCardDestination(name: name))
                     }
                 )
                 .scrollDisabled(!feedExpanded)
-            } else if drawerTab == .history {
-                // History tab — embedded in drawer, not a separate navigation
+            case .history:
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(appState.searchHistory, id: \.self) { query in
