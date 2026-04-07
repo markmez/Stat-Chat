@@ -38,7 +38,8 @@ struct LaunchAnimationView: View {
             // Logo positioned at its final HomeView location
             // Same layout as HomeView: Spacer, logo group, padding, search area, Spacer
             VStack(spacing: 0) {
-                Spacer()
+                // Match HomeView: settings bar + fixed spacer
+                Spacer().frame(height: 86)
 
                 VStack(spacing: 6) {
                     HStack(spacing: 12) {
@@ -87,10 +88,6 @@ struct LaunchAnimationView: View {
                         .opacity(taglineOpacity)
                 }
                 .padding(.bottom, 36)
-
-                // Invisible spacer matching HomeView's search field + samples + bottom area
-                Color.clear
-                    .frame(height: 280)
 
                 Spacer()
             }

@@ -89,7 +89,8 @@ struct HomeView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 8)
 
-                Spacer()
+                // Fixed gap — logo position never changes regardless of content below
+                Spacer().frame(height: 60)
 
                 // Logo + Wordmark — inline
                 VStack(spacing: 6) {
@@ -207,7 +208,8 @@ struct HomeView: View {
                 }
                 .padding(.top, 16)
 
-                Spacer()
+                // Flexible space below pills — absorbs extra space without pushing content up
+                Spacer(minLength: 0)
 
                 // Reserve space for the drawer
                 Color.clear.frame(height: peekHeight + 10)

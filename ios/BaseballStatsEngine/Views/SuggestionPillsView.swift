@@ -64,7 +64,8 @@ struct SuggestionPillsView: View {
                 }
             }
         } else {
-            Color.clear.frame(height: 20)
+            // Reserve height matching loaded pills to prevent logo shift
+            Color.clear.frame(height: compact ? 70 : 100)
                 .task {
                     pool = SuggestionEngine.shared.buildPool(searchHistory: searchHistory)
                     // Inject matchup preview pills scattered through the pool
