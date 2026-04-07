@@ -287,6 +287,7 @@ _STOP_WORDS = {
     "while", "above", "below", "without", "like",
     "really", "actually", "currently", "recently",
     "appeared", "appearing", "recorded", "posted", "put",
+    "league", "led", "leading", "leads", "leader", "leaders",
     "?", "!", ".",
 }
 
