@@ -449,12 +449,15 @@ struct StatGridView: View {
                         Divider()
                             .padding(.top, 4)
                     }
-                    // Only try player name extraction for labels that look like names
-                    // Skip labels starting with common non-name words
-                    let skipPrefixes = ["First", "Last", "vs ", "H2H", "Career", "Season", "Weighted", "ROW"]
-                    let isLikelyName = !skipPrefixes.contains(where: { row.label.hasPrefix($0) })
-                    if isLikelyName,
-                       let playerName = PlayerNameExtractor.extract(row.label),
+                    // Only try player name extraction for labels that look like actual names:
+                    // must contain a space (first + last), not be a year, not start with known non-name words
+                    let label = row.label
+                    let looksLikeName = label.contains(" ")
+                        && !(label.count == 4 && Int(label) != nil)
+                        && !label.hasPrefix("First ") && !label.hasPrefix("Last ")
+                        && !label.hasPrefix("vs ") && !label.hasPrefix("H2H")
+                    if looksLikeName,
+                       let playerName = PlayerNameExtractor.extract(label),
                        let tap = onPlayerTap {
                         HStack(spacing: 0) {
                             Button {
