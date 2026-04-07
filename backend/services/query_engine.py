@@ -1742,8 +1742,13 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     has_year = plan.scope in ("all_time",) or plan.scope.startswith("since_")
     title = f"**{scope_label} {title_prefix}{name} Leaders{filter_label}**\n" if not has_year else f"**{title_prefix}{name} Leaders{filter_label} ({scope_label})**\n"
 
+    # Show proration explainer, but skip if user already specified their own IP/PA threshold
+    user_has_ip_pa_filter = any(
+        ef["stat"].db_column in ("innings_pitched", "plate_appearances", "ip_outs")
+        for ef in plan.extra_filters if ef.get("stat")
+    )
     parts = [title]
-    if pa_label and "on pace" in pa_label:
+    if pa_label and "on pace" in pa_label and not user_has_ip_pa_filter:
         parts.append(f"[SUBTITLE]{pa_label}[/SUBTITLE]")
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
