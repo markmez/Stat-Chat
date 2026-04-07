@@ -692,12 +692,16 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
 <title>StatChat Dashboard</title>
 <style>
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: -apple-system, system-ui, sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 16px; }}
-  h1 {{ font-size: 20px; margin-bottom: 16px; color: #1d1d1f; }}
-  h2 {{ font-size: 16px; margin: 24px 0 8px; color: #555; }}
+  body {{ font-family: -apple-system, system-ui, sans-serif; background: #fff; color: #1d1d1f; padding: 16px; }}
+  h1 {{
+    font-size: 22px; margin-bottom: 16px; font-weight: 700;
+    background: linear-gradient(to right, #73B3FF, #1A40B3);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }}
+  h2 {{ font-size: 15px; margin: 24px 0 8px; color: #1A40B3; font-weight: 600; }}
   table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
-  th {{ text-align: left; padding: 8px 6px; border-bottom: 2px solid #ddd; color: #888; font-weight: 500; position: sticky; top: 0; background: #f5f5f7; }}
-  td {{ padding: 6px; border-bottom: 1px solid #e8e8e8; vertical-align: top; }}
+  th {{ text-align: left; padding: 8px 6px; border-bottom: 2px solid #e0e8f5; color: #1A40B3; font-weight: 600; position: sticky; top: 0; background: #fff; }}
+  td {{ padding: 6px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }}
   .count {{ text-align: center; font-variant-numeric: tabular-nums; }}
   .timestamp {{ color: #999; font-size: 11px; white-space: nowrap; }}
   .query-text {{ max-width: 55vw; word-break: break-word; }}
@@ -707,19 +711,20 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
     font-size: 10px; font-weight: 600; text-transform: uppercase;
   }}
   .badge.intercepted {{ background: #dcfce7; color: #166534; }}
-  .badge.haiku {{ background: #dbeafe; color: #1e40af; }}
+  .badge.haiku {{ background: #dbeafe; color: #1A40B3; }}
   .badge.sonnet {{ background: #f3e8ff; color: #6b21a8; }}
   .breakdown {{ margin-bottom: 24px; }}
   .breakdown table {{ max-width: 500px; }}
   .breakdown td, .breakdown th {{ padding: 8px 12px; }}
-  .total-row td {{ border-top: 2px solid #ccc; }}
+  .total-row td {{ border-top: 2px solid #1A40B3; }}
   .stat-cards {{ display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }}
   .stat-card {{
-    background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
-    padding: 12px 16px; min-width: 100px;
+    background: linear-gradient(135deg, #1A40B3, #73B3FF);
+    border-radius: 10px; padding: 12px 16px; min-width: 100px;
+    box-shadow: 0 2px 8px rgba(26, 64, 179, 0.12);
   }}
-  .stat-card .label {{ font-size: 11px; color: #888; text-transform: uppercase; }}
-  .stat-card .value {{ font-size: 24px; font-weight: 600; color: #1d1d1f; }}
+  .stat-card .label {{ font-size: 11px; color: rgba(255,255,255,0.8); text-transform: uppercase; }}
+  .stat-card .value {{ font-size: 24px; font-weight: 700; color: #fff; }}
 </style>
 </head>
 <body>
@@ -733,10 +738,6 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
   <div class="stat-card">
     <div class="label">Unique Queries</div>
     <div class="value">{len(queries):,}</div>
-  </div>
-  <div class="stat-card">
-    <div class="label">Est. Cost</div>
-    <div class="value">${total_cost:.2f}</div>
   </div>
 </div>
 
