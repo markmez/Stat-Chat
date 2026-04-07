@@ -42,14 +42,12 @@ struct LeaderboardView: View {
     }
     /// Compute name column width from longest label using actual font measurement
     private var nameWidth: CGFloat {
-        if isCompact {
-            let font = UIFont.systemFont(ofSize: UIFont.preferredFont(forTextStyle: .callout).pointSize,
-                                          weight: .medium)
-            let longest = grid.rows.map(\.label).max(by: { $0.count < $1.count }) ?? ""
-            let size = (longest as NSString).size(withAttributes: [.font: font])
-            return max(80, ceil(size.width) + 12)
-        }
-        return 148
+        let font = UIFont.systemFont(ofSize: UIFont.preferredFont(forTextStyle: .callout).pointSize,
+                                      weight: .medium)
+        let longest = grid.rows.map(\.label).max(by: { $0.count < $1.count }) ?? ""
+        let measured = (longest as NSString).size(withAttributes: [.font: font])
+        // For player names, cap at 148. For short labels (years, pitch types), use measured width.
+        return min(148, max(40, ceil(measured.width) + 12))
     }
     private let rankWidth: CGFloat = 30
     private let rankNameGap: CGFloat = 6
@@ -57,29 +55,23 @@ struct LeaderboardView: View {
     private let defaultStatColumnWidth: CGFloat = 56
     private let valueGap: CGFloat = 6
 
-    /// Compute per-column widths based on content.
-    /// Date columns and team abbreviations get appropriate widths.
+    /// Compute per-column widths based on actual content width.
+    /// Measures the widest value in each column to avoid wasted space.
     private var columnWidths: [CGFloat] {
-        grid.headers.enumerated().map { idx, header in
-            let headerLower = header.lowercased()
-            // Date columns need more space ("Sept 27" in monospace)
-            if headerLower == "date" {
-                return CGFloat(62)
+        let font = UIFont.monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .callout).pointSize, weight: .medium)
+
+        return grid.headers.enumerated().map { idx, header in
+            // Find widest string in this column (header + all values)
+            var candidates = [header]
+            for row in grid.rows {
+                if idx < row.values.count {
+                    candidates.append(row.values[idx])
+                }
             }
-            // Opponent / team columns
-            if headerLower == "opp" || headerLower == "team" {
-                return CGFloat(36)
-            }
-            // Year columns
-            if headerLower == "year" {
-                return CGFloat(42)
-            }
-            // Age columns
-            if headerLower == "age" {
-                return CGFloat(32)
-            }
-            // Default stat width
-            return defaultStatColumnWidth
+            let widest = candidates.max(by: { $0.count < $1.count }) ?? header
+            let measured = (widest as NSString).size(withAttributes: [.font: font]).width
+            // Minimum 32pt, add 8pt padding
+            return max(32, ceil(measured) + 8)
         }
     }
 
