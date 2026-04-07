@@ -482,6 +482,16 @@ def pull_game_logs(conn, season_str, full_refresh=False):
     season_year = detect_season(season_str)
     print(f"  Pulling game logs for {season_str}...")
 
+    # Migrate: add stolen_bases/caught_stealing if missing
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(game_batting_logs)").fetchall()}
+    if "stolen_bases" not in cols:
+        conn.execute("ALTER TABLE game_batting_logs ADD COLUMN stolen_bases INTEGER DEFAULT 0")
+        print("    Added stolen_bases column to game_batting_logs")
+    if "caught_stealing" not in cols:
+        conn.execute("ALTER TABLE game_batting_logs ADD COLUMN caught_stealing INTEGER DEFAULT 0")
+        print("    Added caught_stealing column to game_batting_logs")
+    conn.commit()
+
     game_dates = get_game_dates(season_str)
     if not game_dates:
         print("    No game dates found")
@@ -572,6 +582,8 @@ def pull_game_logs(conn, season_str, full_refresh=False):
                 so = safe_int(bat.get("batterStrikeouts"))
                 hbp = safe_int(bat.get("hitByPitch"))
                 sf = safe_int(bat.get("batterSacrificeFlies", 0))
+                sb = safe_int(bat.get("stolenBases"))
+                cs = safe_int(bat.get("caughtBaseSteals"))
                 pa, avg, obp, slg, ops, _, _ = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so)
 
                 cursor.execute("""
@@ -579,15 +591,15 @@ def pull_game_logs(conn, season_str, full_refresh=False):
                     (player_id, season, date, game_number, opponent, vishome,
                      plate_appearances, at_bats,
                      hits, doubles, triples, home_runs, runs, rbi, walks, strikeouts,
-                     hit_by_pitch, sacrifice_flies,
+                     hit_by_pitch, sacrifice_flies, stolen_bases, caught_stealing,
                      batting_avg, obp, slg, ops)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     pid, season_year, game_date, game_num, retro_team(opponent), vishome,
                     pa, ab, h, doubles, triples, hr,
                     safe_int(bat.get("runs")),
                     safe_int(bat.get("runsBattedIn")),
-                    bb, so, hbp, sf, avg, obp, slg, ops,
+                    bb, so, hbp, sf, sb, cs, avg, obp, slg, ops,
                 ))
                 bat_count += 1
 

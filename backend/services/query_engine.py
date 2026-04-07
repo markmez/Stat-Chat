@@ -53,11 +53,22 @@ def _detect_since_date(lower: str) -> Optional[str]:
         days = int(m.group(1))
         return (today - timedelta(days=days)).isoformat()
 
-    # "since the all-star break" — roughly July 15
+    # "since the all-star break" — use actual ASG dates
     if "all-star break" in lower or "all star break" in lower:
-        # Use current year if after July, previous year if before
+        _ASG_DATES = {
+            2026: "2026-07-14", 2025: "2025-07-15", 2024: "2024-07-16",
+            2023: "2023-07-11", 2022: "2022-07-19", 2021: "2021-07-13",
+            # 2020: no ASG (COVID)
+            2019: "2019-07-09", 2018: "2018-07-17", 2017: "2017-07-11",
+            2016: "2016-07-12", 2015: "2015-07-14", 2014: "2014-07-15",
+            2013: "2013-07-16", 2012: "2012-07-10", 2011: "2011-07-12",
+            2010: "2010-07-13", 2009: "2009-07-14", 2008: "2008-07-15",
+            2007: "2007-07-10", 2006: "2006-07-11", 2005: "2005-07-12",
+            2004: "2004-07-13", 2003: "2003-07-15", 2002: "2002-07-09",
+            2001: "2001-07-10", 2000: "2000-07-11",
+        }
         year = today.year if today.month >= 7 else today.year - 1
-        return f"{year}-07-15"
+        return _ASG_DATES.get(year, f"{year}-07-15")
 
     # "since [Month] [day], [year]" or "since [Month] [day] [year]"
     # or "since [Month] [year]" or "since [Month] [day]"

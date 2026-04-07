@@ -167,6 +167,8 @@ def main():
                 so = safe_int(bat.get("batterStrikeouts"))
                 hbp = safe_int(bat.get("hitByPitch"))
                 sf = safe_int(bat.get("batterSacrificeFlies", 0))
+                sb = safe_int(bat.get("stolenBases"))
+                cs = safe_int(bat.get("caughtBaseSteals"))
                 pa, avg, obp, slg, ops, _, _ = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so)
 
                 is_new_game = (pid, game_date_formatted, game_num) not in existing_batting
@@ -176,15 +178,15 @@ def main():
                     (player_id, season, date, game_number, opponent, vishome,
                      plate_appearances, at_bats,
                      hits, doubles, triples, home_runs, runs, rbi, walks, strikeouts,
-                     hit_by_pitch, sacrifice_flies,
+                     hit_by_pitch, sacrifice_flies, stolen_bases, caught_stealing,
                      batting_avg, obp, slg, ops)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     pid, season_year, game_date_formatted, game_num, retro_team(opponent), vishome,
                     pa, ab, h, doubles, triples, hr,
                     safe_int(bat.get("runs")),
                     safe_int(bat.get("runsBattedIn")),
-                    bb, so, hbp, sf, avg, obp, slg, ops,
+                    bb, so, hbp, sf, sb, cs, avg, obp, slg, ops,
                 ))
                 new_logs += 1
                 if is_new_game:
