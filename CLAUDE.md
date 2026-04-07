@@ -281,6 +281,12 @@ Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The ma
 - **Tier 2**: Career milestones, single-game rarities, hot streaks (PELT)
 - **Tier 3 backfill**: Relaxed hitting streaks, league leaders (only if < 3 events from T1+T2)
 - **Historical scans** (`historical_scans.py`): DB-verified "first since" facts — cross-season streaks, career-start stats, leaderboard changes, debut records
+- **Rate stat leaderboard changes** (AVG, OBP, SLG, OPS): Complex logic for when leads change through inaction:
+  - Leader played today → attribute event to leader ("Rice took the AL lead in OPS")
+  - Leader didn't play, leader's team still playing today → HOLD event (wait for game to complete)
+  - Leader didn't play, leader's team played but leader had no PAs → attribute to player who LOST lead ("Alvarez dropped below Rice for the AL lead in OPS")
+  - Leader didn't play, leader's team has no game today → attribute to player who lost lead
+  - Counting stat leads (HR, RBI, etc.) always require the leader to have played — no inaction scenario
 - **Matchup previews**: Tonight's games — pitcher-first selection (career ERA < 3.50 / 240+ IP, or `pitcher_prominence_list` in `stat_config.json`). 12-day suppression rotation. Batter by career OPS (800+ PA). Time-gated: weekdays noon ET+, weekends 9 AM ET+.
 - **On This Date**: Historic performances on today's month-day from past years
 - **AI insights** (`ai_notable_events.py`): Sonnet narrative layer — runs once per game date (deduped). Finds connections rules can't.
