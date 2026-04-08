@@ -10,6 +10,7 @@ private struct ScrollOffsetKey: PreferenceKey {
 
 // Shared navigation destination types
 struct ResultsDestination: Hashable { let question: String }
+struct DrilldownDestination: Hashable { let query: String }
 struct PlayerCardDestination: Hashable { let name: String; var alternatives: [String] = []; var source: String = "link" }
 struct TeamCardDestination: Hashable { let code: String }
 
@@ -40,6 +41,9 @@ struct HomeView: View {
                 }
                 .navigationDestination(for: TeamCardDestination.self) { dest in
                     TeamCardView(teamCode: dest.code, navigationPath: $path)
+                }
+                .navigationDestination(for: DrilldownDestination.self) { dest in
+                    DrilldownResultView(query: dest.query, navigationPath: $path)
                 }
         }
         .sheet(isPresented: Binding(

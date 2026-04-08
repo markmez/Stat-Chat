@@ -60,8 +60,7 @@ struct ResultsView: View {
                 appState.sendQuestion(query)
             },
             onDrilldownTap: { query in
-                appState.clearConversation()
-                navigationPath.append(ResultsDestination(question: query))
+                navigationPath.append(DrilldownDestination(query: query))
             }
         )
     }
@@ -281,6 +280,79 @@ struct ResultsView: View {
             selectedTeamCode = code
         case .question(let query):
             appState.sendQuestion(query, isFollowUp: true)
+        }
+    }
+}
+
+// MARK: - Drilldown Result View
+
+struct DrilldownResultView: View {
+    let query: String
+    @Binding var navigationPath: NavigationPath
+    @State private var segments: [StatGridParser.Segment] = []
+    @State private var isLoading = true
+
+    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                if isLoading {
+                    LoadingIndicator()
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 40)
+                } else {
+                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                        segmentView(segment)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+        }
+        .navigationBarBackButtonHidden(false)
+        .task {
+            let backend = BackendService()
+            do {
+                let result = try await backend.ask(
+                    question: query,
+                    deviceId: AppState.deviceId,
+                    history: [],
+                    onChunk: { @MainActor _ in }
+                )
+                segments = StatGridParser.parse(result.text, isStreaming: false)
+            } catch {
+                segments = [.text("Couldn't load details.")]
+            }
+            isLoading = false
+        }
+    }
+
+    @ViewBuilder
+    private func segmentView(_ segment: StatGridParser.Segment) -> some View {
+        switch segment {
+        case .text(let text):
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(LocalizedStringKey(text))
+                    .font(.system(.body, design: .rounded))
+                    .padding(.vertical, 2)
+            }
+        case .leaderboard(let grid):
+            LeaderboardView(grid: grid, onPlayerTap: { name in
+                navigationPath.append(PlayerCardDestination(name: name))
+            })
+            .padding(.vertical, 6)
+        case .statGrid(let grid):
+            StatGridView(grid: grid, onPlayerTap: { name in
+                navigationPath.append(PlayerCardDestination(name: name))
+            })
+            .padding(.vertical, 6)
+        case .tip(let text):
+            Text(text)
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(.secondary)
+        default:
+            EmptyView()
         }
     }
 }
