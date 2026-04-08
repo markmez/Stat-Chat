@@ -1376,9 +1376,9 @@ def _ambiguous_suggest(plan: QueryPlan) -> str:
         return ""
     abbrev = plan.stat.display_abbrev
     if plan.is_pitching:
-        return f"\n[SUGGEST]{abbrev} leaders among hitters[/SUGGEST]"
+        return f"\n[SUGGEST]{abbrev} leaders (hitters)[/SUGGEST]"
     else:
-        return f"\n[SUGGEST]{abbrev} leaders among pitchers[/SUGGEST]"
+        return f"\n[SUGGEST]{abbrev} leaders (pitchers)[/SUGGEST]"
 
 
 def execute(plan: QueryPlan) -> Optional[str]:
