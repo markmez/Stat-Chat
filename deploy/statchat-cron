@@ -1,7 +1,7 @@
 # StatChat data refresh — game-end oriented schedule
 #
 # Nightly cascade (90 min apart): 11:35 PM, 1:05 AM, 2:35 AM ET
-# Early morning catch-all: 5:35 AM ET
+# Morning catch-alls: 5:35 AM, 8:00 AM ET
 # Afternoon games: 5:00 PM ET daily
 # Weekend early starts: 7:30 PM ET (Sat/Sun only)
 # Backup: 10:00 AM ET — catches data MSF publishes late
@@ -12,11 +12,12 @@
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 
-# Nightly cascade (90 min apart) + morning catch-all
+# Nightly cascade (90 min apart) + morning catch-alls
 35 3 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 5 5 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 35 6 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 35 9 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+0 12 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 
 # Afternoon games: 5:00 PM ET (21:00 UTC)
 0 21 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
