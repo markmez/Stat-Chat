@@ -8,7 +8,6 @@ struct ResultsView: View {
     @State private var resultsContentHeight: CGFloat = 0
     @State private var selectedPlayerName: String? = nil
     @State private var selectedTeamCode: String? = nil
-    @State private var drilldownQuestion: String? = nil
     let initialQuestion: String
     @Binding var navigationPath: NavigationPath
 
@@ -61,7 +60,7 @@ struct ResultsView: View {
                 appState.sendQuestion(query)
             },
             onDrilldownTap: { query in
-                drilldownQuestion = query
+                navigationPath.append(ResultsDestination(question: query))
             }
         )
     }
@@ -204,12 +203,6 @@ struct ResultsView: View {
             set: { if !$0 { selectedTeamCode = nil } }
         )) {
             TeamCardView(teamCode: selectedTeamCode ?? "", navigationPath: $navigationPath)
-        }
-        .navigationDestination(isPresented: Binding(
-            get: { drilldownQuestion != nil },
-            set: { if !$0 { drilldownQuestion = nil } }
-        )) {
-            ResultsView(initialQuestion: drilldownQuestion ?? "", navigationPath: $navigationPath)
         }
         .sheet(isPresented: Binding(
             get: { appState.showPaywall },
