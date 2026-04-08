@@ -1445,7 +1445,7 @@ def execute(plan: QueryPlan) -> Optional[str]:
 
         return result
     except Exception as e:
-        logger.warning("query_engine_error error=%s plan=%s", e, plan)
+        logger.warning("query_engine_error error=%s type=%s plan_type=%s streak_len=%s", e, type(e).__name__, plan.query_type, plan.streak_length)
         return None
     finally:
         conn.close()

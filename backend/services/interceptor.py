@@ -292,6 +292,8 @@ def try_intercept(question: str):
         if response:
             logger.info("query_engine_handled question=%r type=%s", trimmed, plan.query_type)
             return response
+        else:
+            logger.warning("query_engine_valid_but_no_result question=%r type=%s streak_len=%s", trimmed, plan.query_type, plan.streak_length)
     elif plan.unexplained_words and (plan.stat or plan.derived_stat):
         logger.info("query_engine_bail question=%r unexplained=%s", trimmed, plan.unexplained_words)
         return None
