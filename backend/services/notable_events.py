@@ -1877,11 +1877,20 @@ def detect_all(db_path=None, season=None, from_poll=False):
 
     events = []
 
+    # Dynamic streak thresholds — higher bar as season progresses
+    games_played = conn.execute(
+        "SELECT MAX(games) FROM season_batting_stats WHERE season = ?", (season,)
+    ).fetchone()
+    gp = games_played[0] if games_played and games_played[0] else 10
+    hit_streak_min = max(8, min(15, int(gp * 0.75)))
+    onbase_streak_min = max(12, min(20, int(gp * 0.9)))
+    hr_streak_min = max(3, min(5, int(gp * 0.3)))
+
     # Tier 1
-    print("  Running Tier 1 detectors...")
-    events += detect_hitting_streaks(conn, season, latest_date, min_games=8)
-    events += detect_onbase_streaks(conn, season, latest_date, min_games=12)
-    events += detect_hr_streaks(conn, season, latest_date, min_games=4)
+    print(f"  Running Tier 1 detectors... (gp={gp}, hit_min={hit_streak_min}, ob_min={onbase_streak_min}, hr_min={hr_streak_min})")
+    events += detect_hitting_streaks(conn, season, latest_date, min_games=hit_streak_min)
+    events += detect_onbase_streaks(conn, season, latest_date, min_games=onbase_streak_min)
+    events += detect_hr_streaks(conn, season, latest_date, min_games=hr_streak_min)
     events += detect_pitching_streaks(conn, season, latest_date)
     events += detect_season_pace(conn, season, latest_date)
     t1_count = len(events)
