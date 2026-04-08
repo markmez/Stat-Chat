@@ -352,6 +352,7 @@ class QueryPlan:
 
     # Validation
     is_pitching: bool = False
+    ambiguous_stat: bool = False  # True when stat exists in both batting and pitching
     unexplained_words: list = field(default_factory=list)
     consumed_words: set = field(default_factory=set)
 
@@ -871,6 +872,21 @@ def decompose(question: str) -> QueryPlan:
     if not plan.is_pitching and any(w in lower for w in ["pitcher", "pitchers", "pitching", "pitched"]):
         plan.is_pitching = True
 
+    # Stats that default to pitching when no batting/pitching context is explicit
+    _PITCHING_DEFAULT_STATS = {"strikeouts", "walks"}
+    _AMBIGUOUS_STATS = {"strikeouts", "walks", "hit_by_pitch", "hits", "home_runs", "games"}
+    has_batting_context = any(w in lower for w in ["hitter", "hitters", "batter", "batters", "batting", "hitting"])
+    has_pitching_context = plan.is_pitching
+    if (not plan.is_pitching and not has_batting_context
+            and plan.stat and plan.stat.db_column in _PITCHING_DEFAULT_STATS):
+        plan.is_pitching = True
+
+    # Mark ambiguous when no explicit batting/pitching context was given
+    if (plan.stat and plan.stat.db_column in _AMBIGUOUS_STATS
+            and not has_batting_context and not has_pitching_context
+            and not plan.pitcher_role):
+        plan.ambiguous_stat = True
+
     plan.split_context = _detect_split_context(lower)
     if plan.split_context:
         for phrase in plan.split_context.consumed_phrases:
@@ -1354,6 +1370,17 @@ def _format_val(stat_col: str, value, is_rate: bool = False) -> str:
     return str(value)
 
 
+def _ambiguous_suggest(plan: QueryPlan) -> str:
+    """Generate a [SUGGEST] pill for the alternate batting/pitching interpretation."""
+    if not plan.ambiguous_stat or not plan.stat:
+        return ""
+    abbrev = plan.stat.display_abbrev
+    if plan.is_pitching:
+        return f"\n[SUGGEST]{abbrev} leaders among hitters[/SUGGEST]"
+    else:
+        return f"\n[SUGGEST]{abbrev} leaders among pitchers[/SUGGEST]"
+
+
 def execute(plan: QueryPlan) -> Optional[str]:
     """Execute a QueryPlan and return formatted response text, or None."""
     if not plan.is_valid:
@@ -1361,29 +1388,36 @@ def execute(plan: QueryPlan) -> Optional[str]:
 
     conn = _get_db()
     try:
+        result = None
         if plan.query_type == "streak_sequence":
             # "100 RBI in 3 straight seasons" — per_season + streak_sequence
             # means season-level consistency, not game-level streaks
             if plan.per_season:
-                return _execute_per_season_threshold(conn, plan)
-            return _execute_streak_sequence(conn, plan)
+                result = _execute_per_season_threshold(conn, plan)
+            else:
+                result = _execute_streak_sequence(conn, plan)
         elif plan.query_type == "game_log_count":
-            return _execute_game_log_count(conn, plan)
+            result = _execute_game_log_count(conn, plan)
         elif plan.query_type == "game_log_extreme":
-            return _execute_game_log_extreme(conn, plan)
+            result = _execute_game_log_extreme(conn, plan)
         elif plan.query_type == "team_ranking":
-            return _execute_team_ranking(conn, plan)
+            result = _execute_team_ranking(conn, plan)
         elif plan.split_context is not None:
-            return _execute_split_leaderboard(conn, plan)
+            result = _execute_split_leaderboard(conn, plan)
         elif plan.query_type == "count":
-            return _execute_count(conn, plan)
+            result = _execute_count(conn, plan)
         elif plan.query_type == "superlative":
-            return _execute_superlative(conn, plan)
+            result = _execute_superlative(conn, plan)
         elif plan.query_type == "threshold":
-            return _execute_threshold(conn, plan)
+            result = _execute_threshold(conn, plan)
         elif plan.query_type == "leaderboard":
-            return _execute_leaderboard(conn, plan)
-        return None
+            result = _execute_leaderboard(conn, plan)
+
+        # Append alternate interpretation pill for ambiguous stats
+        if result and plan.ambiguous_stat:
+            result += _ambiguous_suggest(plan)
+
+        return result
     except Exception as e:
         logger.warning("query_engine_error error=%s plan=%s", e, plan)
         return None
