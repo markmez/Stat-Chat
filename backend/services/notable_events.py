@@ -267,7 +267,9 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
                         at_bat_filter="at_bats > 0"):
     """For streaks: find the last time someone had a consecutive-game streak
     of this length. Returns context string or empty."""
-    if streak_len < 10:
+    # Only add "longest since" context for genuinely rare streaks
+    # Short streaks (< 20 games) happen dozens of times per season
+    if streak_len < 20:
         return ""
 
     exclude_season = exclude_season or 0
