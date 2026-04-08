@@ -208,53 +208,58 @@ Write notable events from the latest games. Think like the best stat-nerd
 baseball Twitter account — insightful, punchy, data-driven.
 
 CRITICAL RULES:
-1. Every event MUST lead with what happened in the game (the triggering
-   performance), then connect it to the bigger narrative. Do NOT use
-   "last night" or "yesterday" — the date context is shown separately.
-2. Use the DB-VERIFIED HISTORICAL CONTEXT — these are confirmed facts from our
+1. Every event MUST be about what a player did ON {latest_date} specifically.
+   Lead with their game performance, then connect to broader narrative.
+   Do NOT use "last night" or "yesterday" — the date context is shown separately.
+2. Do NOT claim a player extended or set a streak unless their {latest_date}
+   performance continued it. If a pitcher gave up earned runs, they did NOT
+   extend a scoreless streak. If a batter went hitless, they did NOT extend
+   a hitting streak. Streaks are the rule-based detector's job — you should
+   focus on individual-game narratives the rules can't find.
+3. Use the DB-VERIFIED HISTORICAL CONTEXT — these are confirmed facts from our
    database. Cite them confidently.
-3. Do NOT invent historical comparisons beyond what's provided. If the data
+4. Do NOT invent historical comparisons beyond what's provided. If the data
    doesn't include a "first since" fact, don't make one up.
-4. Do NOT duplicate events already detected (listed under ALREADY-DETECTED).
+5. Do NOT duplicate events already detected (listed under ALREADY-DETECTED).
    If an already-detected event covers a player, you may write about that player
    ONLY if your angle is substantially different.
-5. ONLY use biographical facts from the PLAYER CONTEXT section. Do not assume
+6. ONLY use biographical facts from the PLAYER CONTEXT section. Do not assume
    team history, rookie status, or career details not listed there.
-6. Write each as a single flowing sentence, conversational and punchy.
-7. Prioritize: historical context, start-of-season milestones, comeback narratives,
+7. Write each as a single flowing sentence, conversational and punchy.
+8. Prioritize: historical context, start-of-season milestones, comeback narratives,
    rookie watch, pace projections, cross-category patterns.
-8. Output ONLY a JSON array: [{{"headline": "...", "player_names": ["..."], "team_names": ["..."], "opponent": "OPP"}}]
+9. Output ONLY a JSON array: [{{"headline": "...", "player_names": ["..."], "team_names": ["..."], "opponent": "OPP"}}]
    The "opponent" field must be the team abbreviation the primary player played against
    (from the box score data). This is required for every event.
 
 QUALITY THRESHOLD — READ CAREFULLY:
-9. Your job is to find things that RULES CAN'T FIND. Standard good
-   performances are already covered by our automated system. Only write
-   about something if it has a genuine narrative angle:
-   - A player's performance that deviates sharply from their norm
-     (great pitcher gets shelled, struggling hitter explodes)
-   - Cross-category connections (same player leading in multiple stats)
-   - Career context that makes an otherwise ordinary line interesting
-     (hyped rookie's debut stretch, veteran's resurgence)
-   - A genuine quirk or pattern you notice in the data
-10. For PITCHERS: do NOT write about a standard quality start (6 IP, 3 ER).
+10. Your job is to find things that RULES CAN'T FIND. Standard good
+    performances are already covered by our automated system. Only write
+    about something if it has a genuine narrative angle:
+    - A player's performance that deviates sharply from their norm
+      (great pitcher gets shelled, struggling hitter explodes)
+    - Cross-category connections (same player leading in multiple stats)
+    - Career context that makes an otherwise ordinary line interesting
+      (hyped rookie's debut stretch, veteran's resurgence)
+    - A genuine quirk or pattern you notice in the data
+11. For PITCHERS: do NOT write about a standard quality start (6 IP, 3 ER).
     The bar is 8+ IP, or 10+ K, or a genuinely unusual narrative. "Picked
     up his first win" is not notable — everyone gets one eventually.
-11. For BATTERS: a 2-for-4 night is not notable unless the player is on a
+12. For BATTERS: a 2-for-4 night is not notable unless the player is on a
     tear or the stats have broader context. 4+ K in a game for a good
     hitter could be notable.
-12. If you can't articulate WHY something is interesting beyond "he played
+13. If you can't articulate WHY something is interesting beyond "he played
     well," don't include it. Quality over quantity — only include items
     that pass the bar above. Could be 2 items or 10, depending on the day.
 
 STYLE RULES:
-13. Do NOT pad sentences with empty context. If you don't have a meaningful
+14. Do NOT pad sentences with empty context. If you don't have a meaningful
     fact, end the sentence. A stat line speaks for itself.
-14. Career year/season count is ONLY interesting at extremes: debut, second
+15. Career year/season count is ONLY interesting at extremes: debut, second
     year, or 15+ year veteran.
-15. 162-game pace projections are inherently absurd early in the season.
+16. 162-game pace projections are inherently absurd early in the season.
     Note the pace as a fun fact but do NOT editorialize about sustainability.
-16. Less is more. A clean stat line with one piece of context beats a
+17. Less is more. A clean stat line with one piece of context beats a
     sentence stuffed with qualifiers.
 
 DATA SNAPSHOT:
