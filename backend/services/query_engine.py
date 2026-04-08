@@ -2444,7 +2444,7 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
             f"FROM {table} g "
             f"JOIN players p ON g.player_id = p.player_id "
             f"WHERE {col_expr} >= ?{season_filter}{player_filter} "
-            f"ORDER BY g.date DESC LIMIT 50",
+            f"ORDER BY g.date ASC LIMIT 50",
             tuple(player_params),
         )
         games = cur.fetchall()
@@ -2454,12 +2454,11 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
 
         title = f"**{plan.player_name} — {len(games)} games with {threshold}+ {stat_name} ({scope_label})**\n"
         parts = [title]
-        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
 
         if col == "xbh":
             parts.append("HEADER: XBH, 2B, 3B, HR, H-AB")
-            for i, (dt, opp, h, ab, d, t, hr, rbi, r) in enumerate(games):
+            for dt, opp, h, ab, d, t, hr, rbi, r in games:
                 xbh = (d or 0) + (t or 0) + (hr or 0)
                 try:
                     from datetime import datetime as _dt
@@ -2468,16 +2467,14 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
                     dt_fmt = dt
                 parts.append(f"ROW {dt_fmt} vs {opp or '?'}: {xbh}, {d or 0}, {t or 0}, {hr or 0}, {h}-{ab}")
         else:
-            parts.append(f"HEADER: {stat_name}, H-AB")
-            for i, (dt, opp, h, ab, d, t, hr, rbi, r) in enumerate(games):
-                val = {"hits": h, "home_runs": hr, "rbi": rbi, "doubles": d, "triples": t,
-                       "runs": r, "walks": 0, "strikeouts": 0, "stolen_bases": 0}.get(col, 0)
+            parts.append("HEADER: H-AB, HR, 2B, RBI, R")
+            for dt, opp, h, ab, d, t, hr, rbi, r in games:
                 try:
                     from datetime import datetime as _dt
                     dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
                 except Exception:
                     dt_fmt = dt
-                parts.append(f"ROW {dt_fmt} vs {opp or '?'}: {val or 0}, {h}-{ab}")
+                parts.append(f"ROW {dt_fmt} vs {opp or '?'}: {h}-{ab}, {hr or 0}, {d or 0}, {rbi or 0}, {r or 0}")
 
         parts.append("[/LEADERBOARD]")
         return "\n".join(parts)
