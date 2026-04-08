@@ -411,11 +411,11 @@ def _format_haiku_result(result_text: str, question: str = "") -> str:
         else:
             row_lines.append(f"ROW: {', '.join(vals)}")
 
-    # Build title with count (question already shown by iOS above the result)
+    # Build title with count only when there's a meaningful total
+    # (more rows exist than displayed). Don't show "50 results" for a LIMIT 50 leaderboard.
     title = ""
-    display_total = total_count or len(data_rows)
-    if display_total > 1:
-        title = f"**{display_total} results**\n\n"
+    if total_count and total_count > len(data_rows):
+        title = f"**{total_count} results**\n\n"
 
     # Pagination note if results were capped
     pagination = ""
