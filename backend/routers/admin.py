@@ -1054,7 +1054,7 @@ async def dashboard(
     <th>Event</th>
     <th>Type</th>
     <th class="sortable" onclick="sortEvents('taps')" id="eth-taps">Taps</th>
-    <th class="sortable" onclick="sortEvents('date')" id="eth-date">Date<span class="arrow"> &#x25BE;</span></th>
+    <th class="sortable" onclick="sortEvents('date')" id="eth-date">Game Date<span class="arrow"> &#x25BE;</span></th>
   </tr>
   {event_rows}
 </table>
@@ -1193,7 +1193,7 @@ function sortEvents(mode) {{
     return b.dataset.date.localeCompare(a.dataset.date);
   }});
   rows.forEach(r => table.appendChild(r));
-  document.getElementById('eth-date').innerHTML = 'Date' + (mode === 'date' ? '<span class="arrow"> &#x25BE;</span>' : '');
+  document.getElementById('eth-date').innerHTML = 'Game Date' + (mode === 'date' ? '<span class="arrow"> &#x25BE;</span>' : '');
   document.getElementById('eth-taps').innerHTML = 'Taps' + (mode === 'taps' ? '<span class="arrow"> &#x25BE;</span>' : '');
   renderEvents();
 }}
