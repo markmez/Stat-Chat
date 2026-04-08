@@ -25,5 +25,5 @@
               sudo cp deploy/statchat-cron /etc/cron.d/statchat
               sudo chmod 644 /etc/cron.d/statchat
               sudo systemctl restart statchat
-              sleep 2
-              curl -sf http://127.0.0.1:8000/health || exit 1
+              sleep 8
+              curl -sf --max-time 10 http://127.0.0.1:8000/health || exit 1
