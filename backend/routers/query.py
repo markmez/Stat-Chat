@@ -273,14 +273,14 @@ def _format_haiku_result(result_text: str, question: str = "") -> str:
     if not data_rows:
         return clean_text
 
-    # Single aggregate result (COUNT, SUM, etc.) — format as a clean answer
+    # Single aggregate result (COUNT, SUM, etc.) — format as a clean answer with examples
     if len(data_rows) == 1 and len(columns) == 1:
         val = list(data_rows[0].values())[0]
         try:
             num = int(float(val))
-            col_name = _display_col_name(columns[0]) or columns[0].replace("_", " ").title()
             if question:
                 return f"**{num:,}** — {question}"
+            col_name = _display_col_name(columns[0]) or columns[0].replace("_", " ").title()
             return f"**{num:,}** {col_name}"
         except (ValueError, TypeError):
             pass
@@ -447,7 +447,66 @@ async def _try_haiku_sql(question: str):
     if result_text == "No results found.":
         return None  # Empty results — let Sonnet try, it might interpret differently
 
+    # If Haiku returned a bare COUNT(*), unwrap and re-execute to get examples
+    if _is_bare_count(result_text):
+        examples_sql = _unwrap_count_sql(sql)
+        if examples_sql:
+            try:
+                examples_text, _ = await loop.run_in_executor(
+                    None, runner.execute_and_format, examples_sql
+                )
+                if examples_text and examples_text != "No results found.":
+                    # Prepend the count as a title, examples follow
+                    result_text = result_text.strip() + "\n" + examples_text
+            except Exception:
+                pass  # Keep the count-only result
+
     return sql, result_text, is_streak
+
+
+def _is_bare_count(result_text: str) -> bool:
+    """Check if result is a single aggregate number (COUNT, SUM, etc.)."""
+    lines = result_text.strip().split("\n")
+    if "__TOTAL_COUNT__:" in result_text:
+        lines = result_text.split("__TOTAL_COUNT__:")[0].strip().split("\n")
+    # header + separator + one data row = 3 lines
+    if len(lines) != 3:
+        return False
+    cols = [c.strip() for c in lines[0].split("|")]
+    vals = [v.strip() for v in lines[2].split("|")]
+    if len(cols) != 1 or len(vals) != 1:
+        return False
+    try:
+        int(float(vals[0]))
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _unwrap_count_sql(sql: str) -> str | None:
+    """Strip COUNT(*) from SQL to get the underlying query with examples.
+    Returns modified SQL with LIMIT 25, or None if can't unwrap."""
+    import re
+    upper = sql.upper().strip()
+
+    # Pattern 1: SELECT COUNT(*) FROM (subquery)
+    m = re.match(r'SELECT\s+COUNT\s*\(\s*\*\s*\)\s+\w*\s*FROM\s*\((.*)\)\s*\w*\s*$',
+                 sql, re.IGNORECASE | re.DOTALL)
+    if m:
+        inner = m.group(1).strip().rstrip(';')
+        # Remove any existing LIMIT
+        inner = re.sub(r'\s+LIMIT\s+\d+\s*$', '', inner, flags=re.IGNORECASE)
+        return inner + " LIMIT 25"
+
+    # Pattern 2: SELECT COUNT(*) FROM table WHERE ...
+    m = re.match(r'SELECT\s+COUNT\s*\(\s*\*\s*\)\s+\w*\s*FROM\s+(.+)',
+                 sql, re.IGNORECASE | re.DOTALL)
+    if m:
+        rest = m.group(1).strip().rstrip(';')
+        rest = re.sub(r'\s+LIMIT\s+\d+\s*$', '', rest, flags=re.IGNORECASE)
+        return f"SELECT * FROM {rest} LIMIT 25"
+
+    return None
 
 
 class QueryRequest(BaseModel):
