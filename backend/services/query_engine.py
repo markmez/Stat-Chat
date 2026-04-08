@@ -882,9 +882,11 @@ def decompose(question: str) -> QueryPlan:
         plan.is_pitching = True
 
     # Mark ambiguous when no explicit batting/pitching context was given
+    # Game log queries (multi-HR games, 4-hit games) are inherently unambiguous
     if (plan.stat and plan.stat.db_column in _AMBIGUOUS_STATS
             and not has_batting_context and not has_pitching_context
-            and not plan.pitcher_role):
+            and not plan.pitcher_role
+            and plan.query_type not in ("game_log_count", "game_log_extreme")):
         plan.ambiguous_stat = True
 
     plan.split_context = _detect_split_context(lower)
@@ -1003,6 +1005,7 @@ def decompose(question: str) -> QueryPlan:
     game_log_triggers = ["in a game", "in one game", "in a single game"]
     if any(t in lower for t in game_log_triggers):
         plan.query_type = "game_log_extreme"
+        plan.ambiguous_stat = False  # game-level queries are never ambiguous
         _add_consumed(plan, "in a game in one game in a single game single")
 
     # Game-log counting: "most 3-hit games", "most games with 3+ RBI", "most 10-K games"
@@ -1014,6 +1017,7 @@ def decompose(question: str) -> QueryPlan:
 
     if multi_game_match:
         plan.query_type = "game_log_count"
+        plan.ambiguous_stat = False  # game-level queries are never ambiguous
         n = int(multi_game_match.group(1))
         context = multi_game_match.group(0).lower()
         if any(w in context for w in ["hr", "home run", "homer"]):
@@ -1040,6 +1044,7 @@ def decompose(question: str) -> QueryPlan:
         xbh_match = re.search(r'(\d+)\+?\s*(?:xbh|extra[- ]?base[- ]?hit)', lower)
         if xbh_match:
             plan.query_type = "game_log_count"
+            plan.ambiguous_stat = False
             plan.game_log_stat = "xbh"
             plan.game_log_threshold = int(xbh_match.group(1))
             # Consume the full matched text and all variations
@@ -1053,12 +1058,14 @@ def decompose(question: str) -> QueryPlan:
 
     if "multi-hit" in lower or "multi hit" in lower:
         plan.query_type = "game_log_count"
+        plan.ambiguous_stat = False
         plan.game_log_stat = "hits"
         plan.game_log_threshold = 2
         _add_consumed(plan, "multi-hit multi hit")
 
     if "multi-homer" in lower or "multi homer" in lower or "multi-hr" in lower or "multi hr" in lower:
         plan.query_type = "game_log_count"
+        plan.ambiguous_stat = False
         plan.game_log_stat = "home_runs"
         plan.game_log_threshold = 2
         _add_consumed(plan, "multi-homer multi homer multi-hr multi hr")
@@ -2445,48 +2452,13 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
     parts.append("HEADER: Games")
+    season_suffix = f" {plan.season}" if plan.season else ""
     for i, row in enumerate(rows):
-        parts.append(f"ROW {i+1}. {row[0]}: {row[1]}")
+        player_name = row[0]
+        count = row[1]
+        drilldown_query = f"{player_name} {threshold}+ {stat_name} games{season_suffix}"
+        parts.append(f"ROW {i+1}. {player_name}: [DRILLDOWN]{drilldown_query}[/DRILLDOWN]{count}")
     parts.append("[/LEADERBOARD]")
-
-    # Show individual instances (up to 25) with details
-    detail_cols = "g.date, p.name, g.doubles, g.triples, g.home_runs, g.hits, g.at_bats, g.rbi"
-    cur.execute(
-        f"SELECT {detail_cols} "
-        f"FROM {table} g "
-        f"JOIN players p ON g.player_id = p.player_id "
-        f"WHERE {col_expr} >= ?{season_filter} "
-        f"ORDER BY {col_expr} DESC, g.date DESC LIMIT 25",
-        tuple(params[:1] + (params[1:2] if plan.season else [])),
-    )
-    details = cur.fetchall()
-    if details:
-        parts.append("")
-        parts.append(f"**Individual Games ({min(len(details), 25)} of {total_games})**")
-        parts.append("[LEADERBOARD]")
-        if col == "xbh":
-            parts.append("HEADER: XBH, 2B, 3B, HR, H-AB")
-            for i, (dt, name, d, t, hr, h, ab, rbi) in enumerate(details):
-                xbh = (d or 0) + (t or 0) + (hr or 0)
-                # Format date as M/D
-                try:
-                    from datetime import datetime as _dt
-                    dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
-                except:
-                    dt_fmt = dt
-                parts.append(f"ROW {i+1}. {name} ({dt_fmt}): {xbh}, {d or 0}, {t or 0}, {hr or 0}, {h}-{ab}")
-        else:
-            parts.append(f"HEADER: {stat_name}, H-AB, Date")
-            for i, (dt, name, d, t, hr, h, ab, rbi) in enumerate(details):
-                val = {"hits": h, "home_runs": hr, "rbi": rbi, "doubles": d, "triples": t,
-                       "runs": 0, "walks": 0, "strikeouts": 0, "stolen_bases": 0}.get(col, 0)
-                try:
-                    from datetime import datetime as _dt
-                    dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
-                except:
-                    dt_fmt = dt
-                parts.append(f"ROW {i+1}. {name} ({dt_fmt}): {val}, {h}-{ab}, {dt_fmt}")
-        parts.append("[/LEADERBOARD]")
 
     # Suggestion pills
     if col == "strikeouts" and not plan.is_pitching:
