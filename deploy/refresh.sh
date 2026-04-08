@@ -19,13 +19,27 @@ DB=/data/baseball_stats_full.db
 HC_PING_URL="https://hc-ping.com/d3f0c82b-235a-477f-8ed5-3f6ac4c6daa7"
 
 LOCK="/tmp/statchat_detection.lock"
+PIPELINE_LOCK="/tmp/statchat_pipeline.lock"
+
+# Prevent concurrent pipeline runs — skip if another instance is running
+if [ -f "$PIPELINE_LOCK" ]; then
+    # Check if the lock is stale (older than 90 minutes)
+    if [ "$(find "$PIPELINE_LOCK" -mmin +90 2>/dev/null)" ]; then
+        echo "Removing stale pipeline lock (>90 min old)"
+        rm -f "$PIPELINE_LOCK"
+    else
+        echo "Pipeline already running (lock exists) — skipping"
+        exit 0
+    fi
+fi
 
 echo ""
 echo "=== Pipeline refresh starting at $(date) ==="
 
-# Lock detection so polls don't run event detection on partial data
+# Lock pipeline + detection
+touch "$PIPELINE_LOCK"
 touch "$LOCK"
-trap 'rm -f "$LOCK"' EXIT
+trap 'rm -f "$LOCK" "$PIPELINE_LOCK"' EXIT
 
 # Run pipeline (pass through any extra args like --full-refresh)
 if $VENV $PIPELINE --db $DB "$@"; then
