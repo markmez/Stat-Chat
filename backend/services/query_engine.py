@@ -2714,11 +2714,12 @@ def _streak_sliding(rows, target_length, label, plan) -> Optional[str]:
     else:
         title = f"**Longest Streaks of {label} ({scope})**\n"
 
+    _MAX_ROWS = 500
     parts = [title]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
     parts.append("HEADER: Games, Year")
-    for i, (streak_len, name, season) in enumerate(results):
+    for i, (streak_len, name, season) in enumerate(results[:_MAX_ROWS]):
         parts.append(f"ROW {i+1}. {name}: {streak_len}, {season}")
     parts.append("[/LEADERBOARD]")
 
