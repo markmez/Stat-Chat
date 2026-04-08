@@ -57,12 +57,12 @@ async def get_notable_events(limit: int = QueryParam(50, le=200)):
     finally:
         conn.close()
 
-    results = []
+    # Build filtered list with detection_type for interleaving
+    filtered = []
     for r in rows:
-        # Hide matchup previews before display window opens
         if r[7] == "matchup_preview" and not show_matchup_previews:
             continue
-        results.append({
+        filtered.append({
             "headline": r[0],
             "detail": r[1],
             "category": r[2],
@@ -70,8 +70,30 @@ async def get_notable_events(limit: int = QueryParam(50, le=200)):
             "player_names": json.loads(r[4]) if r[4] else [],
             "team_names": json.loads(r[5]) if r[5] else [],
             "game_context": r[6] or "",
+            "_type": r[7],  # for interleaving, stripped before return
         })
-        if len(results) >= limit:
-            break
 
-    return results
+    # Interleave by detection_type within each game_date group
+    # so no two consecutive events share the same type
+    interleaved = []
+    from itertools import groupby
+    for game_date, group in groupby(filtered, key=lambda e: e["game_date"]):
+        bucket = list(group)
+        # Round-robin by type: pick one from each type in rotation
+        by_type = {}
+        for e in bucket:
+            by_type.setdefault(e["_type"], []).append(e)
+        result = []
+        while any(by_type.values()):
+            for t in sorted(by_type.keys()):
+                if by_type[t]:
+                    result.append(by_type[t].pop(0))
+            # Remove empty types
+            by_type = {t: v for t, v in by_type.items() if v}
+        interleaved.extend(result)
+
+    # Strip internal _type field and apply limit
+    for e in interleaved:
+        e.pop("_type", None)
+
+    return interleaved[:limit]
