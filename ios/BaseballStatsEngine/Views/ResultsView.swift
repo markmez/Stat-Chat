@@ -8,7 +8,6 @@ struct ResultsView: View {
     @State private var resultsContentHeight: CGFloat = 0
     @State private var selectedPlayerName: String? = nil
     @State private var selectedTeamCode: String? = nil
-    @State private var drilldownQuery: String? = nil
     let initialQuestion: String
     @Binding var navigationPath: NavigationPath
 
@@ -61,7 +60,8 @@ struct ResultsView: View {
                 appState.sendQuestion(query)
             },
             onDrilldownTap: { query in
-                drilldownQuery = query
+                appState.clearConversation()
+                navigationPath.append(ResultsDestination(question: query))
             }
         )
     }
@@ -212,14 +212,6 @@ struct ResultsView: View {
             PaywallView()
                 .environment(appState)
         }
-        .sheet(isPresented: Binding(
-            get: { drilldownQuery != nil },
-            set: { if !$0 { drilldownQuery = nil } }
-        )) {
-            if let query = drilldownQuery {
-                DrilldownSheet(query: query)
-            }
-        }
         .onChange(of: appState.showPaywall) { _, showing in
             // When paywall dismisses, retry the blocked query if user subscribed
             if !showing && StoreKitService.shared.isSubscribed {
@@ -289,79 +281,6 @@ struct ResultsView: View {
             selectedTeamCode = code
         case .question(let query):
             appState.sendQuestion(query, isFollowUp: true)
-        }
-    }
-}
-
-// MARK: - Drilldown Sheet
-
-private struct DrilldownSheet: View {
-    let query: String
-    @Environment(\.dismiss) private var dismiss
-    @State private var segments: [StatGridParser.Segment] = []
-    @State private var isLoading = true
-    @State private var errorMessage: String?
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    if isLoading {
-                        LoadingIndicator()
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 40)
-                    } else if let error = errorMessage {
-                        Text(error)
-                            .font(.system(.body, design: .rounded))
-                            .foregroundStyle(.secondary)
-                            .padding()
-                    } else {
-                        ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                            switch segment {
-                            case .text(let text):
-                                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                    Text(LocalizedStringKey(text))
-                                        .font(.system(.body, design: .rounded))
-                                        .padding(.vertical, 2)
-                                }
-                            case .leaderboard(let grid):
-                                LeaderboardView(grid: grid)
-                                    .padding(.vertical, 6)
-                            case .statGrid(let grid):
-                                StatGridView(grid: grid)
-                                    .padding(.vertical, 6)
-                            default:
-                                EmptyView()
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-            }
-            .navigationTitle(query)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { dismiss() } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                            .font(.title3)
-                    }
-                }
-            }
-        }
-        .task {
-            do {
-                let response = try await BackendService().queryRaw(
-                    question: query,
-                    deviceId: AppState.deviceId
-                )
-                segments = StatGridParser.parse(response, isStreaming: false)
-            } catch {
-                errorMessage = "Couldn't load details."
-            }
-            isLoading = false
         }
     }
 }
