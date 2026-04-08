@@ -197,6 +197,15 @@ def _fmt_val(col: str, val) -> str:
             return f"{sign}{int(round(fv))}" if fv == int(fv) else f"{sign}{fv:.2f}"
         except (ValueError, TypeError):
             return str(val)
+    # Date columns — shorten to M/D
+    if lower_col in ("date", "game_date", "start_date", "end_date"):
+        s = str(val).strip()
+        if len(s) == 10 and s[4] == "-":  # YYYY-MM-DD
+            try:
+                m, d = int(s[5:7]), int(s[8:10])
+                return f"{m}/{d}"
+            except ValueError:
+                pass
     # Generic: try to clean up float formatting
     try:
         fv = float(val)
@@ -333,9 +342,12 @@ def _format_haiku_result(result_text: str, question: str = "") -> str:
         stat_cols = [c for c in stat_cols if c != "team"]
 
     # Limit to 4 stat columns max for display — iOS leaderboard overflows otherwise.
-    # Keep the most relevant columns (first 4, which Haiku orders by importance).
+    # Deprioritize date columns (wide) — put stats first, dates last, then cap.
+    _date_cols = {"date", "game_date", "start_date", "end_date"}
     if multi_row and len(stat_cols) > 4:
-        stat_cols = stat_cols[:4]
+        non_date = [c for c in stat_cols if c.lower() not in _date_cols]
+        date_only = [c for c in stat_cols if c.lower() in _date_cols]
+        stat_cols = (non_date + date_only)[:4]
 
     # Remove columns that map to None (label-only columns that slipped through)
     stat_cols = [c for c in stat_cols if _display_col_name(c) is not None]
