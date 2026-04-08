@@ -197,12 +197,12 @@ We download Retrosheet season ZIPs that contain 7 CSV files. We now use **battin
 
 ### Database strategy (backend-only, 2026-03-18)
 - **iOS bundled DB**: ~1.6MB — `players` table only (24,110 rows). All stats tables stripped. Used for name matching/disambiguation only.
-- **Backend DB**: ~240MB on Railway volume at `/data/baseball_stats_full.db`. Full historical data 1898-2026, ~26 tables. Cron-refreshed every 4 hours.
-- **Project root DB**: `baseball_stats.db` (~240MB) — the full DB used for pipeline work and S3 uploads.
-- **S3 DB**: `s3://stat-chat/baseball_stats_full.db` — staging area for transferring large DBs to Railway when `railway up` times out.
-- **DB update procedure**: Update project root DB → upload to S3 (`aws s3 cp baseball_stats.db s3://stat-chat/baseball_stats_full.db`) → trigger backend re-download (`POST /admin/redownload-db` with `Authorization: Bearer {ADMIN_KEY}`)
+- **Backend DB (PRIMARY)**: On Lightsail at `/data/baseball_stats_full.db`. Full historical data 1898-2026, ~26 tables, 4.8M+ game logs back to 1920. Cron-refreshed every 4 hours. **This is the only DB that matters.**
+- **Project root DB**: `baseball_stats.db` — STALE local copy from an earlier era. Do NOT use for real work. It's missing historical game logs (only has 2016+) and is out of sync with production.
+- **DB changes (schema migrations, backfills, data fixes)**: Run directly on the backend via `POST /admin/run-sql` or deploy migration scripts that execute on the server. Do NOT modify the local DB and upload — that workflow is dead.
+- **S3 DB**: `s3://stat-chat/baseball_stats_full.db` — last-resort fallback for cold starts only.
 
-**DANGER: Do NOT re-run `pull_stats.py` (Retrosheet pipeline) without precaution.** It rebuilds `baseball_stats.db` from scratch with only 2016-2025 Retrosheet data, wiping all historical (pre-2016) and live (2026) data. If you need to rerun it, back up `baseball_stats.db` first and merge the results. `pull_live_stats.py` (MSF) is safe — it only inserts/updates current-season rows.
+**DANGER: Do NOT re-run `pull_stats.py` (Retrosheet pipeline) without precaution.** It rebuilds from scratch, wiping historical and live data. `pull_live_stats.py` (MSF) is safe — it only inserts/updates current-season rows.
 
 ### Stats methodology & discrepancies
 
@@ -253,7 +253,7 @@ Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The ma
 - **Metering**: `services/metering.py` tracks device UUIDs, 5 free queries/week, weekly Monday reset. `METERING_DB_PATH=/data/metering.db`.
 - **SSE event format**: `{"type":"text","text":"..."}`, `{"type":"done"}`, `{"type":"error","message":"..."}`, `{"type":"quota_exceeded","count":N,"reset":"YYYY-MM-DD"}`
 - **Dockerfile**: Build context is `backend/`. Copies `data_pipeline/` (pipeline scripts duplicated in `backend/data_pipeline/`), `schema_description.py` (duplicated in `backend/`). When updating pipeline scripts, sync both copies.
-- **Admin endpoints**: `POST /admin/refresh` (trigger MSF pipeline), `POST /admin/redownload-db` (force S3 re-download), `GET /admin/freshness`, `GET /admin/schedule`, `GET /admin/volume-usage`, `DELETE /admin/volume-cleanup` (removes orphaned files from volume)
+- **Admin endpoints**: `POST /admin/refresh` (trigger MSF pipeline), `POST /admin/redownload-db` (force S3 re-download), `GET /admin/freshness`, `GET /admin/schedule`, `GET /admin/volume-usage`, `DELETE /admin/volume-cleanup` (removes orphaned files from volume), `GET /admin/dashboard` (query analytics dashboard)
 - **Railway env vars**: `ANTHROPIC_API_KEY`, `DB_PATH`, `FREE_QUERIES_PER_WEEK=1000`, `MSF_API_KEY`, `ADMIN_KEY`
 
 ### Live Data Pipeline (MySportsFeeds)
@@ -271,25 +271,29 @@ Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The ma
 
 ### Polling & Notable Events Feed
 
-#### Data flow: daily pipeline vs polls
-- **Daily pipeline** (`deploy/refresh.sh`, 5:35 AM ET): Full MSF pull — season totals, game logs (cumulative, only new dates since `last_game_date_pulled`), splits, play-by-play, streaks, integrity check. Creates `/tmp/statchat_detection.lock` for duration. Authoritative — DB has complete game logs through yesterday after this runs.
-- **15-min polls** (`poll_new_games.py`): Lightweight — pulls today's game logs + season totals only. Tracks which `(player_id, date, game_number)` tuples are genuinely new inserts vs updates. Runs `detect_all(from_poll=True)` when new games found. Skips detection if lock file present (daily pipeline running).
+#### Data flow: nightly cascade pipeline
+- **Nightly cascade** (`deploy/refresh.sh`): Full MSF pull — season totals, game logs, splits, play-by-play, streaks, integrity check. Creates `/tmp/statchat_detection.lock` + `/tmp/statchat_pipeline.lock` (prevents concurrent runs, 90-min stale timeout). Runs at 11:35 PM, 1:05 AM, 2:35 AM ET (90-min spacing). MSF typically publishes game logs by the 2:35 AM run. Season totals update faster than game logs.
+- **Morning catch-alls**: 5:35 AM, 8:00 AM ET — pick up any data MSF published late.
+- **Backup**: 10:00 AM ET, 5:00 PM ET (afternoon games), 7:30 PM ET weekends.
 - **Weekly reconciliation** (Sunday 6 AM ET): `refresh.sh --full-refresh` — wipes and re-pulls all game logs for full integrity.
+- **15-min polls REMOVED** (2026-04-08): Aggressive polling didn't help — MSF game logs aren't available same-night. Reverted to cascade approach which pulls season totals (available within minutes) for leaderboard change detection.
 
 #### Event detection (`detect_all` in `notable_events.py`)
-- **Tier 1**: Hitting streaks (8+ games), on-base streaks (12+), HR streaks (4+), pitching streaks, season pace milestones
+- **Tier 1**: Hitting streaks, on-base streaks, HR streaks, pitching streaks, season pace milestones
+- **Dynamic streak thresholds**: Scale with games played — `max(floor, min(ceiling, games_played * rate))`. Hitting: 8→15, on-base: 12→20, HR: 3→5. Prevents routine streaks from flooding mid-season while keeping early-season hot starts noteworthy.
+- **No caps on event counts**: If an event meets threshold, it shows. Only matchup previews are capped (top 3). Previously hitting/on-base/HR streaks were capped at 2-3.
 - **Tier 2**: Career milestones, single-game rarities, hot streaks (PELT)
 - **Tier 3 backfill**: Relaxed hitting streaks, league leaders (only if < 3 events from T1+T2)
-- **Historical scans** (`historical_scans.py`): DB-verified "first since" facts — cross-season streaks, career-start stats, leaderboard changes, debut records
+- **Historical scans** (`historical_scans.py`): DB-verified "first since" facts — cross-season streaks, career-start stats, leaderboard changes, debut records. **All scans filter to players who played on `latest_date` only** — events are strictly about what happened on that date, not retroactive milestones from earlier games.
 - **Rate stat leaderboard changes** (AVG, OBP, SLG, OPS): Complex logic for when leads change through inaction:
   - Leader played today → attribute event to leader ("Rice took the AL lead in OPS")
   - Leader didn't play, leader's team still playing today → HOLD event (wait for game to complete)
   - Leader didn't play, leader's team played but leader had no PAs → attribute to player who LOST lead ("Alvarez dropped below Rice for the AL lead in OPS")
   - Leader didn't play, leader's team has no game today → attribute to player who lost lead
   - Counting stat leads (HR, RBI, etc.) always require the leader to have played — no inaction scenario
-- **Matchup previews**: Tonight's games — pitcher-first selection (career ERA < 3.50 / 240+ IP, or `pitcher_prominence_list` in `stat_config.json`). 12-day suppression rotation. Batter by career OPS (800+ PA). Time-gated: weekdays noon ET+, weekends 9 AM ET+.
+- **Matchup previews**: Tonight's games — pitcher-first selection (career ERA < 3.50 / 240+ IP, or `pitcher_prominence_list` in `stat_config.json`). 12-day suppression rotation. Batter by career OPS (800+ PA). **Generated time-agnostic** (overnight pipeline), **display-gated** in feed API: weekdays noon ET+, weekends 9 AM ET+. Capped at 3 per day.
 - **On This Date**: Historic performances on today's month-day from past years
-- **AI insights** (`ai_notable_events.py`): Sonnet narrative layer — runs once per game date (deduped). Finds connections rules can't.
+- **AI insights** (`ai_notable_events.py`): Sonnet narrative layer — runs once per game date (deduped). Finds connections rules can't. **Prompt rules**: events must be about what happened on latest_date specifically; must NOT claim streak extensions unless the game continued them; streaks are the rule-based detector's job.
 
 #### Streak integrity protections
 - **Streak wipe on recompute**: `detect_all` deletes ALL streak events for `latest_date` before inserting new ones. Prevents stale/impossible streaks from persisting when a player no longer qualifies.
@@ -303,16 +307,19 @@ Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The ma
 - Matchup previews: `INSERT OR IGNORE` for non-streak events. Streaks: delete-then-insert per date.
 
 #### Feed API (`/notable-events`)
-- Returns events ordered by `game_date DESC, priority ASC, id DESC`
-- Matchup previews interleaved among today's events only (never push past older dates)
+- Returns events ordered by `game_date DESC`, **interleaved by detection_type** within each date (round-robin so no two consecutive events share the same type)
+- **Matchup preview display gate**: hidden before noon ET weekdays / 9 AM ET weekends. Filtered by `expires_at` (game start time) so they disappear after first pitch.
 - Game scores fetched from MLB Stats API (`statsapi.mlb.com/schedule` with linescore hydration), cached per date. Winning team listed first.
 
 #### Cron schedule (`deploy/statchat-cron`)
-- Weekday polls: every 15 min, 9:35 PM – 2:20 AM ET
-- Weekend polls: every 15 min, 3:35 PM – 2:20 AM ET
-- Daily full pipeline: 5:35 AM ET
+- Nightly cascade: 11:35 PM, 1:05 AM, 2:35 AM ET (90-min spacing, full pipeline)
+- Morning catch-alls: 5:35 AM, 8:00 AM ET
+- Backup: 10:00 AM ET
+- Afternoon: 5:00 PM ET daily, 7:30 PM ET weekends
 - Weekly reconciliation: Sunday 6:00 AM ET
+- Weekly VACUUM: Sunday 5:00 AM ET
 - Health monitor: every 5 min, pings Healthchecks.io
+- **Pipeline lock**: `/tmp/statchat_pipeline.lock` prevents concurrent runs (90-min stale timeout)
 
 #### iOS feed display (`NotableEventsFeed.swift`)
 - Loads from `/notable-events` on first appear + `willEnterForegroundNotification` (5-min cooldown)
@@ -337,12 +344,22 @@ Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The ma
 ### Priority roadmap (in order)
 1. ~~**Historical data (pre-2016) via backend**~~ DONE — full 1898-2026 DB, 220 MB
 2. ~~**In-season live data feed**~~ DONE — MySportsFeeds DETAILS tier, cron every 4 hours, incl. play-by-play platoon splits
-3. **Analytics** — Mixpanel (preferred). Single event per query from iOS side with `query_type` property (e.g. `local_comparison`, `local_leaderboard`, `backend_claude`). Full picture of all queries, filterable by type. Key metric: top searches.
+3. ~~**Analytics**~~ DONE — Custom admin dashboard + Mixpanel. See "Admin Query Dashboard" section below.
 4. **StoreKit subscription + paywall** — $2.99/month, $19.99/year. `/validate-receipt` endpoint on backend.
 5. ~~**About/Data Sources screen**~~ DONE — AboutView with Retrosheet, Chadwick Bureau, AI disclosure.
 
 ### Upcoming features
 - **"Close & Late" splits** — situational stats for at-bats in 7th inning or later when the batting team is tied, ahead by 1, or the tying run is at least on deck. Requires tracking running score through play-by-play data. MSF play-by-play has inning/half data and runner state; score can be derived by accumulating runs. New tables: `close_late_batting_splits`, `close_late_pitching_splits`. Pipeline addition to `pull_live_stats.py`. iOS player card tab.
+
+### Admin Query Dashboard (BUILT, 2026-04-07)
+- **URL**: `https://api.secondsignalapps.com/admin/dashboard?key=I9-NNJ-GBen3SZ-wf8JkZX5-_zvvt8Qri2EtTxWUo-I`
+- **Query logging**: Every query logged to `query_log` table in `metering.db` with query_text, device_id, response_type, timestamp. Three types: `query engine` ($0), `haiku` (~$0.002/query), `sonnet` (~$0.02/query).
+- **Dashboard features**: Blue gradient stat cards (total queries, unique queries), cost breakdown table by response type, full scrollable query list (up to 1,000). Sortable by count (default, tiebroken by recency) or time. Filterable by tapping type badges. Timestamps in Eastern Time.
+- **Player card search logging**: `/player-card` endpoint accepts `source=search|link` and `device_id`. Search = logged + metered. Link navigation (default) = no logging, no metering. iOS passes `source: "search"` from HomeView search bar and SearchHistoryView; link taps from ResultsView, NotableEventsFeed, TeamCardView, etc. default to `"link"`.
+- **Key files**: `backend/services/metering.py` (query_log table, log_query()), `backend/routers/admin.py` (/admin/dashboard endpoint), `backend/routers/query.py` (log_query calls at all exit points), `backend/routers/player_card.py` (source/device_id params)
+- **Styled with app brand colors**: White background, blue gradient (#1A40B3 → #73B3FF) stat cards and title, green/blue/purple type badges.
+- **Replaces Mixpanel long-term**. Remaining features needed: daily/weekly volume trend chart, unique users surfacing, paywall/subscription event tracking. Once built, Mixpanel can be dropped.
+- **Mixpanel MCP**: Connected via `claude mcp add --transport http --scope user mixpanel https://mcp.mixpanel.com/mcp`. OAuth flow, 25+ tools. "Stat Chat Overview" dashboard (ID 11085633). Being phased out.
 
 ### What's explicitly NOT happening
 - **Statcast data** — no viable commercial license path. Dropped from roadmap.
