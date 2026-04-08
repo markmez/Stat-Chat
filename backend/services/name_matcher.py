@@ -1257,7 +1257,7 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
     lower = input_str.strip().lower()
 
     # Reject game-log-style queries — these need the query engine, not a season summary
-    if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)[- ]hit\s+games?', lower):
+    if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)\+?\s*[- ]?\s*hit\s+games?|\d+\+\s+\w+\s+games?', lower):
         return None
 
     # Reject cross-season analytical questions — these should fall through to Claude
@@ -1338,7 +1338,7 @@ def parse_single_stat_lookup(input_str: str) -> Optional[dict]:
     lower = input_str.strip().lower()
 
     # Reject game-log-style queries — handled by query engine
-    if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)[- ]hit\s+games?', lower):
+    if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)\+?\s*[- ]?\s*hit\s+games?|\d+\+\s+\w+\s+games?', lower):
         return None
 
     # Exclude cross-season queries (handled by parse_season_count)
@@ -2540,7 +2540,7 @@ def parse_catch_all_player_stat(input_str: str) -> Optional[dict]:
     if re.search(r'\bclosest\b|\bsince\b', lower):
         return None
     # Game-log-style queries: "games with 4+ hits", "multi-homer games" — not a single-stat lookup
-    if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)[- ]hit\s+games?', lower):
+    if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)\+?\s*[- ]?\s*hit\s+games?|\d+\+\s+\w+\s+games?', lower):
         return None
 
     stat = match_stat(lower)
