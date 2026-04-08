@@ -74,19 +74,11 @@ def scan_start_of_season_streaks(conn, season, latest_date):
     ]
 
     for stype in streak_types:
-        # Check players who played recently (last 2 game dates)
-        recent_dates = conn.execute("""
-            SELECT DISTINCT date FROM game_batting_logs
-            WHERE season = ? ORDER BY date DESC LIMIT 2
-        """, (season,)).fetchall()
-        if not recent_dates:
-            continue
-        cutoff = recent_dates[-1][0]
-
+        # Only evaluate players who played on latest_date
         players = conn.execute("""
             SELECT DISTINCT player_id FROM game_batting_logs
-            WHERE season = ? AND date >= ? AND (plate_appearances > 0 OR at_bats > 0)
-        """, (season, cutoff)).fetchall()
+            WHERE season = ? AND date = ? AND (plate_appearances > 0 OR at_bats > 0)
+        """, (season, latest_date)).fetchall()
 
         for (pid,) in players:
             games = conn.execute("""
@@ -226,18 +218,11 @@ def scan_cross_season_streaks(conn, season, latest_date):
 # ---------------------------------------------------------------------------
 
 def scan_pitching_start_of_season(conn, season, latest_date):
-    """Find notable pitching feats in first N starts, with historical lookup."""
+    """Find notable pitching feats in first N starts, with historical lookup.
+    Only evaluates pitchers who started on latest_date."""
     facts = []
 
-    # Pitchers who started recently (last 2 game dates)
-    recent_dates = conn.execute("""
-        SELECT DISTINCT date FROM game_pitching_logs
-        WHERE season = ? AND is_start = 1 ORDER BY date DESC LIMIT 2
-    """, (season,)).fetchall()
-    if not recent_dates:
-        return facts
-    cutoff = recent_dates[-1][0]
-
+    # Only look at pitchers who started on latest_date
     starters = conn.execute("""
         SELECT player_id, COUNT(*) as starts
         FROM game_pitching_logs
@@ -246,13 +231,13 @@ def scan_pitching_start_of_season(conn, season, latest_date):
         HAVING starts >= 2
         AND player_id IN (
             SELECT DISTINCT player_id FROM game_pitching_logs
-            WHERE season = ? AND is_start = 1 AND date >= ?
+            WHERE season = ? AND is_start = 1 AND date = ?
         )
-    """, (season, season, cutoff)).fetchall()
+    """, (season, season, latest_date)).fetchall()
 
     for pid, num_starts in starters:
         starts = conn.execute("""
-            SELECT strikeouts, walks, earned_runs, ip_outs, hits
+            SELECT strikeouts, walks, earned_runs, ip_outs, hits, date
             FROM game_pitching_logs
             WHERE player_id = ? AND season = ? AND is_start = 1
             ORDER BY date ASC
@@ -261,8 +246,9 @@ def scan_pitching_start_of_season(conn, season, latest_date):
         name = _player_name(conn, pid)
         team = _team_display(conn, pid, season)
 
-        # Check first 2 starts: 15+ K and 0 BB (rare — ~47 in 100+ years at 10+, much fewer at 15+)
-        if num_starts >= 2:
+        # Check first 2 starts: 15+ K and 0 BB
+        # Only fire when the player has exactly 2 starts (their 2nd start just happened on latest_date)
+        if num_starts == 2:
             first_2 = starts[:2]
             k2 = sum(s[0] or 0 for s in first_2)
             bb2 = sum(s[1] or 0 for s in first_2)
@@ -287,9 +273,10 @@ def scan_pitching_start_of_season(conn, season, latest_date):
                     "historical": hist_list,
                 })
 
-        # All starts scoreless with 5+ IP
+        # All starts scoreless with 5+ IP — only fire if latest start was also scoreless
         all_scoreless = all((s[2] or 0) == 0 and (s[3] or 0) >= 15 for s in starts)
-        if all_scoreless and num_starts >= 2:
+        latest_scoreless = starts and (starts[-1][2] or 0) == 0 and (starts[-1][3] or 0) >= 15
+        if all_scoreless and latest_scoreless and num_starts >= 2:
             total_outs = sum(s[3] or 0 for s in starts)
             total_k = sum(s[0] or 0 for s in starts)
             ip = f"{total_outs // 3}.{total_outs % 3}"
@@ -437,27 +424,23 @@ def scan_career_start(conn, season, latest_date):
     facts = []
 
     # Get all current-season players with ≤30 career games
-    # who played in the last 2 game dates (recent activity)
-    recent_dates = conn.execute("""
-        SELECT DISTINCT date FROM game_batting_logs
-        WHERE season = ? ORDER BY date DESC LIMIT 2
-    """, (season,)).fetchall()
-    if not recent_dates:
-        return facts
-    recent_cutoff = recent_dates[-1][0]
-
+    # who played on latest_date
     active = conn.execute("""
         SELECT g.player_id,
-               MAX(CASE WHEN g.date >= ? THEN g.home_runs ELSE 0 END) as g_hr,
-               MAX(CASE WHEN g.date >= ? THEN g.hits ELSE 0 END) as g_hits,
-               MAX(CASE WHEN g.date >= ? THEN g.rbi ELSE 0 END) as g_rbi,
-               MAX(CASE WHEN g.date >= ? THEN g.doubles ELSE 0 END) as g_doubles,
-               MAX(CASE WHEN g.date >= ? THEN g.triples ELSE 0 END) as g_triples
+               MAX(CASE WHEN g.date = ? THEN g.home_runs ELSE 0 END) as g_hr,
+               MAX(CASE WHEN g.date = ? THEN g.hits ELSE 0 END) as g_hits,
+               MAX(CASE WHEN g.date = ? THEN g.rbi ELSE 0 END) as g_rbi,
+               MAX(CASE WHEN g.date = ? THEN g.doubles ELSE 0 END) as g_doubles,
+               MAX(CASE WHEN g.date = ? THEN g.triples ELSE 0 END) as g_triples
         FROM game_batting_logs g
-        WHERE g.season = ? 
+        WHERE g.season = ?
         GROUP BY g.player_id
         HAVING COUNT(*) <= 30
-    """, (recent_cutoff, recent_cutoff, recent_cutoff, recent_cutoff, recent_cutoff, season)).fetchall()
+        AND player_id IN (
+            SELECT DISTINCT player_id FROM game_batting_logs
+            WHERE season = ? AND date = ?
+        )
+    """, (latest_date, latest_date, latest_date, latest_date, latest_date, season, season, latest_date)).fetchall()
 
     for pid, g_hr, g_hits, g_rbi, g_doubles, g_triples in active:
         # Count total career games
@@ -691,14 +674,7 @@ def scan_leaderboard_changes(conn, season, latest_date):
     as a result of their most recent game."""
     facts = []
 
-    # Get recent game dates
-    recent_dates = conn.execute("""
-        SELECT DISTINCT date FROM game_batting_logs
-        WHERE season = ? ORDER BY date DESC LIMIT 2
-    """, (season,)).fetchall()
-    if not recent_dates:
-        return facts
-    cutoff = recent_dates[-1][0]
+    # Use latest_date directly — only attribute events to players who played today
 
     # Batting stats: (season_col, abbrev, label, min_val, game_log_col)
     # game_log_col is used to check if the player contributed to this stat today
@@ -745,11 +721,11 @@ def scan_leaderboard_changes(conn, season, latest_date):
             if leader_val is None or runner_up_val is None:
                 continue
 
-            # Did the leader play recently? (Required for counting stats, not rate stats)
+            # Did the leader play on latest_date? (Required for counting stats, not rate stats)
             played = conn.execute("""
                 SELECT COUNT(*) FROM game_batting_logs
-                WHERE player_id = ? AND season = ? AND date >= ?
-            """, (leader_pid, season, cutoff)).fetchone()[0]
+                WHERE player_id = ? AND season = ? AND date = ?
+            """, (leader_pid, season, latest_date)).fetchone()[0]
             if not played and not is_rate:
                 continue
 
@@ -759,9 +735,8 @@ def scan_leaderboard_changes(conn, season, latest_date):
                 game = conn.execute(f"""
                     SELECT {game_col}
                     FROM game_batting_logs
-                    WHERE player_id = ? AND season = ? AND date >= ?
-                    ORDER BY date DESC LIMIT 1
-                """, (leader_pid, season, cutoff)).fetchone()
+                    WHERE player_id = ? AND season = ? AND date = ?
+                """, (leader_pid, season, latest_date)).fetchone()
                 game_contribution = game[0] if game and game[0] else 0
             else:
                 # No game log column (e.g., stolen_bases) — just check if they played
