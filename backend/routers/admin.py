@@ -863,15 +863,37 @@ async def dashboard(
     """).fetchall()
     conn2.close()
 
+    # Map detection types to clean display categories
+    def _event_category(dtype):
+        if not dtype:
+            return "Other"
+        if dtype.startswith("career_"):
+            return "Milestone"
+        _map = {
+            "ai_insight": "AI Insight",
+            "historical_scan": "Historical",
+            "hitting_streak": "Streak",
+            "onbase_streak": "Streak",
+            "scoreless_streak": "Streak",
+            "hr_streak": "Streak",
+            "pitching_streak": "Streak",
+            "matchup_preview": "Matchup",
+            "on_this_date": "On This Date",
+            "leaderboard_change": "Leader Change",
+        }
+        return _map.get(dtype, dtype.replace("_", " ").title())
+
     event_rows = ""
     for headline, dtype, gdate, taps in event_rows_data:
         escaped_h = headline.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        css_type = dtype.replace(" ", "-") if dtype else ""
+        cat = _event_category(dtype)
+        css_cat = cat.lower().replace(" ", "-")
         event_rows += f"""
-        <tr data-taps="{taps}" data-date="{gdate}" data-etype="{dtype}">
+        <tr data-taps="{taps}" data-date="{gdate}" data-etype="{cat}">
             <td class="query-text">{escaped_h}</td>
-            <td><span class="badge {css_type}" onclick="filterEvents('{dtype}')">{dtype}</span></td>
+            <td><span class="badge evt-{css_cat}" onclick="filterEvents('{cat}')">{cat}</span></td>
             <td class="count">{taps}</td>
+            <td class="timestamp">{gdate}</td>
         </tr>"""
 
     html = f"""<!DOCTYPE html>
@@ -900,6 +922,13 @@ async def dashboard(
     font-size: 10px; font-weight: 600; text-transform: uppercase;
   }}
   .badge.intercepted, .badge.query-engine {{ background: #dcfce7; color: #166534; }}
+  .badge.evt-ai-insight {{ background: #fef3c7; color: #92400e; }}
+  .badge.evt-historical {{ background: #e0e7ff; color: #3730a3; }}
+  .badge.evt-streak {{ background: #fce7f3; color: #9d174d; }}
+  .badge.evt-milestone {{ background: #d1fae5; color: #065f46; }}
+  .badge.evt-matchup {{ background: #ede9fe; color: #5b21b6; }}
+  .badge.evt-on-this-date {{ background: #f0f9ff; color: #0c4a6e; }}
+  .badge.evt-leader-change {{ background: #fff7ed; color: #9a3412; }}
   .badge.haiku {{ background: #dbeafe; color: #1A40B3; }}
   .badge.sonnet {{ background: #f3e8ff; color: #6b21a8; }}
   .breakdown {{ margin-bottom: 24px; }}
@@ -1008,6 +1037,14 @@ async def dashboard(
 </div>
 
 <h2>Feed Events</h2>
+<div class="date-picker">
+  <label>From:</label>
+  <input type="date" id="evt-date-from">
+  <label>To:</label>
+  <input type="date" id="evt-date-to">
+  <button onclick="applyEvtDateRange()">Apply</button>
+  <button class="reset" onclick="clearEvtDateRange()">Reset</button>
+</div>
 <div class="filter-bar" id="evt-filter-bar">
   Showing: <span id="evt-filter-label"></span>
   <span class="filter-x" onclick="clearEvtFilter()">&times;</span>
@@ -1017,6 +1054,7 @@ async def dashboard(
     <th>Event</th>
     <th>Type</th>
     <th class="sortable" onclick="sortEvents('taps')" id="eth-taps">Taps</th>
+    <th class="sortable" onclick="sortEvents('date')" id="eth-date">Date<span class="arrow"> &#x25BE;</span></th>
   </tr>
   {event_rows}
 </table>
@@ -1121,8 +1159,11 @@ let evtFilter = null;
 let evtSort = 'date';
 
 function getVisibleEvents() {{
-  const all = Array.from(document.querySelectorAll('#etable tr[data-taps]'));
-  return evtFilter ? all.filter(r => r.dataset.etype === evtFilter) : all;
+  let all = Array.from(document.querySelectorAll('#etable tr[data-taps]'));
+  if (evtFilter) all = all.filter(r => r.dataset.etype === evtFilter);
+  if (evtDateFrom) all = all.filter(r => r.dataset.date >= evtDateFrom);
+  if (evtDateTo) all = all.filter(r => r.dataset.date <= evtDateTo);
+  return all;
 }}
 
 function renderEvents() {{
@@ -1170,6 +1211,32 @@ function clearEvtFilter() {{
   evtFilter = null;
   evtPage = 0;
   document.getElementById('evt-filter-bar').classList.remove('active');
+  renderEvents();
+}}
+
+let evtDateFrom = null, evtDateTo = null;
+
+function getVisibleEventsFiltered() {{
+  let all = Array.from(document.querySelectorAll('#etable tr[data-taps]'));
+  if (evtFilter) all = all.filter(r => r.dataset.etype === evtFilter);
+  if (evtDateFrom) all = all.filter(r => r.dataset.date >= evtDateFrom);
+  if (evtDateTo) all = all.filter(r => r.dataset.date <= evtDateTo);
+  return all;
+}}
+
+function applyEvtDateRange() {{
+  evtDateFrom = document.getElementById('evt-date-from').value || null;
+  evtDateTo = document.getElementById('evt-date-to').value || null;
+  evtPage = 0;
+  renderEvents();
+}}
+
+function clearEvtDateRange() {{
+  evtDateFrom = null;
+  evtDateTo = null;
+  document.getElementById('evt-date-from').value = '';
+  document.getElementById('evt-date-to').value = '';
+  evtPage = 0;
   renderEvents();
 }}
 
