@@ -483,26 +483,29 @@ def _is_bare_count(result_text: str) -> bool:
         return False
 
 
-def _unwrap_count_sql(sql: str) -> str | None:
+def _unwrap_count_sql(sql: str) -> Optional[str]:
     """Strip COUNT(*) from SQL to get the underlying query with examples.
     Returns modified SQL with LIMIT 25, or None if can't unwrap."""
     import re
-    upper = sql.upper().strip()
 
-    # Pattern 1: SELECT COUNT(*) FROM (subquery)
-    m = re.match(r'SELECT\s+COUNT\s*\(\s*\*\s*\)\s+\w*\s*FROM\s*\((.*)\)\s*\w*\s*$',
-                 sql, re.IGNORECASE | re.DOTALL)
+    # Strip trailing semicolons
+    sql_clean = sql.strip().rstrip(';').strip()
+
+    # Pattern 1: SELECT COUNT(*) [AS alias] FROM (subquery) [alias]
+    m = re.match(
+        r'SELECT\s+COUNT\s*\(\s*\*\s*\)(?:\s+AS\s+\w+)?\s+FROM\s*\((.*)\)\s*\w*\s*$',
+        sql_clean, re.IGNORECASE | re.DOTALL)
     if m:
-        inner = m.group(1).strip().rstrip(';')
-        # Remove any existing LIMIT
+        inner = m.group(1).strip()
         inner = re.sub(r'\s+LIMIT\s+\d+\s*$', '', inner, flags=re.IGNORECASE)
         return inner + " LIMIT 25"
 
-    # Pattern 2: SELECT COUNT(*) FROM table WHERE ...
-    m = re.match(r'SELECT\s+COUNT\s*\(\s*\*\s*\)\s+\w*\s*FROM\s+(.+)',
-                 sql, re.IGNORECASE | re.DOTALL)
+    # Pattern 2: SELECT COUNT(*) [AS alias] FROM table/join WHERE ...
+    m = re.match(
+        r'SELECT\s+COUNT\s*\(\s*\*\s*\)(?:\s+AS\s+\w+)?\s+FROM\s+(.+)',
+        sql_clean, re.IGNORECASE | re.DOTALL)
     if m:
-        rest = m.group(1).strip().rstrip(';')
+        rest = m.group(1).strip()
         rest = re.sub(r'\s+LIMIT\s+\d+\s*$', '', rest, flags=re.IGNORECASE)
         return f"SELECT * FROM {rest} LIMIT 25"
 
