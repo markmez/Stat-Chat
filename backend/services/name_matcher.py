@@ -1337,6 +1337,10 @@ def parse_single_stat_lookup(input_str: str) -> Optional[dict]:
     """Detect queries like 'Judge home runs'. Returns dict with name, stat, season."""
     lower = input_str.strip().lower()
 
+    # Reject game-log-style queries — handled by query engine
+    if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)[- ]hit\s+games?', lower):
+        return None
+
     # Exclude cross-season queries (handled by parse_season_count)
     cross_season_patterns = [
         "how many seasons", "how many times", "how many years",
