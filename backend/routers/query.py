@@ -273,6 +273,18 @@ def _format_haiku_result(result_text: str, question: str = "") -> str:
     if not data_rows:
         return clean_text
 
+    # Single aggregate result (COUNT, SUM, etc.) — format as a clean answer
+    if len(data_rows) == 1 and len(columns) == 1:
+        val = list(data_rows[0].values())[0]
+        try:
+            num = int(float(val))
+            col_name = _display_col_name(columns[0]) or columns[0].replace("_", " ").title()
+            if question:
+                return f"**{num:,}** — {question}"
+            return f"**{num:,}** {col_name}"
+        except (ValueError, TypeError):
+            pass
+
     # Determine row label: name, season, or numbered
     has_name = "name" in columns
     has_season = "season" in columns
