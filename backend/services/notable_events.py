@@ -1885,7 +1885,7 @@ def detect_all(db_path=None, season=None, from_poll=False):
     ).fetchone()
     gp = games_played[0] if games_played and games_played[0] else 10
     hit_streak_min = max(8, min(15, int(gp * 0.75)))
-    onbase_streak_min = max(12, min(20, int(gp * 0.9)))
+    onbase_streak_min = max(12, min(25, int(gp * 1.0)))
     hr_streak_min = max(3, min(5, int(gp * 0.3)))
 
     # Tier 1
