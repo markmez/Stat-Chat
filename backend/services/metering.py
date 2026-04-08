@@ -19,7 +19,7 @@ FREE_QUERIES_PER_WEEK = int(os.getenv("FREE_QUERIES_PER_WEEK", "5"))
 
 
 def init_metering_db() -> None:
-    """Create the quota and query_log tables if they don't exist. Called at app startup."""
+    """Create the quota, query_log, event_archive, and event_taps tables if they don't exist."""
     conn = sqlite3.connect(METERING_DB_PATH)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS device_quota (
@@ -39,6 +39,25 @@ def init_metering_db() -> None:
             timestamp       TEXT NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS event_archive (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            headline        TEXT NOT NULL,
+            detection_type  TEXT NOT NULL,
+            game_date       TEXT NOT NULL,
+            archived_at     TEXT NOT NULL,
+            UNIQUE(headline, game_date)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS event_taps (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            headline        TEXT NOT NULL,
+            tap_type        TEXT NOT NULL,
+            device_id       TEXT,
+            timestamp       TEXT NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -49,6 +68,37 @@ def log_query(query_text: str, device_id: str, response_type: str) -> None:
     conn.execute(
         "INSERT INTO query_log (query_text, device_id, response_type, timestamp) VALUES (?, ?, ?, ?)",
         (query_text, device_id, response_type, _now_iso()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def archive_events(events: list[dict]) -> int:
+    """Archive notable events. Each dict needs headline, detection_type, game_date.
+    Returns count of newly archived events."""
+    conn = sqlite3.connect(METERING_DB_PATH)
+    ts = _now_iso()
+    count = 0
+    for e in events:
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO event_archive (headline, detection_type, game_date, archived_at) VALUES (?, ?, ?, ?)",
+                (e.get("headline", ""), e.get("detection_type", ""), e.get("game_date", ""), ts),
+            )
+            count += conn.total_changes  # approximate
+        except Exception:
+            pass
+    conn.commit()
+    conn.close()
+    return count
+
+
+def log_event_tap(headline: str, tap_type: str, device_id: str) -> None:
+    """Log a user tapping on a feed event link."""
+    conn = sqlite3.connect(METERING_DB_PATH)
+    conn.execute(
+        "INSERT INTO event_taps (headline, tap_type, device_id, timestamp) VALUES (?, ?, ?, ?)",
+        (headline, tap_type, device_id, _now_iso()),
     )
     conn.commit()
     conn.close()

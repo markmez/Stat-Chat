@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Query as QueryParam
+from pydantic import BaseModel
 
 router = APIRouter()
 
@@ -97,3 +98,17 @@ async def get_notable_events(limit: int = QueryParam(50, le=200)):
         e.pop("_type", None)
 
     return interleaved[:limit]
+
+
+class EventTapRequest(BaseModel):
+    headline: str
+    tap_type: str  # "player", "matchup", "suggestion"
+    device_id: str = ""
+
+
+@router.post("/event-tap")
+async def event_tap(req: EventTapRequest):
+    """Log a user tapping on a link within a feed event."""
+    from services.metering import log_event_tap
+    log_event_tap(req.headline, req.tap_type, req.device_id)
+    return {"status": "ok"}

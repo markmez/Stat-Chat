@@ -472,6 +472,25 @@ async def detect_notable(
         raise HTTPException(500, str(e))
 
 
+@router.post("/seed-event-archive")
+async def seed_event_archive(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """One-time: seed event_archive from current notable_events."""
+    verify_admin(authorization, key)
+    stats_conn = sqlite3.connect(DB_PATH)
+    rows = stats_conn.execute("""
+        SELECT headline, detection_type, game_date FROM notable_events
+    """).fetchall()
+    stats_conn.close()
+
+    from services.metering import archive_events
+    events = [{"headline": r[0], "detection_type": r[1], "game_date": r[2]} for r in rows]
+    count = archive_events(events)
+    return {"status": "ok", "seeded": len(events)}
+
+
 @router.get("/debug-decompose")
 async def debug_decompose(
     q: str = "",
@@ -831,6 +850,30 @@ async def dashboard(
             <td class="timestamp">{ts_display}</td>
         </tr>"""
 
+    # Build events table from archive + tap counts
+    conn2 = sqlite3.connect(METERING_DB_PATH)
+    event_rows_data = conn2.execute("""
+        SELECT e.headline, e.detection_type, e.game_date,
+               COALESCE(t.taps, 0) as taps
+        FROM event_archive e
+        LEFT JOIN (
+            SELECT headline, COUNT(*) as taps FROM event_taps GROUP BY headline
+        ) t ON e.headline = t.headline
+        ORDER BY e.game_date DESC, taps DESC
+    """).fetchall()
+    conn2.close()
+
+    event_rows = ""
+    for headline, dtype, gdate, taps in event_rows_data:
+        escaped_h = headline.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        css_type = dtype.replace(" ", "-") if dtype else ""
+        event_rows += f"""
+        <tr data-taps="{taps}" data-date="{gdate}" data-etype="{dtype}">
+            <td class="query-text">{escaped_h}</td>
+            <td><span class="badge {css_type}" onclick="filterEvents('{dtype}')">{dtype}</span></td>
+            <td class="count">{taps}</td>
+        </tr>"""
+
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -963,6 +1006,25 @@ async def dashboard(
   <span class="page-info" id="page-info"></span>
   <button id="next-btn" onclick="changePage(1)">Next &rarr;</button>
 </div>
+
+<h2>Feed Events</h2>
+<div class="filter-bar" id="evt-filter-bar">
+  Showing: <span id="evt-filter-label"></span>
+  <span class="filter-x" onclick="clearEvtFilter()">&times;</span>
+</div>
+<table id="etable">
+  <tr>
+    <th>Event</th>
+    <th>Type</th>
+    <th class="sortable" onclick="sortEvents('taps')" id="eth-taps">Taps</th>
+  </tr>
+  {event_rows}
+</table>
+<div class="pagination">
+  <button id="evt-prev" onclick="changeEvtPage(-1)" disabled>&larr; Prev</button>
+  <span class="page-info" id="evt-page-info"></span>
+  <button id="evt-next" onclick="changeEvtPage(1)">Next &rarr;</button>
+</div>
 <script>
 const PAGE_SIZE = 30;
 let currentSort = 'count';
@@ -1051,6 +1113,67 @@ function resetDateRange() {{
 
 // Initial render
 renderPage();
+
+// --- Events table ---
+const EVT_PAGE = 30;
+let evtPage = 0;
+let evtFilter = null;
+let evtSort = 'date';
+
+function getVisibleEvents() {{
+  const all = Array.from(document.querySelectorAll('#etable tr[data-taps]'));
+  return evtFilter ? all.filter(r => r.dataset.etype === evtFilter) : all;
+}}
+
+function renderEvents() {{
+  const visible = getVisibleEvents();
+  const totalPages = Math.ceil(visible.length / EVT_PAGE);
+  if (evtPage >= totalPages) evtPage = Math.max(0, totalPages - 1);
+  const start = evtPage * EVT_PAGE;
+  const end = start + EVT_PAGE;
+  document.querySelectorAll('#etable tr[data-taps]').forEach(r => r.style.display = 'none');
+  visible.forEach((r, i) => r.style.display = (i >= start && i < end) ? '' : 'none');
+  document.getElementById('evt-page-info').textContent = visible.length > 0
+    ? `${{start + 1}}-${{Math.min(end, visible.length)}} of ${{visible.length}}`
+    : 'No events';
+  document.getElementById('evt-prev').disabled = evtPage === 0;
+  document.getElementById('evt-next').disabled = evtPage >= totalPages - 1;
+}}
+
+function changeEvtPage(d) {{ evtPage += d; renderEvents(); }}
+
+function sortEvents(mode) {{
+  evtSort = mode;
+  evtPage = 0;
+  const table = document.getElementById('etable');
+  const rows = Array.from(table.querySelectorAll('tr[data-taps]'));
+  rows.sort((a, b) => {{
+    if (mode === 'taps') return parseInt(b.dataset.taps) - parseInt(a.dataset.taps);
+    return b.dataset.date.localeCompare(a.dataset.date);
+  }});
+  rows.forEach(r => table.appendChild(r));
+  document.getElementById('eth-date').innerHTML = 'Date' + (mode === 'date' ? '<span class="arrow"> &#x25BE;</span>' : '');
+  document.getElementById('eth-taps').innerHTML = 'Taps' + (mode === 'taps' ? '<span class="arrow"> &#x25BE;</span>' : '');
+  renderEvents();
+}}
+
+function filterEvents(type) {{
+  evtFilter = type;
+  evtPage = 0;
+  document.getElementById('evt-filter-bar').classList.add('active');
+  const css = type.replace(' ', '-');
+  document.getElementById('evt-filter-label').innerHTML = '<span class="badge ' + css + '">' + type + '</span>';
+  renderEvents();
+}}
+
+function clearEvtFilter() {{
+  evtFilter = null;
+  evtPage = 0;
+  document.getElementById('evt-filter-bar').classList.remove('active');
+  renderEvents();
+}}
+
+renderEvents();
 </script>
 </body>
 </html>"""

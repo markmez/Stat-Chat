@@ -2037,6 +2037,15 @@ def detect_all(db_path=None, season=None, from_poll=False):
     conn.close()
 
     print(f"  Notable events: {inserted} new, {pruned} pruned, {len(events)} total detected")
+
+    # Archive events permanently (metering.db — not pruned)
+    try:
+        from services.metering import archive_events
+        archived = archive_events(events)
+        print(f"  Archived {archived} events")
+    except Exception as e:
+        print(f"  Archive failed: {e}")
+
     return len(events)
 
 
