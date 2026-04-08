@@ -660,6 +660,23 @@ def pull_game_logs(conn, season_str, full_refresh=False):
         _set_last_game_date_pulled(conn, season_year, last_date)
 
     print(f"    Loaded {bat_count} batting + {pitch_count} pitching game logs across {len(game_dates)} days")
+
+    # If game logs returned nothing for recent dates, check if play-by-play is available
+    # This helps us understand MSF's data availability timing
+    if bat_count == 0 and game_dates:
+        latest_gdate = game_dates[-1]
+        try:
+            pbp_data = msf_get(f"{season_str}/date/{latest_gdate}/games.json")
+            if pbp_data and pbp_data.get("games"):
+                games = pbp_data["games"]
+                completed = sum(1 for g in games if g.get("schedule", {}).get("playedStatus") == "COMPLETED")
+                print(f"    NOTE: Game logs empty for {latest_gdate}, but games endpoint shows {len(games)} games ({completed} completed)")
+                print(f"    Play-by-play may be available before game logs — potential for faster event detection")
+            else:
+                print(f"    NOTE: Game logs AND games endpoint both empty for {latest_gdate}")
+        except Exception:
+            pass
+
     return bat_count, pitch_count
 
 
