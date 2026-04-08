@@ -1,27 +1,25 @@
-# StatChat data refresh schedule (all times UTC, server runs UTC)
+# StatChat data refresh — game-end oriented schedule
 #
-# LIGHTWEIGHT POLL — every 15 min during post-game hours
-#   Weekdays: 9:35 PM - 2:35 AM ET = 1:35 AM - 6:35 AM UTC
-#   Weekends: 3:35 PM - 2:35 AM ET = 7:35 PM - 6:35 AM UTC
-#   Pulls today's game logs + season totals, detects events
-#
-# FULL PIPELINE — existing schedule
-#   Catches splits, streaks, play-by-play, integrity check
+# Nightly cascade: 11:35 PM, 12:35 AM, 1:35 AM, 2:35 AM ET (covers ET→PT game ends)
+# Early morning catch-all: 5:35 AM ET
+# Afternoon games: 5:00 PM ET daily
+# Weekend early starts: 7:30 PM ET (Sat/Sun only)
+# Backup: 10:00 AM ET — catches data MSF publishes late
 #
 # WEEKLY RECONCILIATION — Sunday 6 AM ET
-#   Full wipe-and-rebuild of game logs
+# WEEKLY VACUUM — Sunday 5 AM ET
 
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 
-# Lightweight poll: weekdays 1:35-6:20 UTC (9:35 PM - 2:20 AM ET)
-5,20,35,50 1,2,3,4,5,6 * * 1,2,3,4,5 statchat /opt/statchat/repo/deploy/poll.sh >> /data/poll.log 2>&1
+# Nightly cascade + morning catch-all (full pipeline)
+35 3,4,5,6,9 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 
-# Lightweight poll: weekends 19:35-6:20 UTC (3:35 PM - 2:20 AM ET)
-5,20,35,50 19,20,21,22,23,0,1,2,3,4,5,6 * * 0,6 statchat /opt/statchat/repo/deploy/poll.sh >> /data/poll.log 2>&1
+# Afternoon games: 5:00 PM ET (21:00 UTC)
+0 21 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 
-# Full pipeline: 5:35 AM ET daily (9:35 UTC) — catch-all + integrity check
-35 9 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+# Weekend early starts: 7:30 PM ET (23:30 UTC, Sat/Sun only)
+30 23 * * 0,6 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 
 # Backup pipeline: 10:00 AM ET (14:00 UTC) — catches data MSF publishes late
 0 14 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
