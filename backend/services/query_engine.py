@@ -2165,10 +2165,50 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
     return "\n".join(parts)
 
 
+def _execute_player_threshold(conn, plan: QueryPlan) -> Optional[str]:
+    """Player-filtered threshold: show qualifying seasons for a specific player.
+    E.g., 'Ohtani 30+ HR seasons' → list of Ohtani's seasons with 30+ HR."""
+    table, prefix = _table_and_prefix(plan)
+    stat_expr, abbrev, stat_name, is_rate = _stat_expr(plan, prefix)
+
+    threshold_display = _format_val("", plan.threshold, is_rate) if is_rate else str(int(plan.threshold))
+
+    cur = conn.cursor()
+    cur.execute(
+        f"SELECT {prefix}.season, {stat_expr} AS stat_val, {prefix}.games, "
+        f"{prefix}.hits, {prefix}.at_bats, {prefix}.home_runs, {prefix}.rbi, {prefix}.runs "
+        f"FROM {table} {prefix} "
+        f"JOIN players p ON {prefix}.player_id = p.player_id "
+        f"WHERE p.name = ? AND {stat_expr} {plan.comparison} ? "
+        f"ORDER BY {prefix}.season ASC",
+        (plan.player_name, plan.threshold),
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        return f"{plan.player_name} has no seasons with {threshold_display}+ {abbrev}."
+
+    title = f"**{plan.player_name} — {len(rows)} season{'s' if len(rows) != 1 else ''} with {threshold_display}+ {abbrev}**\n"
+    parts = [title]
+    parts.append("[LEADERBOARD]")
+    parts.append(f"HEADER: {abbrev}, G, H-AB, RBI, R")
+
+    for season, stat_val, games, h, ab, hr, rbi, r in rows:
+        val = _format_val(plan.stat.db_column if plan.stat else "", stat_val, is_rate)
+        parts.append(f"ROW {season}: {val}, {games or 0}, {h or 0}-{ab or 0}, {rbi or 0}, {r or 0}")
+
+    parts.append("[/LEADERBOARD]")
+    return "\n".join(parts)
+
+
 def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
     """Threshold query: 'who hit 40 HR', 'players with .800 OPS'."""
     if plan.per_season:
         return _execute_per_season_threshold(conn, plan)
+
+    # Player-filtered threshold: show this player's qualifying seasons
+    if plan.player_name:
+        return _execute_player_threshold(conn, plan)
 
     table, prefix = _table_and_prefix(plan)
     stat_expr, abbrev, name, is_rate = _stat_expr(plan, prefix)

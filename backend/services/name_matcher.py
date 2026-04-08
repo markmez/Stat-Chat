@@ -1304,8 +1304,17 @@ def parse_season_count(input_str: str) -> Optional[dict]:
     Returns dict with name, stat (db column), threshold (minimum value, default 1)."""
     lower = input_str.strip().lower()
 
-    # Must contain a cross-season counting phrase
-    if not re.search(r'how many (seasons?|times?|years?)|how often|in how many|has.*ever|did.*ever', lower):
+    # Must contain a cross-season counting phrase OR "N+ stat seasons" pattern
+    has_counting_phrase = bool(re.search(r'how many (seasons?|times?|years?)|how often|in how many|has.*ever|did.*ever', lower))
+
+    # "Ohtani 30+ HR seasons", "Judge .300 seasons", "Soto 100 RBI years"
+    # "30+ HR seasons", ".300 batting average seasons", ".300 seasons"
+    n_stat_seasons_match = re.search(r'(\.?\d+\.?\d*)\+?\s+(\w[\w\s]*?)\s+(?:seasons?|years?)\s*$', lower)
+    if not n_stat_seasons_match:
+        # Bare rate: ".300 seasons" (no stat word, infer batting average)
+        n_stat_seasons_match = re.search(r'(\.\d{3})\+?\s+(?:seasons?|years?)\s*$', lower)
+
+    if not has_counting_phrase and not n_stat_seasons_match:
         return None
 
     name = find_player_in_text(lower)
@@ -1315,19 +1324,25 @@ def parse_season_count(input_str: str) -> Optional[dict]:
     stat_info = match_stat(lower)
     if not stat_info:
         # Infer batting average from verb forms like "batted .300", "hit .300"
-        if re.search(r'(?:batted|hit|batting)\s+\.?\d', lower):
+        # or bare rate values like ".300 seasons"
+        if re.search(r'(?:batted|hit|batting)\s+\.?\d', lower) or re.search(r'\.\d{3}\s+(?:seasons?|years?)', lower):
             stat_info = match_stat("batting average")
         if not stat_info:
             return None
 
     # Check for an explicit threshold — "hit 30 home runs", "batted .300", "stolen 40 bases"
     threshold = 1
-    # Try number anywhere near context: "hit 30", "batted .300", "stolen 40"
-    m = re.search(r'(?:hit|batted|stolen|had|threw|pitched|struck out|walked|over|above)\s+(\.?\d+\.?\d*)', lower)
-    if m:
-        threshold = float(m.group(1))
+    if n_stat_seasons_match:
+        threshold = float(n_stat_seasons_match.group(1))
         if threshold == int(threshold):
             threshold = int(threshold)
+    else:
+        # Try number anywhere near context: "hit 30", "batted .300", "stolen 40"
+        m = re.search(r'(?:hit|batted|stolen|had|threw|pitched|struck out|walked|over|above)\s+(\.?\d+\.?\d*)', lower)
+        if m:
+            threshold = float(m.group(1))
+            if threshold == int(threshold):
+                threshold = int(threshold)
 
     return {"name": name, "stat": stat_info.db_column, "stat_abbrev": stat_info.display_abbrev,
             "stat_name": stat_info.display_name, "threshold": threshold, "is_rate": stat_info.is_rate}
