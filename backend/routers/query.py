@@ -36,7 +36,7 @@ runner = SqlRunner()
 _COL_DISPLAY = {
     "name": None,  # Used as row label, not a stat column
     "player_id": None,
-    "season": None,  # Used as row label when present
+    "season": "Year",
     "team": "Team",
     "age": "Age",
     "player_age": "Age",
@@ -394,10 +394,8 @@ def _format_haiku_result(result_text: str, question: str = "") -> str:
             name = row.get("name", "")
             team = f" ({row.get('team', '')})" if use_team_in_label and row.get("team") else ""
             label_parts.append(f"{name}{team}")
-        # Show season in label only when rows span multiple seasons
-        # (when season is NOT in label_cols, it means mixed years → show it)
-        if has_season and "season" not in label_cols:
-            label_parts.append(str(row.get("season", "")))
+        # Show season as its own column, not merged into the name label
+        # (handled by stat_cols if season is in columns)
 
         label = ", ".join(label_parts) if label_parts else ""
 
