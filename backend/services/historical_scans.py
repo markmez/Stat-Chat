@@ -742,41 +742,69 @@ def scan_leaderboard_changes(conn, season, latest_date):
                 # No game log column (e.g., stolen_bases) — just check if they played
                 game_contribution = 1
 
-            # For counting stats: did they JUST take the lead?
+            # For counting stats: did they JUST take the lead or tie?
             if not is_rate:
                 margin = leader_val - runner_up_val
-                if game_contribution > 0:
-                    # They took or extended the lead if margin <= game contribution
-                    if margin <= game_contribution and margin > 0:
-                        team = leader_team
-                        league = _league_for_team(team)
+                if margin > 0 and game_contribution > 0 and margin <= game_contribution:
+                    # Took sole lead
+                    team = leader_team
+                    league = _league_for_team(team)
 
-                        # Skip MLB if they also lead their league (avoid duplicate)
-                        if scope == "MLB":
-                            league_rows = conn.execute(f"""
-                                SELECT p.player_id
-                                FROM season_batting_stats s
-                                JOIN players p ON s.player_id = p.player_id
-                                WHERE s.season = ? {val_filter}
-                                AND s.team IN ({','.join(repr(t) for t in (AL_TEAMS if league == 'AL' else NL_TEAMS))})
-                                ORDER BY s.{col} DESC LIMIT 1
-                            """, (season,)).fetchone()
-                            if league_rows and league_rows[0] == leader_pid:
-                                continue  # Will be covered by AL/NL scope
+                    if scope == "MLB":
+                        league_rows = conn.execute(f"""
+                            SELECT p.player_id
+                            FROM season_batting_stats s
+                            JOIN players p ON s.player_id = p.player_id
+                            WHERE s.season = ? {val_filter}
+                            AND s.team IN ({','.join(repr(t) for t in (AL_TEAMS if league == 'AL' else NL_TEAMS))})
+                            ORDER BY s.{col} DESC LIMIT 1
+                        """, (season,)).fetchone()
+                        if league_rows and league_rows[0] == leader_pid:
+                            continue
 
-                        facts.append({
-                            "type": "leaderboard_change",
-                            "player": leader_name,
-                            "player_id": leader_pid,
-                            "team": team,
-                            "stat": col,
-                            "stat_label": label,
-                            "stat_abbrev": abbrev,
-                            "value": leader_val,
-                            "scope": scope,
-                            "runner_up": runner_up_name,
-                            "runner_up_val": runner_up_val,
-                        })
+                    facts.append({
+                        "type": "leaderboard_change",
+                        "player": leader_name,
+                        "player_id": leader_pid,
+                        "team": team,
+                        "stat": col,
+                        "stat_label": label,
+                        "stat_abbrev": abbrev,
+                        "value": leader_val,
+                        "scope": scope,
+                        "runner_up": runner_up_name,
+                        "runner_up_val": runner_up_val,
+                    })
+                elif margin == 0:
+                    # Tie — check which player(s) just joined the tie today
+                    for tied_pid, tied_name, tied_val, tied_team in rows:
+                        if tied_val != leader_val:
+                            break
+                        # Did this player play today and did their contribution create the tie?
+                        tied_game = None
+                        if game_col:
+                            tied_game = conn.execute(f"""
+                                SELECT {game_col} FROM game_batting_logs
+                                WHERE player_id = ? AND season = ? AND date = ?
+                            """, (tied_pid, season, latest_date)).fetchone()
+                        tied_contribution = tied_game[0] if tied_game and tied_game[0] else 0
+                        if tied_contribution > 0 and tied_val - tied_contribution < leader_val:
+                            # This player just tied up — find who they tied
+                            other = [n for p, n, v, t in rows if v == leader_val and p != tied_pid]
+                            if other:
+                                facts.append({
+                                    "type": "leaderboard_tie",
+                                    "player": tied_name,
+                                    "player_id": tied_pid,
+                                    "team": tied_team,
+                                    "stat": col,
+                                    "stat_label": label,
+                                    "stat_abbrev": abbrev,
+                                    "value": tied_val,
+                                    "scope": scope,
+                                    "tied_with": other[0],
+                                })
+                            break  # Only report one tie per stat/scope
 
             # For rate stats: leader can change through inaction (other player drops)
             else:
@@ -1370,6 +1398,15 @@ def template_facts(conn, facts, season, latest_date):
 
             headline = f"{game_intro}, dropping below {new_leader} ({nl_str}) for the {scope} lead in {stat_label}."
             secondary_names.append(new_leader)
+
+        elif f["type"] == "leaderboard_tie":
+            val = f["value"]
+            scope = f["scope"]
+            stat_label = f["stat_label"]
+            tied_with = f["tied_with"]
+            game_intro = f"{player} went {game_line}" if game_line else f"{player}"
+            headline = f"{game_intro}, tying {tied_with} for the {scope} lead in {stat_label} ({val})."
+            secondary_names.append(tied_with)
 
         elif f["type"] == "youngest_debut_since":
             age = f["age_years"]
