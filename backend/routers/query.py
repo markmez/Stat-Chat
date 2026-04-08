@@ -365,12 +365,14 @@ def _format_haiku_result(result_text: str, question: str = "") -> str:
         stat_cols = [c for c in stat_cols if c != "team"]
 
     # Limit to 4 stat columns max for display — iOS leaderboard overflows otherwise.
-    # Deprioritize date columns (wide) — put stats first, dates last, then cap.
-    _date_cols = {"date", "game_date", "start_date", "end_date"}
+    # Deprioritize computed/derived columns (gap, diff, shortfall) and date columns.
+    _low_priority_cols = {"date", "game_date", "start_date", "end_date",
+                          "gap", "gap_to_400", "gap_from_400", "shortfall",
+                          "diff", "difference", "delta"}
     if multi_row and len(stat_cols) > 4:
-        non_date = [c for c in stat_cols if c.lower() not in _date_cols]
-        date_only = [c for c in stat_cols if c.lower() in _date_cols]
-        stat_cols = (non_date + date_only)[:4]
+        high = [c for c in stat_cols if c.lower() not in _low_priority_cols]
+        low = [c for c in stat_cols if c.lower() in _low_priority_cols]
+        stat_cols = (high + low)[:4]
 
     # Remove columns that map to None (label-only columns that slipped through)
     stat_cols = [c for c in stat_cols if _display_col_name(c) is not None]
@@ -409,11 +411,11 @@ def _format_haiku_result(result_text: str, question: str = "") -> str:
         else:
             row_lines.append(f"ROW: {', '.join(vals)}")
 
-    # Build title from question + total count
+    # Build title with count (question already shown by iOS above the result)
     title = ""
     display_total = total_count or len(data_rows)
-    if question and display_total > 1:
-        title = f"**{display_total} results** — {question}\n\n"
+    if display_total > 1:
+        title = f"**{display_total} results**\n\n"
 
     # Pagination note if results were capped
     pagination = ""
