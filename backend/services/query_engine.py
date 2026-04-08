@@ -1253,6 +1253,12 @@ def decompose(question: str) -> QueryPlan:
         plan.query_type = "streak_sequence"
         _add_consumed(plan, "consecutive straight in a row games game first opening streak streaks")
 
+        # If no streak_length was extracted but we have a threshold, use it
+        # "8+ game hitting streaks" → threshold=8, streak_length=None → fix
+        if plan.streak_length is None and plan.threshold is not None:
+            plan.streak_length = int(plan.threshold)
+            plan.threshold = None  # consumed into streak_length
+
         # "of a season" / "in a season" in streak context = search all seasons, not a specific one
         if any(p in lower for p in ["of a season", "in a season"]) and not plan.since_year:
             plan.season = None
@@ -2691,26 +2697,31 @@ def _streak_sliding(rows, target_length, label, plan) -> Optional[str]:
 
     if not results:
         if target_length:
-            return None  # Fall through
+            scope = str(plan.season) if plan.season else "All-Time"
+            return f"No {target_length}+ game streaks of {label} found ({scope})."
         return None
 
     # Sort by streak length descending
     results.sort(key=lambda x: x[0], reverse=True)
 
-    # Title
-    scope = str(plan.season) if plan.season else f"Since {plan.since_year}" if plan.since_year else "2016-2025"
+    # Title with count
+    scope = str(plan.season) if plan.season else f"Since {plan.since_year}" if plan.since_year else "All-Time"
+    total = len(results)
     if target_length:
-        title = f"**Players with {label} in {target_length}+ Consecutive Games ({scope})**\n"
+        title = f"**{total} streak{'s' if total != 1 else ''} of {target_length}+ consecutive games with {label} ({scope})**\n"
     else:
         title = f"**Longest Streaks of {label} ({scope})**\n"
 
+    display_limit = min(len(results), 25)
     parts = [title]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
     parts.append("HEADER: Games, Year")
-    for i, (streak_len, name, season) in enumerate(results[:50]):
+    for i, (streak_len, name, season) in enumerate(results[:display_limit]):
         parts.append(f"ROW {i+1}. {name}: {streak_len}, {season}")
     parts.append("[/LEADERBOARD]")
+    if total > display_limit:
+        parts.append(f"\nShowing 1-{display_limit} of {total}.")
 
     return "\n".join(parts)
 
