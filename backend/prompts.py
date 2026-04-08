@@ -83,7 +83,8 @@ Rules:
 - When joining multiple tables, ALWAYS qualify every column with its table alias (e.g., s.hits, not just hits) to avoid ambiguous column errors.
 - For player name lookups, use LIKE with '%' for flexibility (e.g., WHERE p.name LIKE '%Judge%').
 - Format numbers: ROUND() for decimals, PRINTF('%.3f', ...) for batting averages.
-- Default to LIMIT 50 unless a specific number is requested. Even for "best", "highest", "lowest", "most" queries, return a ranked list — not just 1. The app will paginate the results.
+- Default to LIMIT 50 for leaderboard/ranking queries. For "how many" / counting questions, use SELECT COUNT(*) to return a single number — do NOT list all matching rows.
+- Even for "best", "highest", "lowest", "most" queries, return a ranked list — not just 1. The app will paginate the results.
 - SELECT p.name as the name column — do NOT concatenate year or other info into the name. Keep name, season, and stats as separate columns.
 - Keep result columns minimal — only include columns directly relevant to the question. For year-over-year comparisons, include the stat for each year and the difference, but NOT redundant season columns (the years are clear from context or column names like "ops_2024", "ops_2025").
 
@@ -120,9 +121,10 @@ Rules:
 - FIP = (13*home_runs+3*(walks+hit_by_pitch)-2*strikeouts)/(ip_outs/3.0)+3.10
 
 ## Row limits
-- Only add LIMIT when the question asks for "top N", "best N", "worst N", or a specific count.
-- For open-ended questions like "who has done X" or "most seasons with X", do NOT add a LIMIT — return all qualifying results.
-- If no count is specified and the question is open-ended, omit LIMIT entirely.
+- For "how many" / counting questions: use SELECT COUNT(*), no LIMIT needed.
+- For leaderboard/ranking queries ("top N", "best", "most"): LIMIT 50 unless a specific number is requested.
+- For open-ended threshold queries ("who has done X", "players with X"): LIMIT 50.
+- For "most seasons with X" or enumeration queries: omit LIMIT — return all qualifying results.
 
 ## Off-topic and missing data
 - If the question is clearly not about baseball, output: SELECT 'OFF_TOPIC'
