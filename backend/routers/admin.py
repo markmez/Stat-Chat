@@ -457,7 +457,12 @@ async def debug_decompose(
     verify_admin(authorization, key)
     from services.query_engine import decompose, execute as qe_execute
     plan = decompose(q)
-    result = qe_execute(plan) if plan.is_valid else None
+    error = None
+    try:
+        result = qe_execute(plan) if plan.is_valid else None
+    except Exception as e:
+        result = None
+        error = f"{type(e).__name__}: {e}"
     return {
         "valid": plan.is_valid,
         "type": plan.query_type,
@@ -466,6 +471,9 @@ async def debug_decompose(
         "game_log_stat": plan.game_log_stat,
         "unexplained": plan.unexplained_words,
         "has_result": result is not None,
+        "error": error,
+        "streak_length": plan.streak_length,
+        "threshold": plan.threshold,
         "result_preview": (result or "")[:300],
     }
 
