@@ -213,7 +213,6 @@ struct LeaderboardView: View {
                                 Text(val)
                                     .font(.system(.callout, design: .monospaced, weight: .medium))
                                     .foregroundStyle(deepBlue)
-                                    .underline()
                                     .lineLimit(1)
                                     .frame(width: colWidth, alignment: .leading)
                                     .padding(.leading, nameStatGap)

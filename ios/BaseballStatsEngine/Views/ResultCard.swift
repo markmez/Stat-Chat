@@ -10,6 +10,7 @@ struct ResultCard: View {
     var onPlayerTap: ((String) -> Void)? = nil
     var onTeamTap: ((String) -> Void)? = nil
     var onQueryTap: ((String) -> Void)? = nil
+    var onDrilldownTap: ((String) -> Void)? = nil
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
@@ -142,7 +143,7 @@ struct ResultCard: View {
                 .padding(.vertical, 6)
 
         case .leaderboard(let grid):
-            LeaderboardView(grid: grid, onPlayerTap: onPlayerTap, onTeamTap: onTeamTap, onDrilldownTap: onQueryTap)
+            LeaderboardView(grid: grid, onPlayerTap: onPlayerTap, onTeamTap: onTeamTap, onDrilldownTap: onDrilldownTap)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 6)
 
