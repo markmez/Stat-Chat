@@ -1256,6 +1256,10 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
     """Detect season lookup queries. Returns dict with name, season."""
     lower = input_str.strip().lower()
 
+    # Reject game-log-style queries — these need the query engine, not a season summary
+    if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)[- ]hit\s+games?', lower):
+        return None
+
     # Reject cross-season analytical questions — these should fall through to Claude
     cross_season_patterns = [
         "how many seasons", "how many times", "how many years",
