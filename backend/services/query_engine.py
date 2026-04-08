@@ -2516,7 +2516,7 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
     for i, row in enumerate(rows):
         player_name = row[0]
         count = row[1]
-        drilldown_query = f"{player_name} {threshold}+ {stat_name} games{season_suffix}"
+        drilldown_query = f"{player_name} games with {threshold}+ {stat_name.lower()}{season_suffix}"
         parts.append(f"ROW {i+1}. {player_name}: [DRILLDOWN]{drilldown_query}[/DRILLDOWN]{count}")
     parts.append("[/LEADERBOARD]")
 
