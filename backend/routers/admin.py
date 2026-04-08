@@ -928,15 +928,6 @@ async def dashboard(
   </div>
 </div>
 
-<div class="date-picker">
-  <label>From:</label>
-  <input type="date" id="date-from" value="{date_from or ''}">
-  <label>To:</label>
-  <input type="date" id="date-to" value="{date_to or ''}">
-  <button onclick="applyDateRange()">Apply</button>
-  <button class="reset" onclick="resetDateRange()">Reset</button>
-</div>
-
 <h2>Cost Breakdown by Response Type</h2>
 <div class="breakdown">
 <table>
@@ -946,6 +937,14 @@ async def dashboard(
 </div>
 
 <h2>All Queries</h2>
+<div class="date-picker">
+  <label>From:</label>
+  <input type="date" id="date-from" value="{date_from or ''}">
+  <label>To:</label>
+  <input type="date" id="date-to" value="{date_to or ''}">
+  <button onclick="applyDateRange()">Apply</button>
+  <button class="reset" onclick="resetDateRange()">Reset</button>
+</div>
 <div class="filter-bar" id="filter-bar">
   Showing: <span id="filter-label"></span>
   <span class="filter-x" onclick="clearFilter()">&times;</span>
