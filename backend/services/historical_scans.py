@@ -884,6 +884,114 @@ def scan_leaderboard_changes(conn, season, latest_date):
                         "scope": scope,
                     })
 
+    # Pitching leaderboard changes
+    pitch_stats = [
+        ("strikeouts", "K", "strikeouts", 5, "strikeouts"),
+        ("wins", "W", "wins", 2, "win"),
+        ("saves", "SV", "saves", 2, "save"),
+        ("era", "ERA", "ERA", None, "earned_runs"),
+        ("whip", "WHIP", "WHIP", None, "walks"),
+    ]
+
+    min_ip_rate = 10  # ~3.1 IP minimum for rate stats early season
+
+    for col, abbrev, label, min_val, game_col in pitch_stats:
+        is_rate = col in ("era", "whip")
+        ip_filter = f"AND sp.ip_outs >= {min_ip_rate * 3}" if is_rate else ""
+        val_filter = f"AND sp.{col} >= {min_val}" if min_val else ""
+        order = "ASC" if col in ("era", "whip") else "DESC"
+
+        for scope, team_filter in [
+            ("MLB", ""),
+            ("AL", f"AND sp.team IN ({','.join(repr(t) for t in AL_TEAMS)})"),
+            ("NL", f"AND sp.team IN ({','.join(repr(t) for t in NL_TEAMS)})"),
+        ]:
+            rows = conn.execute(f"""
+                SELECT p.player_id, p.name, sp.{col}, sp.team
+                FROM season_pitching_stats sp
+                JOIN players p ON sp.player_id = p.player_id
+                WHERE sp.season = ? {ip_filter} {val_filter} {team_filter}
+                ORDER BY sp.{col} {order}
+                LIMIT 3
+            """, (season,)).fetchall()
+
+            if len(rows) < 2:
+                continue
+
+            leader_pid, leader_name, leader_val, leader_team = rows[0]
+            runner_up_pid, runner_up_name, runner_up_val, runner_up_team = rows[1]
+
+            if leader_val is None or runner_up_val is None:
+                continue
+
+            # Did the leader pitch on latest_date?
+            played = conn.execute("""
+                SELECT COUNT(*) FROM game_pitching_logs
+                WHERE player_id = ? AND season = ? AND date = ?
+            """, (leader_pid, season, latest_date)).fetchone()[0]
+            if not played and not is_rate:
+                continue
+
+            # Get the leader's game contribution today
+            game_contribution = 0
+            if game_col:
+                game = conn.execute(f"""
+                    SELECT {game_col}
+                    FROM game_pitching_logs
+                    WHERE player_id = ? AND season = ? AND date = ?
+                """, (leader_pid, season, latest_date)).fetchone()
+                game_contribution = game[0] if game and game[0] else 0
+            else:
+                game_contribution = 1
+
+            if not is_rate:
+                margin = leader_val - runner_up_val
+                if game_contribution > 0 and margin <= game_contribution and margin > 0:
+                    team = leader_team
+                    league = _league_for_team(team)
+
+                    if scope == "MLB":
+                        league_rows = conn.execute(f"""
+                            SELECT p.player_id
+                            FROM season_pitching_stats sp
+                            JOIN players p ON sp.player_id = p.player_id
+                            WHERE sp.season = ? {val_filter}
+                            AND sp.team IN ({','.join(repr(t) for t in (AL_TEAMS if league == 'AL' else NL_TEAMS))})
+                            ORDER BY sp.{col} {order} LIMIT 1
+                        """, (season,)).fetchone()
+                        if league_rows and league_rows[0] == leader_pid:
+                            continue
+
+                    facts.append({
+                        "type": "leaderboard_change",
+                        "player": leader_name,
+                        "player_id": leader_pid,
+                        "team": team,
+                        "stat": label,
+                        "stat_abbrev": abbrev,
+                        "value": leader_val,
+                        "prev_leader": runner_up_name,
+                        "prev_value": runner_up_val,
+                        "scope": scope,
+                        "is_pitching": True,
+                    })
+            else:
+                # Rate stat: leader changed through play
+                if played:
+                    facts.append({
+                        "type": "leaderboard_change",
+                        "player": leader_name,
+                        "player_id": leader_pid,
+                        "team": leader_team,
+                        "stat": label,
+                        "stat_abbrev": abbrev,
+                        "value": leader_val,
+                        "prev_leader": runner_up_name,
+                        "prev_value": runner_up_val,
+                        "scope": scope,
+                        "is_pitching": True,
+                    })
+
     return facts
 
 
