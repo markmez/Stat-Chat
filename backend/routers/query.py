@@ -301,23 +301,24 @@ def _format_haiku_result(result_text: str, question: str = "") -> str:
             name_col = c
             break
     has_name = name_col is not None
+    # Normalize name column to "name" for downstream processing
+    if has_name and name_col != "name":
+        idx = columns.index(name_col)
+        columns[idx] = "name"
+        for row in data_rows:
+            row["name"] = row.pop(name_col, "")
+
     if has_name and not any(c.lower() == "season" for c in columns):
         # Check if name values contain ", YYYY" pattern
         sample = [row.get(name_col, "") for row in data_rows[:5]]
         if sample and all(_re.search(r',\s*\d{4}$', str(s)) for s in sample if s):
             columns.append("season")
             for row in data_rows:
-                name_val = str(row.get(name_col, ""))
+                name_val = str(row.get("name", ""))
                 m = _re.match(r'^(.+?),\s*(\d{4})$', name_val)
                 if m:
-                    row[name_col] = m.group(1).strip()
+                    row["name"] = m.group(1).strip()
                     row["season"] = m.group(2)
-            # Normalize column name to "name" for downstream
-            if name_col != "name":
-                idx = columns.index(name_col)
-                columns[idx] = "name"
-                for row in data_rows:
-                    row["name"] = row.pop(name_col, "")
 
     has_season = "season" in columns
     multi_row = len(data_rows) > 1
