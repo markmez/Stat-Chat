@@ -429,6 +429,29 @@ async def detect_notable(
         raise HTTPException(500, str(e))
 
 
+@router.get("/debug-decompose")
+async def debug_decompose(
+    q: str = "",
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Debug: show what the query engine produces for a question."""
+    verify_admin(authorization, key)
+    from services.query_engine import decompose, execute as qe_execute
+    plan = decompose(q)
+    result = qe_execute(plan) if plan.is_valid else None
+    return {
+        "valid": plan.is_valid,
+        "type": plan.query_type,
+        "stat": plan.stat.db_column if plan.stat else None,
+        "player_name": plan.player_name,
+        "game_log_stat": plan.game_log_stat,
+        "unexplained": plan.unexplained_words,
+        "has_result": result is not None,
+        "result_preview": (result or "")[:300],
+    }
+
+
 @router.api_route("/ai-notable", methods=["GET", "POST"])
 async def ai_notable(
     dry_run: bool = True,
