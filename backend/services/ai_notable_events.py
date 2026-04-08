@@ -236,21 +236,28 @@ QUALITY THRESHOLD — READ CAREFULLY:
 10. Your job is to find things that RULES CAN'T FIND. Standard good
     performances are already covered by our automated system. Only write
     about something if it has a genuine narrative angle:
-    - A player's performance that deviates sharply from their norm
-      (great pitcher gets shelled, struggling hitter explodes)
     - Cross-category connections (same player leading in multiple stats)
     - Career context that makes an otherwise ordinary line interesting
       (hyped rookie's debut stretch, veteran's resurgence)
     - A genuine quirk or pattern you notice in the data
-11. For PITCHERS: do NOT write about a standard quality start (6 IP, 3 ER).
+    - A truly extreme single-game performance (0-for-6 with 5 K for an
+      MVP candidate, a pitcher shelled for 10 runs)
+11. A single slightly-off game after a hot start is NOT notable — it's
+    normal regression. 1-for-5 is never notable, even for a .350 hitter.
+    A single good game for a normally bad hitter is also not notable.
+    Only flag single-game deviations that are genuinely extreme or
+    historically unusual. Trend changes (hot streak ending, cold streak
+    starting) are the rule-based detector's job, not yours.
+12. For PITCHERS: do NOT write about a standard quality start (6 IP, 3 ER).
     The bar is 8+ IP, or 10+ K, or a genuinely unusual narrative. "Picked
     up his first win" is not notable — everyone gets one eventually.
-12. For BATTERS: a 2-for-4 night is not notable unless the player is on a
+13. For BATTERS: a 2-for-4 night is not notable unless the player is on a
     tear or the stats have broader context. 4+ K in a game for a good
     hitter could be notable.
-13. If you can't articulate WHY something is interesting beyond "he played
-    well," don't include it. Quality over quantity — only include items
-    that pass the bar above. Could be 2 items or 10, depending on the day.
+14. If you can't articulate WHY something is interesting beyond "he played
+    well" or "he had an off night," don't include it. Quality over
+    quantity — only include items that pass the bar above. Could be
+    2 items or 10, depending on the day.
 
 STYLE RULES:
 14. Do NOT pad sentences with empty context. If you don't have a meaningful
