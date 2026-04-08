@@ -8,6 +8,7 @@ struct ResultsView: View {
     @State private var resultsContentHeight: CGFloat = 0
     @State private var selectedPlayerName: String? = nil
     @State private var selectedTeamCode: String? = nil
+    @State private var drilldownQuery: String? = nil
     let initialQuestion: String
     @Binding var navigationPath: NavigationPath
 
@@ -60,7 +61,7 @@ struct ResultsView: View {
                 appState.sendQuestion(query)
             },
             onDrilldownTap: { query in
-                navigationPath.append(DrilldownDestination(query: query))
+                drilldownQuery = query
             }
         )
     }
@@ -211,6 +212,14 @@ struct ResultsView: View {
             PaywallView()
                 .environment(appState)
         }
+        .sheet(isPresented: Binding(
+            get: { drilldownQuery != nil },
+            set: { if !$0 { drilldownQuery = nil } }
+        )) {
+            if let query = drilldownQuery {
+                DrilldownResultView(query: query, navigationPath: $navigationPath)
+            }
+        }
         .onChange(of: appState.showPaywall) { _, showing in
             // When paywall dismisses, retry the blocked query if user subscribed
             if !showing && StoreKitService.shared.isSubscribed {
@@ -289,28 +298,37 @@ struct ResultsView: View {
 struct DrilldownResultView: View {
     let query: String
     @Binding var navigationPath: NavigationPath
+    @Environment(\.dismiss) private var dismiss
     @State private var segments: [StatGridParser.Segment] = []
     @State private var isLoading = true
 
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
-
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                if isLoading {
-                    LoadingIndicator()
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 40)
-                } else {
-                    ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                        segmentView(segment)
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if isLoading {
+                        LoadingIndicator()
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 40)
+                    } else {
+                        ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                            segmentView(segment)
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .font(.title3)
                     }
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
         }
-        .navigationBarBackButtonHidden(false)
+        .presentationDetents([.medium, .large])
         .task {
             let backend = BackendService()
             do {
@@ -338,19 +356,11 @@ struct DrilldownResultView: View {
                     .padding(.vertical, 2)
             }
         case .leaderboard(let grid):
-            LeaderboardView(grid: grid, onPlayerTap: { name in
-                navigationPath.append(PlayerCardDestination(name: name))
-            })
-            .padding(.vertical, 6)
+            LeaderboardView(grid: grid)
+                .padding(.vertical, 6)
         case .statGrid(let grid):
-            StatGridView(grid: grid, onPlayerTap: { name in
-                navigationPath.append(PlayerCardDestination(name: name))
-            })
-            .padding(.vertical, 6)
-        case .tip(let text):
-            Text(text)
-                .font(.system(.caption, design: .rounded))
-                .foregroundStyle(.secondary)
+            StatGridView(grid: grid)
+                .padding(.vertical, 6)
         default:
             EmptyView()
         }
