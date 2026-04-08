@@ -574,7 +574,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     try:
         intercepted = try_intercept(question)
     except Exception as e:
-        logger.warning("intercept_error question=%r error=%s", question, e)
+        logger.warning("intercept_error question=%r error=%s type=%s", question, e, type(e).__name__)
         intercepted = None
     if intercepted is not None:
         logger.info("query_intercepted question=%r", question)
