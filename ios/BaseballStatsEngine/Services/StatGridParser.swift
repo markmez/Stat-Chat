@@ -12,6 +12,7 @@ enum StatGridParser {
             let label: String
             let values: [String]
             var note: String?
+            var drilldownQuery: String?  // If set, the first value is tappable and triggers this query
         }
 
         struct FormMetadata: Sendable {
@@ -216,9 +217,20 @@ enum StatGridParser {
                 let label = String(line[line.index(line.startIndex, offsetBy: 4)..<colonIdx])
                     .trimmingCharacters(in: .whitespaces)
                 let valuesStr = String(line[line.index(after: colonIdx)...])
-                let parts = valuesStr.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                // Extract [DRILLDOWN]query[/DRILLDOWN] if present
+                var drilldown: String?
+                var cleanedValues = valuesStr
+                if let drillStart = valuesStr.range(of: "[DRILLDOWN]"),
+                   let drillEnd = valuesStr.range(of: "[/DRILLDOWN]") {
+                    drilldown = String(valuesStr[drillStart.upperBound..<drillEnd.lowerBound])
+                    cleanedValues = valuesStr.replacingCharacters(
+                        in: drillStart.lowerBound..<drillEnd.upperBound, with: "")
+                }
+                let parts = cleanedValues.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
                 guard !parts.isEmpty else { continue }
-                rows.append(StatGrid.Row(label: label, values: parts))
+                var row = StatGrid.Row(label: label, values: parts)
+                row.drilldownQuery = drilldown
+                rows.append(row)
             } else if line.hasPrefix("NOTE:") {
                 // Attach note to the most recently parsed row
                 if !rows.isEmpty {

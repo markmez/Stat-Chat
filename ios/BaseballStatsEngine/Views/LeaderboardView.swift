@@ -4,6 +4,7 @@ struct LeaderboardView: View {
     let grid: StatGridParser.StatGrid
     var onPlayerTap: ((String) -> Void)? = nil
     var onTeamTap: ((String) -> Void)? = nil
+    var onDrilldownTap: ((String) -> Void)? = nil
 
     @State private var visibleCount = 25
     @State private var sortColumn: Int?
@@ -200,16 +201,32 @@ struct LeaderboardView: View {
                             .padding(.leading, hasRanks ? rankNameGap : 0)
                     }
 
-                    // Stat values — all primary color
+                    // Stat values — primary color, or blue+tappable if drilldown
                     let rowWidths = columnWidths
                     ForEach(Array(row.values.enumerated()), id: \.offset) { idx, val in
                         let colWidth = idx < rowWidths.count ? rowWidths[idx] : defaultStatColumnWidth
-                        Text(val)
-                            .font(.system(.callout, design: .monospaced, weight: .medium))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                            .frame(width: colWidth, alignment: .leading)
-                            .padding(.leading, idx == 0 ? nameStatGap : valueGap)
+                        let isDrilldown = idx == 0 && row.drilldownQuery != nil
+                        if isDrilldown, let query = row.drilldownQuery {
+                            Button {
+                                onDrilldownTap?(query)
+                            } label: {
+                                Text(val)
+                                    .font(.system(.callout, design: .monospaced, weight: .medium))
+                                    .foregroundStyle(deepBlue)
+                                    .underline()
+                                    .lineLimit(1)
+                                    .frame(width: colWidth, alignment: .leading)
+                                    .padding(.leading, nameStatGap)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            Text(val)
+                                .font(.system(.callout, design: .monospaced, weight: .medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                                .frame(width: colWidth, alignment: .leading)
+                                .padding(.leading, idx == 0 ? nameStatGap : valueGap)
+                        }
                     }
 
                     Spacer()

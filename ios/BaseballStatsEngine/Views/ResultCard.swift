@@ -142,7 +142,7 @@ struct ResultCard: View {
                 .padding(.vertical, 6)
 
         case .leaderboard(let grid):
-            LeaderboardView(grid: grid, onPlayerTap: onPlayerTap, onTeamTap: onTeamTap)
+            LeaderboardView(grid: grid, onPlayerTap: onPlayerTap, onTeamTap: onTeamTap, onDrilldownTap: onQueryTap)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 6)
 
