@@ -1056,7 +1056,7 @@ def detect_hot_streaks_pelt(conn, season, latest_date=None):
     for name, ops, avg, num_games, hr, h, ab, obp, slg, season_ops in rows:
         events.append({
             "headline": f"{name} is on a tear — .{int(avg*1000):03d}/.{int(obp*1000):03d}/.{int(slg*1000):03d} over the last {num_games} games"
-                if avg and obp and slg else f"{name} is on a tear — {ops:.3f} OPS over the last {num_games} games",
+                if avg and obp and slg else f"{name} is on a tear — {_fmt_ops(ops)} OPS over the last {num_games} games",
             "detail": f"Season OPS is {season_ops:.3f}. Current stretch: {hr or 0} HR in {num_games} games.",
             "category": "Streak",
             "game_date": latest_date,
@@ -1335,6 +1335,13 @@ def _parse_game_time_et(start_time):
         return ""
 
 
+def _fmt_ops(val):
+    """Format OPS/rate stat: .995 not 0.995, 1.024 stays 1.024."""
+    if val < 1.0:
+        return f".{int(round(val * 1000)):03d}"
+    return f"{val:.3f}"
+
+
 def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
     """Find one compelling stat for a matchup preview card.
 
@@ -1411,10 +1418,10 @@ def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
                     pct_label = round(mix_pct * 100)
                     if ops >= 0.800:
                         if not best_angle or ops > best_angle[0]:
-                            best_angle = (ops, f"{batter_name} has hit {ops:.3f} OPS against {pitch_type.lower()}s — {pct_label}% of {pitcher_name}'s pitch mix.")
+                            best_angle = (ops, f"{batter_name} has hit {_fmt_ops(ops)} OPS against {pitch_type.lower()}s — {pct_label}% of {pitcher_name}'s pitch mix.")
                     elif ops <= 0.650:
                         if not best_angle or ops < best_angle[0]:
-                            best_angle = (-ops, f"{batter_name} has struggled against {pitch_type.lower()}s ({ops:.3f} OPS) — {pct_label}% of {pitcher_name}'s pitch mix.")
+                            best_angle = (-ops, f"{batter_name} has struggled against {pitch_type.lower()}s ({_fmt_ops(ops)} OPS) — {pct_label}% of {pitcher_name}'s pitch mix.")
                 if best_angle:
                     return best_angle[1]
 
@@ -1441,9 +1448,9 @@ def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
                 ops = split[0]
                 hand_label = "lefties" if pitcher_hand == "L" else "righties"
                 if ops >= 0.800:
-                    return f"{batter_name} has hit {ops:.3f} OPS against {hand_label} — {pitcher_name} throws {pitcher_hand}HP."
+                    return f"{batter_name} has hit {_fmt_ops(ops)} OPS against {hand_label} — {pitcher_name} throws {pitcher_hand}HP."
                 elif ops <= 0.650:
-                    return f"{batter_name} has hit just {ops:.3f} OPS against {hand_label} — {pitcher_name} throws {pitcher_hand}HP."
+                    return f"{batter_name} has hit just {_fmt_ops(ops)} OPS against {hand_label} — {pitcher_name} throws {pitcher_hand}HP."
 
         # --- Tier 4: PELT current form ---
         cur.execute("""
@@ -1454,7 +1461,7 @@ def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
         """, (batter_name, season))
         form = cur.fetchone()
         if form and form[0]:
-            return f"{batter_name} is hitting {form[0]:.3f} OPS over his last {form[1]} games heading into tonight."
+            return f"{batter_name} is hitting {_fmt_ops(form[0])} OPS over his last {form[1]} games heading into tonight."
 
         # --- Tier 5: Fallback — season OPS vs season ERA ---
         cur.execute("""
