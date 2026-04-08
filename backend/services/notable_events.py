@@ -413,11 +413,11 @@ def detect_hitting_streaks(conn, season, latest_date, min_games=8):
                 "_streak_len": streak,
             })
 
-    # Sort by streak length, keep top 3
+    # Sort by streak length (longest first)
     events.sort(key=lambda e: e.get("_streak_len", 0), reverse=True)
     for e in events:
         e.pop("_streak_len", None)
-    return events[:3]
+    return events
 
 
 def detect_onbase_streaks(conn, season, latest_date, min_games=12):
@@ -473,7 +473,7 @@ def detect_onbase_streaks(conn, season, latest_date, min_games=12):
     events.sort(key=lambda e: e.get("_streak_len", 0), reverse=True)
     for e in events:
         e.pop("_streak_len", None)
-    return events[:2]
+    return events
 
 
 def detect_hr_streaks(conn, season, latest_date, min_games=4):
@@ -521,7 +521,7 @@ def detect_hr_streaks(conn, season, latest_date, min_games=4):
                 "priority": 1,
             })
 
-    return events[:2]
+    return events
 
 
 def detect_pitching_streaks(conn, season, latest_date):
@@ -1634,8 +1634,7 @@ def detect_on_this_date(conn, season, latest_date):
             "priority": 3,
         })
 
-    # Limit to 2 best (most extreme)
-    return events[:2]
+    return events
 
 
 # ---------------------------------------------------------------------------
