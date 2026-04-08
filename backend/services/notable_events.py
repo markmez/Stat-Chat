@@ -728,12 +728,12 @@ def detect_career_milestones(conn, season, latest_date):
         for pid, name, total in rows:
             if not total or found >= 3:
                 break
+            game_date, stat_val = contributor_info[pid]
             for m in milestones:
                 remaining = m - total
                 if 1 <= remaining <= 5:
-                    game_date, stat_val = contributor_info[pid]
+                    # Approaching milestone
                     action = action_fn(stat_val)
-                    # For hits, fix the template with actual AB
                     if col == "hits":
                         game_row = conn.execute("""
                             SELECT hits, at_bats FROM game_batting_logs
@@ -750,6 +750,27 @@ def detect_career_milestones(conn, season, latest_date):
                         "team_names": [],
                         "detection_type": f"career_{col}_{m}",
                         "priority": 2,
+                    })
+                    found += 1
+                elif remaining <= 0 and remaining > -stat_val:
+                    # Just crossed milestone
+                    action = action_fn(stat_val)
+                    if col == "hits":
+                        game_row = conn.execute("""
+                            SELECT hits, at_bats FROM game_batting_logs
+                            WHERE player_id = ? AND date = ? AND season = ?
+                        """, (pid, game_date, season)).fetchone()
+                        if game_row:
+                            action = f"collected {game_row[0]} hit{'s' if game_row[0] != 1 else ''}"
+                    events.append({
+                        "headline": f"{name} {action}, reaching {m:,} {label}!",
+                        "detail": "",
+                        "category": "Milestone",
+                        "game_date": game_date,
+                        "player_names": [name],
+                        "team_names": [],
+                        "detection_type": f"career_{col}_{m}",
+                        "priority": 1,
                     })
                     found += 1
                     break
@@ -794,10 +815,11 @@ def detect_career_milestones(conn, season, latest_date):
         for pid, name, total in rows:
             if not total or found >= 3:
                 break
+            game_date, stat_val = contributor_info[pid]
             for m in milestones:
                 remaining = m - total
                 if 1 <= remaining <= 5:
-                    game_date, stat_val = contributor_info[pid]
+                    # Approaching milestone
                     action = action_fn(stat_val)
                     events.append({
                         "headline": f"{name} {action}, and is now {remaining} away from {m} {label}.",
@@ -808,6 +830,21 @@ def detect_career_milestones(conn, season, latest_date):
                         "team_names": [],
                         "detection_type": f"career_p_{col}_{m}",
                         "priority": 2,
+                    })
+                    found += 1
+                    break
+                elif remaining <= 0 and remaining > -stat_val:
+                    # Just crossed milestone (total passed m, and today's contribution pushed them over)
+                    action = action_fn(stat_val)
+                    events.append({
+                        "headline": f"{name} {action}, reaching {m:,} {label}!",
+                        "detail": "",
+                        "category": "Milestone",
+                        "game_date": game_date,
+                        "player_names": [name],
+                        "team_names": [],
+                        "detection_type": f"career_p_{col}_{m}",
+                        "priority": 1,
                     })
                     found += 1
                     break

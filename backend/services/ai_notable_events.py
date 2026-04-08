@@ -216,6 +216,10 @@ CRITICAL RULES:
    extend a scoreless streak. If a batter went hitless, they did NOT extend
    a hitting streak. Streaks are the rule-based detector's job — you should
    focus on individual-game narratives the rules can't find.
+3. Do NOT write about career milestones (approaching or reaching round
+   numbers like 1500 K, 500 HR, 3000 hits, etc.). These are detected
+   by the rule-based system. If you see one in ALREADY-DETECTED, do not
+   repeat it. If you don't see one, it's not your job to add it.
 3. Use the DB-VERIFIED HISTORICAL CONTEXT — these are confirmed facts from our
    database. Cite them confidently.
 4. Do NOT invent historical comparisons beyond what's provided. If the data
