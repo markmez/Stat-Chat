@@ -737,7 +737,12 @@ def _to_eastern(iso_ts: str) -> str:
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(key: str | None = None, authorization: str | None = Header(None)):
+async def dashboard(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
     """Admin dashboard showing query analytics."""
     verify_admin(authorization, key)
 
@@ -747,24 +752,36 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
     conn.execute("UPDATE query_log SET response_type = 'query engine' WHERE response_type = 'intercepted'")
     conn.commit()
 
+    # Date range filter
+    date_filter = ""
+    date_params = []
+    if date_from:
+        date_filter += " AND timestamp >= ?"
+        date_params.append(date_from)
+    if date_to:
+        date_filter += " AND timestamp <= ?"
+        date_params.append(date_to + "T23:59:59")
+
     # All queries ranked by count, tiebroken by recency
-    queries = conn.execute("""
+    queries = conn.execute(f"""
         SELECT query_text, COUNT(*) as cnt,
                MAX(timestamp) as last_seen,
                GROUP_CONCAT(DISTINCT response_type) as types
         FROM query_log
+        WHERE 1=1{date_filter}
         GROUP BY query_text
         ORDER BY cnt DESC, last_seen DESC
         LIMIT 1000
-    """).fetchall()
+    """, date_params).fetchall()
 
     # Breakdown by response type
-    breakdown = conn.execute("""
+    breakdown = conn.execute(f"""
         SELECT response_type, COUNT(*) as cnt
         FROM query_log
+        WHERE 1=1{date_filter}
         GROUP BY response_type
         ORDER BY cnt DESC
-    """).fetchall()
+    """, date_params).fetchall()
 
     total = sum(r[1] for r in breakdown)
     conn.close()
@@ -869,6 +886,32 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
     line-height: 1; font-weight: 600;
   }}
   .filter-bar .filter-x:active {{ color: #333; }}
+  .date-picker {{
+    display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
+    font-size: 13px; flex-wrap: wrap;
+  }}
+  .date-picker input {{
+    padding: 4px 8px; border: 1px solid #ddd; border-radius: 6px;
+    font-size: 13px; font-family: inherit;
+  }}
+  .date-picker button {{
+    padding: 4px 12px; border: 1px solid #1A40B3; border-radius: 6px;
+    background: #1A40B3; color: #fff; font-size: 13px; cursor: pointer;
+    font-family: inherit;
+  }}
+  .date-picker button:active {{ opacity: 0.8; }}
+  .date-picker .reset {{ background: #fff; color: #1A40B3; }}
+  .pagination {{
+    display: flex; align-items: center; justify-content: center;
+    gap: 12px; padding: 12px 0; font-size: 13px;
+  }}
+  .pagination button {{
+    padding: 6px 14px; border: 1px solid #ddd; border-radius: 6px;
+    background: #fff; cursor: pointer; font-size: 13px; font-family: inherit;
+  }}
+  .pagination button:disabled {{ opacity: 0.3; cursor: default; }}
+  .pagination button:not(:disabled):active {{ background: #f0f0f0; }}
+  .pagination .page-info {{ color: #888; }}
 </style>
 </head>
 <body>
@@ -883,6 +926,15 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
     <div class="label">Unique Queries</div>
     <div class="value">{len(queries):,}</div>
   </div>
+</div>
+
+<div class="date-picker">
+  <label>From:</label>
+  <input type="date" id="date-from" value="{date_from or ''}">
+  <label>To:</label>
+  <input type="date" id="date-to" value="{date_to or ''}">
+  <button onclick="applyDateRange()">Apply</button>
+  <button class="reset" onclick="resetDateRange()">Reset</button>
 </div>
 
 <h2>Cost Breakdown by Response Type</h2>
@@ -907,12 +959,50 @@ async def dashboard(key: str | None = None, authorization: str | None = Header(N
   </tr>
   {query_rows}
 </table>
+<div class="pagination">
+  <button id="prev-btn" onclick="changePage(-1)" disabled>&larr; Prev</button>
+  <span class="page-info" id="page-info"></span>
+  <button id="next-btn" onclick="changePage(1)">Next &rarr;</button>
+</div>
 <script>
+const PAGE_SIZE = 30;
 let currentSort = 'count';
 let currentFilter = null;
+let currentPage = 0;
+
+function getVisibleRows() {{
+  const all = Array.from(document.querySelectorAll('#qtable tr[data-count]'));
+  return currentFilter
+    ? all.filter(r => r.dataset.types.split(',').includes(currentFilter))
+    : all;
+}}
+
+function renderPage() {{
+  const visible = getVisibleRows();
+  const totalPages = Math.ceil(visible.length / PAGE_SIZE);
+  if (currentPage >= totalPages) currentPage = Math.max(0, totalPages - 1);
+  const start = currentPage * PAGE_SIZE;
+  const end = start + PAGE_SIZE;
+  // Hide all, show page
+  document.querySelectorAll('#qtable tr[data-count]').forEach(r => r.style.display = 'none');
+  visible.forEach((r, i) => {{
+    r.style.display = (i >= start && i < end) ? '' : 'none';
+  }});
+  document.getElementById('page-info').textContent = visible.length > 0
+    ? `${{start + 1}}-${{Math.min(end, visible.length)}} of ${{visible.length}}`
+    : 'No results';
+  document.getElementById('prev-btn').disabled = currentPage === 0;
+  document.getElementById('next-btn').disabled = currentPage >= totalPages - 1;
+}}
+
+function changePage(delta) {{
+  currentPage += delta;
+  renderPage();
+}}
 
 function sortBy(mode) {{
   currentSort = mode;
+  currentPage = 0;
   const table = document.getElementById('qtable');
   const rows = Array.from(table.querySelectorAll('tr[data-count]'));
   rows.sort((a, b) => {{
@@ -923,26 +1013,45 @@ function sortBy(mode) {{
   rows.forEach(r => table.appendChild(r));
   document.getElementById('th-count').innerHTML = 'Count' + (mode === 'count' ? '<span class="arrow"> &#x25BE;</span>' : '');
   document.getElementById('th-time').innerHTML = 'Last (ET)' + (mode === 'time' ? '<span class="arrow"> &#x25BE;</span>' : '');
+  renderPage();
 }}
 
 function filterBy(type) {{
   currentFilter = type;
-  const rows = document.querySelectorAll('#qtable tr[data-count]');
-  rows.forEach(r => {{
-    r.style.display = r.dataset.types.split(',').includes(type) ? '' : 'none';
-  }});
+  currentPage = 0;
   const bar = document.getElementById('filter-bar');
   const label = document.getElementById('filter-label');
   const css = type.replace(' ', '-');
   label.innerHTML = '<span class="badge ' + css + '">' + type + '</span>';
   bar.classList.add('active');
+  renderPage();
 }}
 
 function clearFilter() {{
   currentFilter = null;
-  document.querySelectorAll('#qtable tr[data-count]').forEach(r => r.style.display = '');
+  currentPage = 0;
   document.getElementById('filter-bar').classList.remove('active');
+  renderPage();
 }}
+
+function applyDateRange() {{
+  const from = document.getElementById('date-from').value;
+  const to = document.getElementById('date-to').value;
+  const url = new URL(window.location);
+  if (from) url.searchParams.set('date_from', from); else url.searchParams.delete('date_from');
+  if (to) url.searchParams.set('date_to', to); else url.searchParams.delete('date_to');
+  window.location = url;
+}}
+
+function resetDateRange() {{
+  const url = new URL(window.location);
+  url.searchParams.delete('date_from');
+  url.searchParams.delete('date_to');
+  window.location = url;
+}}
+
+// Initial render
+renderPage();
 </script>
 </body>
 </html>"""
