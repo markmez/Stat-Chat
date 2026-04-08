@@ -433,6 +433,31 @@ async def refresh_game_contexts(
         raise HTTPException(500, str(e))
 
 
+@router.get("/debug-intercept")
+async def debug_intercept(
+    q: str = "",
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Debug: run try_intercept and return result or error."""
+    verify_admin(authorization, key)
+    from services.interceptor import try_intercept
+    try:
+        result = try_intercept(q)
+        return {
+            "intercepted": result is not None,
+            "result_preview": (result or "")[:500],
+            "error": None,
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "intercepted": False,
+            "result_preview": "",
+            "error": f"{type(e).__name__}: {e}\n{traceback.format_exc()[-500:]}",
+        }
+
+
 @router.post("/detect-notable")
 async def detect_notable(
     authorization: str | None = Header(None),
