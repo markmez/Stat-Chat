@@ -2315,6 +2315,10 @@ def parse_consecutive_streak(input_str: str) -> Optional[dict]:
     """Detect consecutive streak queries. Returns dict with type, player_name, season."""
     lower = input_str.strip().lower()
 
+    # "How many hitting streaks" is a counting query — let the query engine handle it
+    if re.search(r'how many|how common|how often|count of', lower):
+        return None
+
     on_base_patterns = ["on-base streak", "on base streak", "reaching base streak",
                         "onbase streak", "consecutive games reaching base",
                         "consecutive games on base"]
