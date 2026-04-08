@@ -292,8 +292,21 @@ def _format_haiku_result(result_text: str, question: str = "") -> str:
         except (ValueError, TypeError):
             pass
 
-    # Determine row label: name, season, or numbered
+    # Fix Haiku concatenating name + year: "Tony Gwynn, 1994" → split into separate columns
+    import re as _re
     has_name = "name" in columns
+    if has_name and "season" not in columns:
+        # Check if name values contain ", YYYY" pattern
+        sample = [row.get("name", "") for row in data_rows[:5]]
+        if all(_re.search(r',\s*\d{4}$', str(s)) for s in sample if s):
+            columns.append("season")
+            for row in data_rows:
+                name_val = str(row.get("name", ""))
+                m = _re.match(r'^(.+?),\s*(\d{4})$', name_val)
+                if m:
+                    row["name"] = m.group(1).strip()
+                    row["season"] = m.group(2)
+
     has_season = "season" in columns
     multi_row = len(data_rows) > 1
 
