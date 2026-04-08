@@ -242,15 +242,26 @@ def _display_col_name(col: str) -> Optional[str]:
     return result
 
 
-def _format_haiku_result(result_text: str) -> str:
+def _format_haiku_result(result_text: str, question: str = "") -> str:
     """
     Convert SqlRunner pipe-delimited output into [LEADERBOARD] or [STATGRID] format.
     Multi-row results with names → [LEADERBOARD] with rank numbers.
     Single-row or aggregate → [STATGRID].
     """
-    lines = result_text.strip().split("\n")
+    # Extract total count metadata if present
+    total_count = None
+    clean_text = result_text
+    if "__TOTAL_COUNT__:" in result_text:
+        parts = result_text.rsplit("__TOTAL_COUNT__:", 1)
+        clean_text = parts[0].strip()
+        try:
+            total_count = int(parts[1].strip())
+        except ValueError:
+            pass
+
+    lines = clean_text.strip().split("\n")
     if len(lines) < 3:  # header + separator + at least one data row
-        return result_text
+        return clean_text
 
     columns = [c.strip() for c in lines[0].split("|")]
     data_rows = []
@@ -260,7 +271,7 @@ def _format_haiku_result(result_text: str) -> str:
             data_rows.append(dict(zip(columns, vals)))
 
     if not data_rows:
-        return result_text
+        return clean_text
 
     # Determine row label: name, season, or numbered
     has_name = "name" in columns
@@ -353,17 +364,37 @@ def _format_haiku_result(result_text: str) -> str:
         else:
             row_lines.append(f"ROW: {', '.join(vals)}")
 
+    # Build title from question + total count
+    title = ""
+    display_total = total_count or len(data_rows)
+    if question and display_total > 1:
+        title = f"**{display_total} results** — {question}\n\n"
+
+    # Pagination note if results were capped
+    pagination = ""
+    if total_count and total_count > len(data_rows):
+        pagination = f"\n\nShowing 1-{len(data_rows)} of {total_count}."
+
     if use_leaderboard:
         parts = []
+        if title:
+            parts.append(title)
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
         parts.append(header)
         parts.extend(row_lines)
         parts.append("[/LEADERBOARD]")
+        if pagination:
+            parts.append(pagination)
         return "\n".join(parts)
     else:
-        grid = f"[STATGRID]\n{header}\n" + "\n".join(row_lines) + "\n[/STATGRID]"
-        return grid
+        parts = []
+        if title:
+            parts.append(title)
+        parts.append(f"[STATGRID]\n{header}\n" + "\n".join(row_lines) + "\n[/STATGRID]")
+        if pagination:
+            parts.append(pagination)
+        return "\n".join(parts)
 
 
 async def _try_haiku_sql(question: str):
@@ -523,7 +554,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     if haiku_result is not None:
         haiku_sql, haiku_result_text, haiku_is_streak = haiku_result
         logger.info("query_haiku_sql question=%r", question)
-        formatted = _format_haiku_result(haiku_result_text)
+        formatted = _format_haiku_result(haiku_result_text, question=question)
         # Guard: never send more than one container — iOS renders each as a separate card
         for tag in ["[LEADERBOARD]", "[STATGRID]"]:
             first = formatted.find(tag)

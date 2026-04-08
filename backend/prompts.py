@@ -121,9 +121,8 @@ Rules:
 - FIP = (13*home_runs+3*(walks+hit_by_pitch)-2*strikeouts)/(ip_outs/3.0)+3.10
 
 ## Row limits
-- For "how many" / counting questions: use SELECT COUNT(*), no LIMIT needed.
+- For "how many" / counting questions AND threshold questions ("who has done X", "players with X"): return the matching rows with LIMIT 100. Do NOT use SELECT COUNT(*) — the app needs the actual rows to display examples. The app will compute the total count and display it.
 - For leaderboard/ranking queries ("top N", "best", "most"): LIMIT 50 unless a specific number is requested.
-- For open-ended threshold queries ("who has done X", "players with X"): LIMIT 50.
 - For "most seasons with X" or enumeration queries: omit LIMIT — return all qualifying results.
 
 ## Off-topic and missing data

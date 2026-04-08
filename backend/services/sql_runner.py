@@ -17,7 +17,7 @@ DB_PATH = os.getenv(
     os.path.join(os.path.dirname(__file__), "..", "..", "baseball_stats_full.db"),
 )
 
-MAX_ROWS = 50
+MAX_ROWS = 100
 
 _STREAK_COLS = [
     "id", "player_id", "season", "start_date", "end_date",
@@ -59,7 +59,13 @@ class SqlRunner:
         if not rows:
             return "No results found.", False
 
-        return _format_rows(columns, rows[:MAX_ROWS]), is_streak
+        total_count = len(rows)
+        formatted = _format_rows(columns, rows[:MAX_ROWS])
+        # Append total count metadata for the formatter to use
+        if total_count > MAX_ROWS:
+            formatted += f"\n__TOTAL_COUNT__:{total_count}"
+
+        return formatted, is_streak
 
     # ------------------------------------------------------------------
     # Streak fallback helpers
