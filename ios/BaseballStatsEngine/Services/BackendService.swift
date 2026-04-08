@@ -100,6 +100,16 @@ final class BackendService: Sendable {
         return QueryResult(text: fullText, intercepted: wasIntercepted, rewrittenQuery: rewrittenQuery)
     }
 
+    /// Non-streaming query — collects full response text. Used for drilldowns.
+    func queryRaw(question: String, deviceId: String) async throws -> String {
+        return try await ask(
+            question: question,
+            deviceId: deviceId,
+            history: [],
+            onChunk: { @MainActor _ in }
+        ).text
+    }
+
     // MARK: - Player Card
 
     /// Structured JSON response from /player-card endpoint.
