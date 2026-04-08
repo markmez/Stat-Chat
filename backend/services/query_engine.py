@@ -326,6 +326,7 @@ class QueryPlan:
     split_context: Optional[SplitContext] = None
     team_code: Optional[str] = None
     active_only: bool = False
+    player_name: Optional[str] = None  # Filter results to a specific player
 
     # Query shape
     query_type: str = "leaderboard"  # "leaderboard", "threshold", "count", "superlative", "game_log_count", "game_log_extreme", "team_ranking"
@@ -1292,6 +1293,16 @@ def decompose(question: str) -> QueryPlan:
             if letter_part in plan.consumed_words or letter_part in _STOP_WORDS or len(letter_part) <= 2:
                 continue
         plan.unexplained_words.append(w_clean)
+
+    # Try to match unexplained words as a player name
+    if plan.unexplained_words:
+        unexplained_str = " ".join(plan.unexplained_words)
+        matched = match_player(unexplained_str)
+        if matched:
+            plan.player_name = matched
+            # Remove matched name words from unexplained
+            matched_words = set(matched.lower().split())
+            plan.unexplained_words = [w for w in plan.unexplained_words if w not in matched_words]
 
     # Final overrides for date_range scope — must run last since earlier steps
     # may have set threshold from date numbers (e.g. "16" from "june 16")
@@ -2416,7 +2427,62 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
 
     cur = conn.cursor()
 
-    # First: get the leaderboard (who had the most such games)
+    _game_stat_labels = {
+        "hits": "Hits", "home_runs": "HR", "rbi": "RBI", "runs": "Runs",
+        "stolen_bases": "SB", "walks": "BB", "strikeouts": "K", "doubles": "2B",
+        "triples": "3B", "xbh": "XBH",
+    }
+    stat_name = _game_stat_labels.get(col, col.replace("_", " ").title())
+
+    # Player-filtered: show individual games for this player
+    if plan.player_name:
+        player_filter = " AND p.name = ?"
+        player_params = list(params) + [plan.player_name]
+        cur.execute(
+            f"SELECT g.date, g.opponent, g.hits, g.at_bats, "
+            f"g.doubles, g.triples, g.home_runs, g.rbi, g.runs "
+            f"FROM {table} g "
+            f"JOIN players p ON g.player_id = p.player_id "
+            f"WHERE {col_expr} >= ?{season_filter}{player_filter} "
+            f"ORDER BY g.date DESC LIMIT 50",
+            tuple(player_params),
+        )
+        games = cur.fetchall()
+        scope_label = str(plan.season) if plan.season else "All-Time"
+        if not games:
+            return f"{plan.player_name} has no games with {threshold}+ {stat_name} ({scope_label})."
+
+        title = f"**{plan.player_name} — {len(games)} games with {threshold}+ {stat_name} ({scope_label})**\n"
+        parts = [title]
+        parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+        parts.append("[LEADERBOARD]")
+
+        if col == "xbh":
+            parts.append("HEADER: XBH, 2B, 3B, HR, H-AB")
+            for i, (dt, opp, h, ab, d, t, hr, rbi, r) in enumerate(games):
+                xbh = (d or 0) + (t or 0) + (hr or 0)
+                try:
+                    from datetime import datetime as _dt
+                    dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
+                except Exception:
+                    dt_fmt = dt
+                parts.append(f"ROW {dt_fmt} vs {opp or '?'}: {xbh}, {d or 0}, {t or 0}, {hr or 0}, {h}-{ab}")
+        else:
+            parts.append(f"HEADER: {stat_name}, H-AB")
+            for i, (dt, opp, h, ab, d, t, hr, rbi, r) in enumerate(games):
+                val = {"hits": h, "home_runs": hr, "rbi": rbi, "doubles": d, "triples": t,
+                       "runs": r, "walks": 0, "strikeouts": 0, "stolen_bases": 0}.get(col, 0)
+                try:
+                    from datetime import datetime as _dt
+                    dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
+                except Exception:
+                    dt_fmt = dt
+                parts.append(f"ROW {dt_fmt} vs {opp or '?'}: {val or 0}, {h}-{ab}")
+
+        parts.append("[/LEADERBOARD]")
+        return "\n".join(parts)
+
+    # Leaderboard mode: who had the most such games
     cur.execute(
         f"SELECT p.name, COUNT(*) AS game_count "
         f"FROM {table} g "
@@ -2440,12 +2506,6 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
     total_games = cur.fetchone()[0]
 
     scope_label = str(plan.season) if plan.season else "All-Time"
-    _game_stat_labels = {
-        "hits": "Hits", "home_runs": "HR", "rbi": "RBI", "runs": "Runs",
-        "stolen_bases": "SB", "walks": "BB", "strikeouts": "K", "doubles": "2B",
-        "triples": "3B", "xbh": "XBH",
-    }
-    stat_name = _game_stat_labels.get(col, col.replace("_", " ").title())
     total_players = len(rows)
     title = f"**{total_games} games with {threshold}+ {stat_name} in {scope_label}** ({total_players} players)\n"
     parts = [title]

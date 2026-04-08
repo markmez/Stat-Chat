@@ -2531,6 +2531,9 @@ def parse_catch_all_player_stat(input_str: str) -> Optional[dict]:
     # "closest to", "since [player]" — comparative/historical
     if re.search(r'\bclosest\b|\bsince\b', lower):
         return None
+    # Game-log-style queries: "games with 4+ hits", "multi-homer games" — not a single-stat lookup
+    if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)[- ]hit\s+games?', lower):
+        return None
 
     stat = match_stat(lower)
     if not stat:
