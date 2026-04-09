@@ -349,9 +349,9 @@ def _build_mlb_season_records(conn, stats_config, table_name):
 
 def build_all(db_path):
     """Build all records tables."""
-    conn = sqlite3.connect(db_path, timeout=30)
+    conn = sqlite3.connect(db_path, timeout=60)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=10000")
+    conn.execute("PRAGMA busy_timeout=30000")
 
     create_tables(conn)
 
