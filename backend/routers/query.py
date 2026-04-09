@@ -308,6 +308,20 @@ def _format_haiku_result(result_text: str, question: str = "") -> str:
         for row in data_rows:
             row["name"] = row.pop(name_col, "")
 
+    # Strip team abbreviations from name column: "Aaron Judge (NYY)" → "Aaron Judge"
+    if has_name:
+        for row in data_rows:
+            name_val = str(row.get("name", ""))
+            # "Name (TEAM)" pattern
+            m = _re.match(r'^(.+?)\s*\([A-Z]{2,3}\)$', name_val)
+            if m:
+                row["name"] = m.group(1).strip()
+                continue
+            # "Name, TEAM" pattern (but not "Name, 1994" which is year)
+            m = _re.match(r'^(.+?),\s*([A-Z]{2,3})$', name_val)
+            if m:
+                row["name"] = m.group(1).strip()
+
     if has_name and not any(c.lower() == "season" for c in columns):
         # Check if name values contain ", YYYY" pattern
         sample = [row.get(name_col, "") for row in data_rows[:5]]
