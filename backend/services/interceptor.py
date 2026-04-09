@@ -29,6 +29,27 @@ def try_intercept(question: str):
     if not trimmed:
         return None
 
+    # Statcast queries for current season — graceful rejection, don't count query
+    import re
+    lower = trimmed.lower()
+    _statcast_keywords = ["exit velo", "exit velocity", "launch angle", "barrel rate",
+                          "barrels", "sprint speed", "hard hit", "hard-hit",
+                          "spin rate", "pitch velocity", "xba", "xslg", "xwoba",
+                          "expected batting", "expected slugging", "chase rate",
+                          "whiff rate", "sweet spot"]
+    if any(kw in lower for kw in _statcast_keywords):
+        current_year = date.today().year
+        is_current = (str(current_year) in lower or "this season" in lower
+                      or "this year" in lower or "2026" in lower
+                      or not re.search(r'20[012]\d', lower))  # no year specified = current
+        if is_current:
+            return ("__NO_COUNT__We don't have Statcast data (exit velocity, launch angle, barrel rate, etc.) "
+                    "in our database. We focus on verified game stats — batting, pitching, splits, streaks, "
+                    "and matchups."
+                    "\n\n[SUGGEST]OPS leaders this season[/SUGGEST]"
+                    "\n[SUGGEST]most home runs this season[/SUGGEST]"
+                    "\n[SUGGEST]best ERA this season[/SUGGEST]")
+
     # 0a. Tonight preview — "how will Judge do tonight" (auto-resolve probable pitcher)
     tonight = nm.parse_tonight_preview(trimmed)
     if tonight:

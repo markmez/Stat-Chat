@@ -617,10 +617,15 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         logger.warning("intercept_error question=%r error=%s type=%s", question, e, type(e).__name__)
         intercepted = None
     if intercepted is not None:
-        logger.info("query_intercepted question=%r", question)
+        # __NO_COUNT__ prefix = don't count against quota (graceful rejection)
+        no_count = intercepted.startswith("__NO_COUNT__")
+        if no_count:
+            intercepted = intercepted.replace("__NO_COUNT__", "", 1)
+        logger.info("query_intercepted question=%r no_count=%s", question, no_count)
         yield event({"type": "text", "text": intercepted})
         yield event({"type": "done", "intercepted": True})
-        increment_count(device_id)
+        if not no_count:
+            increment_count(device_id)
         log_query(question, device_id, "query engine")
         return
 
