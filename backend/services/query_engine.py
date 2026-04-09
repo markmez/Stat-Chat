@@ -1610,9 +1610,18 @@ def execute(plan: QueryPlan) -> Optional[str]:
                 pass
             see_also.append(f"career {abbrev} leaders")
 
-        # Combine all see-alsos into one DIDYOUMEAN with pipe separator
+        # Combine all see-alsos into one DIDYOUMEAN — insert after title, before container
         if see_also and result:
-            result = f"[DIDYOUMEAN]{'|'.join(see_also)}[/DIDYOUMEAN]\n" + result
+            dym_tag = f"[DIDYOUMEAN]{'|'.join(see_also)}[/DIDYOUMEAN]"
+            lines = result.split("\n")
+            # Find first non-empty line (the title), insert after it
+            for i, line in enumerate(lines):
+                if line.strip().startswith("**") and line.strip().endswith("**"):
+                    lines.insert(i + 1, dym_tag)
+                    break
+            else:
+                lines.insert(0, dym_tag)  # fallback: prepend
+            result = "\n".join(lines)
 
         return result
     except Exception as e:
