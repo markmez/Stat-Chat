@@ -3837,11 +3837,11 @@ def build_team_stats(team_code: str, stat_info: Optional[StatInfo] = None,
             parts = [f"**{full_name}** \u2014 {season} Hitters\n"]
             parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
             parts.append("[LEADERBOARD]")
-            parts.append("HEADER: G, AVG, HR, OPS")
+            parts.append("HEADER: AVG, HR, RBI, OPS")
             for i, row in enumerate(rows):
                 avg = _format_rate(str(row[2]))
                 ops = _format_rate(str(row[5]))
-                parts.append(f"ROW {i+1}. {row[0]}: {row[1]}, {avg}, {row[3]}, {ops}")
+                parts.append(f"ROW {i+1}. {row[0]}: {avg}, {row[3]}, {row[4]}, {ops}")
             parts.append("[/LEADERBOARD]")
             parts.append(f"\n[SUGGEST]{nickname} home runs[/SUGGEST]")
             parts.append(f"[SUGGEST]{nickname} batting average[/SUGGEST]")
