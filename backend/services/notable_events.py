@@ -1570,7 +1570,8 @@ def detect_on_this_date(conn, season, latest_date):
     events = []
 
     try:
-        month_day = latest_date[5:]  # "04-05" from "2026-04-05"
+        today = date.today().isoformat()  # Use today's actual date, not latest game date
+        month_day = today[5:]  # "04-09" from "2026-04-09"
     except:
         return events
 
@@ -1595,7 +1596,7 @@ def detect_on_this_date(conn, season, latest_date):
             "headline": headline,
             "detail": "",
             "category": "On This Date",
-            "game_date": latest_date,
+            "game_date": today,
             "player_names": [name],
             "team_names": [opp_name] if opp_name else [],
             "detection_type": "on_this_date",
@@ -1621,7 +1622,7 @@ def detect_on_this_date(conn, season, latest_date):
             "headline": headline,
             "detail": "",
             "category": "On This Date",
-            "game_date": latest_date,
+            "game_date": today,
             "player_names": [name],
             "team_names": [opp_name] if opp_name else [],
             "detection_type": "on_this_date",
@@ -1649,7 +1650,7 @@ def detect_on_this_date(conn, season, latest_date):
             "headline": headline,
             "detail": "",
             "category": "On This Date",
-            "game_date": latest_date,
+            "game_date": today,
             "player_names": [name],
             "team_names": [opp_name] if opp_name else [],
             "detection_type": "on_this_date",
@@ -1677,7 +1678,7 @@ def detect_on_this_date(conn, season, latest_date):
             "headline": headline,
             "detail": "",
             "category": "On This Date",
-            "game_date": latest_date,
+            "game_date": today,
             "player_names": [name],
             "team_names": [opp_name] if opp_name else [],
             "detection_type": "on_this_date",
@@ -1703,7 +1704,7 @@ def detect_on_this_date(conn, season, latest_date):
             "headline": headline,
             "detail": "",
             "category": "On This Date",
-            "game_date": latest_date,
+            "game_date": today,
             "player_names": [name],
             "team_names": [opp_name] if opp_name else [],
             "detection_type": "on_this_date",
