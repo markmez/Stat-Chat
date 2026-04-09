@@ -4034,12 +4034,26 @@ def build_team_total(team_code: str, stat_info: StatInfo, season: int) -> Option
 
 def build_team_ranking(stat_info: StatInfo, season: int) -> Optional[str]:
     """Top 10 teams by a stat."""
+    from services.name_matcher import is_pitching_stat
     conn = _get_db()
     try:
         cur = conn.cursor()
+        is_pitching = is_pitching_stat(stat_info)
+        table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+        pa_col = "ip_outs" if is_pitching else "plate_appearances"
+
+        # Lower-is-better stats
+        lower_better = stat_info.db_column in ("era", "whip", "bb_per_9", "hr_per_9")
+        order = "ASC" if lower_better else "DESC"
 
         if stat_info.is_rate:
-            rate_exprs = {
+            pitching_rate_exprs = {
+                "era": "SUM(s.earned_runs) * 9.0 / (SUM(s.ip_outs) / 3.0)",
+                "whip": "CAST(SUM(s.hits) + SUM(s.walks) AS REAL) / (SUM(s.ip_outs) / 3.0)",
+                "k_per_9": "SUM(s.strikeouts) * 9.0 / (SUM(s.ip_outs) / 3.0)",
+                "bb_per_9": "SUM(s.walks) * 9.0 / (SUM(s.ip_outs) / 3.0)",
+            }
+            batting_rate_exprs = {
                 "batting_avg": "CAST(SUM(s.hits) AS REAL) / SUM(s.at_bats)",
                 "obp": ("CAST(SUM(s.hits + s.walks + s.hit_by_pitch) AS REAL) / "
                         "SUM(s.at_bats + s.walks + s.hit_by_pitch + s.sacrifice_flies)"),
@@ -4049,28 +4063,27 @@ def build_team_ranking(stat_info: StatInfo, season: int) -> Optional[str]:
                         "SUM(s.at_bats + s.walks + s.hit_by_pitch + s.sacrifice_flies) + "
                         "CAST(SUM(s.hits - s.doubles - s.triples - s.home_runs "
                         "+ 2*s.doubles + 3*s.triples + 4*s.home_runs) AS REAL) / SUM(s.at_bats)"),
-                "iso": ("CAST(SUM(s.hits - s.doubles - s.triples - s.home_runs "
-                         "+ 2*s.doubles + 3*s.triples + 4*s.home_runs) AS REAL) / SUM(s.at_bats) "
-                         "- CAST(SUM(s.hits) AS REAL) / SUM(s.at_bats)"),
             }
+            rate_exprs = pitching_rate_exprs if is_pitching else batting_rate_exprs
             select_expr = rate_exprs.get(
                 stat_info.db_column,
-                f"SUM(s.{stat_info.db_column} * s.plate_appearances) / SUM(s.plate_appearances)"
+                f"SUM(s.{stat_info.db_column} * s.{pa_col}) / SUM(s.{pa_col})"
             )
+            min_pa = 300 if is_pitching else 100
             cur.execute(
                 f"SELECT s.team, {select_expr} AS team_stat "
-                f"FROM season_batting_stats s "
-                f"WHERE s.season = ? AND s.plate_appearances >= 1 "
-                f"GROUP BY s.team HAVING SUM(s.plate_appearances) >= 100 "
-                f"ORDER BY team_stat DESC LIMIT 30",
+                f"FROM {table} s "
+                f"WHERE s.season = ? AND s.{pa_col} >= 1 "
+                f"GROUP BY s.team HAVING SUM(s.{pa_col}) >= {min_pa} "
+                f"ORDER BY team_stat {order} LIMIT 30",
                 (season,),
             )
         else:
             cur.execute(
                 f"SELECT s.team, SUM(s.{stat_info.db_column}) AS team_stat "
-                f"FROM season_batting_stats s "
+                f"FROM {table} s "
                 f"WHERE s.season = ? "
-                f"GROUP BY s.team ORDER BY team_stat DESC LIMIT 30",
+                f"GROUP BY s.team ORDER BY team_stat {order} LIMIT 30",
                 (season,),
             )
 

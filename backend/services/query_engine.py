@@ -355,6 +355,7 @@ class QueryPlan:
     # Validation
     is_pitching: bool = False
     ambiguous_stat: bool = False  # True when stat exists in both batting and pitching
+    has_team_context: bool = False  # "team" was in the query — might mean team-level aggregate
     unexplained_words: list = field(default_factory=list)
     consumed_words: set = field(default_factory=set)
 
@@ -618,6 +619,11 @@ def decompose(question: str) -> QueryPlan:
     if any(t in lower for t in team_triggers):
         plan.query_type = "team_ranking"
         _add_consumed(plan, "what which team teams")
+    # "team [stat] leaders" without a specific team name → team ranking
+    elif re.search(r'\bteam\b', lower) and not plan.team_code:
+        plan.query_type = "team_ranking"
+        plan.has_team_context = True  # for alternate interpretation pill
+        _add_consumed(plan, "team teams")
 
     # Sort direction
     if any(t in lower for t in ["worst", "fewest"]):
@@ -1555,6 +1561,11 @@ def execute(plan: QueryPlan) -> Optional[str]:
         # Append alternate interpretation pill for ambiguous stats
         if result and plan.ambiguous_stat:
             result += _ambiguous_suggest(plan)
+
+        # "Within vs by" alternate interpretation for team queries
+        if result and plan.has_team_context and plan.stat:
+            abbrev = plan.stat.display_abbrev
+            result += f"\n[DIDYOUMEAN]{abbrev} leaders on each team[/DIDYOUMEAN]"
 
         return result
     except Exception as e:
