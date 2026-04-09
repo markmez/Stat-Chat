@@ -389,6 +389,8 @@ Pre-defined library of multi-condition historical queries run automatically afte
 - **Approaching thresholds**: 3 away for team records, 5 for big milestones
 - **Personal bests**: Career highs (50+ games min), career firsts (first HR, win, save only), first high-threshold achievement (first 10+ K game, first 4-hit game)
 - **"First since" context**: For career-first threshold achievements, check last player on team/league to do it
+- **Historic moments table**: Pre-computed from game logs — dates when career totals crossed milestones or passed all-time leaders (e.g., Aaron HR #715 on Apr 8 1974). Also franchise record crossings. Feeds into On This Date.
+- **Three surfaces**: Feed events (approaching/crossing), On This Date (historic moments), Leaders tab (franchise record context alongside current leaders — "HR Leaders: Judge 5 — franchise record: 61, Maris 1961")
 
 ### Admin Query Dashboard (BUILT, 2026-04-07)
 - **URL**: `https://api.secondsignalapps.com/admin/dashboard?key=I9-NNJ-GBen3SZ-wf8JkZX5-_zvvt8Qri2EtTxWUo-I`
