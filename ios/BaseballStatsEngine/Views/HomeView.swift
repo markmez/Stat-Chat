@@ -435,10 +435,7 @@ struct HomeView: View {
                 } label: {
                     Text("Upgrade for Unlimited")
                         .font(.system(.caption, design: .rounded, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 10)
-                        .background(deepBlue, in: RoundedRectangle(cornerRadius: 10))
+                        .foregroundStyle(deepBlue)
                 }
             }
         }

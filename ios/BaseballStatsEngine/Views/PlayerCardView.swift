@@ -335,6 +335,9 @@ struct PlayerCardView: View {
         .task {
             AnalyticsService.trackPlayerCardView(name: playerName)
             playerCard = await PlayerCardService.fetch(name: playerName, source: source, deviceId: AppState.deviceId)
+            if source == "search" {
+                appState.incrementQueryCount()
+            }
             isLoading = false
         }
     }

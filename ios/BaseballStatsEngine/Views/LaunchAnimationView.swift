@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct LaunchAnimationView: View {
+    var holdForFTUE: Bool = false
     let onComplete: () -> Void
 
     @State private var logoOpacity: Double = 0.0
@@ -142,24 +143,35 @@ struct LaunchAnimationView: View {
             baseball3Opacity = 1.0
         }
 
-        // Phase 3: Hold (0.7 – 1.1s), then transition (1.1 – 1.8s)
-        // Background fades to white, icon shrinks to home size, colors shift to blue
-        withAnimation(.easeInOut(duration: 0.7).delay(1.1)) {
-            backgroundOpacity = 0.0
-            iconScale = 1.0
-        }
+        if holdForFTUE {
+            // Hold on blue — FTUE will appear over this
+            // Just shrink the icon slightly and call onComplete so FTUE can show
+            withAnimation(.easeInOut(duration: 0.5).delay(1.1)) {
+                iconScale = 1.0
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+                onComplete()
+            }
+        } else {
+            // Phase 3: Hold (0.7 – 1.1s), then transition (1.1 – 1.8s)
+            // Background fades to white, icon shrinks to home size, colors shift to blue
+            withAnimation(.easeInOut(duration: 0.7).delay(1.1)) {
+                backgroundOpacity = 0.0
+                iconScale = 1.0
+            }
 
-        // Wordmark and tagline appear as transition completes
-        withAnimation(.easeOut(duration: 0.4).delay(1.4)) {
-            wordmarkOpacity = 1.0
-        }
-        withAnimation(.easeOut(duration: 0.3).delay(1.6)) {
-            taglineOpacity = 1.0
-        }
+            // Wordmark and tagline appear as transition completes
+            withAnimation(.easeOut(duration: 0.4).delay(1.4)) {
+                wordmarkOpacity = 1.0
+            }
+            withAnimation(.easeOut(duration: 0.3).delay(1.6)) {
+                taglineOpacity = 1.0
+            }
 
-        // Phase 4: Dismiss overlay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.1) {
-            onComplete()
+            // Phase 4: Dismiss overlay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.1) {
+                onComplete()
+            }
         }
     }
 }

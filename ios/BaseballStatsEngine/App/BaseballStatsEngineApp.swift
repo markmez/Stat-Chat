@@ -4,6 +4,7 @@ import SwiftUI
 struct StatChatApp: App {
     @State private var appState = AppState()
     @State private var showLaunch = true
+    @State private var showFTUE = !UserDefaults.standard.bool(forKey: "ftue_completed")
 
     init() {
         AnalyticsService.initialize(distinctId: AppState.deviceId)
@@ -17,13 +18,30 @@ struct StatChatApp: App {
                 HomeView()
 
                 if showLaunch {
-                    LaunchAnimationView {
-                        withAnimation(.easeOut(duration: 0.3)) {
-                            showLaunch = false
+                    LaunchAnimationView(holdForFTUE: showFTUE) {
+                        if showFTUE {
+                            // Splash done but FTUE needed — keep launch overlay
+                            // (splash stays on blue, FTUE content appears)
+                        } else {
+                            withAnimation(.easeOut(duration: 0.3)) {
+                                showLaunch = false
+                            }
                         }
                     }
                     .transition(.opacity)
                     .zIndex(1)
+                }
+
+                if showFTUE && showLaunch {
+                    FTUEView {
+                        UserDefaults.standard.set(true, forKey: "ftue_completed")
+                        showFTUE = false
+                        withAnimation(.easeOut(duration: 0.7)) {
+                            showLaunch = false
+                        }
+                    }
+                    .transition(.opacity)
+                    .zIndex(1.5)
                 }
 
                 if appState.showUpdateBanner {

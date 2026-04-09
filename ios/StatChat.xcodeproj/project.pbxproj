@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CE2D026FB411464489D4A46F /* FTUEView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B03DDD1D06574852939A7111 /* FTUEView.swift */; };
 		0F35C356B5576BF248D5E1AE /* stat_config.json in Resources */ = {isa = PBXBuildFile; fileRef = 6B50FD15492CCE031A905488 /* stat_config.json */; };
 		10E6361803A8FEA7A449A733 /* TeamCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5808AF2D60EBEB36D9CE0A5 /* TeamCardView.swift */; };
 		11B5072DDF250B89211A446B /* all_players.json in Resources */ = {isa = PBXBuildFile; fileRef = 4293560F253FA1568A32F30E /* all_players.json */; };
@@ -52,6 +53,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B03DDD1D06574852939A7111 /* FTUEView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FTUEView.swift; sourceTree = "<group>"; };
 		0D73591CB340996782549D6F /* BaseballStatsEngineApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BaseballStatsEngineApp.swift; sourceTree = "<group>"; };
 		10EA680000C9537C1C20EC2A /* Message.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Message.swift; sourceTree = "<group>"; };
 		12ED36FBBADEE2968B59C872 /* StatGridParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatGridParser.swift; sourceTree = "<group>"; };
@@ -200,6 +202,7 @@
 				A0FB15832BA10076377EBB0F /* PaywallView.swift */,
 				B51AB0AF7813417184FAF96B /* PlayerCardView.swift */,
 				56A2A2E05C215D0A3ADAAAAD /* ResultCard.swift */,
+				B03DDD1D06574852939A7111 /* FTUEView.swift */,
 				CD18464AB4C998AEF89D1ADC /* ResultsView.swift */,
 				72B1E47AF8FDA520F93D8DF4 /* SearchHistoryView.swift */,
 				68E27B973CF2B1F2C0AA67E7 /* SettingsView.swift */,
@@ -313,6 +316,7 @@
 				331DF50CF8911F917BE040E4 /* PlayerNameMatcher.swift in Sources */,
 				C3F79295CCAFADF7A2760CA1 /* PromptStore.swift in Sources */,
 				20D0946EF09755C58A946C8A /* ResultCard.swift in Sources */,
+				CE2D026FB411464489D4A46F /* FTUEView.swift in Sources */,
 				455928344195A5334455240E /* ResultsView.swift in Sources */,
 				ADDD8C0C367AE8A5F619DBF1 /* SQLSanitizer.swift in Sources */,
 				1ECE269D01C0E2A34FCDCE58 /* SearchHistoryView.swift in Sources */,
