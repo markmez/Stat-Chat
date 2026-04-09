@@ -36,7 +36,8 @@ def try_intercept(question: str):
                           "barrels", "sprint speed", "hard hit", "hard-hit",
                           "spin rate", "pitch velocity", "xba", "xslg", "xwoba",
                           "expected batting", "expected slugging", "chase rate",
-                          "whiff rate", "sweet spot"]
+                          "whiff rate", "sweet spot", "statcast", "bat speed",
+                          "swing length", "extension"]
     if any(kw in lower for kw in _statcast_keywords):
         current_year = date.today().year
         is_current = (str(current_year) in lower or "this season" in lower
@@ -45,7 +46,8 @@ def try_intercept(question: str):
         if is_current:
             return ("__NO_COUNT__We don't have Statcast data (exit velocity, launch angle, barrel rate, etc.) "
                     "in our database. We focus on verified game stats — batting, pitching, splits, streaks, "
-                    "and matchups."
+                    "and matchups.\n\n"
+                    "_This search didn't count against your free queries._"
                     "\n\n[SUGGEST]OPS leaders this season[/SUGGEST]"
                     "\n[SUGGEST]most home runs this season[/SUGGEST]"
                     "\n[SUGGEST]best ERA this season[/SUGGEST]")
