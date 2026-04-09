@@ -236,6 +236,14 @@ def _get_latest_date(conn, season):
     return row[0] if row and row[0] else None
 
 
+def _ordinal(n):
+    """Convert number to ordinal: 1st, 2nd, 3rd, 4th..."""
+    n = int(n)
+    if 11 <= n % 100 <= 13:
+        return f"{n}th"
+    return f"{n}{['th','st','nd','rd','th','th','th','th','th','th'][n % 10]}"
+
+
 def _player_name(conn, player_id):
     """Look up player display name."""
     row = conn.execute(
@@ -394,13 +402,15 @@ def detect_hitting_streaks(conn, season, latest_date, min_games=8):
         if streak >= min_games:
             name = _player_name(conn, pid)
             team = _player_team_display(conn, pid, season)
+            game_line, _ = _get_game_line(conn, pid, latest_date, season)
             context = _historical_context(
                 conn, streak, "hits > 0",
                 exclude_season=season, exclude_player=pid
             )
-            headline = f"{name} has hit safely in {streak} straight games"
+            intro = f"{name} went {game_line}" if game_line else name
+            headline = f"{intro}, extending his hitting streak to {streak} straight games"
             if context:
-                headline += f", {context.lower()}"
+                headline += f" — {context.lower()}"
             else:
                 headline += "."
             events.append({
@@ -449,15 +459,18 @@ def detect_onbase_streaks(conn, season, latest_date, min_games=12):
 
         if streak >= min_games:
             name = _player_name(conn, pid)
+            team = _player_team_display(conn, pid, season)
+            game_line, _ = _get_game_line(conn, pid, latest_date, season)
             context = _historical_context(
                 conn, streak,
                 "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
                 exclude_season=season, exclude_player=pid,
                 at_bat_filter="(at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)"
             )
-            headline = f"{name} has reached base in {streak} straight games"
+            intro = f"{name} went {game_line}" if game_line else name
+            headline = f"{intro}, extending his on-base streak to {streak} straight games"
             if context:
-                headline += f", {context.lower()}"
+                headline += f" — {context.lower()}"
             else:
                 headline += "."
             events.append({
@@ -503,15 +516,31 @@ def detect_hr_streaks(conn, season, latest_date, min_games=4):
 
         if streak >= min_games:
             name = _player_name(conn, pid)
+            team = _player_team_display(conn, pid, season)
+            # Get today's HR count and season total
+            today_hr = conn.execute("""
+                SELECT home_runs FROM game_batting_logs
+                WHERE player_id = ? AND date = ? AND season = ?
+            """, (pid, latest_date, season)).fetchone()
+            season_hr = conn.execute("""
+                SELECT home_runs FROM season_batting_stats
+                WHERE player_id = ? AND season = ?
+            """, (pid, season)).fetchone()
+            hr_today = today_hr[0] if today_hr else 1
+            hr_total = season_hr[0] if season_hr else 0
+            game_line, _ = _get_game_line(conn, pid, latest_date, season)
             context = _historical_context(
                 conn, streak, "home_runs > 0",
                 exclude_season=season, exclude_player=pid
             )
-            headline = f"{name} has homered in {streak} straight games"
+            # Build intro with HR number
+            ordinal = f"his {_ordinal(hr_total)}" if hr_total else "a"
+            intro = f"{name} homered ({ordinal}) and has now gone deep in {streak} straight games"
             if context:
-                headline += f", {context.lower()}"
+                intro += f" — {context.lower()}"
             else:
-                headline += "."
+                intro += "."
+            headline = intro
             events.append({
                 "headline": headline,
                 "detail": "",
