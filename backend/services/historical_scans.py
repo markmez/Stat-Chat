@@ -847,71 +847,6 @@ def scan_leaderboard_changes(conn, season, latest_date):
                         "runner_up": runner_up_name,
                         "runner_up_val": runner_up_val,
                     })
-                else:
-                    # Leader didn't play — they took the lead through inaction
-                    # Check if their team plays today
-                    try:
-                        from services.daily_games import has_game_today
-                        if has_game_today(leader_team):
-                            # Hold: their team plays today, wait to see if they get PAs
-                            # If they play, next detect_all will attribute to them
-                            # If they don't play (bench/off day), next run will come back here
-                            leader_has_pa_today = conn.execute("""
-                                SELECT COUNT(*) FROM game_batting_logs
-                                WHERE player_id = ? AND season = ? AND date = ?
-                            """, (leader_pid, season, latest_date)).fetchone()[0] > 0
-                            if not leader_has_pa_today:
-                                # Team played but leader didn't get PAs — or game hasn't ended
-                                # Check if their team's game is already in game logs
-                                team_played = conn.execute("""
-                                    SELECT COUNT(*) FROM game_batting_logs g
-                                    JOIN season_batting_stats s ON g.player_id = s.player_id AND g.season = s.season
-                                    WHERE g.season = ? AND g.date = ? AND s.team = ?
-                                """, (season, latest_date, leader_team)).fetchone()[0] > 0
-                                if not team_played:
-                                    continue  # Hold — game hasn't completed yet
-                    except ImportError:
-                        pass
-
-                    # Leader didn't play (or their team didn't play today)
-                    # Attribute to the runner-up who LOST the lead
-                    # The runner-up must have played today
-                    runner_played = conn.execute("""
-                        SELECT COUNT(*) FROM game_batting_logs
-                        WHERE player_id = ? AND season = ? AND date = ?
-                    """, (runner_up_pid, season, latest_date)).fetchone()[0] > 0
-                    if not runner_played:
-                        continue
-
-                    team = runner_up_team
-                    league = _league_for_team(team)
-
-                    if scope == "MLB":
-                        league_rows = conn.execute(f"""
-                            SELECT p.player_id
-                            FROM season_batting_stats s
-                            JOIN players p ON s.player_id = p.player_id
-                            WHERE s.season = ? {pa_filter}
-                            AND s.team IN ({','.join(repr(t) for t in (AL_TEAMS if league == 'AL' else NL_TEAMS))})
-                            ORDER BY s.{col} DESC LIMIT 1
-                        """, (season,)).fetchone()
-                        if league_rows and league_rows[0] == leader_pid:
-                            continue
-
-                    facts.append({
-                        "type": "leaderboard_change_lost",
-                        "player": runner_up_name,  # The player who lost the lead
-                        "player_id": runner_up_pid,
-                        "team": runner_up_team,
-                        "stat": col,
-                        "stat_label": label,
-                        "stat_abbrev": abbrev,
-                        "value": runner_up_val,
-                        "new_leader": leader_name,
-                        "new_leader_val": leader_val,
-                        "scope": scope,
-                    })
-
     # Pitching leaderboard changes
     pitch_stats = [
         ("strikeouts", "K", "strikeouts", 5, "strikeouts"),
@@ -1346,60 +1281,6 @@ def template_facts(conn, facts, season, latest_date):
 
             headline = f"{game_intro}, taking the {scope} lead in {stat_label} ({val_str}), passing {runner_up} ({ru_str})."
             secondary_names.append(runner_up)
-
-        elif f["type"] == "leaderboard_change_lost":
-            # Player lost the lead through a bad game — new leader didn't play
-            scope = f["scope"]
-            stat_label = f["stat_label"]
-            stat = f.get("stat", "")
-            new_leader = f["new_leader"]
-            new_leader_val = f["new_leader_val"]
-            val = f["value"]  # The losing player's current value
-
-            # Build game intro for the player who lost the lead
-            if stat in ("batting_avg", "obp", "ops", "slg") and pid:
-                game_row = conn.execute("""
-                    SELECT hits, at_bats, walks, hit_by_pitch, home_runs,
-                           doubles, triples
-                    FROM game_batting_logs
-                    WHERE player_id = ? AND date = ? AND season = ?
-                    LIMIT 1
-                """, (pid, latest_date, season)).fetchone()
-                if game_row:
-                    h, ab, bb, hbp, hr, d, t = game_row
-                    h, ab, bb = h or 0, ab or 0, bb or 0
-                    hbp, hr, d, t = hbp or 0, hr or 0, d or 0, t or 0
-                    parts = [f"{h} for {ab}"]
-                    if bb > 0:
-                        parts.append(f"{'a walk' if bb == 1 else f'{bb} walks'}")
-                    if hr > 0:
-                        parts.append(f"{'a homer' if hr == 1 else f'{hr} homers'}")
-                    elif d > 0 or t > 0:
-                        xbh_parts = []
-                        if d > 0: xbh_parts.append(f"{'a double' if d == 1 else f'{d} doubles'}")
-                        if t > 0: xbh_parts.append(f"{'a triple' if t == 1 else f'{t} triples'}")
-                        parts.extend(xbh_parts)
-                    if len(parts) == 1:
-                        game_intro = f"{player} went {parts[0]}"
-                    elif len(parts) == 2:
-                        game_intro = f"{player} went {parts[0]} with {parts[1]}"
-                    else:
-                        extras = parts[1:]
-                        game_intro = f"{player} went {parts[0]} with {', '.join(extras[:-1])} and {extras[-1]}"
-                else:
-                    game_intro = f"{player}"
-            elif game_line:
-                game_intro = f"{player} went {game_line}"
-            else:
-                game_intro = f"{player}"
-
-            if isinstance(new_leader_val, float):
-                nl_str = f"{new_leader_val:.3f}" if new_leader_val >= 1.0 else f".{int(new_leader_val * 1000):03d}"
-            else:
-                nl_str = str(new_leader_val)
-
-            headline = f"{game_intro}, dropping below {new_leader} ({nl_str}) for the {scope} lead in {stat_label}."
-            secondary_names.append(new_leader)
 
         elif f["type"] == "leaderboard_tie":
             val = f["value"]
