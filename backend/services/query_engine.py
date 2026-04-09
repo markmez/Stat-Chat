@@ -1593,6 +1593,27 @@ def execute(plan: QueryPlan) -> Optional[str]:
             season = plan.season or date.today().year
             result = f"[DIDYOUMEAN]{abbrev} leader on each team {season}[/DIDYOUMEAN]\n" + result
 
+        # When no year was specified and we defaulted to current season,
+        # suggest last season (early season) and career as alternate interpretations
+        if (result and plan.season and plan.season == date.today().year
+                and plan.stat and plan.query_type in ("leaderboard", "threshold")):
+            abbrev = plan.stat.display_abbrev
+            last_year = plan.season - 1
+            dym_parts = []
+            try:
+                gp = conn.execute(
+                    "SELECT MAX(games) FROM season_batting_stats WHERE season = ?",
+                    (plan.season,)
+                ).fetchone()
+                games_played = gp[0] if gp and gp[0] else 0
+                if games_played < 40:
+                    dym_parts.append(f"[DIDYOUMEAN]{last_year} {abbrev} leaders[/DIDYOUMEAN]")
+            except Exception:
+                pass
+            dym_parts.append(f"[DIDYOUMEAN]career {abbrev} leaders[/DIDYOUMEAN]")
+            if dym_parts:
+                result = "\n".join(dym_parts) + "\n" + result
+
         return result
     except Exception as e:
         logger.warning("query_engine_error error=%s type=%s plan_type=%s streak_len=%s", e, type(e).__name__, plan.query_type, plan.streak_length)
