@@ -1522,14 +1522,24 @@ def _empty_result_pills(plan: QueryPlan) -> str:
 
 
 def _ambiguous_suggest(plan: QueryPlan) -> str:
-    """Generate a [SUGGEST] pill for the alternate batting/pitching interpretation."""
+    """Generate alternate interpretation for ambiguous batting/pitching stats.
+    Truly ambiguous (SO, BB): DIDYOUMEAN before results.
+    Less ambiguous (H, HR, etc.): SUGGEST pill after results."""
     if not plan.ambiguous_stat or not plan.stat:
         return ""
     abbrev = plan.stat.display_abbrev
+    col = plan.stat.db_column
+    # Truly ambiguous — equally valid as batting or pitching
+    truly_ambiguous = col in ("strikeouts", "walks")
     if plan.is_pitching:
-        return f"\n[SUGGEST]{abbrev} leaders (hitters)[/SUGGEST]"
+        alt = f"{abbrev} leaders (hitters)"
     else:
-        return f"\n[SUGGEST]{abbrev} leaders (pitchers)[/SUGGEST]"
+        alt = f"{abbrev} leaders (pitchers)"
+
+    if truly_ambiguous:
+        return f"__DIDYOUMEAN__{alt}"  # Marker — execute() will position before results
+    else:
+        return f"\n[SUGGEST]{alt}[/SUGGEST]"
 
 
 def execute(plan: QueryPlan) -> Optional[str]:
@@ -1566,9 +1576,16 @@ def execute(plan: QueryPlan) -> Optional[str]:
         elif plan.query_type == "leaderboard":
             result = _execute_leaderboard(conn, plan)
 
-        # Append alternate interpretation pill for ambiguous stats
+        # Alternate interpretation for ambiguous stats
         if result and plan.ambiguous_stat:
-            result += _ambiguous_suggest(plan)
+            alt = _ambiguous_suggest(plan)
+            if alt.startswith("__DIDYOUMEAN__"):
+                # Truly ambiguous — position before results
+                query = alt.replace("__DIDYOUMEAN__", "")
+                result = f"[DIDYOUMEAN]{query}[/DIDYOUMEAN]\n" + result
+            elif alt:
+                # Less ambiguous — append as pill after results
+                result += alt
 
         # "Within vs by" alternate interpretation for team queries — show before results
         if result and plan.has_team_context and plan.stat:
