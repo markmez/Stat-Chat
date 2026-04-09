@@ -293,6 +293,7 @@ _STOP_WORDS = {
     "appeared", "appearing", "recorded", "posted", "put",
     "league", "led", "leading", "leads", "leader", "leaders",
     "outing", "outings", "start", "starts", "appearance", "appearances",
+    "baseman", "basemen", "fielder", "fielders",
     "?", "!", ".",
 }
 

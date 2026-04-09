@@ -186,6 +186,9 @@ def _position_filter(positions: list[str], stats_prefix: str, season_expr: str) 
     season_expr: expression for the season column (e.g. "s.season" or a literal)
     """
     pos_list = ", ".join(f"'{p}'" for p in positions)
+    # MLB positional qualification: primary position (most games) AND
+    # at least 50% of team games at that position (81 games in 162-game season).
+    # For partial seasons, prorate: use the player's team's actual game count.
     return (
         f" AND EXISTS ("
         f"SELECT 1 FROM season_fielding_stats sf "
@@ -194,7 +197,10 @@ def _position_filter(positions: list[str], stats_prefix: str, season_expr: str) 
         f"AND sf.position IN ({pos_list}) "
         f"AND sf.games = ("
         f"SELECT MAX(sf2.games) FROM season_fielding_stats sf2 "
-        f"WHERE sf2.player_id = sf.player_id AND sf2.season = sf.season))"
+        f"WHERE sf2.player_id = sf.player_id AND sf2.season = sf.season)"
+        f"AND sf.games >= ("
+        f"SELECT MAX(s3.games) / 2 FROM season_batting_stats s3 "
+        f"WHERE s3.season = sf.season AND s3.team = {stats_prefix}.team))"
     )
 
 
