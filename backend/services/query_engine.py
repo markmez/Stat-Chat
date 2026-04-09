@@ -330,7 +330,7 @@ class QueryPlan:
     player_name: Optional[str] = None  # Filter results to a specific player
 
     # Query shape
-    query_type: str = "leaderboard"  # "leaderboard", "threshold", "count", "superlative", "game_log_count", "game_log_extreme", "team_ranking"
+    query_type: str = "leaderboard"  # "leaderboard", "threshold", "count", "superlative", "game_log_count", "game_log_extreme", "team_ranking", "per_team_leaders"
     threshold: Optional[float] = None
     comparison: str = ">="  # ">=" or "<="
     sort_asc: bool = False
@@ -614,15 +614,21 @@ def decompose(question: str) -> QueryPlan:
         plan.query_type = "count"
         _add_consumed(plan, "how many players pitchers batters hitters")
 
-    # Team ranking
-    team_triggers = ["what team", "which team", "what teams", "which teams"]
-    if any(t in lower for t in team_triggers):
+    # Per-team individual leaders (must check BEFORE team_ranking and leaderboard triggers)
+    # "on each team" / "per team" / "by team" / "for each team"
+    per_team_triggers = ["on each team", "per team", "for each team", "by team",
+                         "each team", "every team"]
+    if any(p in lower for p in per_team_triggers):
+        plan.query_type = "per_team_leaders"
+        _add_consumed(plan, "on each per for by every team teams")
+    # Team ranking: "what team" / "which team"
+    elif any(t in lower for t in ["what team", "which team", "what teams", "which teams"]):
         plan.query_type = "team_ranking"
         _add_consumed(plan, "what which team teams")
-    # "team [stat] leaders" without a specific team name → team ranking
+    # Bare "team [stat]" without specific team name → team ranking with alternate pill
     elif re.search(r'\bteam\b', lower) and not plan.team_code:
         plan.query_type = "team_ranking"
-        plan.has_team_context = True  # for alternate interpretation pill
+        plan.has_team_context = True
         _add_consumed(plan, "team teams")
 
     # Sort direction
@@ -631,7 +637,7 @@ def decompose(question: str) -> QueryPlan:
         _add_consumed(plan, "worst fewest")
     if any(t in lower for t in ["best", "highest", "most", "top", "leaders", "leader",
                                   "leaderboard", "lowest", "who led", "who leads", "leading"]):
-        if plan.query_type not in ("count", "superlative", "team_ranking"):
+        if plan.query_type not in ("count", "superlative", "team_ranking", "per_team_leaders"):
             plan.query_type = "leaderboard"
         _add_consumed(plan, "best highest most top leaders leader leaderboard lowest who led leads leading")
 
@@ -1547,6 +1553,8 @@ def execute(plan: QueryPlan) -> Optional[str]:
             result = _execute_game_log_extreme(conn, plan)
         elif plan.query_type == "team_ranking":
             result = _execute_team_ranking(conn, plan)
+        elif plan.query_type == "per_team_leaders":
+            result = _execute_per_team_leaders(conn, plan)
         elif plan.split_context is not None:
             result = _execute_split_leaderboard(conn, plan)
         elif plan.query_type == "count":
@@ -1565,7 +1573,8 @@ def execute(plan: QueryPlan) -> Optional[str]:
         # "Within vs by" alternate interpretation for team queries
         if result and plan.has_team_context and plan.stat:
             abbrev = plan.stat.display_abbrev
-            result += f"\n[DIDYOUMEAN]{abbrev} leaders on each team[/DIDYOUMEAN]"
+            season = plan.season or date.today().year
+            result += f"\n[DIDYOUMEAN]{abbrev} leader on each team {season}[/DIDYOUMEAN]"
 
         return result
     except Exception as e:
@@ -2718,6 +2727,60 @@ def _execute_game_log_extreme(conn, plan: QueryPlan) -> Optional[str]:
             result += f"\n\n[SUGGEST]most K in one game by a hitter[/SUGGEST]"
         result += f"\n[SUGGEST]{stat_name} leaders[/SUGGEST]"
     return result
+
+
+def _execute_per_team_leaders(conn, plan: QueryPlan) -> Optional[str]:
+    """Per-team individual leaders: 'ERA leaders on each team'."""
+    if not plan.stat:
+        return None
+
+    season = plan.season or date.today().year
+    stat_expr, abbrev, name, is_rate = _stat_expr(plan, "s")
+    table = "season_pitching_stats" if plan.is_pitching else "season_batting_stats"
+    col = plan.stat.db_column
+
+    # Lower-is-better stats
+    lower_better = col in ("era", "whip", "bb_per_9", "hr_per_9")
+    order = "ASC" if lower_better else "DESC"
+
+    # PA/IP minimum to avoid noise
+    if plan.is_pitching:
+        min_filter = "AND s.ip_outs >= 30"  # ~10 IP
+    else:
+        min_filter = "AND s.plate_appearances >= 15"
+
+    # Use window function to rank within each team
+    cur = conn.cursor()
+    cur.execute(f"""
+        SELECT name, team, stat_val FROM (
+            SELECT p.name, s.team, {stat_expr} AS stat_val,
+                   ROW_NUMBER() OVER (PARTITION BY s.team ORDER BY {stat_expr} {order}) AS rn
+            FROM {table} s
+            JOIN players p ON s.player_id = p.player_id
+            WHERE s.season = ? {min_filter}
+        ) ranked
+        WHERE rn = 1
+        ORDER BY stat_val {order}
+    """, (season,))
+    rows = cur.fetchall()
+
+    if not rows:
+        return f"No per-team {abbrev} leaders found ({season})." + _empty_result_pills(plan)
+
+    # Import team display
+    from services.notable_events import team_display
+
+    title = f"**{season} {name} Leader on Each Team**\n"
+    parts = [title]
+    parts.append("[LEADERBOARD]")
+    parts.append(f"HEADER: {abbrev}")
+    for player_name, team_code, val in rows:
+        team_name = team_display(team_code) if team_code else team_code
+        formatted = _format_val(plan.stat.db_column, val, is_rate)
+        parts.append(f"ROW {team_name} — {player_name}: {formatted}")
+    parts.append("[/LEADERBOARD]")
+
+    return "\n".join(parts)
 
 
 def _execute_team_ranking(conn, plan: QueryPlan) -> Optional[str]:
