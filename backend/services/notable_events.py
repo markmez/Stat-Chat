@@ -16,6 +16,7 @@ import sqlite3
 import os
 import time
 from datetime import date, datetime
+from services.historical_scans import _get_game_line
 
 DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
 
