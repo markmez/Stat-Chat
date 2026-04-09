@@ -31,8 +31,8 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # Weekly full reconciliation: Sunday 6:00 AM ET (10:00 UTC)
 0 10 * * 0 statchat /opt/statchat/repo/deploy/refresh.sh --full-refresh >> /data/refresh.log 2>&1
 
-# Weekly VACUUM: Sunday 5:00 AM ET (09:00 UTC) — reclaim wasted DB space
-0 9 * * 0 statchat /opt/statchat/repo/deploy/vacuum.sh >> /data/refresh.log 2>&1
+# VACUUM: Sunday + Wednesday 5:00 AM ET (09:00 UTC) — reclaim wasted DB space
+0 9 * * 0,3 statchat /opt/statchat/repo/deploy/vacuum.sh >> /data/refresh.log 2>&1
 
 # Weekly records rebuild: Sunday 7:00 AM ET (11:00 UTC) — team + MLB records tables
 0 11 * * 0 statchat /opt/statchat/venv/bin/python /opt/statchat/repo/backend/data_pipeline/build_records.py --db /data/baseball_stats_full.db >> /data/refresh.log 2>&1
