@@ -3820,14 +3820,14 @@ def build_team_stats(team_code: str, stat_info: Optional[StatInfo] = None,
             parts.append(f"[SUGGEST]{nickname} hitters[/SUGGEST]")
             return "\n".join(parts)
         else:
-            # Team overview sorted by OPS
+            # Team overview sorted by OPS — no PA minimum for roster view
             cur = conn.cursor()
             cur.execute(
                 "SELECT p.name, s.games, s.batting_avg, s.home_runs, s.rbi, s.ops "
                 "FROM season_batting_stats s "
                 "JOIN players p ON s.player_id = p.player_id "
-                f"WHERE {team_filter} AND s.season = ? AND s.plate_appearances >= 50 "
-                "ORDER BY s.ops DESC LIMIT 15",
+                f"WHERE {team_filter} AND s.season = ? AND s.plate_appearances >= 1 "
+                "ORDER BY s.plate_appearances DESC LIMIT 15",
                 tuple(team_params + [season]),
             )
             rows = cur.fetchall()
@@ -3843,7 +3843,6 @@ def build_team_stats(team_code: str, stat_info: Optional[StatInfo] = None,
                 ops = _format_rate(str(row[5]))
                 parts.append(f"ROW {i+1}. {row[0]}: {row[1]}, {avg}, {row[3]}, {row[4]}, {ops}")
             parts.append("[/LEADERBOARD]")
-            parts.append("\n_Min. 50 PA._")
             parts.append(f"\n[SUGGEST]{nickname} home runs[/SUGGEST]")
             parts.append(f"[SUGGEST]{nickname} batting average[/SUGGEST]")
             return "\n".join(parts)
@@ -3903,19 +3902,14 @@ def build_pitching_team_stats(team_code: str, stat_info: Optional[StatInfo] = No
             parts.append(f"[SUGGEST]{nickname} pitchers[/SUGGEST]")
             return "\n".join(parts)
         else:
-            # Team pitching overview sorted by ERA
-            # Prorate IP minimum for early season
+            # Team pitching overview — no IP minimum for roster view
             cur = conn.cursor()
-            cur.execute("SELECT MAX(games) FROM season_pitching_stats WHERE season = ?", (season,))
-            r = cur.fetchone()
-            max_games = int(r[0]) if r and r[0] else 162
-            ip_min = max(1, max_games * 3)  # 1 IP per team game
             cur.execute(
-                "SELECT p.name, sp.era, sp.strikeouts "
+                "SELECT p.name, sp.era, sp.strikeouts, sp.ip_outs "
                 "FROM season_pitching_stats sp "
                 "JOIN players p ON sp.player_id = p.player_id "
-                f"WHERE {team_filter} AND sp.season = ? AND sp.ip_outs >= {ip_min} "
-                "ORDER BY sp.era ASC LIMIT 15",
+                f"WHERE {team_filter} AND sp.season = ? AND sp.ip_outs >= 1 "
+                "ORDER BY sp.ip_outs DESC LIMIT 15",
                 tuple(team_params + [season]),
             )
             rows = cur.fetchall()
