@@ -207,7 +207,7 @@ struct ResultCard: View {
                 }
                 .font(.system(.subheadline, design: .rounded))
                 .padding(.horizontal, 20)
-                .padding(.top, 10)
+                .padding(.top, 2)
             }
 
         case .querySuggestion, .partialGrid:
