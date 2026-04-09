@@ -2306,10 +2306,25 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
 
     if not rows:
         msg = f"No {rookie_label.lower()} {op} {threshold_display} {abbrev} found ({scope_label})."
-        # Suggest the most recent full season if current season is empty
+        # Suggest the most recent full season with all original context preserved
         if plan.season and plan.season == date.today().year:
             last_year = plan.season - 1
-            msg += f"\n\n[SUGGEST]{threshold_display}+ {abbrev} in {last_year}[/SUGGEST]"
+            # Build context-preserving pill
+            pill_parts = []
+            if plan.throws:
+                pill_parts.append("RHP" if plan.throws == "R" else "LHP")
+            elif plan.bats:
+                pill_parts.append({"L": "LHB", "R": "RHB", "B": "switch hitters"}.get(plan.bats, ""))
+            if plan.rookie:
+                pill_parts.append("rookies")
+            if plan.pitcher_role:
+                pill_parts.append(f"{plan.pitcher_role}s")
+            if plan.position and not plan.is_pitching:
+                pill_parts.append("/".join(plan.position))
+            pill_parts.append(f"{threshold_display}+ {abbrev}")
+            pill_parts.append(f"in {last_year}")
+            pill = " ".join(p for p in pill_parts if p)
+            msg += f"\n\n[SUGGEST]{pill}[/SUGGEST]"
         return msg
 
     # Build title with extra filters
