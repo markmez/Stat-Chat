@@ -319,6 +319,7 @@ class QueryPlan:
     league: Optional[str] = None
     position: Optional[list] = None
     bats: Optional[str] = None  # "L", "R", "B"
+    throws: Optional[str] = None  # "L", "R"
     rookie: bool = False
     pitcher_role: Optional[str] = None  # "starter", "reliever"
     age_max: Optional[int] = None
@@ -913,6 +914,31 @@ def decompose(question: str) -> QueryPlan:
             _add_consumed(plan, pattern)
             break
 
+    # Throws filter (pitchers)
+    throws_patterns = [
+        ("left-handed pitcher", "L"), ("left handed pitcher", "L"),
+        ("right-handed pitcher", "R"), ("right handed pitcher", "R"),
+        ("lefty pitcher", "L"), ("righty pitcher", "R"),
+        ("lhp", "L"), ("rhp", "R"),
+        # "right-handed pitchers" / "left-handed pitchers" with the s
+        ("left-handed pitchers", "L"), ("left handed pitchers", "L"),
+        ("right-handed pitchers", "R"), ("right handed pitchers", "R"),
+    ]
+    for pattern, throws_val in throws_patterns:
+        if pattern in lower:
+            plan.throws = throws_val
+            plan.is_pitching = True
+            _add_consumed(plan, pattern)
+            break
+    # Also catch bare "right-handed" / "left-handed" when in pitching context
+    if not plan.throws and plan.is_pitching:
+        if "right-handed" in lower or "right handed" in lower:
+            plan.throws = "R"
+            _add_consumed(plan, "right-handed right handed")
+        elif "left-handed" in lower or "left handed" in lower:
+            plan.throws = "L"
+            _add_consumed(plan, "left-handed left handed")
+
     # Special condition patterns
     # "without getting caught" / "without being caught" → CS = 0
     if any(p in lower for p in ["without getting caught", "without being caught",
@@ -1498,6 +1524,10 @@ def _build_filters(plan: QueryPlan, prefix: str, conn=None) -> tuple[str, list]:
         clauses.append(f"p.bats = ?")
         params.append(plan.bats)
 
+    if plan.throws:
+        clauses.append(f"p.throws = ?")
+        params.append(plan.throws)
+
     if plan.age_max:
         clauses.append(f"({prefix}.season - CAST(SUBSTR(p.birthdate, 1, 4) AS INT)) < ?")
         params.append(plan.age_max)
@@ -1605,6 +1635,8 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     rookie_label = "Rookie " if plan.rookie else ""
     role_label = "Starting " if plan.pitcher_role == "starter" else "Relief " if plan.pitcher_role == "reliever" else ""
     bats_label = "Left-Handed " if plan.bats == "L" else "Right-Handed " if plan.bats == "R" else "Switch-Hitting " if plan.bats == "B" else ""
+    if plan.throws:
+        bats_label = "Left-Handed " if plan.throws == "L" else "Right-Handed "
     age_label = f"Under {plan.age_max} " if plan.age_max else f"Over {plan.age_min} " if plan.age_min else ""
 
     if plan.scope.startswith("season_"):
@@ -2273,7 +2305,12 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
     op = "with" if plan.comparison == ">=" else "with no more than"
 
     if not rows:
-        return f"No {rookie_label.lower()} {op} {threshold_display} {abbrev} found ({scope_label})."
+        msg = f"No {rookie_label.lower()} {op} {threshold_display} {abbrev} found ({scope_label})."
+        # Suggest the most recent full season if current season is empty
+        if plan.season and plan.season == date.today().year:
+            last_year = plan.season - 1
+            msg += f"\n\n[SUGGEST]{threshold_display}+ {abbrev} in {last_year}[/SUGGEST]"
+        return msg
 
     # Build title with extra filters
     filter_parts = [f"{threshold_display}+ {abbrev}"]
