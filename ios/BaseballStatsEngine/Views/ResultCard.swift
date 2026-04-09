@@ -195,7 +195,7 @@ struct ResultCard: View {
         case .didYouMean(let query):
             if let tap = onQueryTap {
                 HStack(spacing: 6) {
-                    Text("Interpreting as:")
+                    Text("Did you mean:")
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(.secondary)
                     Button {

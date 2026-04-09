@@ -1570,11 +1570,11 @@ def execute(plan: QueryPlan) -> Optional[str]:
         if result and plan.ambiguous_stat:
             result += _ambiguous_suggest(plan)
 
-        # "Within vs by" alternate interpretation for team queries
+        # "Within vs by" alternate interpretation for team queries — show before results
         if result and plan.has_team_context and plan.stat:
             abbrev = plan.stat.display_abbrev
             season = plan.season or date.today().year
-            result += f"\n[DIDYOUMEAN]{abbrev} leader on each team {season}[/DIDYOUMEAN]"
+            result = f"[DIDYOUMEAN]{abbrev} leader on each team {season}[/DIDYOUMEAN]\n" + result
 
         return result
     except Exception as e:
@@ -2772,12 +2772,13 @@ def _execute_per_team_leaders(conn, plan: QueryPlan) -> Optional[str]:
 
     title = f"**{season} {name} Leader on Each Team**\n"
     parts = [title]
+    parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
-    parts.append(f"HEADER: {abbrev}")
+    parts.append(f"HEADER: Team, {abbrev}")
     for player_name, team_code, val in rows:
         team_name = team_display(team_code) if team_code else team_code
         formatted = _format_val(plan.stat.db_column, val, is_rate)
-        parts.append(f"ROW {team_name} — {player_name}: {formatted}")
+        parts.append(f"ROW {player_name}: {team_name}, {formatted}")
     parts.append("[/LEADERBOARD]")
 
     return "\n".join(parts)
