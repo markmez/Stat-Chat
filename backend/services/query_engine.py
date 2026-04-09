@@ -1425,8 +1425,38 @@ def _format_val(stat_col: str, value, is_rate: bool = False) -> str:
 def _empty_result_pills(plan: QueryPlan) -> str:
     """Generate suggestion pills for empty results — don't leave users at a dead end."""
     pills = []
-    abbrev = plan.stat.display_abbrev if plan.stat else ""
-    threshold = plan.threshold
+
+    # Determine the right stat name — game_log_stat and streak labels
+    # take priority over plan.stat (which is often "games" for these types)
+    _gl_labels = {
+        "hits": "H", "home_runs": "HR", "rbi": "RBI", "runs": "R",
+        "stolen_bases": "SB", "walks": "BB", "strikeouts": "K",
+        "doubles": "2B", "triples": "3B", "xbh": "XBH",
+    }
+    if plan.query_type == "game_log_count" and plan.game_log_stat:
+        abbrev = _gl_labels.get(plan.game_log_stat, plan.game_log_stat.upper())
+        threshold = plan.game_log_threshold
+    elif plan.query_type == "streak_sequence" and plan.streak_condition_labels:
+        # For streaks, suggest related searches
+        raw_label = plan.streak_condition_labels[0]  # "a hit", "a HR", "scoreless"
+        # Clean up for pill text: "a hit" → "hitting", "a HR" → "HR", "scoreless" stays
+        _streak_pill_labels = {
+            "a hit": "hitting", "a HR": "HR", "a BB": "walk",
+            "a SB": "stolen base", "an RBI": "RBI", "an XBH": "XBH",
+            "reaching base": "on-base", "a W": "win",
+        }
+        label = _streak_pill_labels.get(raw_label, raw_label)
+        streak_len = plan.streak_length
+        season = plan.season or date.today().year
+        if streak_len:
+            pills.append(f"longest {label} streak in {season}")
+        pills.append(f"{label} streak leaders")
+        if not pills:
+            return ""
+        return "\n\n" + "\n".join(f"[SUGGEST]{p}[/SUGGEST]" for p in pills[:3])
+    else:
+        abbrev = plan.stat.display_abbrev if plan.stat else ""
+        threshold = plan.threshold
 
     # Context prefix (handedness, position, role, rookie)
     ctx = []
@@ -1444,20 +1474,35 @@ def _empty_result_pills(plan: QueryPlan) -> str:
     if prefix:
         prefix += " "
 
-    # Suggest last season
-    if plan.season and plan.season == date.today().year and threshold:
-        last_year = plan.season - 1
-        t_display = f".{int(plan.threshold * 1000):03d}+" if plan.stat and plan.stat.is_rate and plan.threshold < 1 else f"{int(threshold)}+"
-        pills.append(f"{prefix}{t_display} {abbrev} in {last_year}")
+    # Format threshold display
+    t_display = ""
+    if threshold:
+        if plan.stat and plan.stat.is_rate and threshold < 1:
+            t_display = f".{int(threshold * 1000):03d}+"
+        else:
+            t_display = f"{int(threshold)}+"
 
-    # Suggest all-time if searching a specific season
-    if plan.season and threshold and abbrev:
-        t_display = f".{int(plan.threshold * 1000):03d}+" if plan.stat and plan.stat.is_rate and plan.threshold < 1 else f"{int(threshold)}+"
-        pills.append(f"{prefix}{t_display} {abbrev} all time")
-
-    # Suggest the stat leaders if we have a stat
-    if abbrev:
+    # For game log counts, suggest "most N+ stat games" instead of raw threshold
+    if plan.query_type == "game_log_count" and plan.game_log_threshold:
+        season = plan.season or date.today().year
+        last_year = season - 1 if season == date.today().year else None
+        if last_year:
+            pills.append(f"most {plan.game_log_threshold}+ {abbrev} games in {last_year}")
+        pills.append(f"most {plan.game_log_threshold}+ {abbrev} games all time")
         pills.append(f"{abbrev} leaders")
+    else:
+        # Suggest last season
+        if plan.season and plan.season == date.today().year and t_display:
+            last_year = plan.season - 1
+            pills.append(f"{prefix}{t_display} {abbrev} in {last_year}")
+
+        # Suggest all-time if searching a specific season
+        if plan.season and t_display and abbrev:
+            pills.append(f"{prefix}{t_display} {abbrev} all time")
+
+        # Suggest the stat leaders if we have a stat
+        if abbrev:
+            pills.append(f"{abbrev} leaders")
 
     if not pills:
         return ""
