@@ -1246,3 +1246,819 @@ renderEvents();
 </html>"""
 
     return HTMLResponse(content=html)
+
+
+# ---------------------------------------------------------------------------
+# Records system endpoints
+# ---------------------------------------------------------------------------
+
+RECORDS_SCRIPT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data_pipeline", "build_records.py",
+)
+
+# Team display names — same mapping used in notable_events.py
+_RETRO_TO_DISPLAY = {
+    "NYA": "Yankees", "NYN": "Mets", "LAN": "Dodgers", "ANA": "Angels",
+    "CHN": "Cubs", "CHA": "White Sox", "SFN": "Giants", "SDN": "Padres",
+    "SLN": "Cardinals", "KCA": "Royals", "TBA": "Rays", "WAS": "Nationals",
+    "BOS": "Red Sox", "HOU": "Astros", "ATL": "Braves", "PHI": "Phillies",
+    "TEX": "Rangers", "TOR": "Blue Jays", "BAL": "Orioles", "MIN": "Twins",
+    "CLE": "Guardians", "SEA": "Mariners", "MIL": "Brewers", "CIN": "Reds",
+    "PIT": "Pirates", "DET": "Tigers", "ARI": "Diamondbacks", "COL": "Rockies",
+    "MIA": "Marlins", "OAK": "Athletics", "ATH": "Athletics",
+}
+
+
+def _team_display(code):
+    return _RETRO_TO_DISPLAY.get(code, code)
+
+
+@router.post("/build-records")
+async def build_records(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Build pre-computed team and MLB records tables."""
+    verify_admin(authorization, key)
+    try:
+        result = await _run_subprocess(
+            [sys.executable, RECORDS_SCRIPT, "--db", DB_PATH],
+            timeout=3600,
+        )
+        return {
+            "status": "ok" if result.returncode == 0 else "error",
+            "stdout": result.stdout[-5000:] if result.stdout else "",
+            "stderr": result.stderr[-2000:] if result.stderr else "",
+        }
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "Records build timed out (60 min limit)")
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/records-lookup")
+async def records_lookup(
+    name: str = "",
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Look up a player's career stats and compare against records."""
+    verify_admin(authorization, key)
+    if not name:
+        raise HTTPException(400, "Missing name parameter")
+
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        # Find player
+        player = conn.execute(
+            "SELECT player_id, name, team, positions FROM players WHERE name LIKE ? ORDER BY name LIMIT 10",
+            (f"%{name}%",),
+        ).fetchall()
+        if not player:
+            return {"error": f"No player found matching '{name}'", "results": []}
+
+        results = []
+        for pid, pname, team, positions in player:
+            # Career batting totals
+            bat = conn.execute("""
+                SELECT SUM(games), SUM(plate_appearances), SUM(at_bats), SUM(hits),
+                       SUM(home_runs), SUM(rbi), SUM(runs), SUM(stolen_bases),
+                       SUM(doubles), SUM(walks), SUM(strikeouts)
+                FROM season_batting_stats WHERE player_id = ?
+            """, (pid,)).fetchone()
+
+            # Career pitching totals
+            pitch = conn.execute("""
+                SELECT SUM(games), SUM(wins), SUM(losses), SUM(saves),
+                       SUM(strikeouts), SUM(ip_outs), SUM(earned_runs),
+                       SUM(hits), SUM(walks)
+                FROM season_pitching_stats WHERE player_id = ?
+            """, (pid,)).fetchone()
+
+            career = {}
+            if bat and bat[0]:
+                career["batting"] = {
+                    "games": bat[0], "pa": bat[1], "ab": bat[2], "hits": bat[3],
+                    "home_runs": bat[4], "rbi": bat[5], "runs": bat[6],
+                    "stolen_bases": bat[7], "doubles": bat[8], "walks": bat[9],
+                    "strikeouts": bat[10],
+                    "avg": round(bat[3] / bat[2], 3) if bat[2] else None,
+                }
+            if pitch and pitch[0]:
+                ip = round(pitch[5] / 3, 1) if pitch[5] else 0
+                career["pitching"] = {
+                    "games": pitch[0], "wins": pitch[1], "losses": pitch[2],
+                    "saves": pitch[3], "strikeouts": pitch[4], "ip": ip,
+                    "era": round(pitch[6] * 9 / (pitch[5] / 3), 2) if pitch[5] else None,
+                }
+
+            # Current team — use most recent season entry
+            current_team_row = conn.execute("""
+                SELECT team FROM season_batting_stats WHERE player_id = ?
+                UNION ALL
+                SELECT team FROM season_pitching_stats WHERE player_id = ?
+                ORDER BY 1 DESC LIMIT 1
+            """, (pid, pid)).fetchone()
+
+            # Get all teams this player has played for
+            team_rows = conn.execute("""
+                SELECT DISTINCT team FROM season_batting_stats WHERE player_id = ?
+                UNION
+                SELECT DISTINCT team FROM season_pitching_stats WHERE player_id = ?
+            """, (pid, pid)).fetchall()
+            player_teams = set()
+            for (t,) in team_rows:
+                if t:
+                    for code in t.split("/"):
+                        code = code.strip()
+                        if code:
+                            player_teams.add(code)
+
+            # Compare against team records
+            team_records_approaching = []
+            for tc in sorted(player_teams):
+                records = conn.execute("""
+                    SELECT stat, record_type, value, player_name, player_id
+                    FROM team_records
+                    WHERE team_code = ?
+                    ORDER BY stat, record_type, value DESC
+                """, (tc,)).fetchall()
+
+                for stat, rtype, val, rec_name, rec_pid in records:
+                    # Get this player's value for this stat
+                    if rtype == "career":
+                        my_val = _get_career_value(conn, pid, stat)
+                    else:
+                        continue  # Skip season/game for approach detection
+
+                    if my_val is not None and val is not None:
+                        diff = val - my_val
+                        if 0 < diff <= 10:
+                            team_records_approaching.append({
+                                "team": tc,
+                                "team_name": _team_display(tc),
+                                "stat": stat,
+                                "record_type": rtype,
+                                "record_value": val,
+                                "record_holder": rec_name,
+                                "my_value": my_val,
+                                "diff": diff,
+                            })
+                        elif diff <= 0 and rec_pid == pid:
+                            team_records_approaching.append({
+                                "team": tc,
+                                "team_name": _team_display(tc),
+                                "stat": stat,
+                                "record_type": rtype,
+                                "record_value": val,
+                                "record_holder": rec_name,
+                                "my_value": my_val,
+                                "diff": 0,
+                                "holds_record": True,
+                            })
+
+            # Compare against MLB records
+            mlb_records_near = []
+            mlb_recs = conn.execute("""
+                SELECT stat, record_type, value, player_name, player_id
+                FROM mlb_records
+                ORDER BY stat, record_type
+            """).fetchall()
+            for stat, rtype, val, rec_name, rec_pid in mlb_recs:
+                if rtype == "career":
+                    my_val = _get_career_value(conn, pid, stat)
+                    if my_val is not None and val is not None:
+                        diff = val - my_val
+                        if 0 < diff <= 10:
+                            mlb_records_near.append({
+                                "stat": stat,
+                                "record_type": rtype,
+                                "record_value": val,
+                                "record_holder": rec_name,
+                                "my_value": my_val,
+                                "diff": diff,
+                            })
+
+            # Recent game logs (last 7 days) — find career highs
+            recent_highs = _find_recent_career_highs(conn, pid)
+
+            results.append({
+                "player_id": pid,
+                "name": pname,
+                "team": team,
+                "positions": positions,
+                "career": career,
+                "team_records_approaching": team_records_approaching,
+                "mlb_records_approaching": mlb_records_near,
+                "recent_career_highs": recent_highs,
+            })
+
+        return {"results": results}
+    finally:
+        conn.close()
+
+
+def _get_career_value(conn, player_id, stat):
+    """Get a player's career total for a stat."""
+    # Batting stats
+    batting_stats = {
+        "games": "SUM(games)", "home_runs": "SUM(home_runs)",
+        "hits": "SUM(hits)", "rbi": "SUM(rbi)", "runs": "SUM(runs)",
+        "stolen_bases": "SUM(stolen_bases)", "doubles": "SUM(doubles)",
+        "walks": "SUM(walks)",
+    }
+    if stat in batting_stats:
+        row = conn.execute(
+            f"SELECT {batting_stats[stat]} FROM season_batting_stats WHERE player_id = ?",
+            (player_id,),
+        ).fetchone()
+        return row[0] if row and row[0] else None
+
+    # Pitching stats
+    pitching_stats = {
+        "wins": "SUM(wins)", "strikeouts": "SUM(strikeouts)",
+        "saves": "SUM(saves)",
+    }
+    if stat in pitching_stats:
+        row = conn.execute(
+            f"SELECT {pitching_stats[stat]} FROM season_pitching_stats WHERE player_id = ?",
+            (player_id,),
+        ).fetchone()
+        return row[0] if row and row[0] else None
+
+    # Pitching games (appearances)
+    if stat == "games":
+        # Could be batting or pitching — check both
+        bat = conn.execute(
+            "SELECT SUM(games) FROM season_batting_stats WHERE player_id = ?",
+            (player_id,),
+        ).fetchone()
+        pitch = conn.execute(
+            "SELECT SUM(games) FROM season_pitching_stats WHERE player_id = ?",
+            (player_id,),
+        ).fetchone()
+        bv = bat[0] if bat and bat[0] else 0
+        pv = pitch[0] if pitch and pitch[0] else 0
+        return max(bv, pv) if bv or pv else None
+
+    return None
+
+
+def _find_recent_career_highs(conn, player_id):
+    """Find career highs from last 7 days of game logs."""
+    from datetime import datetime, timedelta
+    cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    highs = []
+
+    # Batting game logs
+    recent_bat = conn.execute("""
+        SELECT date, hits, home_runs, rbi, runs
+        FROM game_batting_logs
+        WHERE player_id = ? AND date >= ?
+        ORDER BY date DESC
+    """, (player_id, cutoff)).fetchall()
+
+    if recent_bat:
+        # Career highs from ALL game logs
+        career_bat = conn.execute("""
+            SELECT MAX(hits), MAX(home_runs), MAX(rbi), MAX(runs)
+            FROM game_batting_logs
+            WHERE player_id = ? AND date < ?
+        """, (player_id, cutoff)).fetchone()
+
+        stat_names = ["hits", "home_runs", "rbi", "runs"]
+        for game in recent_bat:
+            game_date = game[0]
+            for idx, sname in enumerate(stat_names):
+                game_val = game[idx + 1]
+                career_max = career_bat[idx] if career_bat else 0
+                if game_val and career_max is not None and game_val > career_max:
+                    highs.append({
+                        "date": game_date,
+                        "stat": sname,
+                        "value": game_val,
+                        "previous_high": career_max,
+                    })
+
+    # Pitching game logs
+    recent_pitch = conn.execute("""
+        SELECT date, strikeouts, ip_outs
+        FROM game_pitching_logs
+        WHERE player_id = ? AND date >= ?
+        ORDER BY date DESC
+    """, (player_id, cutoff)).fetchall()
+
+    if recent_pitch:
+        career_pitch = conn.execute("""
+            SELECT MAX(strikeouts), MAX(ip_outs)
+            FROM game_pitching_logs
+            WHERE player_id = ? AND date < ?
+        """, (player_id, cutoff)).fetchone()
+
+        for game in recent_pitch:
+            game_date, k, ip_outs = game
+            if k and career_pitch and career_pitch[0] is not None and k > career_pitch[0]:
+                highs.append({"date": game_date, "stat": "strikeouts", "value": k, "previous_high": career_pitch[0]})
+            if ip_outs and career_pitch and career_pitch[1] is not None and ip_outs > career_pitch[1]:
+                highs.append({"date": game_date, "stat": "innings_pitched", "value": ip_outs, "previous_high": career_pitch[1]})
+
+    return highs
+
+
+@router.get("/records-simulate")
+async def records_simulate(
+    date_str: str = "",
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Simulate what record events would fire for a given date."""
+    verify_admin(authorization, key)
+    if not date_str:
+        # Use query param name 'date' as alias
+        raise HTTPException(400, "Missing date parameter (use ?date=YYYY-MM-DD)")
+
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        events = _simulate_records_for_date(conn, date_str)
+        return {"date": date_str, "events": events}
+    finally:
+        conn.close()
+
+
+def _simulate_records_for_date(conn, target_date):
+    """Find all record-related events for a specific date."""
+    events = []
+    season = int(target_date[:4])
+
+    # Find all players who played on this date (batting)
+    bat_players = conn.execute("""
+        SELECT DISTINCT g.player_id, p.name
+        FROM game_batting_logs g
+        JOIN players p ON g.player_id = p.player_id
+        WHERE g.date = ?
+    """, (target_date,)).fetchall()
+
+    # Find all players who played on this date (pitching)
+    pitch_players = conn.execute("""
+        SELECT DISTINCT g.player_id, p.name
+        FROM game_pitching_logs g
+        JOIN players p ON g.player_id = p.player_id
+        WHERE g.date = ?
+    """, (target_date,)).fetchall()
+
+    all_players = {}
+    for pid, name in bat_players + pitch_players:
+        all_players[pid] = name
+
+    # Check each player for record approaches and crossings
+    for pid, pname in all_players.items():
+        # Get this player's teams
+        team_rows = conn.execute("""
+            SELECT DISTINCT team FROM season_batting_stats WHERE player_id = ?
+            UNION
+            SELECT DISTINCT team FROM season_pitching_stats WHERE player_id = ?
+        """, (pid, pid)).fetchall()
+        player_teams = set()
+        for (t,) in team_rows:
+            if t:
+                for code in t.split("/"):
+                    code = code.strip()
+                    if code:
+                        player_teams.add(code)
+
+        # --- Career firsts ---
+        # Check if this is player's first career HR
+        hr_before = conn.execute("""
+            SELECT COALESCE(SUM(home_runs), 0) FROM game_batting_logs
+            WHERE player_id = ? AND date < ? AND date > (season || '-03-25')
+        """, (pid, target_date)).fetchone()[0]
+
+        hr_today = conn.execute("""
+            SELECT COALESCE(home_runs, 0) FROM game_batting_logs
+            WHERE player_id = ? AND date = ?
+        """, (pid, target_date)).fetchone()
+
+        if hr_today and hr_today[0] and hr_before == 0:
+            events.append({
+                "type": "career_first",
+                "player": pname,
+                "stat": "home_run",
+                "detail": f"{pname} hit their first career home run",
+            })
+
+        # First career win (pitching)
+        if any(pid == p[0] for p in pitch_players):
+            wins_before = conn.execute("""
+                SELECT COALESCE(SUM(win), 0) FROM game_pitching_logs
+                WHERE player_id = ? AND date < ? AND date > (season || '-03-25')
+            """, (pid, target_date)).fetchone()[0]
+
+            win_today = conn.execute("""
+                SELECT COALESCE(win, 0) FROM game_pitching_logs
+                WHERE player_id = ? AND date = ?
+            """, (pid, target_date)).fetchone()
+
+            if win_today and win_today[0] and wins_before == 0:
+                events.append({
+                    "type": "career_first",
+                    "player": pname,
+                    "stat": "win",
+                    "detail": f"{pname} earned their first career win",
+                })
+
+            # First career save
+            saves_before = conn.execute("""
+                SELECT COALESCE(SUM(save), 0) FROM game_pitching_logs
+                WHERE player_id = ? AND date < ? AND date > (season || '-03-25')
+            """, (pid, target_date)).fetchone()[0]
+
+            save_today = conn.execute("""
+                SELECT COALESCE(save, 0) FROM game_pitching_logs
+                WHERE player_id = ? AND date = ?
+            """, (pid, target_date)).fetchone()
+
+            if save_today and save_today[0] and saves_before == 0:
+                events.append({
+                    "type": "career_first",
+                    "player": pname,
+                    "stat": "save",
+                    "detail": f"{pname} earned their first career save",
+                })
+
+        # --- Record approaches and crossings ---
+        # Career batting totals up to and including this date
+        career_bat = conn.execute("""
+            SELECT SUM(home_runs), SUM(hits), SUM(rbi), SUM(runs),
+                   SUM(stolen_bases), SUM(doubles), SUM(walks)
+            FROM season_batting_stats
+            WHERE player_id = ? AND season <= ?
+        """, (pid, season)).fetchone()
+
+        if career_bat and career_bat[0] is not None:
+            stat_map = {
+                "home_runs": career_bat[0], "hits": career_bat[1],
+                "rbi": career_bat[2], "runs": career_bat[3],
+                "stolen_bases": career_bat[4], "doubles": career_bat[5],
+                "walks": career_bat[6],
+            }
+
+            for tc in player_teams:
+                # Check team records
+                for stat, my_val in stat_map.items():
+                    if my_val is None:
+                        continue
+                    rec = conn.execute("""
+                        SELECT value, player_name FROM team_records
+                        WHERE team_code = ? AND stat = ? AND record_type = 'career'
+                        ORDER BY value DESC LIMIT 1
+                    """, (tc, stat)).fetchone()
+                    if rec:
+                        diff = rec[0] - my_val
+                        if 0 < diff <= 3:
+                            events.append({
+                                "type": "record_approach",
+                                "player": pname,
+                                "team": _team_display(tc),
+                                "stat": stat,
+                                "record_value": rec[0],
+                                "record_holder": rec[1],
+                                "current_value": my_val,
+                                "diff": diff,
+                                "detail": f"{pname} is {diff} {stat.replace('_', ' ')} away from the {_team_display(tc)} career record ({rec[1]}: {rec[0]})",
+                            })
+                        elif diff <= 0:
+                            events.append({
+                                "type": "record_crossing",
+                                "player": pname,
+                                "team": _team_display(tc),
+                                "stat": stat,
+                                "record_value": rec[0],
+                                "record_holder": rec[1],
+                                "current_value": my_val,
+                                "detail": f"{pname} has surpassed {rec[1]} for the {_team_display(tc)} career {stat.replace('_', ' ')} record ({my_val} vs {rec[0]})",
+                            })
+
+        # --- Career highs from today's game ---
+        today_bat = conn.execute("""
+            SELECT hits, home_runs, rbi, runs
+            FROM game_batting_logs WHERE player_id = ? AND date = ?
+        """, (pid, target_date)).fetchone()
+
+        if today_bat:
+            prior_maxes = conn.execute("""
+                SELECT MAX(hits), MAX(home_runs), MAX(rbi), MAX(runs)
+                FROM game_batting_logs WHERE player_id = ? AND date < ?
+                  AND date > (season || '-03-25')
+            """, (pid, target_date)).fetchone()
+
+            stat_names = ["hits", "home_runs", "rbi", "runs"]
+            for idx, sname in enumerate(stat_names):
+                tv = today_bat[idx]
+                pv = prior_maxes[idx] if prior_maxes else 0
+                if tv and pv is not None and tv > (pv or 0) and tv >= 3:
+                    events.append({
+                        "type": "career_high",
+                        "player": pname,
+                        "stat": sname,
+                        "value": tv,
+                        "previous_high": pv or 0,
+                        "detail": f"{pname} set a career high with {tv} {sname.replace('_', ' ')} (previous: {pv or 0})",
+                    })
+
+    return events
+
+
+@router.get("/records-sandbox", response_class=HTMLResponse)
+async def records_sandbox(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Admin sandbox page for records testing."""
+    verify_admin(authorization, key)
+
+    # Check if records tables exist
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    try:
+        team_count = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='team_records'"
+        ).fetchone()[0]
+        mlb_count = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='mlb_records'"
+        ).fetchone()[0]
+        if team_count and mlb_count:
+            tr = conn.execute("SELECT COUNT(*) FROM team_records").fetchone()[0]
+            mr = conn.execute("SELECT COUNT(*) FROM mlb_records").fetchone()[0]
+            status_html = f'<div class="stat-card"><div class="label">Team Records</div><div class="value">{tr:,}</div></div>'
+            status_html += f'<div class="stat-card"><div class="label">MLB Records</div><div class="value">{mr:,}</div></div>'
+        else:
+            status_html = '<div class="stat-card warn"><div class="label">Status</div><div class="value">Not Built</div></div>'
+    except Exception:
+        status_html = '<div class="stat-card warn"><div class="label">Status</div><div class="value">Error</div></div>'
+    finally:
+        conn.close()
+
+    admin_key = key or ""
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Records Sandbox</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: -apple-system, system-ui, sans-serif; background: #fff; color: #1d1d1f; padding: 16px; max-width: 900px; margin: 0 auto; }}
+  h1 {{
+    font-size: 22px; margin-bottom: 16px; font-weight: 700;
+    background: linear-gradient(to right, #73B3FF, #1A40B3);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }}
+  h2 {{ font-size: 15px; margin: 24px 0 8px; color: #1A40B3; font-weight: 600; }}
+  h3 {{ font-size: 13px; margin: 16px 0 6px; color: #555; font-weight: 600; }}
+  .stat-cards {{ display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }}
+  .stat-card {{
+    background: linear-gradient(135deg, #1A40B3, #73B3FF);
+    border-radius: 10px; padding: 12px 16px; min-width: 100px;
+    box-shadow: 0 2px 8px rgba(26, 64, 179, 0.12);
+  }}
+  .stat-card .label {{ font-size: 11px; color: rgba(255,255,255,0.8); text-transform: uppercase; }}
+  .stat-card .value {{ font-size: 24px; font-weight: 700; color: #fff; }}
+  .stat-card.warn {{ background: linear-gradient(135deg, #b33a1a, #ff7373); }}
+  .search-row {{
+    display: flex; gap: 8px; margin-bottom: 16px; align-items: center;
+  }}
+  .search-row input {{
+    padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px;
+    font-size: 14px; font-family: inherit; flex: 1; max-width: 300px;
+  }}
+  .search-row input:focus {{ outline: none; border-color: #1A40B3; }}
+  button {{
+    padding: 8px 16px; border: none; border-radius: 8px;
+    background: #1A40B3; color: #fff; font-size: 13px; cursor: pointer;
+    font-family: inherit; font-weight: 600;
+  }}
+  button:active {{ opacity: 0.8; }}
+  button.secondary {{
+    background: #fff; color: #1A40B3; border: 1px solid #1A40B3;
+  }}
+  button:disabled {{ opacity: 0.4; cursor: default; }}
+  .results {{ margin-top: 12px; }}
+  .player-card {{
+    border: 1px solid #e0e8f5; border-radius: 10px; padding: 16px;
+    margin-bottom: 16px; background: #fafbff;
+  }}
+  .player-card .player-name {{
+    font-size: 16px; font-weight: 700; color: #1A40B3; margin-bottom: 8px;
+  }}
+  .player-card .meta {{ font-size: 12px; color: #888; margin-bottom: 12px; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 12px; }}
+  th {{ text-align: left; padding: 6px; border-bottom: 2px solid #e0e8f5; color: #1A40B3; font-weight: 600; font-size: 11px; }}
+  td {{ padding: 5px 6px; border-bottom: 1px solid #f0f0f0; }}
+  .badge {{
+    display: inline-block; padding: 2px 6px; border-radius: 4px;
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+  }}
+  .badge.approach {{ background: #fef3c7; color: #92400e; }}
+  .badge.crossing {{ background: #dcfce7; color: #166534; }}
+  .badge.career-first {{ background: #dbeafe; color: #1A40B3; }}
+  .badge.career-high {{ background: #f3e8ff; color: #6b21a8; }}
+  .badge.holds {{ background: #fce7f3; color: #9d174d; }}
+  .event-card {{
+    padding: 8px 12px; border-left: 3px solid #1A40B3; margin-bottom: 6px;
+    background: #f8f9ff; border-radius: 0 6px 6px 0; font-size: 13px;
+  }}
+  .event-card.crossing {{ border-left-color: #16a34a; background: #f0fdf4; }}
+  .event-card.career-first {{ border-left-color: #2563eb; background: #eff6ff; }}
+  .event-card.career-high {{ border-left-color: #7c3aed; background: #faf5ff; }}
+  .event-card .event-badge {{ margin-right: 6px; }}
+  .loading {{ color: #999; font-size: 13px; font-style: italic; }}
+  .empty {{ color: #999; font-size: 13px; }}
+  .build-section {{
+    padding: 12px; background: #f5f7fa; border-radius: 8px; margin-bottom: 20px;
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  }}
+  .build-section .status {{ font-size: 12px; color: #666; }}
+  #build-output {{
+    font-family: monospace; font-size: 11px; background: #1d1d1f; color: #73B3FF;
+    padding: 12px; border-radius: 8px; max-height: 200px; overflow-y: auto;
+    white-space: pre-wrap; display: none; margin-top: 8px;
+  }}
+</style>
+</head>
+<body>
+<h1>Records Sandbox</h1>
+
+<div class="stat-cards">
+  {status_html}
+</div>
+
+<div class="build-section">
+  <button onclick="buildRecords()" id="build-btn">Build Records</button>
+  <span class="status" id="build-status">Run the build to create/refresh records tables.</span>
+</div>
+<div id="build-output"></div>
+
+<h2>Player Lookup</h2>
+<div class="search-row">
+  <input type="text" id="player-input" placeholder="Player name..." onkeydown="if(event.key==='Enter')lookupPlayer()">
+  <button onclick="lookupPlayer()">Search</button>
+</div>
+<div id="lookup-results" class="results"></div>
+
+<h2>Date Simulation</h2>
+<div class="search-row">
+  <input type="date" id="sim-date">
+  <button onclick="simulateDate()">Simulate</button>
+</div>
+<div id="sim-results" class="results"></div>
+
+<script>
+const KEY = '{admin_key}';
+const BASE = window.location.origin;
+
+async function apiFetch(path) {{
+  const sep = path.includes('?') ? '&' : '?';
+  const url = BASE + path + sep + 'key=' + KEY;
+  const resp = await fetch(url);
+  return resp.json();
+}}
+
+async function apiPost(path) {{
+  const sep = path.includes('?') ? '&' : '?';
+  const url = BASE + path + sep + 'key=' + KEY;
+  const resp = await fetch(url, {{ method: 'POST' }});
+  return resp.json();
+}}
+
+async function buildRecords() {{
+  const btn = document.getElementById('build-btn');
+  const status = document.getElementById('build-status');
+  const output = document.getElementById('build-output');
+  btn.disabled = true;
+  status.textContent = 'Building... this may take a few minutes.';
+  output.style.display = 'block';
+  output.textContent = 'Starting build...\\n';
+  try {{
+    const data = await apiPost('/admin/build-records');
+    output.textContent = (data.stdout || '') + '\\n' + (data.stderr || '');
+    status.textContent = data.status === 'ok' ? 'Build complete. Reload to see updated counts.' : 'Build failed.';
+  }} catch (e) {{
+    status.textContent = 'Error: ' + e.message;
+    output.textContent = e.message;
+  }}
+  btn.disabled = false;
+}}
+
+async function lookupPlayer() {{
+  const name = document.getElementById('player-input').value.trim();
+  if (!name) return;
+  const el = document.getElementById('lookup-results');
+  el.innerHTML = '<p class="loading">Searching...</p>';
+  try {{
+    const data = await apiFetch('/admin/records-lookup?name=' + encodeURIComponent(name));
+    if (data.error) {{
+      el.innerHTML = '<p class="empty">' + data.error + '</p>';
+      return;
+    }}
+    if (!data.results || data.results.length === 0) {{
+      el.innerHTML = '<p class="empty">No players found.</p>';
+      return;
+    }}
+    el.innerHTML = data.results.map(renderPlayerCard).join('');
+  }} catch (e) {{
+    el.innerHTML = '<p class="empty">Error: ' + e.message + '</p>';
+  }}
+}}
+
+function renderPlayerCard(p) {{
+  let html = '<div class="player-card">';
+  html += '<div class="player-name">' + esc(p.name) + '</div>';
+  html += '<div class="meta">' + esc(p.team || '') + ' &middot; ' + esc(p.positions || '') + ' &middot; ' + esc(p.player_id) + '</div>';
+
+  // Career stats
+  if (p.career.batting) {{
+    const b = p.career.batting;
+    html += '<h3>Career Batting</h3><table><tr><th>G</th><th>H</th><th>HR</th><th>RBI</th><th>R</th><th>SB</th><th>2B</th><th>BB</th><th>AVG</th></tr>';
+    html += '<tr><td>' + fmt(b.games) + '</td><td>' + fmt(b.hits) + '</td><td>' + fmt(b.home_runs) + '</td><td>' + fmt(b.rbi) + '</td><td>' + fmt(b.runs) + '</td><td>' + fmt(b.stolen_bases) + '</td><td>' + fmt(b.doubles) + '</td><td>' + fmt(b.walks) + '</td><td>' + (b.avg ? b.avg.toFixed(3) : '--') + '</td></tr></table>';
+  }}
+  if (p.career.pitching) {{
+    const pt = p.career.pitching;
+    html += '<h3>Career Pitching</h3><table><tr><th>G</th><th>W</th><th>L</th><th>SV</th><th>K</th><th>IP</th><th>ERA</th></tr>';
+    html += '<tr><td>' + fmt(pt.games) + '</td><td>' + fmt(pt.wins) + '</td><td>' + fmt(pt.losses) + '</td><td>' + fmt(pt.saves) + '</td><td>' + fmt(pt.strikeouts) + '</td><td>' + fmt(pt.ip) + '</td><td>' + (pt.era != null ? pt.era.toFixed(2) : '--') + '</td></tr></table>';
+  }}
+
+  // Team records
+  if (p.team_records_approaching && p.team_records_approaching.length > 0) {{
+    html += '<h3>Team Records</h3>';
+    p.team_records_approaching.forEach(r => {{
+      const badge = r.holds_record
+        ? '<span class="badge holds event-badge">Holds</span>'
+        : '<span class="badge approach event-badge">Approaching</span>';
+      const detail = r.holds_record
+        ? esc(r.team_name) + ' ' + esc(r.stat.replace(/_/g, ' ')) + ' record: ' + fmt(r.my_value)
+        : fmt(r.diff) + ' ' + esc(r.stat.replace(/_/g, ' ')) + ' from ' + esc(r.team_name) + ' record (' + esc(r.record_holder) + ': ' + fmt(r.record_value) + ')';
+      html += '<div class="event-card">' + badge + detail + '</div>';
+    }});
+  }}
+
+  // MLB records
+  if (p.mlb_records_approaching && p.mlb_records_approaching.length > 0) {{
+    html += '<h3>MLB Records (within 10)</h3>';
+    p.mlb_records_approaching.forEach(r => {{
+      html += '<div class="event-card">' +
+        '<span class="badge approach event-badge">Approaching</span>' +
+        fmt(r.diff) + ' ' + esc(r.stat.replace(/_/g, ' ')) + ' from MLB record (' + esc(r.record_holder) + ': ' + fmt(r.record_value) + ')' +
+        '</div>';
+    }});
+  }}
+
+  // Recent career highs
+  if (p.recent_career_highs && p.recent_career_highs.length > 0) {{
+    html += '<h3>Recent Career Highs (last 7 days)</h3>';
+    p.recent_career_highs.forEach(h => {{
+      html += '<div class="event-card career-high">' +
+        '<span class="badge career-high event-badge">Career High</span>' +
+        esc(h.date) + ': ' + fmt(h.value) + ' ' + esc(h.stat.replace(/_/g, ' ')) + ' (prev: ' + fmt(h.previous_high) + ')' +
+        '</div>';
+    }});
+  }}
+
+  if (!p.team_records_approaching?.length && !p.mlb_records_approaching?.length && !p.recent_career_highs?.length) {{
+    html += '<p class="empty">No records approaching or recent career highs.</p>';
+  }}
+
+  html += '</div>';
+  return html;
+}}
+
+async function simulateDate() {{
+  const dt = document.getElementById('sim-date').value;
+  if (!dt) return;
+  const el = document.getElementById('sim-results');
+  el.innerHTML = '<p class="loading">Simulating...</p>';
+  try {{
+    const data = await apiFetch('/admin/records-simulate?date_str=' + dt);
+    if (!data.events || data.events.length === 0) {{
+      el.innerHTML = '<p class="empty">No record events found for ' + dt + '.</p>';
+      return;
+    }}
+    let html = '<h3>' + data.events.length + ' events for ' + dt + '</h3>';
+    data.events.forEach(e => {{
+      const cls = e.type.replace(/_/g, '-');
+      const badge = '<span class="badge ' + cls + ' event-badge">' + e.type.replace(/_/g, ' ') + '</span>';
+      html += '<div class="event-card ' + cls + '">' + badge + esc(e.detail) + '</div>';
+    }});
+    el.innerHTML = html;
+  }} catch (e) {{
+    el.innerHTML = '<p class="empty">Error: ' + e.message + '</p>';
+  }}
+}}
+
+function esc(s) {{ return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }}
+function fmt(n) {{ return n != null ? Number(n).toLocaleString() : '--'; }}
+</script>
+</body>
+</html>"""
+
+    return HTMLResponse(content=html)
