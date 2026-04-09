@@ -1422,6 +1422,48 @@ def _format_val(stat_col: str, value, is_rate: bool = False) -> str:
     return str(value)
 
 
+def _empty_result_pills(plan: QueryPlan) -> str:
+    """Generate suggestion pills for empty results — don't leave users at a dead end."""
+    pills = []
+    abbrev = plan.stat.display_abbrev if plan.stat else ""
+    threshold = plan.threshold
+
+    # Context prefix (handedness, position, role, rookie)
+    ctx = []
+    if plan.throws:
+        ctx.append("RHP" if plan.throws == "R" else "LHP")
+    elif plan.bats:
+        ctx.append({"L": "LHB", "R": "RHB", "B": "switch hitters"}.get(plan.bats, ""))
+    if plan.rookie:
+        ctx.append("rookies")
+    if plan.pitcher_role:
+        ctx.append(f"{plan.pitcher_role}s")
+    if plan.position and not plan.is_pitching:
+        ctx.append("/".join(plan.position))
+    prefix = " ".join(c for c in ctx if c)
+    if prefix:
+        prefix += " "
+
+    # Suggest last season
+    if plan.season and plan.season == date.today().year and threshold:
+        last_year = plan.season - 1
+        t_display = f".{int(plan.threshold * 1000):03d}+" if plan.stat and plan.stat.is_rate and plan.threshold < 1 else f"{int(threshold)}+"
+        pills.append(f"{prefix}{t_display} {abbrev} in {last_year}")
+
+    # Suggest all-time if searching a specific season
+    if plan.season and threshold and abbrev:
+        t_display = f".{int(plan.threshold * 1000):03d}+" if plan.stat and plan.stat.is_rate and plan.threshold < 1 else f"{int(threshold)}+"
+        pills.append(f"{prefix}{t_display} {abbrev} all time")
+
+    # Suggest the stat leaders if we have a stat
+    if abbrev:
+        pills.append(f"{abbrev} leaders")
+
+    if not pills:
+        return ""
+    return "\n\n" + "\n".join(f"[SUGGEST]{p}[/SUGGEST]" for p in pills[:3])
+
+
 def _ambiguous_suggest(plan: QueryPlan) -> str:
     """Generate a [SUGGEST] pill for the alternate batting/pitching interpretation."""
     if not plan.ambiguous_stat or not plan.stat:
@@ -1924,7 +1966,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         return None
 
     if not rows:
-        return f"No results found ({scope_label})."
+        return f"No results found ({scope_label})." + _empty_result_pills(plan)
 
     # Format
     title_prefix = f"{direction_label}{age_label}{bats_label}{position_label}{rookie_label}{role_label}"
@@ -2139,7 +2181,7 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
 
     if not qualifying:
         stat_label = conditions[0][0].replace("_", " ") if conditions else "criteria"
-        return f"No players met that criteria in each of the last {n_seasons} seasons ({start_year}-{most_recent})."
+        return f"No players met that criteria in each of the last {n_seasons} seasons ({start_year}-{most_recent})." + _empty_result_pills(plan)
 
     # Format results
     results = []
@@ -2226,7 +2268,7 @@ def _execute_player_threshold(conn, plan: QueryPlan) -> Optional[str]:
     rows = cur.fetchall()
 
     if not rows:
-        return f"{plan.player_name} has no seasons with {threshold_display}+ {abbrev}."
+        return f"{plan.player_name} has no seasons with {threshold_display}+ {abbrev}." + _empty_result_pills(plan)
 
     title = f"**{plan.player_name} — {len(rows)} season{'s' if len(rows) != 1 else ''} with {threshold_display}+ {abbrev}**\n"
     parts = [title]
@@ -2305,27 +2347,7 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
     op = "with" if plan.comparison == ">=" else "with no more than"
 
     if not rows:
-        msg = f"No {rookie_label.lower()} {op} {threshold_display} {abbrev} found ({scope_label})."
-        # Suggest the most recent full season with all original context preserved
-        if plan.season and plan.season == date.today().year:
-            last_year = plan.season - 1
-            # Build context-preserving pill
-            pill_parts = []
-            if plan.throws:
-                pill_parts.append("RHP" if plan.throws == "R" else "LHP")
-            elif plan.bats:
-                pill_parts.append({"L": "LHB", "R": "RHB", "B": "switch hitters"}.get(plan.bats, ""))
-            if plan.rookie:
-                pill_parts.append("rookies")
-            if plan.pitcher_role:
-                pill_parts.append(f"{plan.pitcher_role}s")
-            if plan.position and not plan.is_pitching:
-                pill_parts.append("/".join(plan.position))
-            pill_parts.append(f"{threshold_display}+ {abbrev}")
-            pill_parts.append(f"in {last_year}")
-            pill = " ".join(p for p in pill_parts if p)
-            msg += f"\n\n[SUGGEST]{pill}[/SUGGEST]"
-        return msg
+        return f"No {rookie_label.lower()} {op} {threshold_display} {abbrev} found ({scope_label})." + _empty_result_pills(plan)
 
     # Build title with extra filters
     filter_parts = [f"{threshold_display}+ {abbrev}"]
@@ -2473,7 +2495,7 @@ def _execute_superlative(conn, plan: QueryPlan) -> Optional[str]:
     )
     rows = cur.fetchall()
     if not rows:
-        return f"No players found matching that criteria."
+        return f"No players found matching that criteria." + _empty_result_pills(plan)
 
     sup_labels = {"youngest": "Youngest", "oldest": "Oldest", "first": "First", "last": "Most Recent"}
     sup_label = sup_labels.get(plan.superlative, "")
@@ -2592,7 +2614,7 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
     rows = cur.fetchall()
     if not rows:
         season_note = f" in {plan.season}" if plan.season else ""
-        return f"No players found with games meeting that criteria{season_note}."
+        return f"No players found with games meeting that criteria{season_note}." + _empty_result_pills(plan)
 
     # Total count of such games
     cur.execute(
@@ -2752,7 +2774,7 @@ def _streak_sliding(rows, target_length, label, plan) -> Optional[str]:
     if not results:
         if target_length:
             scope = str(plan.season) if plan.season else "All-Time"
-            return f"No {target_length}+ game streaks of {label} found ({scope})."
+            return f"No {target_length}+ game streaks of {label} found ({scope})." + _empty_result_pills(plan)
         return None
 
     # Sort by streak length descending
