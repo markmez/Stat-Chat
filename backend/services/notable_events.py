@@ -2034,7 +2034,7 @@ def detect_all(db_path=None, season=None, from_poll=False):
     # Events for prior dates are NOT touched — they were computed when that date
     # was latest_date and the data was complete.
     conn.execute("""
-        DELETE FROM notable_events WHERE game_date = ?
+        DELETE FROM notable_events WHERE game_date = ? AND detection_type != 'ai_insight'
     """, (latest_date,))
     conn.commit()
 
