@@ -351,6 +351,45 @@ Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The ma
 ### Upcoming features
 - **"Close & Late" splits** — situational stats for at-bats in 7th inning or later when the batting team is tied, ahead by 1, or the tying run is at least on deck. Requires tracking running score through play-by-play data. MSF play-by-play has inning/half data and runner state; score can be derived by accumulating runs. New tables: `close_late_batting_splits`, `close_late_pitching_splits`. Pipeline addition to `pull_live_stats.py`. iOS player card tab.
 
+### Deep Scans (SCOPED, not built — the killer feed feature)
+Pre-defined library of multi-condition historical queries run automatically after each game. Modeled on stat Twitter accounts that go viral with deeply specific comparisons.
+
+**Example patterns (from real stat Twitter, April 7-8 2026):**
+- "First Dodgers pitcher to start a season with consecutive 6+ IP 0 ER outings since Maeda 2016" (team + pitching sequence)
+- "Second most consecutive K in expansion era: 2024 Estrada 13, 2026 Miller 11, 2023 Alvarado 11" (era-bounded leaderboard)
+- "2nd player in expansion era to start career with hits in first 5+ ABs, joining Ted Cox 1977" (career-start sequence + team context)
+- "First pitcher since 1900 with 10+ K and 0 BB in each of first 2 starts" (multi-condition + era)
+- "Yankees LHB with .400+ BA, .500+ OBP, .860+ SLG in first 6 games: Rice, Berra, Gehrig, Ruth" (multi-threshold + team + the company matters)
+
+**Architecture:**
+- `historical_scan_library.py` — scan patterns as structured configs
+- Each pattern: condition SQL, lookback era, team-scoped vs MLB, context query
+- Run per player per game day in detect_all
+- Results templated with team-first-since + era list context
+
+**Key design principles:**
+1. Team context is essential — "first Dodger since X" > "first player since X"
+2. Era bounding — "since 1900", "expansion era (1961+)"
+3. The company matters — listing who else did it, especially if legends
+4. Multi-condition — combinations (K + BB, BA + OBP + SLG), not just single stats
+5. Game spans — "any 3-game span", "first N games", "first N career ABs"
+
+**TODO:**
+1. Define 10-15 scan patterns from real examples
+2. Build scan engine (evaluate patterns per player per game)
+3. Build historical context queries (team-first-since, era-list)
+4. Template results
+5. Add to detect_all
+6. Test via records sandbox before going live
+
+### Records & Personal Bests (PARTIALLY BUILT)
+- **Pre-computed records tables**: `team_records` and `mlb_records` in stats DB. Top 5 all-time per team × stat for career, season, and single-game records. Auto-rebuilt on each pipeline run.
+- **Records sandbox**: `/admin/records-sandbox` — player lookup (career stats, record proximity) + date simulation (what events would fire). Used for testing before going live.
+- **Milestone additions needed**: 50 HR / 60 HR season thresholds, 20/20 30/30 40/40 HR/SB thresholds
+- **Approaching thresholds**: 3 away for team records, 5 for big milestones
+- **Personal bests**: Career highs (50+ games min), career firsts (first HR, win, save only), first high-threshold achievement (first 10+ K game, first 4-hit game)
+- **"First since" context**: For career-first threshold achievements, check last player on team/league to do it
+
 ### Admin Query Dashboard (BUILT, 2026-04-07)
 - **URL**: `https://api.secondsignalapps.com/admin/dashboard?key=I9-NNJ-GBen3SZ-wf8JkZX5-_zvvt8Qri2EtTxWUo-I`
 - **Query logging**: Every query logged to `query_log` table in `metering.db` with query_text, device_id, response_type, timestamp. Three types: `query engine` ($0), `haiku` (~$0.002/query), `sonnet` (~$0.02/query).
