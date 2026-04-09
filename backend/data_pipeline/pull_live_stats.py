@@ -661,21 +661,27 @@ def pull_game_logs(conn, season_str, full_refresh=False):
 
     print(f"    Loaded {bat_count} batting + {pitch_count} pitching game logs across {len(game_dates)} days")
 
-    # If game logs returned nothing for recent dates, check if play-by-play is available
-    # This helps us understand MSF's data availability timing
-    if bat_count == 0 and game_dates:
-        latest_gdate = game_dates[-1]
-        try:
-            pbp_data = msf_get(f"{season_str}/date/{latest_gdate}/games.json")
-            if pbp_data and pbp_data.get("games"):
-                games = pbp_data["games"]
-                completed = sum(1 for g in games if g.get("schedule", {}).get("playedStatus") == "COMPLETED")
-                print(f"    NOTE: Game logs empty for {latest_gdate}, but games endpoint shows {len(games)} games ({completed} completed)")
-                print(f"    Play-by-play may be available before game logs — potential for faster event detection")
+    # Always check play-by-play availability for today's date
+    # This tells us if PBP data is available before game logs
+    from datetime import date as _date
+    today_gdate = _date.today().strftime("%Y%m%d")
+    today_has_gamelogs = today_gdate in dates_with_data
+    try:
+        pbp_data = msf_get(f"{season_str}/date/{today_gdate}/games.json")
+        if pbp_data and pbp_data.get("games"):
+            games = pbp_data["games"]
+            completed = sum(1 for g in games if g.get("schedule", {}).get("playedStatus") == "COMPLETED")
+            in_progress = sum(1 for g in games if g.get("schedule", {}).get("playedStatus") == "LIVE")
+            if today_has_gamelogs:
+                print(f"    PBP CHECK ({today_gdate}): {len(games)} games ({completed} completed, {in_progress} live) — game logs ALSO available")
             else:
-                print(f"    NOTE: Game logs AND games endpoint both empty for {latest_gdate}")
-        except Exception:
-            pass
+                print(f"    PBP CHECK ({today_gdate}): {len(games)} games ({completed} completed, {in_progress} live) — game logs NOT yet available")
+                if completed > 0:
+                    print(f"    >>> PLAY-BY-PLAY AVAILABLE BEFORE GAME LOGS — could derive game stats for faster detection")
+        else:
+            print(f"    PBP CHECK ({today_gdate}): no games data from MSF")
+    except Exception as e:
+        print(f"    PBP CHECK ({today_gdate}): failed ({e})")
 
     return bat_count, pitch_count
 
