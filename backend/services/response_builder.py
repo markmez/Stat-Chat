@@ -4096,7 +4096,13 @@ def build_team_ranking(stat_info: StatInfo, season: int) -> Optional[str]:
         parts.append(f"HEADER: {stat_info.display_abbrev}")
         for i, row in enumerate(rows):
             team_name = _team_full_name(str(row[0]))
-            val = _format_rate(str(row[1])) if stat_info.is_rate else str(row[1])
+            raw = row[1]
+            if stat_info.db_column in ("era", "whip", "k_per_9", "bb_per_9", "hr_per_9", "k_per_bb"):
+                val = f"{raw:.2f}"
+            elif stat_info.is_rate:
+                val = _format_rate(str(raw))
+            else:
+                val = str(int(raw)) if raw == int(raw) else str(raw)
             parts.append(f"ROW {i+1}. {team_name}: {val}")
         parts.append("[/LEADERBOARD]")
 
