@@ -3919,13 +3919,13 @@ def build_pitching_team_stats(team_code: str, stat_info: Optional[StatInfo] = No
             parts = [f"**{full_name}** \u2014 {season} Pitchers\n"]
             parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
             parts.append("[LEADERBOARD]")
-            parts.append("HEADER: ERA, SO")
+            parts.append("HEADER: IP, ERA, K")
             for i, row in enumerate(rows):
                 era = _format_pitching_rate(row[1], 2)
-                parts.append(f"ROW {i+1}. {row[0]}: {era}, {row[2]}")
+                ip_outs = row[3] if len(row) > 3 else 0
+                ip = f"{ip_outs // 3}.{ip_outs % 3}" if ip_outs else "0.0"
+                parts.append(f"ROW {i+1}. {row[0]}: {ip}, {era}, {row[2]}")
             parts.append("[/LEADERBOARD]")
-            ip_display = f"{ip_min // 3}.{ip_min % 3}"
-            parts.append(f"\n_Min. {ip_display} IP._")
             parts.append(f"\n[SUGGEST]{nickname} ERA leaders[/SUGGEST]")
             parts.append(f"[SUGGEST]{nickname} strikeout leaders[/SUGGEST]")
             return "\n".join(parts)
