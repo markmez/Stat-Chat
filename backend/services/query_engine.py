@@ -1576,30 +1576,28 @@ def execute(plan: QueryPlan) -> Optional[str]:
         elif plan.query_type == "leaderboard":
             result = _execute_leaderboard(conn, plan)
 
+        # Collect all "see also" alternatives, output as single combined DIDYOUMEAN
+        see_also = []
+
         # Alternate interpretation for ambiguous stats
         if result and plan.ambiguous_stat:
             alt = _ambiguous_suggest(plan)
             if alt.startswith("__DIDYOUMEAN__"):
-                # Truly ambiguous — position before results
-                query = alt.replace("__DIDYOUMEAN__", "")
-                result = f"[DIDYOUMEAN]{query}[/DIDYOUMEAN]\n" + result
+                see_also.append(alt.replace("__DIDYOUMEAN__", ""))
             elif alt:
-                # Less ambiguous — append as pill after results
-                result += alt
+                result += alt  # Less ambiguous — keep as pill
 
-        # "Within vs by" alternate interpretation for team queries — show before results
+        # "Within vs by" alternate interpretation for team queries
         if result and plan.has_team_context and plan.stat:
             abbrev = plan.stat.display_abbrev
             season = plan.season or date.today().year
-            result = f"[DIDYOUMEAN]{abbrev} leader on each team {season}[/DIDYOUMEAN]\n" + result
+            see_also.append(f"{abbrev} leader on each team {season}")
 
-        # When no year was specified and we defaulted to current season,
-        # suggest last season (early season) and career as alternate interpretations
+        # Unqualified season: suggest last season (early) + career
         if (result and plan.season and plan.season == date.today().year
                 and plan.stat and plan.query_type in ("leaderboard", "threshold")):
             abbrev = plan.stat.display_abbrev
             last_year = plan.season - 1
-            dym_parts = []
             try:
                 gp = conn.execute(
                     "SELECT MAX(games) FROM season_batting_stats WHERE season = ?",
@@ -1607,12 +1605,14 @@ def execute(plan: QueryPlan) -> Optional[str]:
                 ).fetchone()
                 games_played = gp[0] if gp and gp[0] else 0
                 if games_played < 40:
-                    dym_parts.append(f"[DIDYOUMEAN]{last_year} {abbrev} leaders[/DIDYOUMEAN]")
+                    see_also.append(f"{last_year} {abbrev} leaders")
             except Exception:
                 pass
-            dym_parts.append(f"[DIDYOUMEAN]career {abbrev} leaders[/DIDYOUMEAN]")
-            if dym_parts:
-                result = "\n".join(dym_parts) + "\n" + result
+            see_also.append(f"career {abbrev} leaders")
+
+        # Combine all see-alsos into one DIDYOUMEAN with pipe separator
+        if see_also and result:
+            result = f"[DIDYOUMEAN]{'|'.join(see_also)}[/DIDYOUMEAN]\n" + result
 
         return result
     except Exception as e:

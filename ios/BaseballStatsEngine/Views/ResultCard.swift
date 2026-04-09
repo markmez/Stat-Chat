@@ -194,16 +194,25 @@ struct ResultCard: View {
 
         case .didYouMean(let query):
             if let tap = onQueryTap {
-                HStack(spacing: 0) {
-                    Text("See also: ")
-                        .foregroundStyle(.secondary)
-                    Button {
-                        tap(query)
-                    } label: {
-                        Text(query)
-                            .foregroundStyle(deepBlue)
+                let queries = query.components(separatedBy: "|")
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        Text("See also: ")
+                            .foregroundStyle(.secondary)
+                        ForEach(Array(queries.enumerated()), id: \.offset) { idx, q in
+                            if idx > 0 {
+                                Text(", ")
+                                    .foregroundStyle(.secondary)
+                            }
+                            Button {
+                                tap(q.trimmingCharacters(in: .whitespaces))
+                            } label: {
+                                Text(q.trimmingCharacters(in: .whitespaces))
+                                    .foregroundStyle(deepBlue)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
                 .font(.system(.subheadline, design: .rounded))
                 .padding(.horizontal, 20)
