@@ -78,12 +78,16 @@ LOWER_IS_BETTER = {"era", "whip"}
 
 
 def create_tables(conn):
-    """Create or replace the records tables."""
-    conn.execute("DROP TABLE IF EXISTS team_records")
-    conn.execute("DROP TABLE IF EXISTS mlb_records")
+    """Create temp tables, build into them, then swap at the end.
+
+    This avoids needing an exclusive lock during the build — DROP + rename
+    only happens at the very end in a quick transaction.
+    """
+    conn.execute("DROP TABLE IF EXISTS team_records_new")
+    conn.execute("DROP TABLE IF EXISTS mlb_records_new")
 
     conn.execute("""
-        CREATE TABLE team_records (
+        CREATE TABLE team_records_new (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             team_code TEXT NOT NULL,
             stat TEXT NOT NULL,
@@ -95,15 +99,9 @@ def create_tables(conn):
             UNIQUE(team_code, stat, record_type, player_id)
         )
     """)
-    conn.execute("""
-        CREATE INDEX idx_team_records_team ON team_records(team_code)
-    """)
-    conn.execute("""
-        CREATE INDEX idx_team_records_player ON team_records(player_id)
-    """)
 
     conn.execute("""
-        CREATE TABLE mlb_records (
+        CREATE TABLE mlb_records_new (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             stat TEXT NOT NULL,
             record_type TEXT NOT NULL,
@@ -114,12 +112,22 @@ def create_tables(conn):
             UNIQUE(stat, record_type, player_id)
         )
     """)
-    conn.execute("""
-        CREATE INDEX idx_mlb_records_player ON mlb_records(player_id)
-    """)
 
     conn.commit()
-    print("Created team_records and mlb_records tables.")
+    print("Created staging tables (team_records_new, mlb_records_new).")
+
+
+def swap_tables(conn):
+    """Atomically swap staging tables into production names."""
+    conn.execute("DROP TABLE IF EXISTS team_records")
+    conn.execute("DROP TABLE IF EXISTS mlb_records")
+    conn.execute("ALTER TABLE team_records_new RENAME TO team_records")
+    conn.execute("ALTER TABLE mlb_records_new RENAME TO mlb_records")
+    conn.execute("CREATE INDEX idx_team_records_team ON team_records(team_code)")
+    conn.execute("CREATE INDEX idx_team_records_player ON team_records(player_id)")
+    conn.execute("CREATE INDEX idx_mlb_records_player ON mlb_records(player_id)")
+    conn.commit()
+    print("Swapped staging tables to production.")
 
 
 def _get_all_single_team_codes(conn):
@@ -175,7 +183,7 @@ def _build_career_records(conn, team_code, stats_config, table_name, target_tabl
         for pid, val in rows:
             name = _player_name(conn, pid)
             conn.execute(f"""
-                INSERT OR REPLACE INTO {target_table}
+                INSERT OR REPLACE INTO {target_table}_new
                 ({'' if target_table == 'mlb_records' else 'team_code, '}stat, record_type, value, player_name, player_id, season)
                 VALUES ({'' if target_table == 'mlb_records' else '?, '}?, 'career', ?, ?, ?, NULL)
             """, (team_code, stat_name, val, name, pid) if target_table == 'team_records' else
@@ -209,7 +217,7 @@ def _build_season_records(conn, team_code, stats_config, table_name, target_tabl
         for pid, val, season in rows:
             name = _player_name(conn, pid)
             conn.execute(f"""
-                INSERT OR REPLACE INTO {target_table}
+                INSERT OR REPLACE INTO {target_table}_new
                 ({'' if target_table == 'mlb_records' else 'team_code, '}stat, record_type, value, player_name, player_id, season)
                 VALUES ({'' if target_table == 'mlb_records' else '?, '}?, 'season', ?, ?, ?, ?)
             """, (team_code, stat_name, val, name, pid, season) if target_table == 'team_records' else
@@ -269,13 +277,13 @@ def _build_game_records(conn, team_code, stats_config, log_table, season_table, 
             name = _player_name(conn, pid)
             if target_table == 'team_records':
                 conn.execute("""
-                    INSERT OR REPLACE INTO team_records
+                    INSERT OR REPLACE INTO team_records_new
                     (team_code, stat, record_type, value, player_name, player_id, season)
                     VALUES (?, ?, 'game', ?, ?, ?, ?)
                 """, (team_code, stat_name, val, name, pid, season))
             else:
                 conn.execute("""
-                    INSERT OR REPLACE INTO mlb_records
+                    INSERT OR REPLACE INTO mlb_records_new
                     (stat, record_type, value, player_name, player_id, season)
                     VALUES (?, 'game', ?, ?, ?, ?)
                 """, (stat_name, val, name, pid, season))
@@ -306,7 +314,7 @@ def _build_mlb_career_records(conn, stats_config, table_name):
         for pid, val in rows:
             name = _player_name(conn, pid)
             conn.execute("""
-                INSERT OR REPLACE INTO mlb_records
+                INSERT OR REPLACE INTO mlb_records_new
                 (stat, record_type, value, player_name, player_id, season)
                 VALUES (?, 'career', ?, ?, ?, NULL)
             """, (stat_name, val, name, pid))
@@ -334,7 +342,7 @@ def _build_mlb_season_records(conn, stats_config, table_name):
         for pid, val, season in rows:
             name = _player_name(conn, pid)
             conn.execute("""
-                INSERT OR REPLACE INTO mlb_records
+                INSERT OR REPLACE INTO mlb_records_new
                 (stat, record_type, value, player_name, player_id, season)
                 VALUES (?, 'season', ?, ?, ?, ?)
             """, (stat_name, val, name, pid, season))
@@ -422,6 +430,10 @@ def build_all(db_path):
     print(f"  + Game: {mlb_count}")
 
     conn.commit()
+
+    # Swap staging tables to production names
+    print("\nSwapping tables...")
+    swap_tables(conn)
     conn.close()
 
     elapsed = time.time() - start
