@@ -50,6 +50,10 @@ else
     exit 1
 fi
 
+# Rebuild pre-computed records tables (team + MLB records)
+echo "=== Rebuilding records tables ==="
+$VENV /opt/statchat/repo/backend/data_pipeline/build_records.py --db $DB 2>&1 | tail -5
+
 # Run data integrity check
 echo "=== Running integrity check ==="
 INTEGRITY_OUTPUT=$($VENV $INTEGRITY --db $DB --check-only 2>&1)
