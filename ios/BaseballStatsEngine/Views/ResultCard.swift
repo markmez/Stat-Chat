@@ -194,21 +194,20 @@ struct ResultCard: View {
 
         case .didYouMean(let query):
             if let tap = onQueryTap {
-                HStack(spacing: 6) {
-                    Text("Did you mean:")
-                        .font(.system(.caption, design: .rounded))
+                HStack(spacing: 0) {
+                    Text("See also: ")
                         .foregroundStyle(.secondary)
                     Button {
                         tap(query)
                     } label: {
                         Text(query)
-                            .font(.system(.caption, design: .rounded, weight: .medium))
                             .foregroundStyle(deepBlue)
                     }
                     .buttonStyle(.plain)
                 }
+                .font(.system(.subheadline, design: .rounded))
                 .padding(.horizontal, 20)
-                .padding(.bottom, 2)
+                .padding(.top, 10)
             }
 
         case .querySuggestion, .partialGrid:
