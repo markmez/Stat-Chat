@@ -338,4 +338,15 @@ DATA SNAPSHOT:
             pass
 
     conn.commit()
+
+    # Archive AI insights permanently
+    try:
+        from services.metering import archive_events
+        archive_events([
+            {"headline": e["headline"], "detection_type": "ai_insight", "game_date": latest_date}
+            for e in events
+        ])
+    except Exception:
+        pass
+
     return {"events": events, "inserted": inserted}
