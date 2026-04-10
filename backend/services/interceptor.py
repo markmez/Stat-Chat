@@ -38,11 +38,13 @@ def try_intercept(question: str):
                           "expected batting", "expected slugging", "chase rate",
                           "whiff rate", "sweet spot", "statcast", "bat speed",
                           "swing length", "extension"]
+    _war_keywords = ["wins above replacement", "fwar", "bwar", "rwar", "wrc+", "wrc plus"]
+    _war_word = re.search(r'\bwar\b', lower)  # word-boundary match for "war"
+    current_year = date.today().year
+    is_current = (str(current_year) in lower or "this season" in lower
+                  or "this year" in lower or "2026" in lower
+                  or not re.search(r'20[012]\d', lower))  # no year specified = current
     if any(kw in lower for kw in _statcast_keywords):
-        current_year = date.today().year
-        is_current = (str(current_year) in lower or "this season" in lower
-                      or "this year" in lower or "2026" in lower
-                      or not re.search(r'20[012]\d', lower))  # no year specified = current
         if is_current:
             return ("__NO_COUNT__We don't have Statcast data (exit velocity, launch angle, barrel rate, etc.) "
                     "in our database. We focus on verified game stats — batting, pitching, splits, streaks, "
@@ -50,6 +52,15 @@ def try_intercept(question: str):
                     "_This search didn't count against your free queries._"
                     "\n\n[SUGGEST]OPS leaders this season[/SUGGEST]"
                     "\n[SUGGEST]most home runs this season[/SUGGEST]"
+                    "\n[SUGGEST]best ERA this season[/SUGGEST]")
+    if _war_word or any(kw in lower for kw in _war_keywords):
+        if is_current:
+            return ("__NO_COUNT__We don't have WAR (Wins Above Replacement) in our database — "
+                    "it's a proprietary metric computed differently by FanGraphs and Baseball Reference. "
+                    "We focus on verified game stats like OPS, ERA, and OPS+.\n\n"
+                    "_This search didn't count against your free queries._"
+                    "\n\n[SUGGEST]OPS+ leaders this season[/SUGGEST]"
+                    "\n[SUGGEST]OPS leaders this season[/SUGGEST]"
                     "\n[SUGGEST]best ERA this season[/SUGGEST]")
 
     # 0a. Tonight preview — "how will Judge do tonight" (auto-resolve probable pitcher)
