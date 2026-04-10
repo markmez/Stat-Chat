@@ -29,10 +29,17 @@
               sudo systemctl daemon-reload
               # Graceful reload: HUP tells gunicorn to spawn new workers before killing old
               # Falls back to hard restart if not running or first deploy with gunicorn
-              if [ -f /tmp/statchat.pid ] && kill -0 $(cat /tmp/statchat.pid) 2>/dev/null; then
+              if [ -f /tmp/statchat.pid ] && sudo kill -0 $(cat /tmp/statchat.pid) 2>/dev/null; then
                 sudo kill -HUP $(cat /tmp/statchat.pid)
+                sleep 5
               else
-                sudo systemctl restart statchat
+                sudo systemctl stop statchat 2>/dev/null || true
+                sleep 1
+                sudo systemctl start statchat
+                sleep 8
               fi
-              sleep 5
-              curl -sf --max-time 10 http://127.0.0.1:8000/health || exit 1
+              curl -sf --max-time 15 http://127.0.0.1:8000/health || {
+                echo "Health check failed, checking logs..."
+                sudo journalctl -u statchat --no-pager -n 30
+                exit 1
+              }
