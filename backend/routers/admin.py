@@ -522,6 +522,29 @@ async def debug_decompose(
     }
 
 
+@router.get("/debug-followup")
+async def debug_followup(
+    q: str = "",
+    prior: str = "",
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Debug: test local follow-up rewriter."""
+    verify_admin(authorization, key)
+    from routers.query import _extract_prior_context, _local_followup_rewrite
+    history = [{"role": "user", "content": prior}, {"role": "assistant", "content": "..."}] if prior else []
+    ctx = _extract_prior_context(history)
+    rewrite = _local_followup_rewrite(q, history) if history else None
+    return {
+        "question": q,
+        "prior": prior,
+        "ctx_player": ctx.get("player"),
+        "ctx_stat": ctx.get("stat"),
+        "ctx_season": ctx.get("season"),
+        "rewrite": rewrite,
+    }
+
+
 @router.api_route("/ai-notable", methods=["GET", "POST"])
 async def ai_notable(
     dry_run: bool = True,
