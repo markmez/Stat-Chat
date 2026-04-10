@@ -3113,10 +3113,10 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
         season_filter = " AND g.season >= ?"
         season_params = [plan.since_year]
     elif plan.streak_direction == "trailing":
-        # Active streaks only need current season — don't scan entire history
+        # Active streaks may span season boundary — use current + prior season
         from datetime import datetime as _dt
-        season_filter = " AND g.season = ?"
-        season_params = [_dt.now().year]
+        season_filter = " AND g.season >= ?"
+        season_params = [_dt.now().year - 1]
     else:
         # No season specified — default to current season to avoid scanning 600K+ rows
         from datetime import datetime as _dt
