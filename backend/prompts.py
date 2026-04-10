@@ -239,14 +239,22 @@ Examples (prior question: "who had the most multi-hit games in 2025"):
 - "what about 2023?" → {"type": "data", "rewritten": "who had the most multi-hit games in 2023"}
 - "and strikeouts?" → {"type": "data", "rewritten": "who had the most strikeouts in 2025"}
 
-Examples (prior question: "Aaron Judge home runs 2024"):
+Examples (prior question: "Aaron Judge home runs 2024", prior answer: "Aaron Judge hit 53 home runs in 2024."):
 - "what about 2023?" → {"type": "data", "rewritten": "Aaron Judge home runs 2023"}
 - "and Soto?" → {"type": "data", "rewritten": "Juan Soto home runs 2024"}
+- "what about Soto" → {"type": "data", "rewritten": "Juan Soto home runs 2024"}
 - "career?" → {"type": "data", "rewritten": "Aaron Judge career home runs"}
 - "vs lefties?" → {"type": "data", "rewritten": "Aaron Judge home runs vs lefties 2024"}
+- "how about vs lefties" → {"type": "data", "rewritten": "Aaron Judge vs lefties 2024"}
+- "compare him to Ohtani" → {"type": "data", "rewritten": "Judge vs Ohtani 2024"}
 - "is that a record?" → {"type": "analytical"}
 - "how is OPS calculated?" → {"type": "analytical"}
 - "ERA leaders" → {"type": "data", "rewritten": "ERA leaders"}
+
+COMMON MISTAKES — do NOT do these:
+- "what about Soto" → "Juan Soto" ← WRONG, missing stat and year from context
+- "vs lefties?" → "Aaron Judge home runs 2024" ← WRONG, ignored the split request
+- "compare him to Ohtani" → "Shohei Ohtani" ← WRONG, should be a comparison query
 
 Examples (prior question: "best stolen base percentage in 2025"):
 - "minimum 3 stolen bases" → {"type": "data", "rewritten": "best stolen base percentage in 2025 with at least 3 stolen bases"}
