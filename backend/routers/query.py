@@ -784,6 +784,10 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     rewritten_query: str | None = None
     if history and len(question.split()) < 10:
         local_rewrite = _local_followup_rewrite(question, history)
+        if local_rewrite is None:
+            ctx = _extract_prior_context(history)
+            logger.info("followup_local_miss question=%r ctx_player=%r ctx_stat=%r ctx_season=%r",
+                        question, ctx["player"], ctx["stat"], ctx["season"])
         if local_rewrite:
             rewritten_query = local_rewrite
             logger.info("followup_local_rewrite original=%r rewritten=%r", question, local_rewrite)
