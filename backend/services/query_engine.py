@@ -2458,6 +2458,96 @@ def _execute_player_threshold(conn, plan: QueryPlan) -> Optional[str]:
     return "\n".join(parts)
 
 
+def _execute_career_threshold(conn, plan: QueryPlan) -> Optional[str]:
+    """Career aggregation threshold: SUM counting stats across all seasons per player."""
+    table, prefix = _table_and_prefix(plan)
+    stat_col = plan.stat.db_column
+    abbrev = plan.stat.display_abbrev
+    threshold_display = str(int(plan.threshold))
+
+    # Build extra filter SUMs and HAVINGs
+    extra_sums = ""
+    extra_having = ""
+    extra_headers = []
+    for ef in plan.extra_filters:
+        ef_col = ef["stat"].db_column
+        extra_sums += f", SUM({prefix}.{ef_col}) AS career_{ef_col}"
+        ef_thresh = int(ef["threshold"])
+        op = ef["comparison"]
+        extra_having += f" AND SUM({prefix}.{ef_col}) {op} {ef_thresh}"
+        extra_headers.append(ef["stat"].display_abbrev)
+
+    # League/bats/throws filters need to go in WHERE (not HAVING)
+    where_parts = []
+    where_params = []
+    if plan.league:
+        from .response_builder import _league_team_clause
+        where_parts.append(_league_team_clause(plan.league, prefix))
+    if plan.bats:
+        where_parts.append("p.bats = ?")
+        where_params.append(plan.bats)
+    if plan.throws:
+        where_parts.append("p.throws = ?")
+        where_params.append(plan.throws)
+    if plan.active_only:
+        current_year = datetime.now().year
+        where_parts.append(f"{prefix}.season >= {current_year - 1}")
+
+    where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+    sql = (
+        f"SELECT p.name, SUM({prefix}.{stat_col}) AS career_total, "
+        f"MIN({prefix}.season) AS first_yr, MAX({prefix}.season) AS last_yr, "
+        f"COUNT({prefix}.season) AS seasons{extra_sums} "
+        f"FROM {table} {prefix} "
+        f"JOIN players p ON {prefix}.player_id = p.player_id "
+        f"{where_clause} "
+        f"GROUP BY {prefix}.player_id "
+        f"HAVING SUM({prefix}.{stat_col}) {plan.comparison} ?{extra_having} "
+        f"ORDER BY career_total DESC"
+    )
+
+    cur = conn.cursor()
+    cur.execute(sql, tuple(where_params + [plan.threshold]))
+    rows = cur.fetchall()
+
+    if not rows:
+        return f"No players with {threshold_display}+ career {abbrev} found." + _empty_result_pills(plan)
+
+    # Title
+    filter_desc = f"{threshold_display}+ {abbrev}"
+    for ef in plan.extra_filters:
+        ef_val = int(ef["threshold"])
+        if ef["comparison"] == "<=":
+            filter_desc += f" and ≤{ef_val} {ef['stat'].display_abbrev}"
+        else:
+            filter_desc += f" and {ef_val}+ {ef['stat'].display_abbrev}"
+
+    parts = [f"**Career {filter_desc} (All-Time)**"]
+    parts.append(f"{len(rows)} matched.\n")
+    parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+    parts.append("[LEADERBOARD]")
+
+    headers = [abbrev, "Seasons", "Years"] + extra_headers
+    parts.append(f"HEADER: {', '.join(headers)}")
+
+    for i, row in enumerate(rows):
+        name = row[0]
+        total = int(row[1])
+        first_yr = row[2]
+        last_yr = row[3]
+        seasons = row[4]
+        year_range = f"{first_yr}-{last_yr}" if first_yr != last_yr else str(first_yr)
+        extra_vals = ""
+        for j in range(len(plan.extra_filters)):
+            ev = int(row[5 + j])
+            extra_vals += f", {ev}"
+        parts.append(f"ROW {i+1}. {name}: {total}, {seasons}, {year_range}{extra_vals}")
+
+    parts.append("[/LEADERBOARD]")
+    return "\n".join(parts)
+
+
 def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
     """Threshold query: 'who hit 40 HR', 'players with .800 OPS'."""
     if plan.per_season:
@@ -2471,7 +2561,13 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
     stat_expr, abbrev, name, is_rate = _stat_expr(plan, prefix)
     filters_str, params = _build_filters(plan, prefix, conn)
 
+    # Career aggregation: when no season + counting stat + threshold exceeds season record
+    # SUM across all seasons per player instead of checking each season individually
     season = plan.season
+    if (not season and not is_rate and plan.threshold
+            and plan.stat and _exceeds_season_record(plan.stat, plan.threshold)):
+        return _execute_career_threshold(conn, plan)
+
     if season:
         pa, pa_label = _pa_filter(plan, prefix, conn, season)
         where = f"WHERE {prefix}.season = ? AND {stat_expr} {plan.comparison} ?"
