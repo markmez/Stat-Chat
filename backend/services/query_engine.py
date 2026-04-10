@@ -358,6 +358,7 @@ class QueryPlan:
     ambiguous_stat: bool = False  # True when stat exists in both batting and pitching
     has_team_context: bool = False  # "team" was in the query — might mean team-level aggregate
     original_question: str = ""  # Original query text for post-execution logic
+    execution_error: Optional[str] = None  # Set by execute() if an exception occurred
     unexplained_words: list = field(default_factory=list)
     consumed_words: set = field(default_factory=set)
 
@@ -1634,6 +1635,7 @@ def execute(plan: QueryPlan) -> Optional[str]:
         return result
     except Exception as e:
         logger.warning("query_engine_error error=%s type=%s plan_type=%s streak_len=%s", e, type(e).__name__, plan.query_type, plan.streak_length)
+        plan.execution_error = f"{type(e).__name__}: {e}"
         return None
     finally:
         conn.close()

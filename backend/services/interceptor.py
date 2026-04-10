@@ -18,6 +18,30 @@ from services.stat_definitions import lookup as stat_def_lookup
 
 logger = logging.getLogger("statchat.interceptor")
 
+# Healthchecks.io endpoint for query engine errors
+# Uses /fail on a SEPARATE check from uptime. Create at healthchecks.io, set grace=0.
+import os
+_QE_ERROR_HC_UUID = os.getenv("QE_ERROR_HC_UUID", "")
+_QE_ERROR_HC_URL = f"https://hc-ping.com/{_QE_ERROR_HC_UUID}/fail" if _QE_ERROR_HC_UUID else ""
+
+
+def _ping_qe_error(question: str, error: str):
+    """Log query engine error to dashboard + ping Healthchecks.io."""
+    # Log to dashboard as its own response type
+    try:
+        from services.metering import log_query
+        log_query(question, "system", "query_engine_error")
+    except Exception:
+        pass
+    # Ping Healthchecks.io (if configured)
+    if _QE_ERROR_HC_URL:
+        try:
+            import requests
+            requests.post(_QE_ERROR_HC_URL, data=f"query: {question}\nerror: {error}",
+                           timeout=3)
+        except Exception:
+            pass
+
 
 def try_intercept(question: str):
     """
@@ -355,7 +379,13 @@ def try_intercept(question: str):
             logger.info("query_engine_handled question=%r type=%s", trimmed, plan.query_type)
             return response
         else:
-            logger.warning("query_engine_valid_but_no_result question=%r type=%s streak_len=%s", trimmed, plan.query_type, plan.streak_length)
+            if plan.execution_error:
+                logger.error("query_engine_execution_error question=%r type=%s error=%s",
+                             trimmed, plan.query_type, plan.execution_error)
+                _ping_qe_error(trimmed, plan.execution_error)
+            else:
+                logger.warning("query_engine_valid_but_no_result question=%r type=%s streak_len=%s",
+                               trimmed, plan.query_type, plan.streak_length)
     elif plan.unexplained_words and (plan.stat or plan.derived_stat):
         logger.info("query_engine_bail question=%r unexplained=%s", trimmed, plan.unexplained_words)
         return None

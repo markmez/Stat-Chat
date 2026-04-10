@@ -738,7 +738,7 @@ METERING_DB_PATH = os.getenv(
 )
 
 # Cost estimates per query by response type
-_COST_PER_QUERY = {"query engine": 0.0, "intercepted": 0.0, "haiku": 0.002, "sonnet": 0.02}
+_COST_PER_QUERY = {"query engine": 0.0, "intercepted": 0.0, "haiku": 0.002, "sonnet": 0.02, "query_engine_error": 0.0}
 
 
 def _to_eastern(iso_ts: str) -> str:
@@ -922,6 +922,7 @@ async def dashboard(
     font-size: 10px; font-weight: 600; text-transform: uppercase;
   }}
   .badge.intercepted, .badge.query-engine {{ background: #dcfce7; color: #166534; }}
+  .badge.query-engine-error {{ background: #fee2e2; color: #991b1b; }}
   .badge.evt-ai-insight {{ background: #fef3c7; color: #92400e; }}
   .badge.evt-historical {{ background: #e0e7ff; color: #3730a3; }}
   .badge.evt-streak {{ background: #fce7f3; color: #9d174d; }}
