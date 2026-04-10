@@ -1485,6 +1485,8 @@ struct PlayerCardView: View {
                     }
 
                     StatGridView(grid: formGrid, suppressBackground: true)
+                        .animation(nil, value: formSliderGameNumber)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     Rectangle()
                         .fill(Color(uiColor: .separator).opacity(0.3))
