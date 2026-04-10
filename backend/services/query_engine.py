@@ -2521,16 +2521,20 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
                         # Build pace display
                         filter_desc = f"{threshold_display}+ {abbrev}"
                         for ef in plan.extra_filters:
-                            ef_val = int(ef["threshold"]) if ef["threshold"] == int(ef["threshold"]) else ef["threshold"]
-                            filter_desc += f" and {ef_val}+ {ef['stat'].display_abbrev}"
+                            ef_val = _format_val("", ef["threshold"], ef["stat"].is_rate) if ef["stat"].is_rate else str(int(ef["threshold"]))
+                            if ef["comparison"] == "<=":
+                                filter_desc += f" and sub-{ef_val} {ef['stat'].display_abbrev}"
+                            else:
+                                filter_desc += f" and {ef_val}+ {ef['stat'].display_abbrev}"
                         parts = [f"**No one has reached {filter_desc} yet in {season}.**"]
                         parts.append(f"Through {max_games} games, {len(pace_rows)} {'player is' if len(pace_rows) == 1 else 'players are'} on pace:\n")
                         parts.append("[LEADERBOARD]")
-                        # Header: primary stat + Pace, extra stats + Pace
-                        all_stats = [abbrev] + [ef["stat"].display_abbrev for ef in plan.extra_filters]
-                        header_parts = []
-                        for s in all_stats:
-                            header_parts.extend([s, "Pace"])
+                        # Header: counting stats get Pace column, rate stats don't
+                        header_parts = [abbrev, "Pace"]
+                        for ef in plan.extra_filters:
+                            header_parts.append(ef["stat"].display_abbrev)
+                            if not ef["stat"].is_rate:
+                                header_parts.append("Pace")
                         parts.append(f"HEADER: {', '.join(header_parts)}")
                         n_extras = len(plan.extra_filters)
                         for i, row in enumerate(pace_rows):
@@ -2539,9 +2543,12 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
                             primary_pace = int(row[1] * pace_factor)
                             vals = [str(primary_val), str(primary_pace)]
                             for j in range(n_extras):
-                                ev = int(row[2 + j])
-                                ep = int(row[2 + j] * pace_factor)
-                                vals.extend([str(ev), str(ep)])
+                                ef = plan.extra_filters[j]
+                                raw = row[2 + j]
+                                if ef["stat"].is_rate:
+                                    vals.append(_format_val(ef["stat"].db_column, raw, True))
+                                else:
+                                    vals.extend([str(int(raw)), str(int(raw * pace_factor))])
                             parts.append(f"ROW {i+1}. {row[0]}: {', '.join(vals)}")
                         parts.append("[/LEADERBOARD]")
                         return "\n".join(parts)
