@@ -63,6 +63,34 @@ def try_intercept(question: str):
                     "\n[SUGGEST]OPS leaders this season[/SUGGEST]"
                     "\n[SUGGEST]best ERA this season[/SUGGEST]")
 
+    # Advanced fielding metrics — proprietary, never in our DB
+    _adv_fielding_keywords = ["uzr", "ultimate zone", "drs", "defensive runs saved",
+                              "oaa", "outs above average", "range factor", "zone rating",
+                              "framing", "catcher framing", "arm strength", "pop time",
+                              "gold glove", "defensive value"]
+    if any(kw in lower for kw in _adv_fielding_keywords):
+        return ("__NO_COUNT__We don't have advanced defensive metrics (UZR, DRS, OAA, framing, etc.) "
+                "in our database — these are proprietary to FanGraphs, Sports Info Solutions, and Statcast. "
+                "We do have fielding percentage, errors, putouts, assists, and double plays.\n\n"
+                "_This search didn't count against your free queries._"
+                "\n\n[SUGGEST]best fielding percentage at shortstop 2025[/SUGGEST]"
+                "\n[SUGGEST]most errors 2025[/SUGGEST]"
+                "\n[SUGGEST]most double plays by a second baseman 2025[/SUGGEST]")
+
+    # Basic fielding queries for current season — no 2026 fielding data in our DB
+    _basic_fielding_keywords = ["fielding", "fielding %", "fielding pct", "fielding percentage",
+                                "putouts", "assists", "errors", "double plays turned",
+                                "passed balls", "defensive"]
+    if any(kw in lower for kw in _basic_fielding_keywords):
+        if is_current:
+            return ("__NO_COUNT__We don't have fielding stats for the current season yet. "
+                    "We have fielding percentage, putouts, assists, errors, and double plays "
+                    "for previous seasons (through 2025).\n\n"
+                    "_This search didn't count against your free queries._"
+                    "\n\n[SUGGEST]best fielding percentage at shortstop 2025[/SUGGEST]"
+                    "\n[SUGGEST]most errors 2025[/SUGGEST]"
+                    "\n[SUGGEST]most double plays by a second baseman 2025[/SUGGEST]")
+
     # 0a. Tonight preview — "how will Judge do tonight" (auto-resolve probable pitcher)
     tonight = nm.parse_tonight_preview(trimmed)
     if tonight:
