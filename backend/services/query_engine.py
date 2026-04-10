@@ -860,7 +860,7 @@ def decompose(question: str) -> QueryPlan:
             _add_consumed(plan, str(season) + " last this year season")
     if plan.scope == "current_season":
         # Default to current year for leaderboards, no default for all-time
-        if plan.query_type in ("leaderboard", "team_ranking"):
+        if plan.query_type in ("leaderboard", "team_ranking", "threshold"):
             # Past tense → last year
             if any(p in lower for p in ["who led", "who had", "who hit the most"]):
                 plan.season = datetime.now().year - 1
