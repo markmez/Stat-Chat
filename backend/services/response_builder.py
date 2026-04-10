@@ -3762,11 +3762,9 @@ def build_consecutive_streak(streak_type: str, player_name: Optional[str] = None
         parts = [f"**Longest {streak_label} Streaks \u2014 {scope_label}**\n"]
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
-        parts.append("HEADER: Games, Season, Dates")
+        parts.append("HEADER: Games")
         for i, row in enumerate(rows):
-            start = _format_date(str(row[3]))
-            end = _format_date(str(row[4]))
-            parts.append(f"ROW {i+1}. {row[0]}: {row[1]}, {row[2]}, {start}\u2013{end}")
+            parts.append(f"ROW {i+1}. {row[0]}: {row[1]}")
         parts.append("[/LEADERBOARD]")
 
         return "\n".join(parts)
