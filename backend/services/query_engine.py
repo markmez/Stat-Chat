@@ -2528,21 +2528,17 @@ def _execute_career_threshold(conn, plan: QueryPlan) -> Optional[str]:
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
 
-    headers = [abbrev, "Seasons", "Years"] + extra_headers
+    headers = [abbrev] + extra_headers
     parts.append(f"HEADER: {', '.join(headers)}")
 
     for i, row in enumerate(rows):
         name = row[0]
         total = int(row[1])
-        first_yr = row[2]
-        last_yr = row[3]
-        seasons = row[4]
-        year_range = f"{first_yr}-{last_yr}" if first_yr != last_yr else str(first_yr)
         extra_vals = ""
         for j in range(len(plan.extra_filters)):
             ev = int(row[5 + j])
             extra_vals += f", {ev}"
-        parts.append(f"ROW {i+1}. {name}: {total}, {seasons}, {year_range}{extra_vals}")
+        parts.append(f"ROW {i+1}. {name}: {total}{extra_vals}")
 
     parts.append("[/LEADERBOARD]")
     return "\n".join(parts)
