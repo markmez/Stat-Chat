@@ -1595,9 +1595,14 @@ def execute(plan: QueryPlan) -> Optional[str]:
             see_also.append(f"{abbrev} leader on each team {season}")
 
         # Unqualified season: suggest last season (early) + career
+        # Skip if user explicitly said "this season", "this year", or the year number
+        _explicit_season = any(p in trimmed.lower() for p in [
+            "this season", "this year", str(date.today().year)])
         if (result and plan.season and plan.season == date.today().year
-                and plan.stat and plan.query_type in ("leaderboard", "threshold")):
+                and plan.stat and plan.query_type in ("leaderboard", "threshold")
+                and not _explicit_season):
             abbrev = plan.stat.display_abbrev
+            league_prefix = f"{plan.league} " if plan.league else ""
             last_year = plan.season - 1
             try:
                 gp = conn.execute(
@@ -1606,10 +1611,10 @@ def execute(plan: QueryPlan) -> Optional[str]:
                 ).fetchone()
                 games_played = gp[0] if gp and gp[0] else 0
                 if games_played < 40:
-                    see_also.append(f"{last_year} {abbrev} leaders")
+                    see_also.append(f"{last_year} {league_prefix}{abbrev} leaders")
             except Exception:
                 pass
-            see_also.append(f"career {abbrev} leaders")
+            see_also.append(f"career {league_prefix}{abbrev} leaders")
 
         # Combine all see-alsos into one DIDYOUMEAN — insert after title, before container
         if see_also and result:
