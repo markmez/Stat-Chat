@@ -2894,10 +2894,10 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
     }
     col_expr = _computed_cols.get(col, f"g.{col}")
 
-    season_filter = f" AND g.season = ?" if plan.season else ""
-    params = [threshold]
-    if plan.season:
-        params.append(plan.season)
+    # Default to current season if none — prevents unbounded scan of 661K+ rows
+    effective_season = plan.season or date.today().year
+    season_filter = f" AND g.season = ?"
+    params = [threshold, effective_season]
 
     cur = conn.cursor()
 

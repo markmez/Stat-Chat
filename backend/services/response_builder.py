@@ -3694,6 +3694,10 @@ def build_consecutive_streak(streak_type: str, player_name: Optional[str] = None
 
     streak_type: "hit" or "onbase".
     """
+    # Default to current season — prevents unbounded 661K row scan
+    if season is None:
+        season = date.today().year
+
     conn = _get_db()
     try:
         if streak_type == "hit":
@@ -4803,6 +4807,10 @@ def build_single_game_extreme(stat_info: StatInfo, season: Optional[int],
                               is_pitching: bool = False,
                               position: Optional[list[str]] = None) -> Optional[str]:
     """Build 'most K in one game' style queries from game logs."""
+    # Default to current season — prevents unbounded scan of 661K+ rows
+    if season is None:
+        season = date.today().year
+
     conn = _get_db()
     try:
         if is_pitching:
