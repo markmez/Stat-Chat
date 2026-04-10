@@ -24,6 +24,9 @@
               sudo -u statchat /opt/statchat/venv/bin/pip install -q -r backend/requirements.txt
               sudo cp deploy/statchat-cron /etc/cron.d/statchat
               sudo chmod 644 /etc/cron.d/statchat
+              # Ensure QE error healthcheck UUID is in env
+              grep -q QE_ERROR_HC_UUID /opt/statchat/.env 2>/dev/null || \
+                echo 'QE_ERROR_HC_UUID=d3f0c82b-235a-477f-8ed5-3f6ac4c6daa7' | sudo tee -a /opt/statchat/.env > /dev/null
               # Update service file if changed
               sudo cp deploy/statchat.service /etc/systemd/system/statchat.service
               sudo systemctl daemon-reload

@@ -425,3 +425,4 @@ def try_intercept(question: str):
 
     # No match — fall through to Claude
     return None
+# QE_ERROR_HC_UUID configured via deploy workflow
