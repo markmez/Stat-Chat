@@ -666,8 +666,12 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
         if stat_match and player:
             season_part = f" {season}" if season else ""
             return f"{player} {name_text_clean}{season_part}"
-        # Try as a player name
+        # Try as a player name (use prominence for ambiguous last names like "Soto")
         new_player = _nm.find_player_in_text(name_text) or _nm.match_player(name_text)
+        if not new_player:
+            prominence = _nm.match_player_with_prominence(name_text)
+            if prominence:
+                new_player = prominence[0]
         if new_player and stat:
             season_part = f" {season}" if season else ""
             return f"{new_player} {stat}{season_part}"
@@ -709,6 +713,10 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
     if compare_match and player:
         other_text = compare_match.group(1).strip()
         other_player = _nm.find_player_in_text(other_text) or _nm.match_player(other_text)
+        if not other_player:
+            prominence = _nm.match_player_with_prominence(other_text)
+            if prominence:
+                other_player = prominence[0]
         if other_player:
             season_part = f" {season}" if season else ""
             return f"{player} vs {other_player}{season_part}"
