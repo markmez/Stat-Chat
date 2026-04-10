@@ -861,12 +861,21 @@ def decompose(question: str) -> QueryPlan:
     if plan.scope == "current_season":
         # Default to current year for leaderboards, no default for all-time
         if plan.query_type in ("leaderboard", "team_ranking", "threshold"):
+            # Threshold exceeding 110% of the single-season record → must be career
+            if plan.query_type == "threshold" and plan.threshold and plan.stat and plan.comparison == ">=":
+                if _exceeds_season_record(plan.stat, plan.threshold):
+                    plan.scope = "all_time"
+                    # Skip season defaulting — leave as all-time
+                else:
+                    plan.season = datetime.now().year
+                    plan.scope = f"season_{plan.season}"
             # Past tense → last year
-            if any(p in lower for p in ["who led", "who had", "who hit the most"]):
+            elif any(p in lower for p in ["who led", "who had", "who hit the most"]):
                 plan.season = datetime.now().year - 1
+                plan.scope = f"season_{plan.season}"
             else:
                 plan.season = datetime.now().year
-            plan.scope = f"season_{plan.season}"
+                plan.scope = f"season_{plan.season}"
 
     # --- Detect filters ---
     plan.position = _detect_position(lower)
@@ -1373,6 +1382,50 @@ def decompose(question: str) -> QueryPlan:
                 plan.threshold = None  # let the extra_filters carry the conditions
 
     return plan
+
+
+# ---------------------------------------------------------------------------
+# Season record cache — for detecting "obviously career" thresholds
+# ---------------------------------------------------------------------------
+
+_season_record_cache: dict[str, float] = {}
+
+
+def _load_season_records():
+    """Load max single-season values for counting stats from the DB."""
+    if _season_record_cache:
+        return
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        counting_cols = ["home_runs", "rbi", "hits", "runs", "stolen_bases",
+                         "doubles", "triples", "walks", "strikeouts_batting"]
+        for col in counting_cols:
+            try:
+                row = conn.execute(f"SELECT MAX({col}) FROM season_batting_stats").fetchone()
+                if row and row[0]:
+                    _season_record_cache[col] = float(row[0])
+            except Exception:
+                pass
+        pitching_cols = ["wins", "strikeouts", "saves", "complete_games", "shutouts"]
+        for col in pitching_cols:
+            try:
+                row = conn.execute(f"SELECT MAX({col}) FROM season_pitching_stats").fetchone()
+                if row and row[0]:
+                    _season_record_cache[col] = float(row[0])
+            except Exception:
+                pass
+        conn.close()
+    except Exception:
+        pass
+
+
+def _exceeds_season_record(stat: StatInfo, threshold: float) -> bool:
+    """Return True if the threshold exceeds 110% of the all-time single-season record."""
+    _load_season_records()
+    record = _season_record_cache.get(stat.db_column)
+    if record is None:
+        return False  # Unknown stat or rate stat — don't override
+    return threshold > record * 1.1
 
 
 # ---------------------------------------------------------------------------
