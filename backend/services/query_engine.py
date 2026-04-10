@@ -2505,9 +2505,12 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
                     # Require minimum games played (at least half of team max)
                     pace_where += f" AND {prefix}.games >= ?"
                     pace_params.append(max(1, max_games // 2))
+                    # Build SELECT with extra stat columns
+                    extra_cols = ", ".join(f"{prefix}.{ef['stat'].db_column}" for ef in plan.extra_filters)
+                    extra_select = f", {extra_cols}" if extra_cols else ""
                     pace_cur = conn.cursor()
                     pace_cur.execute(
-                        f"SELECT p.name, {stat_expr} AS stat_val, {prefix}.games "
+                        f"SELECT p.name, {stat_expr} AS stat_val{extra_select}, {prefix}.games "
                         f"FROM {table} {prefix} "
                         f"JOIN players p ON {prefix}.player_id = p.player_id "
                         f"{pace_where} ORDER BY stat_val DESC LIMIT 10",
@@ -2523,11 +2526,23 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
                         parts = [f"**No one has reached {filter_desc} yet in {season}.**"]
                         parts.append(f"Through {max_games} games, {len(pace_rows)} {'player is' if len(pace_rows) == 1 else 'players are'} on pace:\n")
                         parts.append("[LEADERBOARD]")
-                        parts.append(f"HEADER: {abbrev}, Pace")
+                        # Header: primary stat + Pace, extra stats + Pace
+                        all_stats = [abbrev] + [ef["stat"].display_abbrev for ef in plan.extra_filters]
+                        header_parts = []
+                        for s in all_stats:
+                            header_parts.extend([s, "Pace" if len(all_stats) == 1 else f"{s} Pace"])
+                        parts.append(f"HEADER: {', '.join(header_parts)}")
+                        n_extras = len(plan.extra_filters)
                         for i, row in enumerate(pace_rows):
-                            current_val = int(row[1])
-                            projected = int(row[1] * pace_factor)
-                            parts.append(f"ROW {i+1}. {row[0]}: {current_val}, ~{projected}")
+                            # row: name, primary_val, [extra1, extra2, ...], games
+                            primary_val = int(row[1])
+                            primary_pace = int(row[1] * pace_factor)
+                            vals = [str(primary_val), str(primary_pace)]
+                            for j in range(n_extras):
+                                ev = int(row[2 + j])
+                                ep = int(row[2 + j] * pace_factor)
+                                vals.extend([str(ev), str(ep)])
+                            parts.append(f"ROW {i+1}. {row[0]}: {', '.join(vals)}")
                         parts.append("[/LEADERBOARD]")
                         return "\n".join(parts)
             except Exception as e:
