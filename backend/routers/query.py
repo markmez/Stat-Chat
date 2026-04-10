@@ -578,6 +578,149 @@ async def query(req: QueryRequest):
     )
 
 
+import re as _re
+from services import name_matcher as _nm
+
+
+def _extract_prior_context(history: list[dict]) -> dict:
+    """Extract player name, stat, and season from the prior Q&A exchange."""
+    ctx = {"player": None, "stat": None, "season": None, "query": None}
+    # Find the last user message
+    for msg in reversed(history):
+        if msg.get("role") == "user":
+            ctx["query"] = msg["content"]
+            break
+    if not ctx["query"]:
+        return ctx
+
+    q = ctx["query"]
+
+    # Extract season
+    year_match = _re.search(r'\b(20[12]\d)\b', q)
+    if year_match:
+        ctx["season"] = year_match.group(1)
+    elif "this season" in q.lower() or "this year" in q.lower():
+        from datetime import date
+        ctx["season"] = str(date.today().year)
+    elif "last season" in q.lower() or "last year" in q.lower():
+        from datetime import date
+        ctx["season"] = str(date.today().year - 1)
+
+    # Extract player name
+    player = _nm.find_player_in_text(q)
+    if player:
+        ctx["player"] = player
+
+    # Extract stat keyword — check common stat words in the prior query
+    lower_q = q.lower()
+    stat_keywords = [
+        ("home runs", "home runs"), ("hr", "home runs"), ("homers", "home runs"),
+        ("rbi", "RBI"), ("runs batted in", "RBI"),
+        ("batting average", "batting average"), ("avg", "batting average"),
+        ("ops", "OPS"), ("obp", "OBP"), ("slg", "SLG"),
+        ("stolen bases", "stolen bases"), ("steals", "stolen bases"),
+        ("hits", "hits"), ("doubles", "doubles"), ("triples", "triples"),
+        ("runs", "runs"), ("walks", "walks"),
+        ("strikeouts", "strikeouts"),
+        ("era", "ERA"), ("whip", "WHIP"), ("wins", "wins"),
+        ("saves", "saves"), ("innings pitched", "innings pitched"),
+    ]
+    for keyword, canonical in stat_keywords:
+        if keyword in lower_q:
+            ctx["stat"] = canonical
+            break
+
+    return ctx
+
+
+def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]:
+    """Try to rewrite a follow-up question locally without calling Haiku.
+    Returns the rewritten standalone query, or None to fall through to Haiku."""
+    lower = question.strip().lower()
+    ctx = _extract_prior_context(history)
+
+    if not ctx["query"]:
+        return None
+
+    player = ctx["player"]
+    stat = ctx["stat"]
+    season = ctx["season"]
+
+    # --- Pattern 1: Player swap ---
+    # "what about Soto", "and Soto?", "how about Ohtani", "and his?"
+    swap_match = _re.match(
+        r'^(?:what about|how about|and|how did|what did)\s+(.+?)[\?\.]?$', lower)
+    if swap_match:
+        name_text = swap_match.group(1).strip().rstrip('?.')
+        # Skip if it's a year ("what about 2023?")
+        if _re.match(r'^20[012]\d$', name_text):
+            # Year swap
+            if player and stat:
+                return f"{player} {stat} {name_text}"
+            elif player:
+                return f"{player} {name_text}"
+            return None
+        # Skip if it's a stat ("and his RBI?", "what about strikeouts?")
+        name_text_clean = name_text.replace("his ", "").replace("her ", "")
+        stat_match = _nm.match_stat(name_text_clean)
+        if stat_match and player:
+            season_part = f" {season}" if season else ""
+            return f"{player} {name_text_clean}{season_part}"
+        # Try as a player name
+        new_player = _nm.find_player_in_text(name_text) or _nm.match_player(name_text)
+        if new_player and stat:
+            season_part = f" {season}" if season else ""
+            return f"{new_player} {stat}{season_part}"
+        elif new_player and player:
+            # No stat extracted but we have prior player — use prior query structure
+            return ctx["query"].replace(player, new_player)
+
+    # --- Pattern 2: Career ---
+    if lower in ("career", "career?", "career stats", "career stats?"):
+        if player:
+            if stat:
+                return f"{player} career {stat}"
+            return f"{player} career stats"
+
+    # --- Pattern 3: Splits pivot ---
+    # "vs lefties", "vs righties", "at home", "on the road", "away"
+    splits_patterns = {
+        "vs lefties": "vs lefties", "against lefties": "vs lefties",
+        "vs left": "vs lefties", "against left": "vs lefties",
+        "vs righties": "vs righties", "against righties": "vs righties",
+        "vs right": "vs righties", "against right": "vs righties",
+        "at home": "home vs away", "home": "home vs away",
+        "on the road": "home vs away", "away": "home vs away",
+    }
+    clean = lower.rstrip('?.').strip()
+    # Strip leading "how about" / "what about"
+    for prefix in ["how about ", "what about ", "and "]:
+        if clean.startswith(prefix):
+            clean = clean[len(prefix):]
+    if clean in splits_patterns and player:
+        split = splits_patterns[clean]
+        season_part = f" {season}" if season else ""
+        return f"{player} {split}{season_part}"
+
+    # --- Pattern 4: Comparison ---
+    # "compare him to Ohtani", "compare to Soto", "him vs Ohtani"
+    compare_match = _re.match(
+        r'^(?:compare (?:him|her|them) to|compare to|him vs|vs)\s+(.+?)[\?\.]?$', lower)
+    if compare_match and player:
+        other_text = compare_match.group(1).strip()
+        other_player = _nm.find_player_in_text(other_text) or _nm.match_player(other_text)
+        if other_player:
+            season_part = f" {season}" if season else ""
+            return f"{player} vs {other_player}{season_part}"
+
+    # --- Pattern 5: "who led the league?" ---
+    if _re.match(r'^who (?:led|leads|won)\b', lower) and stat:
+        season_part = f" {season}" if season else ""
+        return f"most {stat}{season_part}"
+
+    return None
+
+
 async def _stream(question: str, device_id: str, history: list[dict], contextual: bool = False):
     """Core pipeline: quota check → route → SQL → execute → stream answer."""
 
@@ -629,10 +772,31 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         log_query(question, device_id, "query engine")
         return
 
-    # 2a. Follow-up rewrite — if history is present and question is short,
-    # use Haiku to classify as data (rewrite) or analytical (reason about prior answer).
+    # 2a. Follow-up rewrite — try local patterns first (free), fall back to Haiku.
     rewritten_query: str | None = None
     if history and len(question.split()) < 10:
+        local_rewrite = _local_followup_rewrite(question, history)
+        if local_rewrite:
+            rewritten_query = local_rewrite
+            logger.info("followup_local_rewrite original=%r rewritten=%r", question, local_rewrite)
+            try:
+                intercepted = try_intercept(local_rewrite)
+            except Exception as e:
+                logger.warning("intercept_rewrite_error error=%s", e)
+                intercepted = None
+            if intercepted is not None:
+                logger.info("followup_local_intercepted rewritten=%r", local_rewrite)
+                yield event({"type": "text", "text": intercepted})
+                done_event = {"type": "done", "intercepted": True}
+                done_event["rewritten_query"] = local_rewrite
+                yield event(done_event)
+                increment_count(device_id)
+                log_query(local_rewrite, device_id, "query engine")
+                return
+            # Local rewrite didn't intercept — use it as the question for the rest of pipeline
+            question = local_rewrite
+
+    if history and len(question.split()) < 10 and not rewritten_query:
         logger.info("followup_classify question=%r", question)
         try:
             classification = await llm.classify_followup(question, history)
