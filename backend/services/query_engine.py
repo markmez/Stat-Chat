@@ -2530,7 +2530,7 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
                         all_stats = [abbrev] + [ef["stat"].display_abbrev for ef in plan.extra_filters]
                         header_parts = []
                         for s in all_stats:
-                            header_parts.extend([s, "Pace" if len(all_stats) == 1 else f"{s} Pace"])
+                            header_parts.extend([s, "Pace"])
                         parts.append(f"HEADER: {', '.join(header_parts)}")
                         n_extras = len(plan.extra_filters)
                         for i, row in enumerate(pace_rows):
