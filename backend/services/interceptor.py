@@ -333,8 +333,12 @@ def try_intercept(question: str):
     # Consecutive streak — "longest hitting streak"
     consec = nm.parse_consecutive_streak(trimmed)
     if consec:
+        # Default to current season if none specified — prevents unbounded 661K row scan
+        season = consec.get("season")
+        if not season:
+            season = date.today().year
         response = rb.build_consecutive_streak(
-            consec["type"], consec.get("player_name"), consec.get("season"))
+            consec["type"], consec.get("player_name"), season)
         if response:
             return response
 
