@@ -357,6 +357,7 @@ class QueryPlan:
     is_pitching: bool = False
     ambiguous_stat: bool = False  # True when stat exists in both batting and pitching
     has_team_context: bool = False  # "team" was in the query — might mean team-level aggregate
+    original_question: str = ""  # Original query text for post-execution logic
     unexplained_words: list = field(default_factory=list)
     consumed_words: set = field(default_factory=set)
 
@@ -553,6 +554,7 @@ def _add_consumed(plan: QueryPlan, words: str):
 def decompose(question: str) -> QueryPlan:
     """Decompose a natural language query into a structured QueryPlan."""
     plan = QueryPlan()
+    plan.original_question = question.strip()
     lower = question.strip().lower()
 
     # --- Early detection: stat definitions ---
@@ -1596,7 +1598,7 @@ def execute(plan: QueryPlan) -> Optional[str]:
 
         # Unqualified season: suggest last season (early) + career
         # Skip if user explicitly said "this season", "this year", or the year number
-        _explicit_season = any(p in trimmed.lower() for p in [
+        _explicit_season = any(p in plan.original_question.lower() for p in [
             "this season", "this year", str(date.today().year)])
         if (result and plan.season and plan.season == date.today().year
                 and plan.stat and plan.query_type in ("leaderboard", "threshold")
