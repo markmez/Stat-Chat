@@ -24,6 +24,15 @@
               sudo -u statchat /opt/statchat/venv/bin/pip install -q -r backend/requirements.txt
               sudo cp deploy/statchat-cron /etc/cron.d/statchat
               sudo chmod 644 /etc/cron.d/statchat
-              sudo systemctl restart statchat
-              sleep 8
+              # Update service file if changed
+              sudo cp deploy/statchat.service /etc/systemd/system/statchat.service
+              sudo systemctl daemon-reload
+              # Graceful reload: HUP tells gunicorn to spawn new workers before killing old
+              # Falls back to hard restart if not running or first deploy with gunicorn
+              if [ -f /tmp/statchat.pid ] && kill -0 $(cat /tmp/statchat.pid) 2>/dev/null; then
+                sudo kill -HUP $(cat /tmp/statchat.pid)
+              else
+                sudo systemctl restart statchat
+              fi
+              sleep 5
               curl -sf --max-time 10 http://127.0.0.1:8000/health || exit 1
