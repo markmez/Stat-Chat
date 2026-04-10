@@ -2521,7 +2521,7 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
                         # Build pace display
                         filter_desc = f"{threshold_display}+ {abbrev}"
                         for ef in plan.extra_filters:
-                            ef_val = _format_val("", ef["threshold"], ef["stat"].is_rate) if ef["stat"].is_rate else str(int(ef["threshold"]))
+                            ef_val = _format_val(ef["stat"].db_column, ef["threshold"], ef["stat"].is_rate) if ef["stat"].is_rate else str(int(ef["threshold"]))
                             if ef["comparison"] == "<=":
                                 filter_desc += f" and sub-{ef_val} {ef['stat'].display_abbrev}"
                             else:
