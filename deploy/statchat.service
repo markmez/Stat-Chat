@@ -18,6 +18,7 @@ StandardError=journal
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
+PrivateTmp=true
 ReadWritePaths=/data
 
 [Install]
