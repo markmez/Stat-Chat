@@ -761,26 +761,8 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         log_query(question, device_id, "sonnet")
         return
 
-    # 2. Try local intercept first — zero Claude API cost
-    try:
-        intercepted = try_intercept(question)
-    except Exception as e:
-        logger.warning("intercept_error question=%r error=%s type=%s", question, e, type(e).__name__)
-        intercepted = None
-    if intercepted is not None:
-        # __NO_COUNT__ prefix = don't count against quota (graceful rejection)
-        no_count = intercepted.startswith("__NO_COUNT__")
-        if no_count:
-            intercepted = intercepted.replace("__NO_COUNT__", "", 1)
-        logger.info("query_intercepted question=%r no_count=%s", question, no_count)
-        yield event({"type": "text", "text": intercepted})
-        yield event({"type": "done", "intercepted": True})
-        if not no_count:
-            increment_count(device_id)
-        log_query(question, device_id, "query engine")
-        return
-
-    # 2a. Follow-up rewrite — try local patterns first (free), fall back to Haiku.
+    # 2. Follow-up rewrite — try local patterns BEFORE interceptor so short
+    # follow-ups like "what about Soto" get rewritten, not intercepted as-is.
     rewritten_query: str | None = None
     if history and len(question.split()) < 10:
         local_rewrite = _local_followup_rewrite(question, history)
@@ -853,6 +835,28 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             increment_count(device_id)
             log_query(question, device_id, "sonnet")
             return
+
+    # 2b. Try local intercept — zero Claude API cost
+    # Runs after follow-up rewrite so the question may already be rewritten.
+    try:
+        intercepted = try_intercept(question)
+    except Exception as e:
+        logger.warning("intercept_error question=%r error=%s type=%s", question, e, type(e).__name__)
+        intercepted = None
+    if intercepted is not None:
+        no_count = intercepted.startswith("__NO_COUNT__")
+        if no_count:
+            intercepted = intercepted.replace("__NO_COUNT__", "", 1)
+        logger.info("query_intercepted question=%r no_count=%s", question, no_count)
+        yield event({"type": "text", "text": intercepted})
+        done_event = {"type": "done", "intercepted": True}
+        if rewritten_query:
+            done_event["rewritten_query"] = rewritten_query
+        yield event(done_event)
+        if not no_count:
+            increment_count(device_id)
+        log_query(question, device_id, "query engine")
+        return
 
     # 3. Haiku SQL fallback — cheap SQL generation, no Sonnet needed
     haiku_result = await _try_haiku_sql(question)
