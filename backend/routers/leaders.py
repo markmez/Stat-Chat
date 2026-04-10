@@ -35,10 +35,13 @@ PITCHING_STATS = [
 ]
 
 
-def _format_rate(val):
+def _format_rate(val, pitching=False):
     if val is None:
         return "--"
     if isinstance(val, float):
+        if pitching:
+            # ERA, WHIP: 2 decimals, keep leading digit
+            return f"{val:.2f}"
         if val >= 10:
             return f"{val:.2f}"
         s = f"{val:.3f}"
@@ -63,10 +66,12 @@ async def get_leaders(
         else:
             teams = None
 
-        team_filter = ""
+        batting_team_filter = ""
+        pitching_team_filter = ""
         if teams:
             placeholders = ",".join(f"'{t}'" for t in teams)
-            team_filter = f" AND s.team IN ({placeholders})"
+            batting_team_filter = f" AND s.team IN ({placeholders})"
+            pitching_team_filter = f" AND sp.team IN ({placeholders})"
 
         # Prorated PA minimum: (team_games / 162) * 502
         # Get max team games played
@@ -89,7 +94,7 @@ async def get_leaders(
                 SELECT p.name, s.{stat['col']}, s.team
                 FROM season_batting_stats s
                 JOIN players p ON s.player_id = p.player_id
-                WHERE s.season = ?{team_filter}{pa_filter}
+                WHERE s.season = ?{batting_team_filter}{pa_filter}
                   AND s.{stat['col']} IS NOT NULL
                 ORDER BY s.{stat['col']} {stat['order']}
                 LIMIT ?
@@ -111,7 +116,7 @@ async def get_leaders(
                 SELECT p.name, sp.{stat['col']}, sp.team
                 FROM season_pitching_stats sp
                 JOIN players p ON sp.player_id = p.player_id
-                WHERE sp.season = ?{team_filter}{ip_filter}
+                WHERE sp.season = ?{pitching_team_filter}{ip_filter}
                   AND sp.{stat['col']} IS NOT NULL
                 ORDER BY sp.{stat['col']} {stat['order']}
                 LIMIT ?
@@ -119,7 +124,7 @@ async def get_leaders(
 
             leaders = []
             for name, val, team in rows:
-                display_val = _format_rate(val) if stat["is_rate"] else str(val)
+                display_val = _format_rate(val, pitching=True) if stat["is_rate"] else str(val)
                 leaders.append({"name": name, "value": display_val, "team": team})
 
             pitching.append({"stat": stat["label"], "leaders": leaders})
