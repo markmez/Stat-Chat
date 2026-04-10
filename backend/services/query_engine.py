@@ -2469,6 +2469,65 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
     op = "with" if plan.comparison == ">=" else "with no more than"
 
     if not rows:
+        # On-pace fallback: for current-season counting stats with no results,
+        # check who's on pace to reach the threshold over 162 games
+        if (season and season == date.today().year and not is_rate
+                and plan.comparison == ">=" and plan.threshold):
+            try:
+                gp_row = conn.execute(
+                    "SELECT MAX(games) FROM season_batting_stats WHERE season = ?",
+                    (season,)
+                ).fetchone()
+                max_games = int(gp_row[0]) if gp_row and gp_row[0] else 0
+                if 5 <= max_games < 140:
+                    pace_factor = 162 / max_games
+                    # Prorated threshold: what you'd need now to be on pace
+                    prorated = plan.threshold / pace_factor
+                    pace_params = [season, prorated] + params
+                    pace_where = f"WHERE {prefix}.season = ? AND {stat_expr} {plan.comparison} ?"
+                    if filters_str:
+                        pace_where += f" AND {filters_str}"
+                    # Prorate extra filter thresholds too
+                    pace_extra_where = ""
+                    for ef in plan.extra_filters:
+                        if not ef["stat"].is_rate:
+                            ef_prorated = ef["threshold"] / pace_factor
+                            pace_extra_where += f" AND {prefix}.{ef['stat'].db_column} {ef['comparison']} ?"
+                            pace_params.append(ef_prorated)
+                        else:
+                            pace_extra_where += f" AND {prefix}.{ef['stat'].db_column} {ef['comparison']} ?"
+                            pace_params.append(ef["threshold"])
+                    pace_where += pace_extra_where
+                    # Require minimum games played (at least half of team max)
+                    pace_where += f" AND {prefix}.games >= ?"
+                    pace_params.append(max(1, max_games // 2))
+                    pace_cur = conn.cursor()
+                    pace_cur.execute(
+                        f"SELECT p.name, {stat_expr} AS stat_val, {prefix}.games "
+                        f"FROM {table} {prefix} "
+                        f"JOIN players p ON {prefix}.player_id = p.player_id "
+                        f"{pace_where} ORDER BY stat_val DESC LIMIT 10",
+                        tuple(pace_params),
+                    )
+                    pace_rows = pace_cur.fetchall()
+                    if pace_rows:
+                        # Build pace display
+                        filter_desc = f"{threshold_display}+ {abbrev}"
+                        for ef in plan.extra_filters:
+                            ef_val = int(ef["threshold"]) if ef["threshold"] == int(ef["threshold"]) else ef["threshold"]
+                            filter_desc += f" and {ef_val}+ {ef['stat'].display_abbrev}"
+                        parts = [f"**No one has reached {filter_desc} yet in {season}.**"]
+                        parts.append(f"Through {max_games} games, {len(pace_rows)} {'player is' if len(pace_rows) == 1 else 'players are'} on pace:\n")
+                        parts.append("[LEADERBOARD]")
+                        parts.append(f"HEADER: {abbrev}, Pace")
+                        for i, row in enumerate(pace_rows):
+                            current_val = int(row[1]) if not is_rate else row[1]
+                            projected = int(row[1] * pace_factor)
+                            parts.append(f"ROW {i+1}. {row[0]}: {current_val}, ~{projected}")
+                        parts.append("[/LEADERBOARD]")
+                        return "\n".join(parts)
+            except Exception as e:
+                logger.warning("pace_fallback_error error=%s", e)
         return f"No {rookie_label.lower()} {op} {threshold_display} {abbrev} found ({scope_label})." + _empty_result_pills(plan)
 
     # Build title with extra filters
