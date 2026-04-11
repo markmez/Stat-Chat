@@ -518,6 +518,7 @@ async def debug_decompose(
         "error": error,
         "streak_length": plan.streak_length,
         "threshold": plan.threshold,
+        "compare_years": plan.compare_years,
         "result_preview": (result or "")[:300],
     }
 

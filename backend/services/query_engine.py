@@ -873,7 +873,7 @@ def decompose(question: str) -> QueryPlan:
                 _add_consumed(plan, name_text)
 
     # Only detect explicit season if since_year/since_date didn't already claim the year
-    if not plan.since_year and not plan.since_date and not hasattr(plan, 'compare_years'):
+    if not plan.since_year and not plan.since_date and not plan.compare_years:
         season = detect_season(lower, default_to_most_recent=False)
         if season:
             plan.season = season
