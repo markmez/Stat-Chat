@@ -4821,9 +4821,11 @@ def build_matchup(batter_name: str, pitcher_name: str,
             parts.append(f"[SUBTITLE]{batter_last}'s stats against each pitch in {pitcher_last}'s arsenal[/SUBTITLE]")
             parts.append(f"[SUBTITLE]% is how often {pitcher_last} throws this pitch historically[/SUBTITLE]")
             parts.append("[LEADERBOARD]")
+            _pitch_display = {"4-Seam": "4-Seamers", "2-Seam": "2-Seamers"}
             parts.append("HEADER: PA, AVG, OBP, SLG")
             for i, (pt, pct, pa, avg, obp, slg, ops) in enumerate(mix_table_rows):
-                parts.append(f"ROW {pt} ({pct}%): {pa}, "
+                pt_display = _pitch_display.get(pt, pt)
+                parts.append(f"ROW {pt_display} ({pct}%): {pa}, "
                             f"{_format_rate(avg)}, {_format_rate(obp)}, "
                             f"{_format_rate(slg)}")
             if projection:
