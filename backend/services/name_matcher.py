@@ -1105,6 +1105,9 @@ def parse_matchup(input_str: str) -> Optional[dict]:
 
 def parse_comparison(input_str: str) -> Optional[dict]:
     """Detect comparison queries. Returns dict with name1, name2, season, alternatives."""
+    # Year-over-year comparison — not a player comparison
+    if re.search(r'20[012]\d\s*(?:vs\.?|versus|compared to|to)\s*20[012]\d', input_str.lower()):
+        return None
     season = detect_season(input_str)
     cleaned = input_str.strip().lower()
 
@@ -1258,6 +1261,10 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
 
     # Reject game-log-style queries — these need the query engine, not a season summary
     if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)\+?\s*[- ]?\s*hit\s+games?|\d+\+\s+\w+\s+games?', lower):
+        return None
+
+    # Reject year-over-year comparisons — "Betts 2023 vs 2024" needs the query engine
+    if re.search(r'20[012]\d\s*(?:vs\.?|versus|compared to|to)\s*20[012]\d', lower):
         return None
 
     # Reject cross-season analytical questions — these should fall through to Claude
