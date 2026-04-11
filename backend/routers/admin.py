@@ -2076,12 +2076,8 @@ def _simulate_records_for_date(conn, target_date):
                         })
                         break
 
-    # Dedupe: if a player has both career_high and first_threshold for same stat,
-    # keep only first_threshold (more interesting — "first time ever" > "beat your best")
-    threshold_players = {(e["player"], e.get("stat", "")) for e in events if e["type"] == "first_threshold"}
-    events = [e for e in events if not (
-        e["type"] == "career_high" and (e["player"], e.get("stat", "")) in threshold_players
-    )]
+    # No dedup for now — show both career_high and first_threshold when they overlap
+    # so we can evaluate the distinction before deciding how to merge them
 
     return events
 
