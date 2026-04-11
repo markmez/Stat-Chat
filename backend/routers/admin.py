@@ -1786,13 +1786,23 @@ def _simulate_records_for_date(conn, target_date):
         for stat, min_val in career_high_checks:
             today_val = bat.get(stat, 0)
             if today_val >= min_val:
-                prev_high = conn.execute(f"""
-                    SELECT MAX({stat}) FROM game_batting_logs
+                prev_row = conn.execute(f"""
+                    SELECT {stat}, date FROM game_batting_logs
                     WHERE player_id = ? AND date < ?
-                """, (pid, target_date)).fetchone()[0] or 0
-                if today_val > prev_high:
+                    ORDER BY {stat} DESC LIMIT 1
+                """, (pid, target_date)).fetchone()
+                prev_high = prev_row[0] if prev_row else 0
+                prev_date = prev_row[1] if prev_row else None
+                if today_val > (prev_high or 0):
                     stat_label = stat.replace("_", " ")
-                    if prev_high > 0:
+                    if prev_high and prev_date:
+                        try:
+                            from datetime import datetime as _dt
+                            prev_fmt = _dt.strptime(prev_date, "%Y-%m-%d").strftime("%b %-d, %Y")
+                        except Exception:
+                            prev_fmt = prev_date
+                        context = f"a new career high (previous: {prev_high} on {prev_fmt})"
+                    elif prev_high:
                         context = f"a new career high (previous: {prev_high})"
                     else:
                         context = f"the first time in his career"
@@ -1805,15 +1815,28 @@ def _simulate_records_for_date(conn, target_date):
 
         # Pitching career highs
         if pitch.get("strikeouts", 0) >= 10:
-            prev_k = conn.execute("""
-                SELECT MAX(strikeouts) FROM game_pitching_logs
+            prev_k_row = conn.execute("""
+                SELECT strikeouts, date FROM game_pitching_logs
                 WHERE player_id = ? AND date < ?
-            """, (pid, target_date)).fetchone()[0] or 0
-            if pitch["strikeouts"] > prev_k:
+                ORDER BY strikeouts DESC LIMIT 1
+            """, (pid, target_date)).fetchone()
+            prev_k = prev_k_row[0] if prev_k_row else 0
+            prev_k_date = prev_k_row[1] if prev_k_row else None
+            if pitch["strikeouts"] > (prev_k or 0):
                 k = pitch["strikeouts"]
                 ip_outs = pitch.get("ip_outs", 0)
                 ip_display = f"{ip_outs // 3}.{ip_outs % 3}" if ip_outs else "?"
-                context = f"a new career high (previous: {prev_k})" if prev_k > 0 else "the first time in his career"
+                if prev_k and prev_k_date:
+                    try:
+                        from datetime import datetime as _dt
+                        prev_fmt = _dt.strptime(prev_k_date, "%Y-%m-%d").strftime("%b %-d, %Y")
+                    except Exception:
+                        prev_fmt = prev_k_date
+                    context = f"a new career high (previous: {prev_k} on {prev_fmt})"
+                elif prev_k:
+                    context = f"a new career high (previous: {prev_k})"
+                else:
+                    context = "the first time in his career"
                 events.append({
                     "type": "career_high",
                     "player": pname, "team": team_name,
