@@ -2722,7 +2722,13 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
     rows = cur.fetchall()
 
     threshold_display = _format_val("", plan.threshold, is_rate) if is_rate else str(int(plan.threshold))
-    rookie_label = "Rookies" if plan.rookie else "Players"
+    # Build descriptive label with filters
+    bats_label = {"L": "Left-Handed ", "R": "Right-Handed ", "B": "Switch-Hitting "}.get(plan.bats or "", "")
+    throws_label = {"L": "Left-Handed ", "R": "Right-Handed "}.get(plan.throws or "", "")
+    position_label = "/".join(plan.position) + " " if plan.position else ""
+    role_label = f"{plan.pitcher_role.title()} " if plan.pitcher_role else ""
+    base_label = "Rookies" if plan.rookie else "Pitchers" if plan.is_pitching else "Players"
+    rookie_label = f"{bats_label}{throws_label}{position_label}{role_label}{base_label}"
     op = "with" if plan.comparison == ">=" else "with no more than"
 
     if not rows:
