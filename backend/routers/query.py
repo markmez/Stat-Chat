@@ -627,10 +627,10 @@ def _strip_bold_title(text: str) -> str:
                 count_line = f"{count_match.group(1)} matched"
                 rest_start = 2
 
-        # Build subtitle
+        # Build context line
         subtitle_parts = []
         if scope:
-            subtitle_parts.append(scope)
+            subtitle_parts.append(f"Showing results for {scope}")
         if count_line:
             subtitle_parts.append(count_line)
 
