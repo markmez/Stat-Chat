@@ -1829,7 +1829,7 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
         ip_display = f"{ip_min // 3}.{ip_min % 3}"
         full_season_ip = 162
         if season and max_games < 140:
-            label = f"Showing pitchers on pace for {full_season_ip}+ IP ({ip_display} IP minimum through {max_games} games)"
+            label = f"Showing pitchers on pace for {full_season_ip}+ IP ({ip_display} IP minimum)"
         else:
             label = f"Min. {ip_display} IP."
         return f" AND {prefix}.ip_outs >= {ip_min}", label
@@ -1843,7 +1843,7 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
         else:
             pa_min = 400
         if season and max_games < 140:
-            label = f"Showing hitters on pace for 400+ PA ({pa_min} PA minimum through {max_games} games)"
+            label = f"Showing hitters on pace for 400+ PA ({pa_min} PA minimum)"
         else:
             label = f"Min. {pa_min} PA."
         return f" AND {prefix}.plate_appearances >= {pa_min}", label
