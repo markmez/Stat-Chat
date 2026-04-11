@@ -636,6 +636,18 @@ def _strip_bold_title(text: str) -> str:
 
         rest = "\n".join(lines[rest_start:])
 
+        # Merge any existing SUBTITLE into the context line
+        existing_sub = _re.search(r'\[SUBTITLE\](.*?)\[/SUBTITLE\]', rest)
+        if existing_sub:
+            sub_text = existing_sub.group(1).strip()
+            # Shorten verbose phrasing
+            sub_text = _re.sub(r'Showing (?:hitters|pitchers|players) on pace for \d+\+ (?:PA|IP)\s*\(', '', sub_text)
+            sub_text = sub_text.rstrip(')')
+            sub_text = sub_text.strip()
+            if sub_text:
+                subtitle_parts.append(sub_text)
+            rest = rest[:existing_sub.start()] + rest[existing_sub.end():]
+
         if subtitle_parts:
             return f"[CONTEXT]{' · '.join(subtitle_parts)}[/CONTEXT]\n{rest}"
         return rest
