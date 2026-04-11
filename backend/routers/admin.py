@@ -1983,12 +1983,12 @@ def _simulate_records_for_date(conn, target_date):
                 if n == 3: return "3rd"
                 return f"{n}th"
 
-            # HR milestones: 20, 30, 40, 50, 60
+            # HR milestones: cross at 20/30/40/50/60/70/80, approach only 50+ (within 3) and 40 (within 2)
+            _hr_approach_proximity = {40: 2, 50: 3, 60: 3, 70: 3, 80: 3}
             if bat.get("home_runs", 0) > 0:
-                for threshold in [60, 50, 40, 30, 20]:
+                for threshold in [80, 70, 60, 50, 40, 30, 20]:
                     diff = threshold - hr
                     if diff == 0:
-                        # Just crossed — check it was today's game
                         hr_yesterday = hr - bat.get("home_runs", 0)
                         if hr_yesterday < threshold:
                             prior_times = _career_threshold_count("home_runs", threshold)
@@ -2002,17 +2002,20 @@ def _simulate_records_for_date(conn, target_date):
                                 "detail": f"{pname} hit his {threshold}th home run of the season — {context}.",
                             })
                             break
-                    elif 1 <= diff <= 3:
-                        events.append({
-                            "type": "milestone_approach",
-                            "player": pname, "team": team_name,
-                            "detail": f"{pname} has {hr} HR — {diff} away from {threshold} this season.",
-                        })
-                        break
+                    elif threshold in _hr_approach_proximity:
+                        proximity = _hr_approach_proximity[threshold]
+                        if 1 <= diff <= proximity:
+                            events.append({
+                                "type": "milestone_approach",
+                                "player": pname, "team": team_name,
+                                "detail": f"{pname} has {hr} HR — {diff} away from {threshold} this season.",
+                            })
+                            break
 
-            # SB milestones: 20, 30, 40, 50
+            # SB milestones: cross at 20/30/40/50/60/70/80, approach only 50+ (within 3) and 40 (within 2)
+            _sb_approach_proximity = {40: 2, 50: 3, 60: 3, 70: 3, 80: 3}
             if bat.get("stolen_bases", 0) > 0:
-                for threshold in [50, 40, 30, 20]:
+                for threshold in [80, 70, 60, 50, 40, 30, 20]:
                     diff = threshold - sb
                     if diff == 0:
                         sb_yesterday = sb - bat.get("stolen_bases", 0)
@@ -2028,13 +2031,15 @@ def _simulate_records_for_date(conn, target_date):
                                 "detail": f"{pname} stole his {threshold}th base of the season — {context}.",
                             })
                             break
-                    elif 1 <= diff <= 3:
-                        events.append({
-                            "type": "milestone_approach",
-                            "player": pname, "team": team_name,
-                            "detail": f"{pname} has {sb} SB — {diff} away from {threshold} this season.",
-                        })
-                        break
+                    elif threshold in _sb_approach_proximity:
+                        proximity = _sb_approach_proximity[threshold]
+                        if 1 <= diff <= proximity:
+                            events.append({
+                                "type": "milestone_approach",
+                                "player": pname, "team": team_name,
+                                "detail": f"{pname} has {sb} SB — {diff} away from {threshold} this season.",
+                            })
+                            break
 
             # X/X combos (20/20, 30/30, 40/40) — check if today's game contributed
             if bat.get("home_runs", 0) > 0 or bat.get("stolen_bases", 0) > 0:
