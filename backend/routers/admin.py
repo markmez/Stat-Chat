@@ -1801,16 +1801,16 @@ def _simulate_records_for_date(conn, target_date):
                             prev_fmt = _dt.strptime(prev_date, "%Y-%m-%d").strftime("%b %-d, %Y")
                         except Exception:
                             prev_fmt = prev_date
-                        context = f"a new career high (previous: {prev_high} on {prev_fmt})"
+                        context = f"a new career high, topping his previous best of {prev_high} set on {prev_fmt}"
                     elif prev_high:
-                        context = f"a new career high (previous: {prev_high})"
+                        context = f"a new career high, topping his previous best of {prev_high}"
                     else:
                         context = f"the first time in his career"
                     events.append({
                         "type": "career_high",
                         "player": pname, "team": team_name,
                         "stat": stat,
-                        "detail": f"{pname} went {game_line}, hitting {today_val} {stat_label} in a game for {context}",
+                        "detail": f"{pname} went {game_line} — {today_val} {stat_label} in a game, {context}.",
                     })
 
         # Pitching career highs
@@ -1832,16 +1832,16 @@ def _simulate_records_for_date(conn, target_date):
                         prev_fmt = _dt.strptime(prev_k_date, "%Y-%m-%d").strftime("%b %-d, %Y")
                     except Exception:
                         prev_fmt = prev_k_date
-                    context = f"a new career high (previous: {prev_k} on {prev_fmt})"
+                    context = f"a new career high, topping his previous best of {prev_k} set on {prev_fmt}"
                 elif prev_k:
-                    context = f"a new career high (previous: {prev_k})"
+                    context = f"a new career high, topping his previous best of {prev_k}"
                 else:
                     context = "the first time in his career"
                 events.append({
                     "type": "career_high",
                     "player": pname, "team": team_name,
                     "stat": "strikeouts",
-                    "detail": f"{pname} struck out {k} in {ip_display} IP, {context}",
+                    "detail": f"{pname} struck out {k} in {ip_display} IP — {context}.",
                 })
 
         # ===== TEAM RECORD APPROACHES / CROSSINGS (career) =====
