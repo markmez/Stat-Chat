@@ -582,6 +582,66 @@ import re as _re
 from services import name_matcher as _nm
 
 
+def _strip_bold_title(text: str) -> str:
+    """Strip the bold **title** line from a response and convert scope info to subtitle.
+
+    Before: **Switch-Hitting Players with 20+ HR (2025)**\n9 matched.\n...
+    After:  [SUBTITLE]2025 · 9 matched[/SUBTITLE]\n...
+
+    Before: **Aaron Judge** hit **53** home runs in 2025.
+    After:  (unchanged — sentence responses don't start with a full bold title)
+    """
+    lines = text.split("\n")
+    if not lines:
+        return text
+
+    first = lines[0].strip()
+
+    # Only strip lines that are ENTIRELY a bold title: **...** with no other text
+    # Don't touch sentence responses like "**Aaron Judge** hit **53** home runs..."
+    if first.startswith("**") and first.endswith("**") and first.count("**") == 2:
+        title_content = first[2:-2]
+
+        # Extract scope from parentheses: "... (2025)" or "... (All-Time)"
+        scope_match = _re.search(r'\(([^)]+)\)\s*$', title_content)
+        if scope_match:
+            scope = scope_match.group(1)
+        else:
+            # Try extracting year from title like "2026 ERA Leaders"
+            year_match = _re.search(r'\b(20[012]\d)\b', title_content)
+            scope = year_match.group(1) if year_match else None
+            if not scope and "career" in title_content.lower():
+                scope = "Career"
+            elif not scope and "all-time" in title_content.lower():
+                scope = "All-Time"
+            elif not scope and "active" in title_content.lower():
+                scope = "Active"
+
+        # Check if next line has a count like "9 matched." or "14 matched."
+        count_line = ""
+        rest_start = 1
+        if len(lines) > 1:
+            next_line = lines[1].strip()
+            count_match = _re.match(r'^(\d+)\s+matched\.?$', next_line)
+            if count_match:
+                count_line = f"{count_match.group(1)} matched"
+                rest_start = 2
+
+        # Build subtitle
+        subtitle_parts = []
+        if scope:
+            subtitle_parts.append(scope)
+        if count_line:
+            subtitle_parts.append(count_line)
+
+        rest = "\n".join(lines[rest_start:])
+        if subtitle_parts:
+            return f"[SUBTITLE]{' · '.join(subtitle_parts)}[/SUBTITLE]\n{rest}"
+        return rest
+
+    return text
+
+
 def _extract_prior_context(history: list[dict]) -> dict:
     """Extract player name, stat, and season from the prior Q&A exchange."""
     ctx = {"player": None, "stat": None, "season": None, "query": None}
@@ -780,6 +840,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 intercepted = None
             if intercepted is not None:
                 logger.info("followup_local_intercepted rewritten=%r", local_rewrite)
+                intercepted = _strip_bold_title(intercepted)
                 yield event({"type": "text", "text": intercepted})
                 done_event = {"type": "done", "intercepted": True}
                 done_event["rewritten_query"] = local_rewrite
@@ -811,6 +872,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                     intercepted = None
                 if intercepted is not None:
                     logger.info("followup_intercepted rewritten=%r", rewritten)
+                    intercepted = _strip_bold_title(intercepted)
                     yield event({"type": "text", "text": intercepted})
                     done_event = {"type": "done", "intercepted": True}
                     if rewritten_query:
@@ -848,6 +910,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         if no_count:
             intercepted = intercepted.replace("__NO_COUNT__", "", 1)
         logger.info("query_intercepted question=%r no_count=%s", question, no_count)
+        intercepted = _strip_bold_title(intercepted)
         yield event({"type": "text", "text": intercepted})
         done_event = {"type": "done", "intercepted": True}
         if rewritten_query:
