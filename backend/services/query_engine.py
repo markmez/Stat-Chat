@@ -3154,11 +3154,14 @@ def _execute_per_team_leaders(conn, plan: QueryPlan) -> Optional[str]:
     lower_better = col in ("era", "whip", "bb_per_9", "hr_per_9")
     order = "ASC" if lower_better else "DESC"
 
-    # PA/IP minimum to avoid noise
-    if plan.is_pitching:
-        min_filter = "AND s.ip_outs >= 30"  # ~10 IP
+    # PA/IP minimum for rate stats only — counting stats don't need minimums
+    if is_rate:
+        if plan.is_pitching:
+            min_filter = "AND s.ip_outs >= 30"  # ~10 IP
+        else:
+            min_filter = "AND s.plate_appearances >= 15"
     else:
-        min_filter = "AND s.plate_appearances >= 15"
+        min_filter = ""
 
     # Use window function to rank within each team
     cur = conn.cursor()
