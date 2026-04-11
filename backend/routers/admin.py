@@ -1847,6 +1847,62 @@ def _simulate_records_for_date(conn, target_date):
                     "detail": f"{pname} struck out {k} in {ip_display} IP. The {k} K is {context}.",
                 })
 
+        # ===== FIRST HIGH-THRESHOLD ACHIEVEMENTS =====
+        # Different from career highs: "first time ever reaching this bar"
+        # Only interesting if the player has enough career games (not a debut)
+        career_games = conn.execute("""
+            SELECT COALESCE(SUM(games), 0) FROM season_batting_stats
+            WHERE player_id = ?
+        """, (pid,)).fetchone()[0]
+
+        if career_games >= 50:  # Skip players too early in career
+            bat_thresholds = [
+                ("hits", 4, "4-hit game"),
+                ("hits", 5, "5-hit game"),
+                ("home_runs", 3, "3-homer game"),
+                ("rbi", 6, "6-RBI game"),
+                ("rbi", 7, "7-RBI game"),
+                ("stolen_bases", 3, "3-steal game"),
+                ("stolen_bases", 4, "4-steal game"),
+            ]
+            for stat, threshold, label in bat_thresholds:
+                today_val = bat.get(stat, 0)
+                if today_val >= threshold:
+                    prev_count = conn.execute(f"""
+                        SELECT COUNT(*) FROM game_batting_logs
+                        WHERE player_id = ? AND date < ? AND {stat} >= ?
+                    """, (pid, target_date, threshold)).fetchone()[0]
+                    if prev_count == 0:
+                        events.append({
+                            "type": "first_threshold",
+                            "player": pname, "team": team_name,
+                            "detail": f"{pname} went {game_line} — his first career {label}.",
+                        })
+                        break  # Only report the highest threshold met
+
+        if pitch and career_games >= 20:
+            pitch_thresholds = [
+                ("strikeouts", 10, "10-K game"),
+                ("strikeouts", 12, "12-K game"),
+                ("strikeouts", 15, "15-K game"),
+            ]
+            k_today = pitch.get("strikeouts", 0)
+            ip_outs = pitch.get("ip_outs", 0)
+            ip_display = f"{ip_outs // 3}.{ip_outs % 3}" if ip_outs else "?"
+            for stat, threshold, label in reversed(pitch_thresholds):  # Check highest first
+                if k_today >= threshold:
+                    prev_count = conn.execute(f"""
+                        SELECT COUNT(*) FROM game_pitching_logs
+                        WHERE player_id = ? AND date < ? AND strikeouts >= ?
+                    """, (pid, target_date, threshold)).fetchone()[0]
+                    if prev_count == 0:
+                        events.append({
+                            "type": "first_threshold",
+                            "player": pname, "team": team_name,
+                            "detail": f"{pname} struck out {k_today} in {ip_display} IP — his first career {label}.",
+                        })
+                        break  # Only report the highest threshold met
+
         # ===== TEAM RECORD APPROACHES / CROSSINGS (career) =====
         franchise_codes = get_franchise_codes(team_code)
 
@@ -2118,6 +2174,8 @@ async def records_sandbox(
   .badge.milestone-approach {{ background: #fef3c7; color: #92400e; }}
   .badge.milestone-crossing {{ background: #dcfce7; color: #166534; }}
   .badge.career-first {{ background: #dbeafe; color: #1A40B3; }}
+  .badge.first-threshold {{ background: #e0e7ff; color: #3730a3; }}
+  .event-card.first-threshold {{ border-left-color: #6366f1; background: #eef2ff; }}
   .badge.career-high {{ background: #f3e8ff; color: #6b21a8; }}
   .badge.holds {{ background: #fce7f3; color: #9d174d; }}
   .event-card {{
