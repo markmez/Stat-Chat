@@ -4262,8 +4262,8 @@ def build_player_game_logs(name: str, season: int) -> Optional[str]:
             parts.append("[/LEADERBOARD]")
         else:
             cur = conn.execute("""
-                SELECT g.date, g.opponent, g.hits, g.at_bats, g.home_runs,
-                       g.rbi, g.runs, g.walks, g.strikeouts
+                SELECT g.date, g.hits, g.at_bats, g.home_runs,
+                       g.rbi, g.runs, g.walks, g.strikeouts, g.stolen_bases
                 FROM game_batting_logs g
                 WHERE g.player_id = ? AND g.season = ?
                 ORDER BY g.date DESC
@@ -4275,15 +4275,15 @@ def build_player_game_logs(name: str, season: int) -> Optional[str]:
             parts = [f"**{display_name} — {season} Game Logs**\n"]
             parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
             parts.append("[LEADERBOARD]")
-            parts.append("HEADER: H-AB, HR, RBI, R, BB, SO")
+            parts.append("HEADER: H-AB, HR, RBI, R, BB, SO, SB")
             for row in rows:
-                dt, opp, h, ab, hr, rbi, r, bb, so = row
+                dt, h, ab, hr, rbi, r, bb, so, sb = row
                 try:
                     from datetime import datetime as _dt
                     dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
                 except Exception:
                     dt_fmt = dt
-                parts.append(f"ROW {dt_fmt} vs {opp or '?'}: {h or 0}-{ab or 0}, {hr or 0}, {rbi or 0}, {r or 0}, {bb or 0}, {so or 0}")
+                parts.append(f"ROW {dt_fmt}: {h or 0}-{ab or 0}, {hr or 0}, {rbi or 0}, {r or 0}, {bb or 0}, {so or 0}, {sb or 0}")
             parts.append("[/LEADERBOARD]")
 
         parts.append(f"\n[SUGGEST]{display_name} this season[/SUGGEST]")
@@ -4361,7 +4361,7 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
         earliest = rows[-1][0] if rows else ""
         latest = rows[0][0] if rows else ""
 
-        title = f"**{display_name} — Last {n_games} Games**\n"
+        title = f"**{display_name} — Last {n_games} Games Cumulative Stats**\n"
         parts = [title]
         if earliest and latest:
             try:
@@ -4381,18 +4381,27 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
 
         # Per-game breakdown for spans ≤ 30 games
         if n_games <= 30:
+            # Re-fetch with SB
+            cur.execute(f"""
+                SELECT g.date, g.hits, g.at_bats, g.home_runs,
+                       g.rbi, g.runs, g.walks, g.strikeouts, g.stolen_bases
+                FROM game_batting_logs g
+                WHERE g.player_id = ? AND g.at_bats > 0
+                ORDER BY g.date DESC
+                LIMIT ?
+            """, (pid, n_games))
+            detail_rows = cur.fetchall()
             parts.append("")
             parts.append("[LEADERBOARD]")
-            parts.append("HEADER: H-AB, HR, RBI, R, BB, SO")
-            for row in rows:
-                dt, h, ab, d, t, hr, r, rbi, bb, so, opp = row
+            parts.append("HEADER: H-AB, HR, RBI, R, BB, SO, SB")
+            for row in detail_rows:
+                dt, h, ab, hr, rbi, r, bb, so, sb = row
                 try:
                     from datetime import datetime as _dt
                     dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
                 except Exception:
                     dt_fmt = dt
-                opp_display = opp or "?"
-                parts.append(f"ROW {dt_fmt} vs {opp_display}: {h or 0}-{ab or 0}, {hr or 0}, {rbi or 0}, {r or 0}, {bb or 0}, {so or 0}")
+                parts.append(f"ROW {dt_fmt}: {h or 0}-{ab or 0}, {hr or 0}, {rbi or 0}, {r or 0}, {bb or 0}, {so or 0}, {sb or 0}")
             parts.append("[/LEADERBOARD]")
 
         parts.append(f"\n[SUGGEST]{display_name} this season[/SUGGEST]")
