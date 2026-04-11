@@ -1787,10 +1787,12 @@ def _simulate_records_for_date(conn, target_date):
             if game_val <= 0:
                 continue  # Must have contributed today
 
+            # Only sum seasons WITH this team (team field may be "NYA" or "NYA/BOS")
             career_total = conn.execute(f"""
                 SELECT COALESCE(SUM({stat_col}), 0) FROM season_batting_stats
                 WHERE player_id = ? AND season <= ?
-            """, (pid, season)).fetchone()[0]
+                AND (team = ? OR team LIKE ? OR team LIKE ? OR team LIKE ?)
+            """, (pid, season, team_code, f"{team_code}/%", f"%/{team_code}", f"%/{team_code}/%")).fetchone()[0]
 
             rec = conn.execute("""
                 SELECT value, player_name FROM team_records
@@ -1820,7 +1822,8 @@ def _simulate_records_for_date(conn, target_date):
             career_total = conn.execute(f"""
                 SELECT COALESCE(SUM({stat_col}), 0) FROM season_pitching_stats
                 WHERE player_id = ? AND season <= ?
-            """, (pid, season)).fetchone()[0]
+                AND (team = ? OR team LIKE ? OR team LIKE ? OR team LIKE ?)
+            """, (pid, season, team_code, f"{team_code}/%", f"%/{team_code}", f"%/{team_code}/%")).fetchone()[0]
 
             rec = conn.execute("""
                 SELECT value, player_name FROM team_records
