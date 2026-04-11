@@ -1279,7 +1279,21 @@ def template_facts(conn, facts, season, latest_date):
                 val_str = str(val)
                 ru_str = str(runner_up_val)
 
-            headline = f"{game_intro}, taking the {scope} lead in {stat_label} ({val_str}), passing {runner_up} ({ru_str})."
+            # Check if this player previously held this lead (within last 7 days)
+            took_verb = "taking"
+            try:
+                prev_lead = conn.execute("""
+                    SELECT 1 FROM notable_events
+                    WHERE detection_type = 'historical'
+                    AND headline LIKE ? AND headline LIKE ?
+                    AND game_date >= date(?, '-7 days') AND game_date < ?
+                    LIMIT 1
+                """, (f"%{player}%", f"%lead in {stat_label}%", latest_date, latest_date)).fetchone()
+                if prev_lead:
+                    took_verb = "taking back"
+            except Exception:
+                pass
+            headline = f"{game_intro}, {took_verb} the {scope} lead in {stat_label} ({val_str}), passing {runner_up} ({ru_str})."
             secondary_names.append(runner_up)
 
         elif f["type"] == "leaderboard_tie":
