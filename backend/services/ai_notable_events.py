@@ -232,9 +232,8 @@ CRITICAL RULES:
 6. ONLY use biographical facts from the PLAYER CONTEXT section. Do not assume
    team history, rookie status, or career details not listed there.
 7. Write each as a single flowing sentence, conversational and punchy.
-   Baseball slang: "long ball" = home run, "going deep" = hitting a home run,
-   "yard" = home run. Use these correctly — don't use "long ball" to mean
-   a ball hit far.
+   If using baseball slang, use it correctly (e.g. "long ball" means home run,
+   not a ball hit far).
 8. Prioritize: historical context, start-of-season milestones, comeback narratives,
    rookie watch, pace projections, cross-category patterns.
 9. Output ONLY a JSON array: [{{"headline": "...", "player_names": ["..."], "team_names": ["..."], "opponent": "OPP"}}]
