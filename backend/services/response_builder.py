@@ -179,18 +179,19 @@ def _rookie_filter(prefix: str, is_pitching: bool = False) -> str:
 def _position_filter(positions: list[str], stats_prefix: str, season_expr: str) -> str:
     """Return SQL filter clause for position-based queries.
 
-    Uses season_fielding_stats to find the player's primary position
-    (the position where they played the most games that season).
+    Uses season_fielding_stats when available (historical seasons).
+    Falls back to players.positions for current season (no fielding data).
     positions: list of position codes, e.g. ["SS"] or ["LF", "CF", "RF"]
     stats_prefix: alias for the season_batting_stats/pitching table (e.g. "s")
     season_expr: expression for the season column (e.g. "s.season" or a literal)
     """
     pos_list = ", ".join(f"'{p}'" for p in positions)
-    # MLB positional qualification: primary position (most games) AND
-    # at least 50% of team games at that position (81 games in 162-game season).
-    # For partial seasons, prorate: use the player's team's actual game count.
+    # Build OR conditions for players.positions (slash-separated: "C/DH/1B")
+    pos_like = " OR ".join(f"p.positions LIKE '%{p}%'" for p in positions)
     return (
-        f" AND EXISTS ("
+        f" AND ("
+        # Primary path: season_fielding_stats (historical, more accurate)
+        f"EXISTS ("
         f"SELECT 1 FROM season_fielding_stats sf "
         f"WHERE sf.player_id = {stats_prefix}.player_id "
         f"AND sf.season = {season_expr} "
@@ -201,6 +202,12 @@ def _position_filter(positions: list[str], stats_prefix: str, season_expr: str) 
         f"AND sf.games >= ("
         f"SELECT MAX(s3.games) / 2 FROM season_batting_stats s3 "
         f"WHERE s3.season = sf.season AND s3.team = {stats_prefix}.team))"
+        # Fallback: players.positions (current season, no fielding data)
+        f" OR (NOT EXISTS ("
+        f"SELECT 1 FROM season_fielding_stats sf "
+        f"WHERE sf.player_id = {stats_prefix}.player_id "
+        f"AND sf.season = {season_expr}) "
+        f"AND ({pos_like})))"
     )
 
 
