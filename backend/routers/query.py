@@ -894,6 +894,9 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     except Exception as e:
         yield event({"type": "text", "text": "I'm not sure about that. Try asking about player stats, leaders, or comparisons."})
 
+    # Disclaimer for knowledge-mode responses — these come from AI, not our verified DB
+    yield event({"type": "text", "text": "\n\n_Answered from general knowledge — not verified against our database. AI can make mistakes._"})
+
     done_event: dict = {"type": "done"}
     if rewritten_query:
         done_event["rewritten_query"] = rewritten_query
