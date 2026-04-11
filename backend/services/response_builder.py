@@ -4177,15 +4177,15 @@ def build_season_count(name: str, db_column: str, stat_abbrev: str,
         else:
             parts[0] += "."
 
-        # Show the values per season in a compact grid if reasonable count
+        # Show the values per season as a compact leaderboard if reasonable count
         if 2 <= count <= 20:
             parts.append("")
-            parts.append("[STATGRID]")
+            parts.append("[LEADERBOARD]")
             parts.append(f"HEADER: {stat_abbrev}")
             for season, val in rows:
                 formatted = _format_stat_value(val, stat_abbrev)
                 parts.append(f"ROW {season}: {formatted}")
-            parts.append("[/STATGRID]")
+            parts.append("[/LEADERBOARD]")
 
         parts.append(f"\n[SUGGEST]{name} career[/SUGGEST]")
 
