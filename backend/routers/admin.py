@@ -1728,7 +1728,16 @@ def _simulate_records_for_date(conn, target_date):
         team_name = _team_display(team_code)
 
         # ===== CAREER FIRSTS =====
-        # First career HR
+        # Skip first career win/save in first 3 weeks of season (too much noise)
+        from datetime import datetime as _dt, timedelta as _td
+        try:
+            game_dt = _dt.strptime(target_date, "%Y-%m-%d")
+            season_start = _dt(season, 3, 25)  # approximate opening day
+            early_season = (game_dt - season_start).days < 21
+        except Exception:
+            early_season = False
+
+        # First career HR (always interesting)
         if bat.get("home_runs", 0) > 0:
             career_hr_before = conn.execute("""
                 SELECT COALESCE(SUM(home_runs), 0) FROM game_batting_logs
@@ -1741,8 +1750,8 @@ def _simulate_records_for_date(conn, target_date):
                     "detail": f"{pname} hit his first career home run",
                 })
 
-        # First career win
-        if pitch.get("win", 0) > 0:
+        # First career win (skip early season noise)
+        if pitch.get("win", 0) > 0 and not early_season:
             career_w_before = conn.execute("""
                 SELECT COALESCE(SUM(win), 0) FROM game_pitching_logs
                 WHERE player_id = ? AND date < ?
@@ -1754,8 +1763,8 @@ def _simulate_records_for_date(conn, target_date):
                     "detail": f"{pname} earned his first career win",
                 })
 
-        # First career save
-        if pitch.get("save", 0) > 0:
+        # First career save (skip early season noise)
+        if pitch.get("save", 0) > 0 and not early_season:
             career_sv_before = conn.execute("""
                 SELECT COALESCE(SUM(save), 0) FROM game_pitching_logs
                 WHERE player_id = ? AND date < ?
