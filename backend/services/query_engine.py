@@ -359,6 +359,7 @@ class QueryPlan:
     has_team_context: bool = False  # "team" was in the query — might mean team-level aggregate
     original_question: str = ""  # Original query text for post-execution logic
     execution_error: Optional[str] = None  # Set by execute() if an exception occurred
+    compare_years: Optional[tuple] = None  # (year1, year2) for year-over-year comparison
     unexplained_words: list = field(default_factory=list)
     consumed_words: set = field(default_factory=set)
 
@@ -369,6 +370,8 @@ class QueryPlan:
             return False  # Handled by specialized parsers
         if self.query_type == "streak_sequence":
             return len(self.streak_conditions) > 0 and len(self.unexplained_words) == 0
+        if self.query_type == "year_comparison":
+            return self.player_name is not None and self.compare_years is not None and len(self.unexplained_words) == 0
         return (self.stat is not None or self.derived_stat is not None) and len(self.unexplained_words) == 0
 
 
@@ -851,8 +854,26 @@ def decompose(question: str) -> QueryPlan:
         plan.scope = f"since_{plan.since_year}"
         _add_consumed(plan, "each every all of the last past over in during straight consecutive seasons years back to back back-to-back season year")
 
+    # Year-over-year comparison: "Mookie Betts 2023 vs 2024"
+    yoy_match = re.search(r'(20[012]\d)\s*(?:vs\.?|versus|compared to|to)\s*(20[012]\d)', lower)
+    if yoy_match and not plan.since_year and not plan.since_date:
+        plan.compare_years = (int(yoy_match.group(1)), int(yoy_match.group(2)))
+        plan.query_type = "year_comparison"
+        _add_consumed(plan, f"{yoy_match.group(1)} {yoy_match.group(2)} vs versus compared to")
+        # Detect player name from the rest of the query
+        name_text = lower[:yoy_match.start()].strip()
+        if name_text:
+            from services import name_matcher as _nm
+            player = _nm.match_player(name_text)
+            if not player:
+                result = _nm.match_player_with_prominence(name_text)
+                player = result[0] if result else None
+            if player:
+                plan.player_name = player
+                _add_consumed(plan, name_text)
+
     # Only detect explicit season if since_year/since_date didn't already claim the year
-    if not plan.since_year and not plan.since_date:
+    if not plan.since_year and not plan.since_date and not hasattr(plan, 'compare_years'):
         season = detect_season(lower, default_to_most_recent=False)
         if season:
             plan.season = season
@@ -1607,7 +1628,9 @@ def execute(plan: QueryPlan) -> Optional[str]:
     conn = _get_db()
     try:
         result = None
-        if plan.query_type == "streak_sequence":
+        if plan.query_type == "year_comparison":
+            result = _execute_year_comparison(conn, plan)
+        elif plan.query_type == "streak_sequence":
             # "100 RBI in 3 straight seasons" — per_season + streak_sequence
             # means season-level consistency, not game-level streaks
             if plan.per_season:
@@ -2541,6 +2564,95 @@ def _execute_career_threshold(conn, plan: QueryPlan) -> Optional[str]:
         parts.append(f"ROW {i+1}. {name}: {total}{extra_vals}")
 
     parts.append("[/LEADERBOARD]")
+    return "\n".join(parts)
+
+
+def _execute_year_comparison(conn, plan: QueryPlan) -> Optional[str]:
+    """Year-over-year comparison: 'Mookie Betts 2023 vs 2024'."""
+    if not plan.player_name or not plan.compare_years:
+        return None
+
+    year1, year2 = plan.compare_years
+    name = plan.player_name
+
+    # Get player_id
+    row = conn.execute("SELECT player_id FROM players WHERE name = ? LIMIT 1",
+                       (name,)).fetchone()
+    if not row:
+        return None
+    pid = row[0]
+
+    # Check if pitcher
+    is_pitcher = False
+    p_check = conn.execute(
+        "SELECT 1 FROM season_pitching_stats WHERE player_id = ? AND season IN (?, ?) LIMIT 1",
+        (pid, year1, year2)).fetchone()
+    b_check = conn.execute(
+        "SELECT 1 FROM season_batting_stats WHERE player_id = ? AND season IN (?, ?) LIMIT 1",
+        (pid, year1, year2)).fetchone()
+    if p_check and not b_check:
+        is_pitcher = True
+
+    if is_pitcher:
+        table = "season_pitching_stats"
+        cols = "games, wins, losses, era, games_started, complete_games, shutouts, saves, innings_pitched, hits_allowed, earned_runs, strikeouts, walks, whip"
+        headers = "G, W, L, ERA, GS, CG, SHO, SV, IP, H, ER, SO, BB, WHIP"
+    else:
+        table = "season_batting_stats"
+        cols = "games, at_bats, runs, hits, doubles, triples, home_runs, rbi, stolen_bases, caught_stealing, walks, strikeouts, batting_avg, obp, slg, ops, ops_plus"
+        headers = "G, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, SO, AVG, OBP, SLG, OPS, OPS+"
+
+    col_list = [c.strip() for c in cols.split(",")]
+
+    rows = {}
+    for yr in (year1, year2):
+        r = conn.execute(
+            f"SELECT {cols}, team FROM {table} WHERE player_id = ? AND season = ?",
+            (pid, yr)).fetchone()
+        if r:
+            rows[yr] = r
+
+    if not rows:
+        return f"No stats found for {name} in {year1} or {year2}."
+
+    # Get team for display
+    team = None
+    for yr in (year2, year1):
+        if yr in rows:
+            team = rows[yr][-1]  # last column is team
+            break
+
+    parts = [f"**{name} — {year1} vs {year2}**\n"]
+    parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+    parts.append("[STATGRID]")
+    parts.append(f"HEADER: {headers}")
+
+    header_list = [h.strip() for h in headers.split(",")]
+    rate_cols = {"era", "batting_avg", "obp", "slg", "ops", "whip"}
+
+    for yr in (year1, year2):
+        if yr in rows:
+            vals = []
+            for i, col_name in enumerate(col_list):
+                v = rows[yr][i]
+                if v is None:
+                    vals.append("--")
+                elif col_name.strip() in rate_cols:
+                    vals.append(_format_val(col_name.strip(), v, True))
+                elif col_name.strip() == "innings_pitched":
+                    vals.append(str(v) if v else "--")
+                else:
+                    vals.append(str(int(v)) if isinstance(v, float) and v == int(v) else str(v))
+            parts.append(f"ROW {yr}: {', '.join(vals)}")
+        else:
+            parts.append(f"ROW {yr}: {'--' + (', --' * (len(header_list) - 1))}")
+
+    parts.append("[/STATGRID]")
+
+    # Suggestions
+    parts.append(f"\n[SUGGEST]{name} career stats[/SUGGEST]")
+    parts.append(f"[SUGGEST]{name} {year2}[/SUGGEST]")
+
     return "\n".join(parts)
 
 
