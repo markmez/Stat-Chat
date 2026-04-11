@@ -187,7 +187,11 @@ def _position_filter(positions: list[str], stats_prefix: str, season_expr: str) 
     """
     pos_list = ", ".join(f"'{p}'" for p in positions)
     # Build OR conditions for players.positions (slash-separated: "C/DH/1B")
-    pos_like = " OR ".join(f"p.positions LIKE '%{p}%'" for p in positions)
+    # Only match PRIMARY position (first listed) as proxy for 50% games rule
+    pos_like_parts = []
+    for p in positions:
+        pos_like_parts.append(f"(p.positions = '{p}' OR p.positions LIKE '{p}/%')")
+    pos_like = " OR ".join(pos_like_parts)
     return (
         f" AND ("
         # Primary path: season_fielding_stats (historical, more accurate)
