@@ -233,7 +233,8 @@ CRITICAL RULES:
    team history, rookie status, or career details not listed there.
 7. Write each as a single flowing sentence, conversational and punchy.
    If using baseball slang, use it correctly (e.g. "long ball" means home run,
-   not a ball hit far).
+   not a ball hit far). Always include units — "6 innings" not just "6",
+   "3 starts" not just "3" — when the number could be ambiguous.
 8. Prioritize: historical context, start-of-season milestones, comeback narratives,
    rookie watch, pace projections, cross-category patterns.
 9. Output ONLY a JSON array: [{{"headline": "...", "player_names": ["..."], "team_names": ["..."], "opponent": "OPP"}}]
