@@ -1363,6 +1363,10 @@ def parse_single_stat_lookup(input_str: str) -> Optional[dict]:
     if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)\+?\s*[- ]?\s*hit\s+games?|\d+\+\s+\w+\s+games?', lower):
         return None
 
+    # Reject "game logs" / "game log" — not a stat lookup
+    if re.search(r'\bgame\s*logs?\b', lower):
+        return None
+
     # Exclude cross-season queries (handled by parse_season_count)
     cross_season_patterns = [
         "how many seasons", "how many times", "how many years",
@@ -2568,6 +2572,9 @@ def parse_catch_all_player_stat(input_str: str) -> Optional[dict]:
         return None
     # "closest to", "since [player]" — comparative/historical
     if re.search(r'\bclosest\b|\bsince\b', lower):
+        return None
+    # "game logs" — not a stat lookup
+    if re.search(r'\bgame\s*logs?\b', lower):
         return None
     # Game-log-style queries: "games with 4+ hits", "multi-homer games" — not a single-stat lookup
     if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)\+?\s*[- ]?\s*hit\s+games?|\d+\+\s+\w+\s+games?', lower):

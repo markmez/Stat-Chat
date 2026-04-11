@@ -1020,10 +1020,9 @@ def build_single_stat_lookup(name: str, stat_info: StatInfo, season: int) -> Opt
         else:
             sentence = f"**{display_name}** had **{formatted_value} {abbr}** in {season}."
 
-        team_display = _team_full_name(team)
         stat_name = stat_info.pill_name
         return (
-            f"{sentence} ({team_display})\n\n"
+            f"{sentence}\n\n"
             f"[TIP]Tap a player name for their full profile.[/TIP]\n\n"
             f"[SUGGEST]{season} {stat_name} leaders[/SUGGEST]\n"
             f"[SUGGEST]{display_name} career {stat_name}[/SUGGEST]"
@@ -1085,10 +1084,9 @@ def build_pitching_single_stat_lookup(name: str, stat_info: StatInfo, season: in
         else:
             sentence = f"**{display_name}** had **{formatted_value} {abbr}** in {season}."
 
-        team_display = _team_full_name(team)
         stat_name = stat_info.pill_name
         return (
-            f"{sentence} ({team_display})\n\n"
+            f"{sentence}\n\n"
             f"[TIP]Tap a player name for their full profile.[/TIP]\n\n"
             f"[SUGGEST]{season} {stat_name} leaders[/SUGGEST]\n"
             f"[SUGGEST]{display_name} career[/SUGGEST]"
@@ -1193,7 +1191,7 @@ def build_career_lookup(name: str, stat_info: Optional[StatInfo] = None) -> Opti
 
             stat_name = stat_info.pill_name
             return (
-                f"{sentence} ({team_display})\n\n"
+                f"{sentence}\n\n"
                 f"[SUGGEST]career {stat_name} leaders[/SUGGEST]\n"
                 f"[SUGGEST]{display_name} {most_recent}[/SUGGEST]"
             )
@@ -1282,7 +1280,7 @@ def build_pitching_career_lookup(name: str, stat_info: Optional[StatInfo] = None
 
             stat_name = stat_info.pill_name
             return (
-                f"{sentence} ({team_display})\n\n"
+                f"{sentence}\n\n"
                 f"[SUGGEST]career {stat_name} leaders[/SUGGEST]\n"
                 f"[SUGGEST]{display_name} {most_recent}[/SUGGEST]"
             )
