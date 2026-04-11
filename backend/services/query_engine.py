@@ -2588,8 +2588,8 @@ def _execute_year_comparison(conn, plan: QueryPlan) -> Optional[str]:
 
     if is_pitcher:
         table = "season_pitching_stats"
-        cols = "games, wins, losses, era, games_started, complete_games, shutouts, saves, innings_pitched, hits_allowed, earned_runs, strikeouts, walks, whip"
-        headers = "G, W, L, ERA, GS, CG, SHO, SV, IP, H, ER, SO, BB, WHIP"
+        cols = "games, wins, losses, era, games_started, saves, innings_pitched, hits, earned_runs, strikeouts, walks, whip"
+        headers = "G, W, L, ERA, GS, SV, IP, H, ER, K, BB, WHIP"
     else:
         table = "season_batting_stats"
         cols = "games, at_bats, runs, hits, doubles, triples, home_runs, rbi, stolen_bases, caught_stealing, walks, strikeouts, batting_avg, obp, slg, ops, ops_plus"
