@@ -4184,7 +4184,7 @@ def build_season_count(name: str, db_column: str, stat_abbrev: str,
             parts.append(f"HEADER: {stat_abbrev}")
             for season, val in rows:
                 formatted = _format_stat_value(val, stat_abbrev)
-                parts.append(f"ROW: {season}, {formatted}")
+                parts.append(f"ROW {season}: {formatted}")
             parts.append("[/STATGRID]")
 
         parts.append(f"\n[SUGGEST]{name} career[/SUGGEST]")
