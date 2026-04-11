@@ -2319,6 +2319,10 @@ def parse_consecutive_streak(input_str: str) -> Optional[dict]:
     if re.search(r'how many|how common|how often|count of', lower):
         return None
 
+    # "active/current hitting streak" needs trailing streak logic — let the query engine handle it
+    if any(w in lower for w in ["active", "current"]):
+        return None
+
     on_base_patterns = ["on-base streak", "on base streak", "reaching base streak",
                         "onbase streak", "consecutive games reaching base",
                         "consecutive games on base"]
