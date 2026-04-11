@@ -304,6 +304,22 @@ def try_intercept(question: str):
         if response:
             return response
 
+    # 13. Game logs — "Devers game logs", "Judge game log 2025"
+    import re as _re
+    game_log_match = _re.search(r'\bgame\s*logs?\b', lower)
+    if game_log_match:
+        player = nm.find_player_in_text(trimmed)
+        if not player:
+            result = nm.match_player_with_prominence(trimmed)
+            player = result[0] if result else None
+        if player:
+            season = nm.detect_season(trimmed, default_to_most_recent=False)
+            if not season:
+                season = date.today().year
+            response = rb.build_player_game_logs(player, season)
+            if response:
+                return response
+
     # 14. Season lookup — "How did Judge do last season?", just "Aaron Judge"
     season_lookup = nm.parse_season_lookup(trimmed)
     if season_lookup:

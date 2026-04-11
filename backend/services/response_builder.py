@@ -4214,6 +4214,89 @@ def _format_stat_value(val, stat_abbrev: str) -> str:
 # 30a. build_player_game_window — first/last N games of a player's season(s)
 # ===================================================================
 
+
+def build_player_game_logs(name: str, season: int) -> Optional[str]:
+    """Full game log table for a player's season."""
+    conn = _get_db()
+    try:
+        display_name, team = _get_player_info(conn, name)
+        row = conn.execute("SELECT player_id FROM players WHERE name = ? LIMIT 1",
+                           (_sanitize(name),)).fetchone()
+        if not row:
+            return None
+        pid = row[0]
+
+        # Check if pitcher
+        is_pitcher = False
+        try:
+            from services.name_matcher import is_pitcher as _is_pitcher
+            is_pitcher = _is_pitcher(name)
+        except Exception:
+            pass
+
+        if is_pitcher:
+            cur = conn.execute("""
+                SELECT g.date, g.opponent, g.innings_pitched, g.hits, g.earned_runs,
+                       g.strikeouts, g.walks, g.home_runs, g.win, g.loss, g.save
+                FROM game_pitching_logs g
+                WHERE g.player_id = ? AND g.season = ?
+                ORDER BY g.date DESC
+            """, (pid, season))
+            rows = cur.fetchall()
+            if not rows:
+                return None
+
+            parts = [f"**{display_name} — {season} Game Logs**\n"]
+            parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+            parts.append("[LEADERBOARD]")
+            parts.append("HEADER: IP, H, ER, K, BB, HR, Dec")
+            for row in rows:
+                dt, opp, ip, h, er, k, bb, hr, w, l, sv = row
+                try:
+                    from datetime import datetime as _dt
+                    dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
+                except Exception:
+                    dt_fmt = dt
+                dec = "W" if w else ("L" if l else ("SV" if sv else ""))
+                parts.append(f"ROW {dt_fmt} vs {opp or '?'}: {ip or 0}, {h or 0}, {er or 0}, {k or 0}, {bb or 0}, {hr or 0}, {dec}")
+            parts.append("[/LEADERBOARD]")
+        else:
+            cur = conn.execute("""
+                SELECT g.date, g.opponent, g.hits, g.at_bats, g.home_runs,
+                       g.rbi, g.runs, g.walks, g.strikeouts
+                FROM game_batting_logs g
+                WHERE g.player_id = ? AND g.season = ?
+                ORDER BY g.date DESC
+            """, (pid, season))
+            rows = cur.fetchall()
+            if not rows:
+                return None
+
+            parts = [f"**{display_name} — {season} Game Logs**\n"]
+            parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+            parts.append("[LEADERBOARD]")
+            parts.append("HEADER: H-AB, HR, RBI, R, BB, SO")
+            for row in rows:
+                dt, opp, h, ab, hr, rbi, r, bb, so = row
+                try:
+                    from datetime import datetime as _dt
+                    dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
+                except Exception:
+                    dt_fmt = dt
+                parts.append(f"ROW {dt_fmt} vs {opp or '?'}: {h or 0}-{ab or 0}, {hr or 0}, {rbi or 0}, {r or 0}, {bb or 0}, {so or 0}")
+            parts.append("[/LEADERBOARD]")
+
+        parts.append(f"\n[SUGGEST]{display_name} this season[/SUGGEST]")
+        parts.append(f"[SUGGEST]{display_name} career stats[/SUGGEST]")
+
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
+# ===================================================================
+
+
 def build_player_game_window(name: str, window_type: str, n_games: int,
                               stat_info=None, season: Optional[int] = None) -> Optional[str]:
     """Build a response for 'first/last N games' queries.
@@ -4243,7 +4326,7 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
     if season is None and window_type == "last":
         cur.execute(f"""
             SELECT g.date, g.hits, g.at_bats, g.doubles, g.triples, g.home_runs,
-                   g.runs, g.rbi, g.walks, g.strikeouts
+                   g.runs, g.rbi, g.walks, g.strikeouts, g.opponent
             FROM game_batting_logs g
             WHERE g.player_id = ? AND g.at_bats > 0
             ORDER BY g.date DESC
@@ -4295,6 +4378,23 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
                     f"{totals['rbi']}, {totals['bb']}, {totals['so']}, "
                     f"{_format_rate(avg)}, {_format_rate(ops)}")
         parts.append("[/STATGRID]")
+
+        # Per-game breakdown for spans ≤ 30 games
+        if n_games <= 30:
+            parts.append("")
+            parts.append("[LEADERBOARD]")
+            parts.append("HEADER: H-AB, HR, RBI, R, BB, SO")
+            for row in rows:
+                dt, h, ab, d, t, hr, r, rbi, bb, so, opp = row
+                try:
+                    from datetime import datetime as _dt
+                    dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
+                except Exception:
+                    dt_fmt = dt
+                opp_display = opp or "?"
+                parts.append(f"ROW {dt_fmt} vs {opp_display}: {h or 0}-{ab or 0}, {hr or 0}, {rbi or 0}, {r or 0}, {bb or 0}, {so or 0}")
+            parts.append("[/LEADERBOARD]")
+
         parts.append(f"\n[SUGGEST]{display_name} this season[/SUGGEST]")
         parts.append(f"[SUGGEST]{display_name} career stats[/SUGGEST]")
 
