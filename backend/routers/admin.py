@@ -1749,9 +1749,20 @@ def _simulate_records_for_date(conn, target_date):
 
         # ===== CAREER HIGHS (single game) =====
         career_high_checks = [
-            ("hits", 3), ("home_runs", 2), ("rbi", 5),
+            ("hits", 4), ("home_runs", 3), ("rbi", 5),
             ("runs", 3), ("stolen_bases", 3),
         ]
+        # Build game line for context
+        game_line = ""
+        if bat:
+            h, ab = bat.get("hits", 0), bat.get("at_bats", 0)
+            hr = bat.get("home_runs", 0)
+            rbi_val = bat.get("rbi", 0)
+            parts = [f"{h}-for-{ab}"]
+            if hr: parts.append(f"{hr} HR")
+            if rbi_val: parts.append(f"{rbi_val} RBI")
+            game_line = ", ".join(parts)
+
         for stat, min_val in career_high_checks:
             today_val = bat.get(stat, 0)
             if today_val >= min_val:
@@ -1760,11 +1771,16 @@ def _simulate_records_for_date(conn, target_date):
                     WHERE player_id = ? AND date < ?
                 """, (pid, target_date)).fetchone()[0] or 0
                 if today_val > prev_high:
+                    stat_label = stat.replace("_", " ")
+                    if prev_high > 0:
+                        context = f"a new career high (previous: {prev_high})"
+                    else:
+                        context = f"the first time in his career"
                     events.append({
                         "type": "career_high",
                         "player": pname, "team": team_name,
                         "stat": stat,
-                        "detail": f"{pname} set a career high with {today_val} {stat.replace('_', ' ')} (previous: {prev_high})",
+                        "detail": f"{pname} went {game_line}, hitting {today_val} {stat_label} in a game for {context}",
                     })
 
         # Pitching career highs
@@ -1774,11 +1790,15 @@ def _simulate_records_for_date(conn, target_date):
                 WHERE player_id = ? AND date < ?
             """, (pid, target_date)).fetchone()[0] or 0
             if pitch["strikeouts"] > prev_k:
+                k = pitch["strikeouts"]
+                ip_outs = pitch.get("ip_outs", 0)
+                ip_display = f"{ip_outs // 3}.{ip_outs % 3}" if ip_outs else "?"
+                context = f"a new career high (previous: {prev_k})" if prev_k > 0 else "the first time in his career"
                 events.append({
                     "type": "career_high",
                     "player": pname, "team": team_name,
                     "stat": "strikeouts",
-                    "detail": f"{pname} set a career high with {pitch['strikeouts']} strikeouts (previous: {prev_k})",
+                    "detail": f"{pname} struck out {k} in {ip_display} IP, {context}",
                 })
 
         # ===== TEAM RECORD APPROACHES / CROSSINGS (career) =====
