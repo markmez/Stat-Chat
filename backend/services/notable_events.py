@@ -1953,6 +1953,28 @@ def detect_all(db_path=None, season=None, from_poll=False):
     t2_count = len(events) - t1_count
     print(f"    Tier 2: {t2_count} events")
 
+    # Records & personal bests
+    print("  Running records detection...")
+    try:
+        from routers.admin import _simulate_records_for_date
+        record_events = _simulate_records_for_date(conn, latest_date)
+        for re in record_events:
+            player_names = [re.get("player", "")] if re.get("player") else []
+            team_names = [re.get("team", "")] if re.get("team") else []
+            events.append({
+                "headline": re["detail"],
+                "detail": "",
+                "category": re["type"].replace("_", " ").title(),
+                "game_date": latest_date,
+                "player_names": player_names,
+                "team_names": team_names,
+                "detection_type": re["type"],
+                "priority": 2,
+            })
+        print(f"    Records: {len(record_events)} events")
+    except Exception as e:
+        print(f"    Records detection failed: {e}")
+
     # Tier 3 backfill if needed
     if len(events) < 3:
         print("  Running Tier 3 backfill...")
