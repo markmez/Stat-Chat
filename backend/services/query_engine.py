@@ -944,14 +944,21 @@ def decompose(question: str) -> QueryPlan:
 
     # Bats filter
     bats_patterns = [
-        # Full phrases (check longest first)
-        ("left-handed batter", "L"), ("left handed batter", "L"),
-        ("left-handed hitter", "L"), ("left handed hitter", "L"),
-        ("right-handed batter", "R"), ("right handed batter", "R"),
-        ("right-handed hitter", "R"), ("right handed hitter", "R"),
+        # Full phrases (check longest first, plurals before singulars)
+        ("left-handed batters", "L"), ("left-handed batter", "L"),
+        ("left handed batters", "L"), ("left handed batter", "L"),
+        ("left-handed hitters", "L"), ("left-handed hitter", "L"),
+        ("left handed hitters", "L"), ("left handed hitter", "L"),
+        ("right-handed batters", "R"), ("right-handed batter", "R"),
+        ("right handed batters", "R"), ("right handed batter", "R"),
+        ("right-handed hitters", "R"), ("right-handed hitter", "R"),
+        ("right handed hitters", "R"), ("right handed hitter", "R"),
+        ("switch hitters", "B"), ("switch-hitters", "B"),
         ("switch hitter", "B"), ("switch-hitter", "B"),
         # Short forms
+        ("lefty batters", "L"), ("lefty hitters", "L"),
         ("lefty batter", "L"), ("lefty hitter", "L"), ("lefty", "L"),
+        ("righty batters", "R"), ("righty hitters", "R"),
         ("righty batter", "R"), ("righty hitter", "R"), ("righty", "R"),
     ]
     for pattern, bats_val in bats_patterns:
