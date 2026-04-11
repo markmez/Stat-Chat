@@ -85,12 +85,16 @@ async def get_notable_events(limit: int = QueryParam(50, le=200)):
         for e in bucket:
             by_type.setdefault(e["_type"], []).append(e)
         result = []
+        # Sort types: matchup previews first, on_this_date last within today's group
+        type_order = {"matchup_preview": 0, "on_this_date": 99}
+        type_keys = sorted(by_type.keys(), key=lambda t: type_order.get(t, 50))
         while any(by_type.values()):
-            for t in sorted(by_type.keys()):
-                if by_type[t]:
+            for t in type_keys:
+                if by_type.get(t):
                     result.append(by_type[t].pop(0))
             # Remove empty types
             by_type = {t: v for t, v in by_type.items() if v}
+            type_keys = [t for t in type_keys if t in by_type]
         interleaved.extend(result)
 
     # Strip internal _type field and apply limit
