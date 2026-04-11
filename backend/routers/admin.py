@@ -1794,7 +1794,10 @@ def _simulate_records_for_date(conn, target_date):
                 prev_high = prev_row[0] if prev_row else 0
                 prev_date = prev_row[1] if prev_row else None
                 if today_val > (prev_high or 0):
-                    stat_label = stat.replace("_", " ")
+                    _stat_display = {"rbi": "RBI", "home_runs": "home runs",
+                                     "hits": "hits", "stolen_bases": "stolen bases",
+                                     "doubles": "doubles"}
+                    stat_label = _stat_display.get(stat, stat.replace("_", " "))
                     if prev_high and prev_date:
                         try:
                             from datetime import datetime as _dt
@@ -1841,7 +1844,7 @@ def _simulate_records_for_date(conn, target_date):
                     "type": "career_high",
                     "player": pname, "team": team_name,
                     "stat": "strikeouts",
-                    "detail": f"{pname} struck out {k} in {ip_display} IP — {context}.",
+                    "detail": f"{pname} struck out {k} in {ip_display} IP. The {k} K is {context}.",
                 })
 
         # ===== TEAM RECORD APPROACHES / CROSSINGS (career) =====
