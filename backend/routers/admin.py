@@ -1613,184 +1613,322 @@ async def records_simulate(
 
 
 def _simulate_records_for_date(conn, target_date):
-    """Find all record-related events for a specific date."""
+    """Find all record-related events for a specific date.
+
+    Rules:
+    - Player MUST have contributed to the stat on this date (HR>0 for HR records, etc.)
+    - Counting stats only (skip rate stats — ERA/WHIP records have no IP minimum)
+    - Career and season records against team records
+    - Career firsts: HR, win, save only
+    - Career highs: single game, min threshold (3+ hits, 2+ HR, 5+ RBI, 3+ R, 10+ K)
+    - Milestone thresholds: 50/60 HR seasons, 20/20 30/30 40/40 HR/SB combos
+    """
     events = []
     season = int(target_date[:4])
 
-    # Find all players who played on this date (batting)
-    bat_players = conn.execute("""
-        SELECT DISTINCT g.player_id, p.name
+    # Counting stats to check (stat_col, game_log_col, label, min_interesting_game_val)
+    BAT_COUNTING = [
+        ("home_runs", "home_runs", "home runs", 1),
+        ("hits", "hits", "hits", 1),
+        ("rbi", "rbi", "RBI", 1),
+        ("runs", "runs", "runs", 1),
+        ("stolen_bases", "stolen_bases", "stolen bases", 1),
+        ("doubles", "doubles", "doubles", 1),
+        ("walks", "walks", "walks", 1),
+    ]
+    PITCH_COUNTING = [
+        ("wins", "win", "wins", 1),
+        ("strikeouts", "strikeouts", "strikeouts", 1),
+        ("saves", "save", "saves", 1),
+    ]
+
+    # --- Get all game logs for this date ---
+    bat_games = conn.execute("""
+        SELECT g.player_id, p.name, p.team,
+               g.hits, g.home_runs, g.rbi, g.runs, g.stolen_bases,
+               g.doubles, g.walks, g.at_bats
         FROM game_batting_logs g
         JOIN players p ON g.player_id = p.player_id
         WHERE g.date = ?
     """, (target_date,)).fetchall()
 
-    # Find all players who played on this date (pitching)
-    pitch_players = conn.execute("""
-        SELECT DISTINCT g.player_id, p.name
+    pitch_games = conn.execute("""
+        SELECT g.player_id, p.name, p.team,
+               g.win, g.strikeouts, g.save, g.hits AS hits_allowed,
+               g.earned_runs, g.ip_outs, g.loss
         FROM game_pitching_logs g
         JOIN players p ON g.player_id = p.player_id
         WHERE g.date = ?
     """, (target_date,)).fetchall()
 
-    all_players = {}
-    for pid, name in bat_players + pitch_players:
-        all_players[pid] = name
+    # Index game stats by player_id
+    bat_by_pid = {}
+    for row in bat_games:
+        pid = row[0]
+        bat_by_pid[pid] = {
+            "name": row[1], "team": row[2],
+            "hits": row[3] or 0, "home_runs": row[4] or 0,
+            "rbi": row[5] or 0, "runs": row[6] or 0,
+            "stolen_bases": row[7] or 0, "doubles": row[8] or 0,
+            "walks": row[9] or 0, "at_bats": row[10] or 0,
+        }
 
-    # Check each player for record approaches and crossings
-    for pid, pname in all_players.items():
-        # Get this player's teams
-        team_rows = conn.execute("""
-            SELECT DISTINCT team FROM season_batting_stats WHERE player_id = ?
+    pitch_by_pid = {}
+    for row in pitch_games:
+        pid = row[0]
+        pitch_by_pid[pid] = {
+            "name": row[1], "team": row[2],
+            "win": row[3] or 0, "strikeouts": row[4] or 0,
+            "save": row[5] or 0, "ip_outs": row[8] or 0,
+        }
+
+    all_pids = set(bat_by_pid.keys()) | set(pitch_by_pid.keys())
+
+    # --- Get current team for each player ---
+    def get_current_team(pid):
+        row = conn.execute("""
+            SELECT team FROM season_batting_stats
+            WHERE player_id = ? AND season = ?
             UNION
-            SELECT DISTINCT team FROM season_pitching_stats WHERE player_id = ?
-        """, (pid, pid)).fetchall()
-        player_teams = set()
-        for (t,) in team_rows:
-            if t:
-                for code in t.split("/"):
-                    code = code.strip()
-                    if code:
-                        player_teams.add(code)
+            SELECT team FROM season_pitching_stats
+            WHERE player_id = ? AND season = ?
+            LIMIT 1
+        """, (pid, season, pid, season)).fetchone()
+        if row and row[0]:
+            return row[0].split("/")[0].strip()
+        return None
 
-        # --- Career firsts ---
-        # Check if this is player's first career HR
-        hr_before = conn.execute("""
-            SELECT COALESCE(SUM(home_runs), 0) FROM game_batting_logs
-            WHERE player_id = ? AND date < ? AND date > (season || '-03-25')
-        """, (pid, target_date)).fetchone()[0]
+    for pid in all_pids:
+        bat = bat_by_pid.get(pid, {})
+        pitch = pitch_by_pid.get(pid, {})
+        pname = bat.get("name") or pitch.get("name")
+        team_code = get_current_team(pid)
+        if not team_code:
+            continue
+        team_name = _team_display(team_code)
 
-        hr_today = conn.execute("""
-            SELECT COALESCE(home_runs, 0) FROM game_batting_logs
-            WHERE player_id = ? AND date = ?
-        """, (pid, target_date)).fetchone()
+        # ===== CAREER FIRSTS =====
+        # First career HR
+        if bat.get("home_runs", 0) > 0:
+            career_hr_before = conn.execute("""
+                SELECT COALESCE(SUM(home_runs), 0) FROM game_batting_logs
+                WHERE player_id = ? AND date < ?
+            """, (pid, target_date)).fetchone()[0]
+            if career_hr_before == 0:
+                events.append({
+                    "type": "career_first",
+                    "player": pname, "team": team_name,
+                    "detail": f"{pname} hit his first career home run",
+                })
 
-        if hr_today and hr_today[0] and hr_before == 0:
-            events.append({
-                "type": "career_first",
-                "player": pname,
-                "stat": "home_run",
-                "detail": f"{pname} hit their first career home run",
-            })
-
-        # First career win (pitching)
-        if any(pid == p[0] for p in pitch_players):
-            wins_before = conn.execute("""
+        # First career win
+        if pitch.get("win", 0) > 0:
+            career_w_before = conn.execute("""
                 SELECT COALESCE(SUM(win), 0) FROM game_pitching_logs
-                WHERE player_id = ? AND date < ? AND date > (season || '-03-25')
+                WHERE player_id = ? AND date < ?
             """, (pid, target_date)).fetchone()[0]
-
-            win_today = conn.execute("""
-                SELECT COALESCE(win, 0) FROM game_pitching_logs
-                WHERE player_id = ? AND date = ?
-            """, (pid, target_date)).fetchone()
-
-            if win_today and win_today[0] and wins_before == 0:
+            if career_w_before == 0:
                 events.append({
                     "type": "career_first",
-                    "player": pname,
-                    "stat": "win",
-                    "detail": f"{pname} earned their first career win",
+                    "player": pname, "team": team_name,
+                    "detail": f"{pname} earned his first career win",
                 })
 
-            # First career save
-            saves_before = conn.execute("""
+        # First career save
+        if pitch.get("save", 0) > 0:
+            career_sv_before = conn.execute("""
                 SELECT COALESCE(SUM(save), 0) FROM game_pitching_logs
-                WHERE player_id = ? AND date < ? AND date > (season || '-03-25')
+                WHERE player_id = ? AND date < ?
             """, (pid, target_date)).fetchone()[0]
-
-            save_today = conn.execute("""
-                SELECT COALESCE(save, 0) FROM game_pitching_logs
-                WHERE player_id = ? AND date = ?
-            """, (pid, target_date)).fetchone()
-
-            if save_today and save_today[0] and saves_before == 0:
+            if career_sv_before == 0:
                 events.append({
                     "type": "career_first",
-                    "player": pname,
-                    "stat": "save",
-                    "detail": f"{pname} earned their first career save",
+                    "player": pname, "team": team_name,
+                    "detail": f"{pname} earned his first career save",
                 })
 
-        # --- Record approaches and crossings ---
-        # Career batting totals up to and including this date
-        career_bat = conn.execute("""
-            SELECT SUM(home_runs), SUM(hits), SUM(rbi), SUM(runs),
-                   SUM(stolen_bases), SUM(doubles), SUM(walks)
-            FROM season_batting_stats
-            WHERE player_id = ? AND season <= ?
-        """, (pid, season)).fetchone()
-
-        if career_bat and career_bat[0] is not None:
-            stat_map = {
-                "home_runs": career_bat[0], "hits": career_bat[1],
-                "rbi": career_bat[2], "runs": career_bat[3],
-                "stolen_bases": career_bat[4], "doubles": career_bat[5],
-                "walks": career_bat[6],
-            }
-
-            for tc in player_teams:
-                # Check team records
-                for stat, my_val in stat_map.items():
-                    if my_val is None:
-                        continue
-                    rec = conn.execute("""
-                        SELECT value, player_name FROM team_records
-                        WHERE team_code = ? AND stat = ? AND record_type = 'career'
-                        ORDER BY value DESC LIMIT 1
-                    """, (tc, stat)).fetchone()
-                    if rec:
-                        diff = rec[0] - my_val
-                        if 0 < diff <= 3:
-                            events.append({
-                                "type": "record_approach",
-                                "player": pname,
-                                "team": _team_display(tc),
-                                "stat": stat,
-                                "record_value": rec[0],
-                                "record_holder": rec[1],
-                                "current_value": my_val,
-                                "diff": diff,
-                                "detail": f"{pname} is {diff} {stat.replace('_', ' ')} away from the {_team_display(tc)} career record ({rec[1]}: {rec[0]})",
-                            })
-                        elif diff <= 0:
-                            events.append({
-                                "type": "record_crossing",
-                                "player": pname,
-                                "team": _team_display(tc),
-                                "stat": stat,
-                                "record_value": rec[0],
-                                "record_holder": rec[1],
-                                "current_value": my_val,
-                                "detail": f"{pname} has surpassed {rec[1]} for the {_team_display(tc)} career {stat.replace('_', ' ')} record ({my_val} vs {rec[0]})",
-                            })
-
-        # --- Career highs from today's game ---
-        today_bat = conn.execute("""
-            SELECT hits, home_runs, rbi, runs
-            FROM game_batting_logs WHERE player_id = ? AND date = ?
-        """, (pid, target_date)).fetchone()
-
-        if today_bat:
-            prior_maxes = conn.execute("""
-                SELECT MAX(hits), MAX(home_runs), MAX(rbi), MAX(runs)
-                FROM game_batting_logs WHERE player_id = ? AND date < ?
-                  AND date > (season || '-03-25')
-            """, (pid, target_date)).fetchone()
-
-            stat_names = ["hits", "home_runs", "rbi", "runs"]
-            for idx, sname in enumerate(stat_names):
-                tv = today_bat[idx]
-                pv = prior_maxes[idx] if prior_maxes else 0
-                if tv and pv is not None and tv > (pv or 0) and tv >= 3:
+        # ===== CAREER HIGHS (single game) =====
+        career_high_checks = [
+            ("hits", 3), ("home_runs", 2), ("rbi", 5),
+            ("runs", 3), ("stolen_bases", 3),
+        ]
+        for stat, min_val in career_high_checks:
+            today_val = bat.get(stat, 0)
+            if today_val >= min_val:
+                prev_high = conn.execute(f"""
+                    SELECT MAX({stat}) FROM game_batting_logs
+                    WHERE player_id = ? AND date < ?
+                """, (pid, target_date)).fetchone()[0] or 0
+                if today_val > prev_high:
                     events.append({
                         "type": "career_high",
-                        "player": pname,
-                        "stat": sname,
-                        "value": tv,
-                        "previous_high": pv or 0,
-                        "detail": f"{pname} set a career high with {tv} {sname.replace('_', ' ')} (previous: {pv or 0})",
+                        "player": pname, "team": team_name,
+                        "stat": stat,
+                        "detail": f"{pname} set a career high with {today_val} {stat.replace('_', ' ')} (previous: {prev_high})",
                     })
+
+        # Pitching career highs
+        if pitch.get("strikeouts", 0) >= 10:
+            prev_k = conn.execute("""
+                SELECT MAX(strikeouts) FROM game_pitching_logs
+                WHERE player_id = ? AND date < ?
+            """, (pid, target_date)).fetchone()[0] or 0
+            if pitch["strikeouts"] > prev_k:
+                events.append({
+                    "type": "career_high",
+                    "player": pname, "team": team_name,
+                    "stat": "strikeouts",
+                    "detail": f"{pname} set a career high with {pitch['strikeouts']} strikeouts (previous: {prev_k})",
+                })
+
+        # ===== TEAM RECORD APPROACHES / CROSSINGS (career) =====
+        for stat_col, game_col, label, _ in BAT_COUNTING:
+            game_val = bat.get(game_col, 0) if game_col in bat else bat.get(stat_col, 0)
+            if game_val <= 0:
+                continue  # Must have contributed today
+
+            career_total = conn.execute(f"""
+                SELECT COALESCE(SUM({stat_col}), 0) FROM season_batting_stats
+                WHERE player_id = ? AND season <= ?
+            """, (pid, season)).fetchone()[0]
+
+            rec = conn.execute("""
+                SELECT value, player_name FROM team_records
+                WHERE team_code = ? AND stat = ? AND record_type = 'career'
+                ORDER BY value DESC LIMIT 1
+            """, (team_code, stat_col)).fetchone()
+            if rec and career_total:
+                diff = int(rec[0]) - int(career_total)
+                if 1 <= diff <= 3:
+                    events.append({
+                        "type": "record_approach",
+                        "player": pname, "team": team_name,
+                        "detail": f"{pname} {label}: {int(career_total)} — {diff} away from {team_name} career record ({rec[1]}: {int(rec[0])})",
+                    })
+                elif diff <= 0 and rec[1] != pname:
+                    events.append({
+                        "type": "record_crossing",
+                        "player": pname, "team": team_name,
+                        "detail": f"{pname} passed {rec[1]} for the {team_name} career {label} record ({int(career_total)} vs {int(rec[0])})",
+                    })
+
+        for stat_col, game_col, label, _ in PITCH_COUNTING:
+            game_val = pitch.get(game_col, 0)
+            if game_val <= 0:
+                continue
+
+            career_total = conn.execute(f"""
+                SELECT COALESCE(SUM({stat_col}), 0) FROM season_pitching_stats
+                WHERE player_id = ? AND season <= ?
+            """, (pid, season)).fetchone()[0]
+
+            rec = conn.execute("""
+                SELECT value, player_name FROM team_records
+                WHERE team_code = ? AND stat = ? AND record_type = 'career'
+                ORDER BY value DESC LIMIT 1
+            """, (team_code, stat_col)).fetchone()
+            if rec and career_total:
+                diff = int(rec[0]) - int(career_total)
+                if 1 <= diff <= 3:
+                    events.append({
+                        "type": "record_approach",
+                        "player": pname, "team": team_name,
+                        "detail": f"{pname} {label}: {int(career_total)} — {diff} away from {team_name} career record ({rec[1]}: {int(rec[0])})",
+                    })
+                elif diff <= 0 and rec[1] != pname:
+                    events.append({
+                        "type": "record_crossing",
+                        "player": pname, "team": team_name,
+                        "detail": f"{pname} passed {rec[1]} for the {team_name} career {label} record ({int(career_total)} vs {int(rec[0])})",
+                    })
+
+        # ===== SEASON RECORD APPROACHES (only later in season) =====
+        # Only check when player has 50+ games (avoid early-season noise)
+        season_games = conn.execute("""
+            SELECT games FROM season_batting_stats
+            WHERE player_id = ? AND season = ? LIMIT 1
+        """, (pid, season)).fetchone()
+        if season_games and season_games[0] and season_games[0] >= 50:
+            for stat_col, game_col, label, _ in BAT_COUNTING:
+                game_val = bat.get(game_col, 0) if game_col in bat else bat.get(stat_col, 0)
+                if game_val <= 0:
+                    continue
+                season_total = conn.execute(f"""
+                    SELECT COALESCE({stat_col}, 0) FROM season_batting_stats
+                    WHERE player_id = ? AND season = ? LIMIT 1
+                """, (pid, season)).fetchone()
+                if not season_total:
+                    continue
+                sv = season_total[0]
+                rec = conn.execute("""
+                    SELECT value, player_name, season FROM team_records
+                    WHERE team_code = ? AND stat = ? AND record_type = 'season'
+                    ORDER BY value DESC LIMIT 1
+                """, (team_code, stat_col)).fetchone()
+                if rec and sv:
+                    diff = int(rec[0]) - int(sv)
+                    if 1 <= diff <= 3:
+                        events.append({
+                            "type": "season_record_approach",
+                            "player": pname, "team": team_name,
+                            "detail": f"{pname} has {int(sv)} {label} — {diff} from {team_name} single-season record ({rec[1]}, {rec[2]}: {int(rec[0])})",
+                        })
+
+        # ===== MILESTONE THRESHOLDS (50/60 HR, 20/20 30/30 40/40) =====
+        season_bat = conn.execute("""
+            SELECT home_runs, stolen_bases FROM season_batting_stats
+            WHERE player_id = ? AND season = ? LIMIT 1
+        """, (pid, season)).fetchone()
+        if season_bat:
+            hr, sb = season_bat[0] or 0, season_bat[1] or 0
+
+            # 50/60 HR approaching
+            if bat.get("home_runs", 0) > 0:
+                for threshold in [60, 50]:
+                    diff = threshold - hr
+                    if 1 <= diff <= 5:
+                        events.append({
+                            "type": "milestone_approach",
+                            "player": pname, "team": team_name,
+                            "detail": f"{pname} has {hr} HR — {diff} away from {threshold} home runs this season",
+                        })
+                        break
+                    elif diff == 0:
+                        events.append({
+                            "type": "milestone_crossing",
+                            "player": pname, "team": team_name,
+                            "detail": f"{pname} hit his {threshold}th home run of the season!",
+                        })
+                        break
+
+            # X/X combos (20/20, 30/30, 40/40) — check if today's game contributed
+            if bat.get("home_runs", 0) > 0 or bat.get("stolen_bases", 0) > 0:
+                for threshold in [40, 30, 20]:
+                    if hr >= threshold and sb >= threshold:
+                        # Already reached — check if today's game pushed them over
+                        hr_yesterday = hr - bat.get("home_runs", 0)
+                        sb_yesterday = sb - bat.get("stolen_bases", 0)
+                        if hr_yesterday < threshold or sb_yesterday < threshold:
+                            events.append({
+                                "type": "milestone_crossing",
+                                "player": pname, "team": team_name,
+                                "detail": f"{pname} joined the {threshold}/{threshold} club ({hr} HR, {sb} SB)!",
+                            })
+                            break
+                    elif hr >= threshold - 3 and sb >= threshold and bat.get("home_runs", 0) > 0:
+                        events.append({
+                            "type": "milestone_approach",
+                            "player": pname, "team": team_name,
+                            "detail": f"{pname} has {hr} HR and {sb} SB — {threshold - hr} HR from {threshold}/{threshold}",
+                        })
+                        break
+                    elif sb >= threshold - 3 and hr >= threshold and bat.get("stolen_bases", 0) > 0:
+                        events.append({
+                            "type": "milestone_approach",
+                            "player": pname, "team": team_name,
+                            "detail": f"{pname} has {hr} HR and {sb} SB — {threshold - sb} SB from {threshold}/{threshold}",
+                        })
+                        break
 
     return events
 
@@ -1885,7 +2023,12 @@ async def records_sandbox(
     font-size: 10px; font-weight: 600; text-transform: uppercase;
   }}
   .badge.approach {{ background: #fef3c7; color: #92400e; }}
+  .badge.record-approach {{ background: #fef3c7; color: #92400e; }}
+  .badge.season-record-approach {{ background: #fff7ed; color: #9a3412; }}
   .badge.crossing {{ background: #dcfce7; color: #166534; }}
+  .badge.record-crossing {{ background: #dcfce7; color: #166534; }}
+  .badge.milestone-approach {{ background: #fef3c7; color: #92400e; }}
+  .badge.milestone-crossing {{ background: #dcfce7; color: #166534; }}
   .badge.career-first {{ background: #dbeafe; color: #1A40B3; }}
   .badge.career-high {{ background: #f3e8ff; color: #6b21a8; }}
   .badge.holds {{ background: #fce7f3; color: #9d174d; }}
@@ -1894,6 +2037,11 @@ async def records_sandbox(
     background: #f8f9ff; border-radius: 0 6px 6px 0; font-size: 13px;
   }}
   .event-card.crossing {{ border-left-color: #16a34a; background: #f0fdf4; }}
+  .event-card.record-crossing {{ border-left-color: #16a34a; background: #f0fdf4; }}
+  .event-card.milestone-crossing {{ border-left-color: #16a34a; background: #f0fdf4; }}
+  .event-card.record-approach {{ border-left-color: #d97706; background: #fffbeb; }}
+  .event-card.season-record-approach {{ border-left-color: #ea580c; background: #fff7ed; }}
+  .event-card.milestone-approach {{ border-left-color: #d97706; background: #fffbeb; }}
   .event-card.career-first {{ border-left-color: #2563eb; background: #eff6ff; }}
   .event-card.career-high {{ border-left-color: #7c3aed; background: #faf5ff; }}
   .event-card .event-badge {{ margin-right: 6px; }}
@@ -1935,6 +2083,7 @@ async def records_sandbox(
 <div class="search-row">
   <input type="date" id="sim-date">
   <button onclick="simulateDate()">Simulate</button>
+  <button class="secondary" onclick="simulateAll()">Simulate All Dates</button>
 </div>
 <div id="sim-results" class="results"></div>
 
@@ -2064,20 +2213,49 @@ async function simulateDate() {{
   el.innerHTML = '<p class="loading">Simulating...</p>';
   try {{
     const data = await apiFetch('/admin/records-simulate?date_str=' + dt);
-    if (!data.events || data.events.length === 0) {{
-      el.innerHTML = '<p class="empty">No record events found for ' + dt + '.</p>';
-      return;
-    }}
-    let html = '<h3>' + data.events.length + ' events for ' + dt + '</h3>';
-    data.events.forEach(e => {{
-      const cls = e.type.replace(/_/g, '-');
-      const badge = '<span class="badge ' + cls + ' event-badge">' + e.type.replace(/_/g, ' ') + '</span>';
-      html += '<div class="event-card ' + cls + '">' + badge + esc(e.detail) + '</div>';
-    }});
-    el.innerHTML = html;
+    el.innerHTML = renderDateEvents(dt, data.events || []);
   }} catch (e) {{
     el.innerHTML = '<p class="empty">Error: ' + e.message + '</p>';
   }}
+}}
+
+async function simulateAll() {{
+  const el = document.getElementById('sim-results');
+  el.innerHTML = '<p class="loading">Simulating all dates from March 27...</p>';
+  // Build date list from March 27 to today
+  const dates = [];
+  const start = new Date('{date.today().year}', 2, 27); // March = 2
+  const end = new Date();
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {{
+    dates.push(d.toISOString().slice(0, 10));
+  }}
+  let allHtml = '';
+  let totalEvents = 0;
+  for (const dt of dates) {{
+    try {{
+      const data = await apiFetch('/admin/records-simulate?date_str=' + dt);
+      const evts = data.events || [];
+      totalEvents += evts.length;
+      if (evts.length > 0) {{
+        allHtml += renderDateEvents(dt, evts);
+      }}
+    }} catch (e) {{
+      allHtml += '<p class="empty">Error on ' + dt + ': ' + e.message + '</p>';
+    }}
+  }}
+  el.innerHTML = '<h3>' + totalEvents + ' total events across ' + dates.length + ' game dates</h3>' + allHtml;
+}}
+
+function renderDateEvents(dt, events) {{
+  if (!events || events.length === 0) return '';
+  const dayName = new Date(dt + 'T12:00:00').toLocaleDateString('en-US', {{ weekday: 'short', month: 'short', day: 'numeric' }});
+  let html = '<h3 style="margin-top:16px;border-bottom:1px solid #e0e8f5;padding-bottom:4px">' + dayName + ' — ' + events.length + ' event' + (events.length !== 1 ? 's' : '') + '</h3>';
+  events.forEach(e => {{
+    const cls = e.type.replace(/_/g, '-');
+    const badge = '<span class="badge ' + cls + ' event-badge">' + e.type.replace(/_/g, ' ') + '</span>';
+    html += '<div class="event-card ' + cls + '">' + badge + esc(e.detail) + '</div>';
+  }});
+  return html;
 }}
 
 function esc(s) {{ return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }}
