@@ -3297,7 +3297,10 @@ def _streak_trailing(rows, target_length, label, plan) -> Optional[str]:
 
     results.sort(key=lambda x: x[0], reverse=True)
 
-    title = f"**Current Active Streaks of {label}**\n"
+    # Clean up label for title: "a hit" → "Hitting", "a HR" → "HR"
+    _label_map = {"a hit": "Hitting", "a HR": "HR", "a BB": "Walk", "scoreless": "Scoreless"}
+    display_label = _label_map.get(label, label)
+    title = f"**Active {display_label} Streaks**\n"
     parts = [title]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
