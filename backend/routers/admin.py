@@ -1847,64 +1847,6 @@ def _simulate_records_for_date(conn, target_date):
                     "detail": f"{pname} struck out {k} in {ip_display} IP. The {k} K is {context}.",
                 })
 
-        # ===== FIRST HIGH-THRESHOLD ACHIEVEMENTS =====
-        # Different from career highs: "first time ever reaching this bar"
-        # Only interesting if the player has enough career games (not a debut)
-        career_games = conn.execute("""
-            SELECT COALESCE(SUM(games), 0) FROM season_batting_stats
-            WHERE player_id = ?
-        """, (pid,)).fetchone()[0]
-
-        if career_games >= 50:  # Skip players too early in career
-            bat_thresholds = [
-                ("hits", 4, "4-hit game"),
-                ("hits", 5, "5-hit game"),
-                ("home_runs", 3, "3-homer game"),
-                ("rbi", 6, "6-RBI game"),
-                ("rbi", 7, "7-RBI game"),
-                ("stolen_bases", 3, "3-steal game"),
-                ("stolen_bases", 4, "4-steal game"),
-            ]
-            for stat, threshold, label in bat_thresholds:
-                today_val = bat.get(stat, 0)
-                if today_val >= threshold:
-                    prev_count = conn.execute(f"""
-                        SELECT COUNT(*) FROM game_batting_logs
-                        WHERE player_id = ? AND date < ? AND {stat} >= ?
-                    """, (pid, target_date, threshold)).fetchone()[0]
-                    if prev_count == 0:
-                        events.append({
-                            "type": "first_threshold",
-                            "player": pname, "team": team_name,
-                            "stat": stat,
-                            "detail": f"{pname} went {game_line} — his first career {label}.",
-                        })
-                        break  # Only report the highest threshold met
-
-        if pitch and career_games >= 20:
-            pitch_thresholds = [
-                ("strikeouts", 10, "10-K game"),
-                ("strikeouts", 12, "12-K game"),
-                ("strikeouts", 15, "15-K game"),
-            ]
-            k_today = pitch.get("strikeouts", 0)
-            ip_outs = pitch.get("ip_outs", 0)
-            ip_display = f"{ip_outs // 3}.{ip_outs % 3}" if ip_outs else "?"
-            for stat, threshold, label in reversed(pitch_thresholds):  # Check highest first
-                if k_today >= threshold:
-                    prev_count = conn.execute(f"""
-                        SELECT COUNT(*) FROM game_pitching_logs
-                        WHERE player_id = ? AND date < ? AND strikeouts >= ?
-                    """, (pid, target_date, threshold)).fetchone()[0]
-                    if prev_count == 0:
-                        events.append({
-                            "type": "first_threshold",
-                            "player": pname, "team": team_name,
-                            "stat": "strikeouts",
-                            "detail": f"{pname} struck out {k_today} in {ip_display} IP — his first career {label}.",
-                        })
-                        break  # Only report the highest threshold met
-
         # ===== TEAM RECORD APPROACHES / CROSSINGS (career) =====
         franchise_codes = get_franchise_codes(team_code)
 
@@ -2020,7 +1962,7 @@ def _simulate_records_for_date(conn, target_date):
                             "detail": f"{pname} has {int(sv)} {label} — {diff} from {team_name} single-season record ({rec[1]}, {rec[2]}: {int(rec[0])})",
                         })
 
-        # ===== MILESTONE THRESHOLDS (50/60 HR, 20/20 30/30 40/40) =====
+        # ===== SEASON MILESTONE THRESHOLDS =====
         season_bat = conn.execute("""
             SELECT home_runs, stolen_bases FROM season_batting_stats
             WHERE player_id = ? AND season = ? LIMIT 1
@@ -2028,22 +1970,69 @@ def _simulate_records_for_date(conn, target_date):
         if season_bat:
             hr, sb = season_bat[0] or 0, season_bat[1] or 0
 
-            # 50/60 HR approaching
+            def _career_threshold_count(stat_col, threshold):
+                """How many career seasons has this player reached this threshold?"""
+                return conn.execute(f"""
+                    SELECT COUNT(*) FROM season_batting_stats
+                    WHERE player_id = ? AND {stat_col} >= ? AND season < ?
+                """, (pid, threshold, season)).fetchone()[0]
+
+            def _ordinal(n):
+                if n == 1: return "first"
+                if n == 2: return "2nd"
+                if n == 3: return "3rd"
+                return f"{n}th"
+
+            # HR milestones: 20, 30, 40, 50, 60
             if bat.get("home_runs", 0) > 0:
-                for threshold in [60, 50]:
+                for threshold in [60, 50, 40, 30, 20]:
                     diff = threshold - hr
-                    if 1 <= diff <= 5:
+                    if diff == 0:
+                        # Just crossed — check it was today's game
+                        hr_yesterday = hr - bat.get("home_runs", 0)
+                        if hr_yesterday < threshold:
+                            prior_times = _career_threshold_count("home_runs", threshold)
+                            if prior_times == 0:
+                                context = f"the first {threshold}-HR season of his career"
+                            else:
+                                context = f"the {_ordinal(prior_times + 1)} {threshold}-HR season of his career"
+                            events.append({
+                                "type": "milestone_crossing",
+                                "player": pname, "team": team_name,
+                                "detail": f"{pname} hit his {threshold}th home run of the season — {context}.",
+                            })
+                            break
+                    elif 1 <= diff <= 3:
                         events.append({
                             "type": "milestone_approach",
                             "player": pname, "team": team_name,
-                            "detail": f"{pname} has {hr} HR — {diff} away from {threshold} home runs this season",
+                            "detail": f"{pname} has {hr} HR — {diff} away from {threshold} this season.",
                         })
                         break
-                    elif diff == 0:
+
+            # SB milestones: 20, 30, 40, 50
+            if bat.get("stolen_bases", 0) > 0:
+                for threshold in [50, 40, 30, 20]:
+                    diff = threshold - sb
+                    if diff == 0:
+                        sb_yesterday = sb - bat.get("stolen_bases", 0)
+                        if sb_yesterday < threshold:
+                            prior_times = _career_threshold_count("stolen_bases", threshold)
+                            if prior_times == 0:
+                                context = f"the first {threshold}-steal season of his career"
+                            else:
+                                context = f"the {_ordinal(prior_times + 1)} {threshold}-steal season of his career"
+                            events.append({
+                                "type": "milestone_crossing",
+                                "player": pname, "team": team_name,
+                                "detail": f"{pname} stole his {threshold}th base of the season — {context}.",
+                            })
+                            break
+                    elif 1 <= diff <= 3:
                         events.append({
-                            "type": "milestone_crossing",
+                            "type": "milestone_approach",
                             "player": pname, "team": team_name,
-                            "detail": f"{pname} hit his {threshold}th home run of the season!",
+                            "detail": f"{pname} has {sb} SB — {diff} away from {threshold} this season.",
                         })
                         break
 
@@ -2051,7 +2040,6 @@ def _simulate_records_for_date(conn, target_date):
             if bat.get("home_runs", 0) > 0 or bat.get("stolen_bases", 0) > 0:
                 for threshold in [40, 30, 20]:
                     if hr >= threshold and sb >= threshold:
-                        # Already reached — check if today's game pushed them over
                         hr_yesterday = hr - bat.get("home_runs", 0)
                         sb_yesterday = sb - bat.get("stolen_bases", 0)
                         if hr_yesterday < threshold or sb_yesterday < threshold:
@@ -2065,14 +2053,14 @@ def _simulate_records_for_date(conn, target_date):
                         events.append({
                             "type": "milestone_approach",
                             "player": pname, "team": team_name,
-                            "detail": f"{pname} has {hr} HR and {sb} SB — {threshold - hr} HR from {threshold}/{threshold}",
+                            "detail": f"{pname} has {hr} HR and {sb} SB — {threshold - hr} HR from {threshold}/{threshold}.",
                         })
                         break
                     elif sb >= threshold - 3 and hr >= threshold and bat.get("stolen_bases", 0) > 0:
                         events.append({
                             "type": "milestone_approach",
                             "player": pname, "team": team_name,
-                            "detail": f"{pname} has {hr} HR and {sb} SB — {threshold - sb} SB from {threshold}/{threshold}",
+                            "detail": f"{pname} has {hr} HR and {sb} SB — {threshold - sb} SB from {threshold}/{threshold}.",
                         })
                         break
 
