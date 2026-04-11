@@ -1772,16 +1772,18 @@ def _simulate_records_for_date(conn, target_date):
             ("hits", 4), ("home_runs", 3), ("rbi", 5),
             ("stolen_bases", 3),
         ]
-        # Build game line for context
+        # Build game line for context: "2-for-4, 1 HR, with 6 RBI"
         game_line = ""
         if bat:
             h, ab = bat.get("hits", 0), bat.get("at_bats", 0)
             hr = bat.get("home_runs", 0)
             rbi_val = bat.get("rbi", 0)
-            parts = [f"{h}-for-{ab}"]
-            if hr: parts.append(f"{hr} HR")
-            if rbi_val: parts.append(f"{rbi_val} RBI")
-            game_line = ", ".join(parts)
+            main_parts = [f"{h}-for-{ab}"]
+            if hr: main_parts.append(f"{hr} HR")
+            if rbi_val:
+                game_line = ", ".join(main_parts) + f" with {rbi_val} RBI"
+            else:
+                game_line = ", ".join(main_parts)
 
         for stat, min_val in career_high_checks:
             today_val = bat.get(stat, 0)
@@ -1810,7 +1812,7 @@ def _simulate_records_for_date(conn, target_date):
                         "type": "career_high",
                         "player": pname, "team": team_name,
                         "stat": stat,
-                        "detail": f"{pname} went {game_line} — {today_val} {stat_label} in a game, {context}.",
+                        "detail": f"{pname} went {game_line}. The {today_val} {stat_label} in a game is {context}.",
                     })
 
         # Pitching career highs
