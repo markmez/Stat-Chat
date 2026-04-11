@@ -1876,6 +1876,7 @@ def _simulate_records_for_date(conn, target_date):
                         events.append({
                             "type": "first_threshold",
                             "player": pname, "team": team_name,
+                            "stat": stat,
                             "detail": f"{pname} went {game_line} — his first career {label}.",
                         })
                         break  # Only report the highest threshold met
@@ -1899,6 +1900,7 @@ def _simulate_records_for_date(conn, target_date):
                         events.append({
                             "type": "first_threshold",
                             "player": pname, "team": team_name,
+                            "stat": "strikeouts",
                             "detail": f"{pname} struck out {k_today} in {ip_display} IP — his first career {label}.",
                         })
                         break  # Only report the highest threshold met
@@ -2073,6 +2075,13 @@ def _simulate_records_for_date(conn, target_date):
                             "detail": f"{pname} has {hr} HR and {sb} SB — {threshold - sb} SB from {threshold}/{threshold}",
                         })
                         break
+
+    # Dedupe: if a player has both career_high and first_threshold for same stat,
+    # keep only first_threshold (more interesting — "first time ever" > "beat your best")
+    threshold_players = {(e["player"], e.get("stat", "")) for e in events if e["type"] == "first_threshold"}
+    events = [e for e in events if not (
+        e["type"] == "career_high" and (e["player"], e.get("stat", "")) in threshold_players
+    )]
 
     return events
 
