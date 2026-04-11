@@ -1657,34 +1657,6 @@ def detect_on_this_date(conn, season, latest_date):
             "priority": 3,
         })
 
-    # 6+ hit games on this date
-    big_hits = conn.execute("""
-        SELECT p.name, g.season, g.hits, g.at_bats, g.home_runs, g.rbi, g.opponent
-        FROM game_batting_logs g
-        JOIN players p ON g.player_id = p.player_id
-        WHERE substr(g.date, 6) = ? AND g.season < ? AND g.hits >= 6
-        ORDER BY g.hits DESC, g.season DESC
-    """, (month_day, season)).fetchall()
-
-    for name, yr, h, ab, hr, rbi, opp in big_hits[:1]:
-        opp_name = team_display(opp) if opp else ""
-        headline = f"On this date in {yr}, {name} went {h}-for-{ab}"
-        if hr:
-            headline += f" with {hr} HR"
-        if opp_name:
-            headline += f" against the {opp_name}"
-        headline += "."
-        events.append({
-            "headline": headline,
-            "detail": "",
-            "category": "On This Date",
-            "game_date": today,
-            "player_names": [name],
-            "team_names": [opp_name] if opp_name else [],
-            "detection_type": "on_this_date",
-            "priority": 3,
-        })
-
     # 10+ RBI game on this date (extremely rare)
     big_rbi = conn.execute("""
         SELECT p.name, g.season, g.rbi, g.hits, g.at_bats, g.home_runs, g.opponent
