@@ -1763,18 +1763,7 @@ def _simulate_records_for_date(conn, target_date):
                     "detail": f"{pname} earned his first career win",
                 })
 
-        # First career save (skip early season noise)
-        if pitch.get("save", 0) > 0 and not early_season:
-            career_sv_before = conn.execute("""
-                SELECT COALESCE(SUM(save), 0) FROM game_pitching_logs
-                WHERE player_id = ? AND date < ?
-            """, (pid, target_date)).fetchone()[0]
-            if career_sv_before == 0:
-                events.append({
-                    "type": "career_first",
-                    "player": pname, "team": team_name,
-                    "detail": f"{pname} earned his first career save",
-                })
+        # First career save — removed, usually flukey, not prospect-driven
 
         # ===== CAREER HIGHS (single game) =====
         career_high_checks = [
