@@ -1698,6 +1698,26 @@ def _simulate_records_for_date(conn, target_date):
             return row[0].split("/")[0].strip()
         return None
 
+    # Franchise mapping: current code → all historical codes for the same franchise
+    # Used to check records across the full franchise history
+    _FRANCHISE_MAP = {
+        "ATH": ["ATH", "OAK", "PHA"],            # Athletics: Philly → KC → Oakland → Sacramento
+        "OAK": ["ATH", "OAK", "PHA"],
+        "WAS": ["WAS", "MON"],                     # Nationals ← Expos
+        "MIA": ["MIA", "FLO"],                     # Marlins (Florida → Miami)
+        "ANA": ["ANA", "CAL"],                     # Angels (California → Anaheim)
+        "TBA": ["TBA"],                             # Rays (Devil Rays → Rays, same code)
+        "BAL": ["BAL", "MLA", "SLA"],              # Orioles ← St. Louis Browns ← Milwaukee
+        "MIN": ["MIN", "WS1"],                     # Twins ← Washington Senators (original)
+        "TEX": ["TEX", "WS2"],                     # Rangers ← Washington Senators (expansion)
+        "ATL": ["ATL", "BSN", "MLN"],              # Braves: Boston → Milwaukee → Atlanta
+        "SFN": ["SFN", "NY1"],                     # Giants: New York → San Francisco
+        "LAN": ["LAN", "BRO"],                     # Dodgers: Brooklyn → Los Angeles
+    }
+
+    def get_franchise_codes(code):
+        return _FRANCHISE_MAP.get(code, [code])
+
     for pid in all_pids:
         bat = bat_by_pid.get(pid, {})
         pitch = pitch_by_pid.get(pid, {})
@@ -1750,7 +1770,7 @@ def _simulate_records_for_date(conn, target_date):
         # ===== CAREER HIGHS (single game) =====
         career_high_checks = [
             ("hits", 4), ("home_runs", 3), ("rbi", 5),
-            ("runs", 3), ("stolen_bases", 3),
+            ("stolen_bases", 3),
         ]
         # Build game line for context
         game_line = ""
@@ -1802,23 +1822,33 @@ def _simulate_records_for_date(conn, target_date):
                 })
 
         # ===== TEAM RECORD APPROACHES / CROSSINGS (career) =====
+        franchise_codes = get_franchise_codes(team_code)
+
         for stat_col, game_col, label, _ in BAT_COUNTING:
             game_val = bat.get(game_col, 0) if game_col in bat else bat.get(stat_col, 0)
             if game_val <= 0:
                 continue  # Must have contributed today
 
-            # Only sum seasons WITH this team (team field may be "NYA" or "NYA/BOS")
+            # Sum seasons with any franchise code (team field may be "NYA" or "NYA/BOS")
+            team_clauses = []
+            team_params_list = []
+            for fc in franchise_codes:
+                team_clauses.append(f"(team = ? OR team LIKE ? OR team LIKE ? OR team LIKE ?)")
+                team_params_list.extend([fc, f"{fc}/%", f"%/{fc}", f"%/{fc}/%"])
+            team_where = " OR ".join(team_clauses)
+
             career_total = conn.execute(f"""
                 SELECT COALESCE(SUM({stat_col}), 0) FROM season_batting_stats
-                WHERE player_id = ? AND season <= ?
-                AND (team = ? OR team LIKE ? OR team LIKE ? OR team LIKE ?)
-            """, (pid, season, team_code, f"{team_code}/%", f"%/{team_code}", f"%/{team_code}/%")).fetchone()[0]
+                WHERE player_id = ? AND season <= ? AND ({team_where})
+            """, [pid, season] + team_params_list).fetchone()[0]
 
-            rec = conn.execute("""
+            # Check records across all franchise codes
+            fc_placeholders = ",".join("?" * len(franchise_codes))
+            rec = conn.execute(f"""
                 SELECT value, player_name FROM team_records
-                WHERE team_code = ? AND stat = ? AND record_type = 'career'
+                WHERE team_code IN ({fc_placeholders}) AND stat = ? AND record_type = 'career'
                 ORDER BY value DESC LIMIT 1
-            """, (team_code, stat_col)).fetchone()
+            """, franchise_codes + [stat_col]).fetchone()
             if rec and career_total:
                 diff = int(rec[0]) - int(career_total)
                 if 1 <= diff <= 3:
@@ -1839,17 +1869,25 @@ def _simulate_records_for_date(conn, target_date):
             if game_val <= 0:
                 continue
 
+            # Sum seasons with any franchise code
+            team_clauses_p = []
+            team_params_p = []
+            for fc in franchise_codes:
+                team_clauses_p.append(f"(team = ? OR team LIKE ? OR team LIKE ? OR team LIKE ?)")
+                team_params_p.extend([fc, f"{fc}/%", f"%/{fc}", f"%/{fc}/%"])
+            team_where_p = " OR ".join(team_clauses_p)
+
             career_total = conn.execute(f"""
                 SELECT COALESCE(SUM({stat_col}), 0) FROM season_pitching_stats
-                WHERE player_id = ? AND season <= ?
-                AND (team = ? OR team LIKE ? OR team LIKE ? OR team LIKE ?)
-            """, (pid, season, team_code, f"{team_code}/%", f"%/{team_code}", f"%/{team_code}/%")).fetchone()[0]
+                WHERE player_id = ? AND season <= ? AND ({team_where_p})
+            """, [pid, season] + team_params_p).fetchone()[0]
 
-            rec = conn.execute("""
+            fc_placeholders = ",".join("?" * len(franchise_codes))
+            rec = conn.execute(f"""
                 SELECT value, player_name FROM team_records
-                WHERE team_code = ? AND stat = ? AND record_type = 'career'
+                WHERE team_code IN ({fc_placeholders}) AND stat = ? AND record_type = 'career'
                 ORDER BY value DESC LIMIT 1
-            """, (team_code, stat_col)).fetchone()
+            """, franchise_codes + [stat_col]).fetchone()
             if rec and career_total:
                 diff = int(rec[0]) - int(career_total)
                 if 1 <= diff <= 3:
@@ -1883,11 +1921,12 @@ def _simulate_records_for_date(conn, target_date):
                 if not season_total:
                     continue
                 sv = season_total[0]
-                rec = conn.execute("""
+                fc_placeholders_s = ",".join("?" * len(franchise_codes))
+                rec = conn.execute(f"""
                     SELECT value, player_name, season FROM team_records
-                    WHERE team_code = ? AND stat = ? AND record_type = 'season'
+                    WHERE team_code IN ({fc_placeholders_s}) AND stat = ? AND record_type = 'season'
                     ORDER BY value DESC LIMIT 1
-                """, (team_code, stat_col)).fetchone()
+                """, franchise_codes + [stat_col]).fetchone()
                 if rec and sv:
                     diff = int(rec[0]) - int(sv)
                     if 1 <= diff <= 3:
