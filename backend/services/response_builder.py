@@ -4248,18 +4248,13 @@ def build_player_game_logs(name: str, season: int) -> Optional[str]:
 
             parts = [f"**{display_name} — {season} Game Logs**\n"]
             parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
-            parts.append("[LEADERBOARD]")
-            parts.append("HEADER: IP, H, ER, K, BB, HR, Dec")
+            parts.append("[GAMELOGS]")
             for row in rows:
                 dt, opp, ip, h, er, k, bb, hr, w, l, sv = row
-                try:
-                    from datetime import datetime as _dt
-                    dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
-                except Exception:
-                    dt_fmt = dt
                 dec = "W" if w else ("L" if l else ("SV" if sv else ""))
-                parts.append(f"ROW {dt_fmt} vs {opp or '?'}: {ip or 0}, {h or 0}, {er or 0}, {k or 0}, {bb or 0}, {hr or 0}, {dec}")
-            parts.append("[/LEADERBOARD]")
+                dec_str = f", {dec}" if dec else ""
+                parts.append(f"GAME {dt}|{ip or 0} IP, {h or 0} H, {er or 0} ER, {k or 0} K, {bb or 0} BB{dec_str}")
+            parts.append("[/GAMELOGS]")
         else:
             cur = conn.execute("""
                 SELECT g.date, g.hits, g.at_bats, g.home_runs,
@@ -4274,17 +4269,11 @@ def build_player_game_logs(name: str, season: int) -> Optional[str]:
 
             parts = [f"**{display_name} — {season} Game Logs**\n"]
             parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
-            parts.append("[LEADERBOARD]")
-            parts.append("HEADER: H-AB, HR, RBI, R, BB, SO, SB")
+            parts.append("[GAMELOGS]")
             for row in rows:
                 dt, h, ab, hr, rbi, r, bb, so, sb = row
-                try:
-                    from datetime import datetime as _dt
-                    dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
-                except Exception:
-                    dt_fmt = dt
-                parts.append(f"ROW {dt_fmt}: {h or 0}-{ab or 0}, {hr or 0}, {rbi or 0}, {r or 0}, {bb or 0}, {so or 0}, {sb or 0}")
-            parts.append("[/LEADERBOARD]")
+                parts.append(f"GAME {dt}|{h or 0}-{ab or 0}, {hr or 0} HR, {rbi or 0} RBI, {r or 0} R, {bb or 0} BB, {so or 0} SO, {sb or 0} SB")
+            parts.append("[/GAMELOGS]")
 
         parts.append(f"\n[SUGGEST]{display_name} this season[/SUGGEST]")
         parts.append(f"[SUGGEST]{display_name} career stats[/SUGGEST]")
@@ -4392,17 +4381,11 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
             """, (pid, n_games))
             detail_rows = cur.fetchall()
             parts.append("")
-            parts.append("[LEADERBOARD]")
-            parts.append("HEADER: H-AB, HR, RBI, R, BB, SO, SB")
+            parts.append("[GAMELOGS]")
             for row in detail_rows:
                 dt, h, ab, hr, rbi, r, bb, so, sb = row
-                try:
-                    from datetime import datetime as _dt
-                    dt_fmt = _dt.strptime(dt, "%Y-%m-%d").strftime("%-m/%-d")
-                except Exception:
-                    dt_fmt = dt
-                parts.append(f"ROW {dt_fmt}: {h or 0}-{ab or 0}, {hr or 0}, {rbi or 0}, {r or 0}, {bb or 0}, {so or 0}, {sb or 0}")
-            parts.append("[/LEADERBOARD]")
+                parts.append(f"GAME {dt}|{h or 0}-{ab or 0}, {hr or 0} HR, {rbi or 0} RBI, {r or 0} R, {bb or 0} BB, {so or 0} SO, {sb or 0} SB")
+            parts.append("[/GAMELOGS]")
 
         parts.append(f"\n[SUGGEST]{display_name} this season[/SUGGEST]")
         parts.append(f"[SUGGEST]{display_name} career stats[/SUGGEST]")
