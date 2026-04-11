@@ -2582,16 +2582,9 @@ def _execute_year_comparison(conn, plan: QueryPlan) -> Optional[str]:
         return None
     pid = row[0]
 
-    # Check if pitcher
-    is_pitcher = False
-    p_check = conn.execute(
-        "SELECT 1 FROM season_pitching_stats WHERE player_id = ? AND season IN (?, ?) LIMIT 1",
-        (pid, year1, year2)).fetchone()
-    b_check = conn.execute(
-        "SELECT 1 FROM season_batting_stats WHERE player_id = ? AND season IN (?, ?) LIMIT 1",
-        (pid, year1, year2)).fetchone()
-    if p_check and not b_check:
-        is_pitcher = True
+    # Check if pitcher using the standard detection
+    from services.name_matcher import is_pitcher as _is_pitcher
+    is_pitcher = _is_pitcher(name)
 
     if is_pitcher:
         table = "season_pitching_stats"
