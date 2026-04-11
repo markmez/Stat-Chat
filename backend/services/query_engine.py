@@ -2953,6 +2953,12 @@ def _execute_superlative(conn, plan: QueryPlan) -> Optional[str]:
         query_params.append(plan.since_year)
     if filters_str:
         where_parts.append(filters_str)
+    # Rate stats require full-season qualification (400 PA / 162 IP)
+    if is_rate:
+        if plan.is_pitching:
+            where_parts.append(f"{prefix}.ip_outs >= {162 * 3}")
+        else:
+            where_parts.append(f"{prefix}.plate_appearances >= 400")
     where = f"WHERE {' AND '.join(where_parts)}{birthdate_filter}"
 
     cur = conn.cursor()
