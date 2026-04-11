@@ -636,14 +636,8 @@ def _strip_bold_title(text: str) -> str:
 
         rest = "\n".join(lines[rest_start:])
 
-        # Merge with any existing SUBTITLE in the rest
-        existing_sub = _re.search(r'\[SUBTITLE\](.*?)\[/SUBTITLE\]', rest)
-        if existing_sub and subtitle_parts:
-            subtitle_parts.append(existing_sub.group(1))
-            rest = rest[:existing_sub.start()] + rest[existing_sub.end():]
-
         if subtitle_parts:
-            return f"[SUBTITLE]{' · '.join(subtitle_parts)}[/SUBTITLE]\n{rest}"
+            return f"[CONTEXT]{' · '.join(subtitle_parts)}[/CONTEXT]\n{rest}"
         return rest
 
     return text
