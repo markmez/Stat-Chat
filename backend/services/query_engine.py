@@ -1282,14 +1282,14 @@ def decompose(question: str) -> QueryPlan:
                 plan.streak_direction = "leading"
         if not n_match:
             # "longest hitting streak" — no number, find the longest
-            if "longest" in lower or "most consecutive" in lower:
+            if "current" in lower or "active" in lower:
+                plan.streak_length = None
+                plan.streak_direction = "trailing"
+                _add_consumed(plan, "current active longest")
+            elif "longest" in lower or "most consecutive" in lower:
                 plan.streak_length = None  # means "find the longest"
                 plan.streak_direction = "sliding"
                 _add_consumed(plan, "longest most consecutive")
-            elif "current" in lower:
-                plan.streak_length = None
-                plan.streak_direction = "trailing"
-                _add_consumed(plan, "current")
         else:
             plan.streak_length = int(n_match.group(1))
             _add_consumed(plan, n_match.group(0))
