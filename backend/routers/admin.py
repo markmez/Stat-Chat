@@ -1650,6 +1650,55 @@ async def records_simulate_all(
         conn.close()
 
 
+@router.get("/records-simulate-season")
+async def records_simulate_season(
+    year: int = 2025,
+    page: int = 1,
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Run deep scans across a full season. Paginated — 20 events per page."""
+    verify_admin(authorization, key)
+    from datetime import date as _date, timedelta as _td
+    from services.deep_scans import run_deep_scans
+
+    conn = sqlite3.connect(DB_PATH, timeout=60)
+    try:
+        cooldowns = {}
+        all_events = []
+
+        # Get all game dates for this season
+        dates = conn.execute("""
+            SELECT DISTINCT date FROM game_batting_logs
+            WHERE season = ? ORDER BY date
+        """, (year,)).fetchall()
+
+        for (date_str,) in dates:
+            try:
+                deep_events = run_deep_scans(conn, year, date_str, cooldowns)
+                for e in deep_events:
+                    e["date"] = date_str
+                    all_events.extend([e])
+            except Exception as e:
+                all_events.append({"type": "error", "detail": f"{date_str}: {e}", "date": date_str})
+
+        total = len(all_events)
+        per_page = 20
+        start_idx = (page - 1) * per_page
+        page_events = all_events[start_idx:start_idx + per_page]
+        total_pages = (total + per_page - 1) // per_page
+
+        return {
+            "year": year,
+            "total_events": total,
+            "page": page,
+            "total_pages": total_pages,
+            "events": page_events,
+        }
+    finally:
+        conn.close()
+
+
 def _simulate_records_for_date(conn, target_date):
     """Find all record-related events for a specific date.
 
@@ -2308,6 +2357,20 @@ async def records_sandbox(
 </div>
 <div id="sim-results" class="results"></div>
 
+<h2>Deep Scans — Full Season</h2>
+<div class="search-row">
+  <select id="season-year" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:14px">
+    <option value="2025" selected>2025</option>
+    <option value="2024">2024</option>
+    <option value="2023">2023</option>
+  </select>
+  <button onclick="scanSeason(1)">Scan Season</button>
+  <button class="secondary" id="prev-btn" onclick="scanSeason(currentSeasonPage-1)" disabled>&larr; Prev</button>
+  <button class="secondary" id="next-btn" onclick="scanSeason(currentSeasonPage+1)" disabled>Next &rarr;</button>
+  <span id="page-info" style="font-size:12px;color:#888"></span>
+</div>
+<div id="season-results" class="results"></div>
+
 <script>
 const KEY = '{admin_key}';
 const BASE = window.location.origin;
@@ -2466,6 +2529,40 @@ function renderDateEvents(dt, events) {{
     html += '<div class="event-card ' + cls + '">' + badge + esc(e.detail) + '</div>';
   }});
   return html;
+}}
+
+let currentSeasonPage = 1;
+
+async function scanSeason(page) {{
+  if (page < 1) return;
+  currentSeasonPage = page;
+  const year = document.getElementById('season-year').value;
+  const el = document.getElementById('season-results');
+  const pageInfo = document.getElementById('page-info');
+  el.innerHTML = '<p class="loading">Scanning ' + year + ' season (this may take a minute)...</p>';
+  try {{
+    const data = await apiFetch('/admin/records-simulate-season?year=' + year + '&page=' + page);
+    if (!data.events || data.events.length === 0) {{
+      el.innerHTML = '<p class="empty">No deep scan events found for ' + year + '.</p>';
+      pageInfo.textContent = '';
+      document.getElementById('prev-btn').disabled = true;
+      document.getElementById('next-btn').disabled = true;
+      return;
+    }}
+    let html = '';
+    data.events.forEach(e => {{
+      const cls = e.type.replace(/_/g, '-');
+      const badge = '<span class="badge ' + cls + ' event-badge">' + e.type.replace(/_/g, ' ') + '</span>';
+      const dateLabel = '<span style="color:#888;font-size:11px;margin-right:6px">' + (e.date || '') + '</span>';
+      html += '<div class="event-card ' + cls + '">' + dateLabel + badge + esc(e.detail || '') + '</div>';
+    }});
+    el.innerHTML = html;
+    pageInfo.textContent = 'Page ' + data.page + ' of ' + data.total_pages + ' (' + data.total_events + ' total events)';
+    document.getElementById('prev-btn').disabled = (data.page <= 1);
+    document.getElementById('next-btn').disabled = (data.page >= data.total_pages);
+  }} catch (e) {{
+    el.innerHTML = '<p class="empty">Error: ' + e.message + '</p>';
+  }}
 }}
 
 function esc(s) {{ return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }}
