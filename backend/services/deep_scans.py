@@ -345,9 +345,8 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "player": pname, "team": team or "",
                         "detail": (
                             f"{pname} has a {era:.2f} ERA with {total_k} K through {starts} starts "
-                            f"({ip_display} IP) — on pace to join "
-                            f"{last_dom['name']} ({last_dom['era']:.2f} ERA, {last_dom['k']} K in {last_dom['season']}) "
-                            f"if he keeps it up."
+                            f"({ip_display} IP) — the last pitcher to do that through {starts} starts was "
+                            f"{last_dom['name']} ({last_dom['era']:.2f} ERA, {last_dom['k']} K) in {last_dom['season']}."
                         ),
                     })
                     _set_cooldown(pid, "pitch_dom")
@@ -462,22 +461,33 @@ def _find_last_power_speed(conn, exclude_pid, season, games, hr, sb):
 
 
 def _find_last_pitching_dominance(conn, exclude_pid, season, starts, era, total_k):
-    """Find last pitcher with ERA <= this and K >= this through same number of starts."""
-    k_per_start = total_k / max(starts, 1)
-    # Compare against qualified full-season pitchers (162+ IP)
-    row = conn.execute("""
-        SELECT p.name, sp.season, sp.era, sp.strikeouts
-        FROM season_pitching_stats sp
-        JOIN players p ON sp.player_id = p.player_id
-        WHERE sp.season < ? AND sp.player_id != ?
-        AND sp.ip_outs >= 486
-        AND sp.era <= ? AND sp.strikeouts >= ?
-        ORDER BY sp.season DESC
-        LIMIT 1
-    """, (season, exclude_pid, era, total_k)).fetchone()
+    """Find last pitcher with ERA <= this and K >= this through same number of starts.
+    Scans one year at a time working backwards."""
+    for check_season in range(season - 1, season - 26, -1):
+        row = conn.execute("""
+            SELECT p.name, sub.season, sub.era_calc, sub.total_k FROM (
+                SELECT player_id, season,
+                       CAST(SUM(earned_runs) AS REAL) * 27 / NULLIF(SUM(ip_outs), 0) as era_calc,
+                       SUM(strikeouts) as total_k
+                FROM (
+                    SELECT player_id, season, earned_runs, ip_outs, strikeouts,
+                           ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY date) as snum
+                    FROM game_pitching_logs
+                    WHERE is_start = 1 AND season = ?
+                ) numbered
+                WHERE snum <= ?
+                GROUP BY player_id, season
+                HAVING SUM(ip_outs) > 0
+            ) sub
+            JOIN players p ON sub.player_id = p.player_id
+            WHERE sub.player_id != ?
+            AND sub.era_calc <= ? AND sub.total_k >= ?
+            LIMIT 1
+        """, (check_season, starts, exclude_pid, era, total_k)).fetchone()
 
-    if row:
-        return {"name": row[0], "season": row[1], "era": row[2], "k": int(row[3])}
+        if row:
+            return {"name": row[0], "season": row[1], "era": round(row[2], 2), "k": int(row[3])}
+
     return None
 
 
