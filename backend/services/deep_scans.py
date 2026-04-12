@@ -247,7 +247,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "player": pname, "team": team or "",
                         "detail": (
                             f"{pname} has {hr} HR through {games} games — "
-                            f"the last player on that pace was "
+                            f"the last player to hit that many through {games} games was "
                             f"{last_hr['name']} ({last_hr['value']} HR) in {last_hr['season']}."
                         ),
                     })
@@ -276,7 +276,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "player": pname, "team": team or "",
                         "detail": (
                             f"{pname} has {sb} SB through {games} games — "
-                            f"the last player to steal at that rate was "
+                            f"the last player to steal that many through {games} games was "
                             f"{last_sb['name']} ({last_sb['value']} SB) in {last_sb['season']}."
                         ),
                     })
@@ -295,7 +295,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "player": pname, "team": team or "",
                         "detail": (
                             f"{pname} has {hr} HR and {sb} SB through {games} games — "
-                            f"the last player with that power-speed combo was "
+                            f"the last player with that power-speed combo through {games} games was "
                             f"{last_ps['name']} ({last_ps['hr']} HR, {last_ps['sb']} SB) in {last_ps['season']}."
                         ),
                     })
@@ -404,59 +404,87 @@ def _find_last_ops_match(conn, exclude_pid, season, games, ops):
 
 
 def _find_last_hr_pace(conn, exclude_pid, season, games, hr):
-    """Find last player with >= hr home runs through <= games games.
-    Compares against full-season players (400+ PA) who hit this many HR."""
-    row = conn.execute("""
-        SELECT p.name, s.season, s.home_runs
-        FROM season_batting_stats s
-        JOIN players p ON s.player_id = p.player_id
-        WHERE s.season < ? AND s.player_id != ?
-        AND s.plate_appearances >= 400
-        AND s.home_runs >= ?
-        ORDER BY s.season DESC
-        LIMIT 1
-    """, (season, exclude_pid, hr)).fetchone()
+    """Find last player with >= hr home runs through first N games.
+    Scans one year at a time working backwards."""
+    for check_season in range(season - 1, season - 26, -1):
+        row = conn.execute("""
+            SELECT p.name, sub.season, sub.total_hr FROM (
+                SELECT player_id, season, SUM(home_runs) as total_hr
+                FROM (
+                    SELECT player_id, season, home_runs,
+                           ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY date) as gnum
+                    FROM game_batting_logs
+                    WHERE at_bats > 0 AND season = ?
+                ) numbered
+                WHERE gnum <= ?
+                GROUP BY player_id, season
+                HAVING total_hr >= ?
+            ) sub
+            JOIN players p ON sub.player_id = p.player_id
+            WHERE sub.player_id != ?
+            LIMIT 1
+        """, (check_season, games, hr, exclude_pid)).fetchone()
 
-    if row:
-        return {"name": row[0], "season": row[1], "value": int(row[2])}
+        if row:
+            return {"name": row[0], "season": row[1], "value": int(row[2])}
+
     return None
 
 
 def _find_last_sb_pace(conn, exclude_pid, season, games, sb):
-    """Find last player with >= sb stolen bases through <= games games.
-    Compares against full-season players (400+ PA) who stole this many."""
-    row = conn.execute("""
-        SELECT p.name, s.season, s.stolen_bases
-        FROM season_batting_stats s
-        JOIN players p ON s.player_id = p.player_id
-        WHERE s.season < ? AND s.player_id != ?
-        AND s.plate_appearances >= 400
-        AND s.stolen_bases >= ?
-        ORDER BY s.season DESC
-        LIMIT 1
-    """, (season, exclude_pid, sb)).fetchone()
+    """Find last player with >= sb stolen bases through first N games.
+    Scans one year at a time working backwards."""
+    for check_season in range(season - 1, season - 26, -1):
+        row = conn.execute("""
+            SELECT p.name, sub.season, sub.total_sb FROM (
+                SELECT player_id, season, SUM(stolen_bases) as total_sb
+                FROM (
+                    SELECT player_id, season, stolen_bases,
+                           ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY date) as gnum
+                    FROM game_batting_logs
+                    WHERE season = ?
+                ) numbered
+                WHERE gnum <= ?
+                GROUP BY player_id, season
+                HAVING total_sb >= ?
+            ) sub
+            JOIN players p ON sub.player_id = p.player_id
+            WHERE sub.player_id != ?
+            LIMIT 1
+        """, (check_season, games, sb, exclude_pid)).fetchone()
 
-    if row:
-        return {"name": row[0], "season": row[1], "value": int(row[2])}
+        if row:
+            return {"name": row[0], "season": row[1], "value": int(row[2])}
+
     return None
 
 
 def _find_last_power_speed(conn, exclude_pid, season, games, hr, sb):
-    """Find last player with >= hr HR AND >= sb SB.
-    Compares against full-season players (400+ PA) with both stats this high."""
-    row = conn.execute("""
-        SELECT p.name, s.season, s.home_runs, s.stolen_bases
-        FROM season_batting_stats s
-        JOIN players p ON s.player_id = p.player_id
-        WHERE s.season < ? AND s.player_id != ?
-        AND s.plate_appearances >= 400
-        AND s.home_runs >= ? AND s.stolen_bases >= ?
-        ORDER BY s.season DESC
-        LIMIT 1
-    """, (season, exclude_pid, hr, sb)).fetchone()
+    """Find last player with >= hr HR AND >= sb SB through first N games.
+    Scans one year at a time working backwards."""
+    for check_season in range(season - 1, season - 26, -1):
+        row = conn.execute("""
+            SELECT p.name, sub.season, sub.total_hr, sub.total_sb FROM (
+                SELECT player_id, season,
+                       SUM(home_runs) as total_hr, SUM(stolen_bases) as total_sb
+                FROM (
+                    SELECT player_id, season, home_runs, stolen_bases,
+                           ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY date) as gnum
+                    FROM game_batting_logs
+                    WHERE at_bats > 0 AND season = ?
+                ) numbered
+                WHERE gnum <= ?
+                GROUP BY player_id, season
+                HAVING total_hr >= ? AND total_sb >= ?
+            ) sub
+            JOIN players p ON sub.player_id = p.player_id
+            WHERE sub.player_id != ?
+            LIMIT 1
+        """, (check_season, games, hr, sb, exclude_pid)).fetchone()
 
-    if row:
-        return {"name": row[0], "season": row[1], "hr": int(row[2]), "sb": int(row[3])}
+        if row:
+            return {"name": row[0], "season": row[1], "hr": int(row[2]), "sb": int(row[3])}
+
     return None
 
 
