@@ -3091,7 +3091,12 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
     rows = cur.fetchall()
     if not rows:
         season_note = f" in {plan.season}" if plan.season else ""
-        return f"No players found with games meeting that criteria{season_note}." + _empty_result_pills(plan)
+        extra_pills = ""
+        if col == "strikeouts" and plan.is_pitching:
+            extra_pills = f"\n[SUGGEST]most {threshold}+ K games by a hitter[/SUGGEST]"
+        elif col == "strikeouts" and not plan.is_pitching:
+            extra_pills = f"\n[SUGGEST]most {threshold}+ K games by a pitcher[/SUGGEST]"
+        return f"No players found with games meeting that criteria{season_note}.{extra_pills}" + _empty_result_pills(plan)
 
     # Total count of such games
     cur.execute(
