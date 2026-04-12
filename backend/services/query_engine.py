@@ -2425,10 +2425,15 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
             display_seasons = seasons[-max_seasons:]  # keep most recent
 
     headers = []
+    single_stat = len(stat_cols) == 1
     for szn in display_seasons:
         yr_label = f"'{str(szn)[-2:]}"
         for col in stat_cols:
-            headers.append(f"{_labels.get(col, col)} {yr_label}")
+            # If only one stat, just show the year — stat is obvious from the query
+            if single_stat:
+                headers.append(yr_label)
+            else:
+                headers.append(f"{_labels.get(col, col)} {yr_label}")
     parts.append("[LEADERBOARD]")
     parts.append("HEADER: " + ", ".join(headers))
 
@@ -2449,6 +2454,11 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
 
     parts.append("[/LEADERBOARD]")
     parts.append(f"\n{len(results)} player{'s' if len(results) != 1 else ''} qualified.")
+
+    # See-also for all-time version
+    first_label = _labels.get(conditions[0][0], conditions[0][0])
+    thresh_display = int(conditions[0][2]) if conditions[0][2] == int(conditions[0][2]) else conditions[0][2]
+    parts.insert(1, f"[DIDYOUMEAN]{thresh_display}+ {first_label} in {n_seasons} straight seasons all time[/DIDYOUMEAN]")
 
     return "\n".join(parts)
 
