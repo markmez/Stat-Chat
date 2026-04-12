@@ -183,7 +183,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
         ops = obp_val + slg
         cfg = SCAN_CONFIG["slash_line_season"]
         if games >= cfg["gate_min_games"] and ops >= cfg["gate_ops"] and not _check_cooldown(pid, "ops_season"):
-            last_match = _find_last_ops_match(conn, pid, season, ops)
+            last_match = _find_last_ops_match(conn, pid, season, games, ops)
             ops_display = f"{ops:.3f}"
             if last_match:
                 years_ago = season - last_match["season"]
@@ -195,7 +195,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "detail": (
                             f"{pname} is posting a {ops_display} OPS "
                             f"({_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)}) "
-                            f"through {games} games — the last qualified hitter with an OPS that high was "
+                            f"through {games} games — the last player to post an OPS that high through {games} games was "
                             f"{last_match['name']} in {last_match['season']} ({years_ago} years ago)."
                         ),
                     })
@@ -207,7 +207,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "detail": (
                             f"{pname} is posting a {ops_display} OPS "
                             f"({_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)}) "
-                            f"through {games} games — the last to do that was "
+                            f"through {games} games — the last to do that through {games} games was "
                             f"{last_match['name']} in {last_match['season']}."
                         ),
                     })
@@ -219,7 +219,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                     "detail": (
                         f"{pname} is posting a {ops_display} OPS "
                         f"({_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)}) "
-                        f"through {games} games — no qualified hitter in our records has matched that."
+                        f"through {games} games — no player in our records has posted an OPS that high through {games} games."
                     ),
                 })
             # Set cooldown if any event was generated
@@ -353,18 +353,41 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
 # Historical comparison queries
 # ---------------------------------------------------------------------------
 
-def _find_last_ops_match(conn, exclude_pid, season, ops):
-    """Find the most recent qualified hitter (400+ PA) with OPS >= the given value."""
+def _find_last_ops_match(conn, exclude_pid, season, games, ops):
+    """Find the most recent player with OPS >= the given value through
+    the same number of games (first N games of a season).
+
+    Uses game logs with ROW_NUMBER — bounded to last 25 years and only
+    checking the specific OPS threshold, so the query is targeted.
+    """
+    min_season = season - 25
     row = conn.execute("""
-        SELECT p.name, s.season
-        FROM season_batting_stats s
-        JOIN players p ON s.player_id = p.player_id
-        WHERE s.season < ? AND s.player_id != ?
-        AND s.plate_appearances >= 400
-        AND s.ops >= ?
-        ORDER BY s.season DESC
+        SELECT p.name, sub.season FROM (
+            SELECT player_id, season,
+                   CAST(SUM(hits) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) AS REAL) /
+                       NULLIF(SUM(at_bats) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) + SUM(COALESCE(sacrifice_flies, 0)), 0)
+                   +
+                   CAST(SUM(hits) - SUM(doubles) - SUM(triples) - SUM(home_runs)
+                        + 2*SUM(doubles) + 3*SUM(triples) + 4*SUM(home_runs) AS REAL) /
+                       NULLIF(SUM(at_bats), 0)
+                   AS ops_calc
+            FROM (
+                SELECT g.player_id, g.season, g.hits, g.at_bats, g.walks,
+                       g.hit_by_pitch, g.sacrifice_flies, g.doubles, g.triples, g.home_runs,
+                       ROW_NUMBER() OVER (PARTITION BY g.player_id, g.season ORDER BY g.date) as gnum
+                FROM game_batting_logs g
+                WHERE g.at_bats > 0 AND g.season >= ? AND g.season < ?
+            ) numbered
+            WHERE gnum <= ?
+            GROUP BY player_id, season
+            HAVING SUM(at_bats) >= ?
+        ) sub
+        JOIN players p ON sub.player_id = p.player_id
+        WHERE sub.player_id != ?
+        AND sub.ops_calc >= ?
+        ORDER BY sub.season DESC
         LIMIT 1
-    """, (season, exclude_pid, ops)).fetchone()
+    """, (min_season, season, games, max(games * 2, 20), exclude_pid, ops)).fetchone()
 
     if row:
         return {"name": row[0], "season": row[1]}
