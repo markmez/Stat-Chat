@@ -1106,6 +1106,7 @@ def decompose(question: str) -> QueryPlan:
             plan.game_log_stat = "rbi"
         elif any(w in context for w in ["strikeout", "k"]):
             plan.game_log_stat = "strikeouts"
+            plan.is_pitching = True  # 10-K games = pitching
         elif any(w in context for w in ["xbh", "extra base", "extra-base"]):
             plan.game_log_stat = "xbh"
         elif any(w in context for w in ["walk", "bb"]):
