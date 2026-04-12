@@ -31,9 +31,9 @@ DB_PATH = "/data/baseball_stats_full.db"
 SCAN_CONFIG = {
     "slash_line_season": {
         "description": "OPS through first N games of season",
-        "gate": "OPS ≥ .950, games ≥ 10",
-        "interesting_if": "Nobody in MLB with OPS this high over a full season in 5+ years",
-        "gate_ops": 0.950,
+        "gate": "Dynamic: OPS ≥ 1.200 (≤15g), ≥ 1.100 (≤30g), ≥ 1.000 (≤50g), ≥ .950 (50+g). Games ≥ 10.",
+        "interesting_if": "Nobody with OPS this high through same game count in 5+ years",
+        "gate_ops": "dynamic",
         "gate_min_games": 10,
         "min_years_mlb": 5,
         "min_years_team": 3,
@@ -182,7 +182,16 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
         # === OPS (season start) ===
         ops = obp_val + slg
         cfg = SCAN_CONFIG["slash_line_season"]
-        if games >= cfg["gate_min_games"] and ops >= cfg["gate_ops"] and not _check_cooldown(pid, "ops_season"):
+        # Dynamic gate: higher bar early (small samples inflate OPS)
+        if games <= 15:
+            ops_gate = 1.200
+        elif games <= 30:
+            ops_gate = 1.100
+        elif games <= 50:
+            ops_gate = 1.000
+        else:
+            ops_gate = 0.950
+        if games >= cfg["gate_min_games"] and ops >= ops_gate and not _check_cooldown(pid, "ops_season"):
             last_match = _find_last_ops_match(conn, pid, season, games, ops)
             ops_display = f"{ops:.3f}"
             if last_match:

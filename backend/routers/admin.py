@@ -2263,8 +2263,8 @@ async def records_sandbox(
     &bull; All require contribution to the stat on that date<br>
     <br>
     <b>Deep Scans — OPS (season)</b><br>
-    &bull; Gate: OPS &ge; .950, games &ge; 10<br>
-    &bull; Checks: last qualified hitter (400+ PA) with OPS this high<br>
+    &bull; Gate: Dynamic — OPS &ge; 1.200 (&le;15g), &ge; 1.100 (&le;30g), &ge; 1.000 (&le;50g), &ge; .950 (50+g). Games &ge; 10.<br>
+    &bull; Checks: last player with OPS this high through same game count (per-year scan)<br>
     &bull; Interesting if: 5+ years MLB, 3+ years team<br>
     <br>
     <b>Deep Scans — OPS (PELT streak)</b><br>
