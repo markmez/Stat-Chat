@@ -123,15 +123,18 @@ def run_deep_scans(conn, season, target_date):
     for row in bat_games:
         pid, pname, team = row[0], row[1], row[2]
 
-        # Get season stats through this date
+        # Get cumulative stats through this date from game logs
         season_row = conn.execute("""
-            SELECT games, at_bats, hits, home_runs, walks, stolen_bases,
-                   batting_avg, obp, slg, ops, doubles, triples,
-                   hit_by_pitch, sacrifice_flies
-            FROM season_batting_stats
-            WHERE player_id = ? AND season = ?
-        """, (pid, season)).fetchone()
-        if not season_row:
+            SELECT COUNT(*) as games,
+                   SUM(at_bats) as ab, SUM(hits) as h, SUM(home_runs) as hr,
+                   SUM(walks) as bb, SUM(stolen_bases) as sb,
+                   SUM(doubles) as d2b, SUM(triples) as d3b,
+                   SUM(COALESCE(hit_by_pitch, 0)) as hbp,
+                   SUM(COALESCE(sacrifice_flies, 0)) as sf
+            FROM game_batting_logs
+            WHERE player_id = ? AND season = ? AND date <= ?
+        """, (pid, season, target_date)).fetchone()
+        if not season_row or not season_row[1]:
             continue
 
         games = season_row[0] or 0
@@ -140,9 +143,16 @@ def run_deep_scans(conn, season, target_date):
         hr = season_row[3] or 0
         bb = season_row[4] or 0
         sb = season_row[5] or 0
-        avg = season_row[6] or 0
-        obp_val = season_row[7] or 0
-        slg = season_row[8] or 0
+        d2b = season_row[6] or 0
+        d3b = season_row[7] or 0
+        hbp = season_row[8] or 0
+        sf = season_row[9] or 0
+
+        # Compute rate stats
+        avg = hits / ab if ab > 0 else 0
+        obp_val = (hits + bb + hbp) / (ab + bb + hbp + sf) if (ab + bb + hbp + sf) > 0 else 0
+        slg_num = (hits - d2b - d3b - hr) + 2*d2b + 3*d3b + 4*hr
+        slg = slg_num / ab if ab > 0 else 0
 
         # === SLASH LINE (season start) ===
         cfg = SCAN_CONFIG["slash_line_season"]
@@ -256,13 +266,15 @@ def run_deep_scans(conn, season, target_date):
         if not is_start:
             continue  # Only starters for now
 
-        # Get season pitching stats
+        # Get cumulative pitching stats through this date
         pitch_season = conn.execute("""
-            SELECT games_started, strikeouts, walks, earned_runs, ip_outs, era
-            FROM season_pitching_stats
-            WHERE player_id = ? AND season = ?
-        """, (pid, season)).fetchone()
-        if not pitch_season:
+            SELECT SUM(CASE WHEN is_start = 1 THEN 1 ELSE 0 END) as starts,
+                   SUM(strikeouts) as k, SUM(walks) as bb,
+                   SUM(earned_runs) as er, SUM(ip_outs) as ip_outs
+            FROM game_pitching_logs
+            WHERE player_id = ? AND season = ? AND date <= ?
+        """, (pid, season, target_date)).fetchone()
+        if not pitch_season or not pitch_season[0]:
             continue
 
         starts = pitch_season[0] or 0
@@ -270,7 +282,7 @@ def run_deep_scans(conn, season, target_date):
         total_bb = pitch_season[2] or 0
         total_er = pitch_season[3] or 0
         total_ip_outs = pitch_season[4] or 0
-        era = pitch_season[5] or 0
+        era = (total_er * 27) / total_ip_outs if total_ip_outs > 0 else 99
 
         cfg_p = SCAN_CONFIG["pitching_dominance"]
         k_per_start = total_k / max(starts, 1)
