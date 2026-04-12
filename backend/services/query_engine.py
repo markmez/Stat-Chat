@@ -3091,12 +3091,12 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
     rows = cur.fetchall()
     if not rows:
         season_note = f" in {plan.season}" if plan.season else ""
-        extra_pills = ""
+        extra = ""
         if col == "strikeouts" and plan.is_pitching:
-            extra_pills = f"\n[SUGGEST]most {threshold}+ K games by a hitter[/SUGGEST]"
+            extra = f"\n[DIDYOUMEAN]most {threshold}+ K games by a hitter[/DIDYOUMEAN]"
         elif col == "strikeouts" and not plan.is_pitching:
-            extra_pills = f"\n[SUGGEST]most {threshold}+ K games by a pitcher[/SUGGEST]"
-        return f"No players found with games meeting that criteria{season_note}.{extra_pills}" + _empty_result_pills(plan)
+            extra = f"\n[DIDYOUMEAN]most {threshold}+ K games by a pitcher[/DIDYOUMEAN]"
+        return f"No players found with games meeting that criteria{season_note}.{extra}" + _empty_result_pills(plan)
 
     # Count total qualifying players (not just the limited set)
     cur.execute(
@@ -3126,11 +3126,11 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
         parts.append(f"ROW {i+1}. {player_name}: [DRILLDOWN]{drilldown_query}[/DRILLDOWN]{count}")
     parts.append("[/LEADERBOARD]")
 
-    # Suggestion pills
-    if col == "strikeouts" and not plan.is_pitching:
-        parts.append(f"\n[SUGGEST]most {threshold}+ K games by a pitcher[/SUGGEST]")
-    elif col == "strikeouts" and plan.is_pitching:
-        parts.append(f"\n[SUGGEST]most {threshold}+ K games by a hitter[/SUGGEST]")
+    # See-also for K disambiguation (prominent, above results)
+    if col == "strikeouts" and plan.is_pitching:
+        parts.insert(0, f"[DIDYOUMEAN]most {threshold}+ K games by a hitter[/DIDYOUMEAN]")
+    elif col == "strikeouts" and not plan.is_pitching:
+        parts.insert(0, f"[DIDYOUMEAN]most {threshold}+ K games by a pitcher[/DIDYOUMEAN]")
     parts.append(f"[SUGGEST]{stat_name} leaders[/SUGGEST]")
 
     return "\n".join(parts)
