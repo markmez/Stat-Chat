@@ -3085,8 +3085,8 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
         f"JOIN players p ON g.player_id = p.player_id "
         f"WHERE {col_expr} >= ?{season_filter} "
         f"GROUP BY g.player_id "
-        f"ORDER BY game_count DESC LIMIT ?",
-        tuple(params + [plan.limit]),
+        f"ORDER BY game_count DESC",
+        tuple(params),
     )
     rows = cur.fetchall()
     if not rows:
@@ -3108,13 +3108,9 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
     total_players = cur.fetchone()[0]
 
     scope_label = str(plan.season) if plan.season else "All-Time"
-    shown = len(rows)
-    if shown < total_players:
-        count_note = f"Showing top {shown} of {total_players} players"
-    else:
-        count_note = f"{total_players} player{'s' if total_players != 1 else ''}"
-    title = f"**Most {threshold}+ {stat_name} Games ({scope_label})**\n{count_note}.\n"
+    title = f"**Most {threshold}+ {stat_name} Games ({scope_label})**"
     parts = [title]
+    parts.append(f"{total_players} players.\n")
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
     parts.append("HEADER: Games")

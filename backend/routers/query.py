@@ -622,9 +622,9 @@ def _strip_bold_title(text: str) -> str:
         rest_start = 1
         if len(lines) > 1:
             next_line = lines[1].strip()
-            count_match = _re.match(r'^(\d+)\s+matched\.?$', next_line)
+            count_match = _re.match(r'^(\d+)\s+(matched|players?)\.?$', next_line)
             if count_match:
-                count_line = f"{count_match.group(1)} matched"
+                count_line = f"{count_match.group(1)} {count_match.group(2)}"
                 rest_start = 2
 
         # Build context line
