@@ -3085,7 +3085,7 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
         f"JOIN players p ON g.player_id = p.player_id "
         f"WHERE {col_expr} >= ?{season_filter} "
         f"GROUP BY g.player_id "
-        f"ORDER BY game_count DESC",
+        f"ORDER BY game_count DESC LIMIT 500",
         tuple(params),
     )
     rows = cur.fetchall()
