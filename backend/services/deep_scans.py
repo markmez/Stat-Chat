@@ -305,37 +305,25 @@ def run_deep_scans(conn, season, target_date):
 
 def _find_last_slash_match(conn, exclude_pid, season, games, avg, obp, slg):
     """Find the most recent player (before this season) who had AVG/OBP/SLG
-    all >= the given values through the same number of games."""
-    # Build per-player season stats through N games using game logs
-    # This is expensive but accurate
-    # Limit to last 25 years for performance — if nobody in 25 years, that's the story
-    min_season = season - 25
+    all >= the given values through a similar number of games.
+
+    Uses season_batting_stats with a game count window (±5 games) for performance.
+    Not exact "first N games" but close enough and fast.
+    """
+    min_games = max(games - 5, 5)
+    max_games = games + 5
     row = conn.execute("""
-        SELECT p.name, sub.season FROM (
-            SELECT player_id, season,
-                   CAST(SUM(hits) AS REAL) / NULLIF(SUM(at_bats), 0) as avg,
-                   CAST(SUM(hits) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) AS REAL) /
-                       NULLIF(SUM(at_bats) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) + SUM(COALESCE(sacrifice_flies, 0)), 0) as obp,
-                   CAST(SUM(hits) - SUM(doubles) - SUM(triples) - SUM(home_runs)
-                        + 2*SUM(doubles) + 3*SUM(triples) + 4*SUM(home_runs) AS REAL) /
-                       NULLIF(SUM(at_bats), 0) as slg
-            FROM (
-                SELECT g.player_id, g.season, g.hits, g.at_bats, g.walks,
-                       g.hit_by_pitch, g.sacrifice_flies, g.doubles, g.triples, g.home_runs,
-                       ROW_NUMBER() OVER (PARTITION BY g.player_id, g.season ORDER BY g.date) as gnum
-                FROM game_batting_logs g
-                WHERE g.at_bats > 0 AND g.season >= ? AND g.season < ?
-            ) numbered
-            WHERE gnum <= ?
-            GROUP BY player_id, season
-            HAVING SUM(at_bats) >= ?
-        ) sub
-        JOIN players p ON sub.player_id = p.player_id
-        WHERE sub.player_id != ?
-        AND sub.avg >= ? AND sub.obp >= ? AND sub.slg >= ?
-        ORDER BY sub.season DESC
+        SELECT p.name, s.season
+        FROM season_batting_stats s
+        JOIN players p ON s.player_id = p.player_id
+        WHERE s.season < ? AND s.player_id != ?
+        AND s.games BETWEEN ? AND ?
+        AND s.batting_avg >= ? AND s.obp >= ? AND s.slg >= ?
+        AND s.plate_appearances >= ?
+        ORDER BY s.season DESC
         LIMIT 1
-    """, (min_season, season, games, max(games * 2, 20), exclude_pid, avg, obp, slg)).fetchone()
+    """, (season, exclude_pid, min_games, max_games, avg, obp, slg,
+          max(games * 2, 20))).fetchone()
 
     if row:
         return {"name": row[0], "season": row[1]}
@@ -343,26 +331,17 @@ def _find_last_slash_match(conn, exclude_pid, season, games, avg, obp, slg):
 
 
 def _find_last_hr_pace(conn, exclude_pid, season, games, hr):
-    """Find last player with >= hr home runs through <= games games."""
-    min_season = season - 25
+    """Find last player with >= hr home runs through <= games games.
+    Uses season_batting_stats with game count window for performance."""
     row = conn.execute("""
-        SELECT p.name, sub.season FROM (
-            SELECT player_id, season, SUM(home_runs) as total_hr
-            FROM (
-                SELECT player_id, season, home_runs,
-                       ROW_NUMBER() OVER (PARTITION BY player_id, season ORDER BY date) as gnum
-                FROM game_batting_logs
-                WHERE at_bats > 0 AND season >= ? AND season < ?
-            )
-            WHERE gnum <= ?
-            GROUP BY player_id, season
-            HAVING total_hr >= ?
-        ) sub
-        JOIN players p ON sub.player_id = p.player_id
-        WHERE sub.player_id != ?
-        ORDER BY sub.season DESC
+        SELECT p.name, s.season
+        FROM season_batting_stats s
+        JOIN players p ON s.player_id = p.player_id
+        WHERE s.season < ? AND s.player_id != ?
+        AND s.games <= ? AND s.home_runs >= ?
+        ORDER BY s.season DESC
         LIMIT 1
-    """, (min_season, season, games, hr, exclude_pid)).fetchone()
+    """, (season, exclude_pid, games, hr)).fetchone()
 
     if row:
         return {"name": row[0], "season": row[1]}
@@ -370,26 +349,17 @@ def _find_last_hr_pace(conn, exclude_pid, season, games, hr):
 
 
 def _find_last_sb_pace(conn, exclude_pid, season, games, sb):
-    """Find last player with >= sb stolen bases through <= games games."""
-    min_season = season - 25
+    """Find last player with >= sb stolen bases through <= games games.
+    Uses season_batting_stats with game count window for performance."""
     row = conn.execute("""
-        SELECT p.name, sub.season FROM (
-            SELECT player_id, season, SUM(stolen_bases) as total_sb
-            FROM (
-                SELECT player_id, season, stolen_bases,
-                       ROW_NUMBER() OVER (PARTITION BY player_id, season ORDER BY date) as gnum
-                FROM game_batting_logs
-                WHERE season >= ? AND season < ?
-            )
-            WHERE gnum <= ?
-            GROUP BY player_id, season
-            HAVING total_sb >= ?
-        ) sub
-        JOIN players p ON sub.player_id = p.player_id
-        WHERE sub.player_id != ?
-        ORDER BY sub.season DESC
+        SELECT p.name, s.season
+        FROM season_batting_stats s
+        JOIN players p ON s.player_id = p.player_id
+        WHERE s.season < ? AND s.player_id != ?
+        AND s.games <= ? AND s.stolen_bases >= ?
+        ORDER BY s.season DESC
         LIMIT 1
-    """, (min_season, season, games, sb, exclude_pid)).fetchone()
+    """, (season, exclude_pid, games, sb)).fetchone()
 
     if row:
         return {"name": row[0], "season": row[1]}
@@ -397,27 +367,17 @@ def _find_last_sb_pace(conn, exclude_pid, season, games, sb):
 
 
 def _find_last_power_speed(conn, exclude_pid, season, games, hr, sb):
-    """Find last player with >= hr HR AND >= sb SB through <= games games."""
-    min_season = season - 25
+    """Find last player with >= hr HR AND >= sb SB through <= games games.
+    Uses season_batting_stats with game count window for performance."""
     row = conn.execute("""
-        SELECT p.name, sub.season FROM (
-            SELECT player_id, season,
-                   SUM(home_runs) as total_hr, SUM(stolen_bases) as total_sb
-            FROM (
-                SELECT player_id, season, home_runs, stolen_bases,
-                       ROW_NUMBER() OVER (PARTITION BY player_id, season ORDER BY date) as gnum
-                FROM game_batting_logs
-                WHERE at_bats > 0 AND season >= ? AND season < ?
-            )
-            WHERE gnum <= ?
-            GROUP BY player_id, season
-            HAVING total_hr >= ? AND total_sb >= ?
-        ) sub
-        JOIN players p ON sub.player_id = p.player_id
-        WHERE sub.player_id != ?
-        ORDER BY sub.season DESC
+        SELECT p.name, s.season
+        FROM season_batting_stats s
+        JOIN players p ON s.player_id = p.player_id
+        WHERE s.season < ? AND s.player_id != ?
+        AND s.games <= ? AND s.home_runs >= ? AND s.stolen_bases >= ?
+        ORDER BY s.season DESC
         LIMIT 1
-    """, (min_season, season, games, hr, sb, exclude_pid)).fetchone()
+    """, (season, exclude_pid, games, hr, sb)).fetchone()
 
     if row:
         return {"name": row[0], "season": row[1]}
@@ -427,28 +387,18 @@ def _find_last_power_speed(conn, exclude_pid, season, games, hr, sb):
 def _find_last_pitching_dominance(conn, exclude_pid, season, starts, era, total_k):
     """Find last pitcher with ERA <= this and K >= this through same number of starts."""
     k_per_start = total_k / max(starts, 1)
-    min_season = season - 25
+    # Use season_pitching_stats — compare full-season ERA and K with similar starts count
     row = conn.execute("""
-        SELECT p.name, sub.season FROM (
-            SELECT player_id, season,
-                   CAST(SUM(earned_runs) AS REAL) * 27 / NULLIF(SUM(ip_outs), 0) as era,
-                   SUM(strikeouts) as total_k,
-                   COUNT(*) as num_starts
-            FROM (
-                SELECT player_id, season, earned_runs, ip_outs, strikeouts,
-                       ROW_NUMBER() OVER (PARTITION BY player_id, season ORDER BY date) as snum
-                FROM game_pitching_logs
-                WHERE is_start = 1 AND season >= ? AND season < ?
-            )
-            WHERE snum <= ?
-            GROUP BY player_id, season
-        ) sub
-        JOIN players p ON sub.player_id = p.player_id
-        WHERE sub.player_id != ?
-        AND sub.era <= ? AND sub.total_k >= ?
-        ORDER BY sub.season DESC
+        SELECT p.name, sp.season
+        FROM season_pitching_stats sp
+        JOIN players p ON sp.player_id = p.player_id
+        WHERE sp.season < ? AND sp.player_id != ?
+        AND sp.games_started BETWEEN ? AND ?
+        AND sp.era <= ? AND sp.strikeouts >= ?
+        ORDER BY sp.season DESC
         LIMIT 1
-    """, (min_season, season, starts, exclude_pid, era, total_k)).fetchone()
+    """, (season, exclude_pid, max(starts - 2, 1), starts + 2,
+          era, total_k)).fetchone()
 
     if row:
         return {"name": row[0], "season": row[1]}
