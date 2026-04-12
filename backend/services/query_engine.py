@@ -2790,7 +2790,7 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
                                 filter_desc += f" and sub-{ef_val} {ef['stat'].display_abbrev}"
                             else:
                                 filter_desc += f" and {ef_val}+ {ef['stat'].display_abbrev}"
-                        parts = [f"**No one has reached {filter_desc} yet in {season}.**"]
+                        parts = [f"No one has reached {filter_desc} yet in {season}."]
                         parts.append(f"Through {max_games} games, {len(pace_rows)} {'player is' if len(pace_rows) == 1 else 'players are'} on pace:\n")
                         parts.append("[LEADERBOARD]")
                         # Header: counting stats get Pace column, rate stats don't
