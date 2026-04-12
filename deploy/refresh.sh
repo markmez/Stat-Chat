@@ -21,26 +21,24 @@ HC_PING_URL="https://hc-ping.com/d3f0c82b-235a-477f-8ed5-3f6ac4c6daa7"
 LOCK="/tmp/statchat_detection.lock"
 PIPELINE_LOCK="/tmp/statchat_pipeline.lock"
 
-# Prevent concurrent pipeline runs — retry once after 30 min if locked
-if [ -f "$PIPELINE_LOCK" ]; then
+# Prevent concurrent pipeline runs — retry every 30 min up to 3 times
+RETRY=0
+MAX_RETRIES=3
+while [ -f "$PIPELINE_LOCK" ]; do
     # Check if the lock is stale (older than 90 minutes)
     if [ "$(find "$PIPELINE_LOCK" -mmin +90 2>/dev/null)" ]; then
         echo "Removing stale pipeline lock (>90 min old)"
         rm -f "$PIPELINE_LOCK"
-    else
-        echo "Pipeline locked — waiting 30 minutes to retry..."
-        sleep 1800
-        if [ -f "$PIPELINE_LOCK" ]; then
-            if [ "$(find "$PIPELINE_LOCK" -mmin +90 2>/dev/null)" ]; then
-                echo "Removing stale pipeline lock after retry wait"
-                rm -f "$PIPELINE_LOCK"
-            else
-                echo "Pipeline still locked after 30 min — skipping"
-                exit 0
-            fi
-        fi
+        break
     fi
-fi
+    RETRY=$((RETRY + 1))
+    if [ $RETRY -gt $MAX_RETRIES ]; then
+        echo "Pipeline still locked after $MAX_RETRIES retries — giving up"
+        exit 0
+    fi
+    echo "Pipeline locked — retry $RETRY/$MAX_RETRIES in 30 minutes..."
+    sleep 1800
+done
 
 echo ""
 echo "=== Pipeline refresh starting at $(date) ==="
