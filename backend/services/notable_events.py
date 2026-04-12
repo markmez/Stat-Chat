@@ -1121,10 +1121,15 @@ def detect_hot_streaks_pelt(conn, season, latest_date=None):
     """, (season,)).fetchall()
 
     for name, ops, avg, num_games, hr, h, ab, obp, slg, season_ops in rows:
+        # Build one-line summary with slash line + HR if any
+        if avg and obp and slg:
+            slash = f".{int(avg*1000):03d}/.{int(obp*1000):03d}/.{int(slg*1000):03d}"
+        else:
+            slash = f"{_fmt_ops(ops)} OPS"
+        hr_part = f" with {hr} HR" if hr else ""
         events.append({
-            "headline": f"{name} is on a tear — .{int(avg*1000):03d}/.{int(obp*1000):03d}/.{int(slg*1000):03d} over the last {num_games} games"
-                if avg and obp and slg else f"{name} is on a tear — {_fmt_ops(ops)} OPS over the last {num_games} games",
-            "detail": f"Season OPS is {season_ops:.3f}. Current stretch: {hr or 0} HR in {num_games} games.",
+            "headline": f"{name} is on a tear — {slash}{hr_part} over the last {num_games} games.",
+            "detail": "",
             "category": "Streak",
             "game_date": latest_date,
             "player_names": [name],
