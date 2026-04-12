@@ -2004,8 +2004,18 @@ def detect_all(db_path=None, season=None, from_poll=False):
     except Exception as e:
         print(f"    Historical scans failed: {e}")
 
-    # Tonight's matchup previews
+    # Tonight's matchup previews — wipe previous previews for today first
+    # (multiple pipeline runs would otherwise accumulate 3 per run)
     print("  Running matchup previews...")
+    today_str = date.today().isoformat()
+    try:
+        conn.execute("""
+            DELETE FROM notable_events
+            WHERE detection_type = 'matchup_preview' AND game_date = ?
+        """, (today_str,))
+        conn.commit()
+    except Exception:
+        pass
     try:
         preview_events = detect_matchup_previews(conn, season)
         events += preview_events
