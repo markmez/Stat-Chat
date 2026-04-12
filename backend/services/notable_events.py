@@ -1941,7 +1941,8 @@ def detect_all(db_path=None, season=None, from_poll=False):
     events += detect_onbase_streaks(conn, season, latest_date, min_games=onbase_streak_min)
     events += detect_hr_streaks(conn, season, latest_date, min_games=hr_streak_min)
     events += detect_pitching_streaks(conn, season, latest_date)
-    events += detect_season_pace(conn, season, latest_date)
+    # detect_season_pace disabled — replaced by records/milestones system
+    # which requires contribution on the date and has proper thresholds
     t1_count = len(events)
     print(f"    Tier 1: {t1_count} events")
 
