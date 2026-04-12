@@ -1945,33 +1945,29 @@ def _simulate_records_for_date(conn, target_date):
             if game_val <= 0:
                 continue  # Must have contributed today
 
-            # Sum seasons with any franchise code (team field may be "NYA" or "NYA/BOS")
-            team_clauses = []
-            team_params_list = []
-            for fc in franchise_codes:
-                team_clauses.append(f"(team = ? OR team LIKE ? OR team LIKE ? OR team LIKE ?)")
-                team_params_list.extend([fc, f"{fc}/%", f"%/{fc}", f"%/{fc}/%"])
-            team_where = " OR ".join(team_clauses)
-
+            # Career total through target date using game logs
             career_total = conn.execute(f"""
-                SELECT COALESCE(SUM({stat_col}), 0) FROM season_batting_stats
-                WHERE player_id = ? AND season <= ? AND ({team_where})
-            """, [pid, season] + team_params_list).fetchone()[0]
+                SELECT COALESCE(SUM({stat_col}), 0) FROM game_batting_logs
+                WHERE player_id = ? AND date <= ?
+            """, (pid, target_date)).fetchone()[0]
 
             # Check records across all franchise codes
             fc_placeholders = ",".join("?" * len(franchise_codes))
             rec = conn.execute(f"""
-                SELECT value, player_name FROM team_records
+                SELECT value, player_name, player_id FROM team_records
                 WHERE team_code IN ({fc_placeholders}) AND stat = ? AND record_type = 'career'
                 ORDER BY value DESC LIMIT 1
             """, franchise_codes + [stat_col]).fetchone()
             if rec and career_total:
+                # Skip if the record holder is the current player
+                if rec[2] == pid:
+                    continue
                 diff = int(rec[0]) - int(career_total)
                 if 1 <= diff <= 3:
                     events.append({
                         "type": "record_approach",
                         "player": pname, "team": team_name,
-                        "detail": f"{pname} {label}: {int(career_total)} — {diff} away from {team_name} career record ({rec[1]}: {int(rec[0])})",
+                        "detail": f"{pname} hit {label.replace('home runs', 'a homer').replace('hits', str(game_val) + ' hits').replace('stolen bases', 'a stolen base')}, giving him {int(career_total)} career {label} as a member of the {team_name} — {diff} from the franchise record held by {rec[1]} ({int(rec[0])}).",
                     })
                 elif diff <= 0 and rec[1] != pname:
                     events.append({
@@ -1985,32 +1981,28 @@ def _simulate_records_for_date(conn, target_date):
             if game_val <= 0:
                 continue
 
-            # Sum seasons with any franchise code
-            team_clauses_p = []
-            team_params_p = []
-            for fc in franchise_codes:
-                team_clauses_p.append(f"(team = ? OR team LIKE ? OR team LIKE ? OR team LIKE ?)")
-                team_params_p.extend([fc, f"{fc}/%", f"%/{fc}", f"%/{fc}/%"])
-            team_where_p = " OR ".join(team_clauses_p)
-
+            # Career total through target date using game logs
+            gl_col = game_col if game_col != "win" else "win"
             career_total = conn.execute(f"""
-                SELECT COALESCE(SUM({stat_col}), 0) FROM season_pitching_stats
-                WHERE player_id = ? AND season <= ? AND ({team_where_p})
-            """, [pid, season] + team_params_p).fetchone()[0]
+                SELECT COALESCE(SUM({stat_col if stat_col != 'wins' else 'win'}), 0) FROM game_pitching_logs
+                WHERE player_id = ? AND date <= ?
+            """, (pid, target_date)).fetchone()[0]
 
             fc_placeholders = ",".join("?" * len(franchise_codes))
             rec = conn.execute(f"""
-                SELECT value, player_name FROM team_records
+                SELECT value, player_name, player_id FROM team_records
                 WHERE team_code IN ({fc_placeholders}) AND stat = ? AND record_type = 'career'
                 ORDER BY value DESC LIMIT 1
             """, franchise_codes + [stat_col]).fetchone()
             if rec and career_total:
+                if rec[2] == pid:
+                    continue  # Skip own record
                 diff = int(rec[0]) - int(career_total)
                 if 1 <= diff <= 3:
                     events.append({
                         "type": "record_approach",
                         "player": pname, "team": team_name,
-                        "detail": f"{pname} {label}: {int(career_total)} — {diff} away from {team_name} career record ({rec[1]}: {int(rec[0])})",
+                        "detail": f"{pname} now has {int(career_total)} career {label} with the {team_name} — {diff} from the franchise record held by {rec[1]} ({int(rec[0])}).",
                     })
                 elif diff <= 0 and rec[1] != pname:
                     events.append({
