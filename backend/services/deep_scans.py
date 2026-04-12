@@ -96,9 +96,34 @@ def _format_avg(val):
     return f".{int(val * 1000):03d}"
 
 
-def run_deep_scans(conn, season, target_date):
-    """Run all deep scans for a given date. Returns list of event dicts."""
+def run_deep_scans(conn, season, target_date, cooldowns=None):
+    """Run all deep scans for a given date. Returns list of event dicts.
+
+    cooldowns: optional dict of {(player_id, scan_type): last_fired_date}
+    Pass the same dict across multiple calls to enforce cooldown across dates.
+    """
+    if cooldowns is None:
+        cooldowns = {}
     events = []
+
+    COOLDOWN_DAYS = 5
+
+    def _check_cooldown(pid, scan_type):
+        """Return True if this player+scan is on cooldown."""
+        key = (pid, scan_type)
+        if key not in cooldowns:
+            return False
+        last_date = cooldowns[key]
+        try:
+            from datetime import datetime as _dt
+            last = _dt.strptime(last_date, "%Y-%m-%d")
+            current = _dt.strptime(target_date, "%Y-%m-%d")
+            return (current - last).days < COOLDOWN_DAYS
+        except Exception:
+            return False
+
+    def _set_cooldown(pid, scan_type):
+        cooldowns[(pid, scan_type)] = target_date
 
     # Get players who played on this date
     bat_games = conn.execute("""
@@ -154,10 +179,10 @@ def run_deep_scans(conn, season, target_date):
         slg_num = (hits - d2b - d3b - hr) + 2*d2b + 3*d3b + 4*hr
         slg = slg_num / ab if ab > 0 else 0
 
-        # === SLASH LINE (season start) ===
+        # === OPS (season start) ===
         ops = obp_val + slg
         cfg = SCAN_CONFIG["slash_line_season"]
-        if games >= cfg["gate_min_games"] and ops >= cfg["gate_ops"]:
+        if games >= cfg["gate_min_games"] and ops >= cfg["gate_ops"] and not _check_cooldown(pid, "ops_season"):
             last_match = _find_last_ops_match(conn, pid, season, ops)
             ops_display = f"{ops:.3f}"
             if last_match:
@@ -197,9 +222,12 @@ def run_deep_scans(conn, season, target_date):
                         f"through {games} games — no qualified hitter in our records has matched that."
                     ),
                 })
+            # Set cooldown if any event was generated
+            if any(e.get("scan") == "slash_line_season" and e.get("player") == pname for e in events):
+                _set_cooldown(pid, "ops_season")
 
         # === HR ACCUMULATION ===
-        if (hr >= 8 and games <= 30) or (hr >= 15 and games <= 50):
+        if ((hr >= 8 and games <= 30) or (hr >= 15 and games <= 50)) and not _check_cooldown(pid, "hr_acc"):
             last_hr = _find_last_hr_pace(conn, pid, season, games, hr)
             if last_hr:
                 years_ago = season - last_hr["season"]
@@ -224,9 +252,11 @@ def run_deep_scans(conn, season, target_date):
                         f"no player in our records has reached that mark this quickly."
                     ),
                 })
+            if any(e.get("scan") == "hr_accumulation" and e.get("player") == pname for e in events):
+                _set_cooldown(pid, "hr_acc")
 
         # === SB ACCUMULATION ===
-        if (sb >= 10 and games <= 30) or (sb >= 20 and games <= 50):
+        if ((sb >= 10 and games <= 30) or (sb >= 20 and games <= 50)) and not _check_cooldown(pid, "sb_acc"):
             last_sb = _find_last_sb_pace(conn, pid, season, games, sb)
             if last_sb:
                 years_ago = season - last_sb["season"]
@@ -241,9 +271,11 @@ def run_deep_scans(conn, season, target_date):
                             f"{last_sb['name']} in {last_sb['season']}."
                         ),
                     })
+            if any(e.get("scan") == "sb_accumulation" and e.get("player") == pname for e in events):
+                _set_cooldown(pid, "sb_acc")
 
         # === POWER-SPEED COMBO ===
-        if hr >= 5 and sb >= 5 and games <= 25:
+        if hr >= 5 and sb >= 5 and games <= 25 and not _check_cooldown(pid, "power_speed"):
             last_ps = _find_last_power_speed(conn, pid, season, games, hr, sb)
             if last_ps:
                 years_ago = season - last_ps["season"]
@@ -258,6 +290,8 @@ def run_deep_scans(conn, season, target_date):
                             f"{last_ps['name']} in {last_ps['season']}."
                         ),
                     })
+            if any(e.get("scan") == "power_speed" and e.get("player") == pname for e in events):
+                _set_cooldown(pid, "power_speed")
 
     # --- Pitching scans ---
     for row in pitch_games:
@@ -290,7 +324,7 @@ def run_deep_scans(conn, season, target_date):
         cfg_p = SCAN_CONFIG["pitching_dominance"]
         k_per_start = total_k / max(starts, 1)
 
-        if starts >= cfg_p["gate_min_starts"] and era <= cfg_p["gate_era"] and k_per_start >= cfg_p["gate_k_per_start"]:
+        if starts >= cfg_p["gate_min_starts"] and era <= cfg_p["gate_era"] and k_per_start >= cfg_p["gate_k_per_start"] and not _check_cooldown(pid, "pitch_dom"):
             last_dom = _find_last_pitching_dominance(conn, pid, season, starts, era, total_k)
             if last_dom:
                 years_ago = season - last_dom["season"]
@@ -306,9 +340,10 @@ def run_deep_scans(conn, season, target_date):
                             f"{starts} starts since {last_dom['name']} in {last_dom['season']}."
                         ),
                     })
+                    _set_cooldown(pid, "pitch_dom")
 
     # --- PELT-triggered scans ---
-    pelt_events = _run_pelt_scans(conn, season, target_date, bat_games)
+    pelt_events = _run_pelt_scans(conn, season, target_date, bat_games, cooldowns)
     events += pelt_events
 
     return events
@@ -413,7 +448,7 @@ def _find_last_pitching_dominance(conn, exclude_pid, season, starts, era, total_
     return None
 
 
-def _run_pelt_scans(conn, season, target_date, bat_games):
+def _run_pelt_scans(conn, season, target_date, bat_games, cooldowns=None):
     """Run scans using PELT-detected hot streaks as windows."""
     events = []
 
@@ -437,7 +472,18 @@ def _run_pelt_scans(conn, season, target_date, bat_games):
 
         cfg = SCAN_CONFIG["slash_line_pelt"]
         cf_ops = (cf_obp or 0) + (cf_slg or 0)
-        if num_games >= 7 and cf_ops >= cfg.get("gate_ops", 1.000):
+        # Check cooldown
+        if cooldowns is None:
+            cooldowns = {}
+        _cd_key = (pid, "ops_pelt")
+        _on_cooldown = False
+        if _cd_key in cooldowns:
+            try:
+                from datetime import datetime as _dt
+                _on_cooldown = (_dt.strptime(target_date, "%Y-%m-%d") - _dt.strptime(cooldowns[_cd_key], "%Y-%m-%d")).days < 5
+            except Exception:
+                pass
+        if num_games >= 7 and cf_ops >= cfg.get("gate_ops", 1.000) and not _on_cooldown:
             last = _find_last_streak_ops(conn, pid, season, num_games, cf_ops)
             if last:
                 years_ago = season - last["season"]
@@ -454,6 +500,7 @@ def _run_pelt_scans(conn, season, target_date, bat_games):
                             f"{last['name']} in {last['season']}."
                         ),
                     })
+                    cooldowns[_cd_key] = target_date
 
     return events
 

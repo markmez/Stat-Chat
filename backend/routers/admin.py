@@ -1601,13 +1601,11 @@ async def records_simulate(
     """Simulate what record events would fire for a given date."""
     verify_admin(authorization, key)
     if not date_str:
-        # Use query param name 'date' as alias
         raise HTTPException(400, "Missing date parameter (use ?date=YYYY-MM-DD)")
 
     conn = sqlite3.connect(DB_PATH, timeout=10)
     try:
         events = _simulate_records_for_date(conn, date_str)
-        # Add deep scans
         try:
             from services.deep_scans import run_deep_scans
             deep_events = run_deep_scans(conn, int(date_str[:4]), date_str)
@@ -1615,6 +1613,39 @@ async def records_simulate(
         except Exception as e:
             events.append({"type": "error", "detail": f"Deep scan error: {e}"})
         return {"date": date_str, "events": events}
+    finally:
+        conn.close()
+
+
+@router.get("/records-simulate-all")
+async def records_simulate_all(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Simulate all dates from March 27 through today with cooldown tracking."""
+    verify_admin(authorization, key)
+    from datetime import date as _date, timedelta as _td
+    from services.deep_scans import run_deep_scans
+
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    try:
+        cooldowns = {}  # Shared across all dates
+        all_results = []
+        start = _date(_date.today().year, 3, 27)
+        end = _date.today()
+        d = start
+        while d <= end:
+            date_str = d.isoformat()
+            events = _simulate_records_for_date(conn, date_str)
+            try:
+                deep_events = run_deep_scans(conn, d.year, date_str, cooldowns)
+                events.extend(deep_events)
+            except Exception as e:
+                events.append({"type": "error", "detail": f"Deep scan error: {e}"})
+            if events:
+                all_results.append({"date": date_str, "events": events})
+            d += _td(days=1)
+        return {"results": all_results, "total_events": sum(len(r["events"]) for r in all_results)}
     finally:
         conn.close()
 
@@ -2411,29 +2442,18 @@ async function simulateDate() {{
 
 async function simulateAll() {{
   const el = document.getElementById('sim-results');
-  el.innerHTML = '<p class="loading">Simulating all dates from March 27...</p>';
-  // Build date list from March 27 to today
-  const dates = [];
-  const start = new Date('{date.today().year}', 2, 27); // March = 2
-  const end = new Date();
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {{
-    dates.push(d.toISOString().slice(0, 10));
+  el.innerHTML = '<p class="loading">Simulating all dates from March 27 (with cooldown tracking)...</p>';
+  try {{
+    const data = await apiFetch('/admin/records-simulate-all');
+    const results = data.results || [];
+    let allHtml = '';
+    results.forEach(r => {{
+      allHtml += renderDateEvents(r.date, r.events);
+    }});
+    el.innerHTML = '<h3>' + data.total_events + ' total events across ' + results.length + ' game dates</h3>' + allHtml;
+  }} catch (e) {{
+    el.innerHTML = '<p class="empty">Error: ' + e.message + '</p>';
   }}
-  let allHtml = '';
-  let totalEvents = 0;
-  for (const dt of dates) {{
-    try {{
-      const data = await apiFetch('/admin/records-simulate?date_str=' + dt);
-      const evts = data.events || [];
-      totalEvents += evts.length;
-      if (evts.length > 0) {{
-        allHtml += renderDateEvents(dt, evts);
-      }}
-    }} catch (e) {{
-      allHtml += '<p class="empty">Error on ' + dt + ': ' + e.message + '</p>';
-    }}
-  }}
-  el.innerHTML = '<h3>' + totalEvents + ' total events across ' + dates.length + ' game dates</h3>' + allHtml;
 }}
 
 function renderDateEvents(dt, events) {{
