@@ -625,30 +625,28 @@ def detect_pitching_streaks(conn, season, latest_date):
 
 
 def detect_season_pace(conn, season, latest_date=None):
-    """Find players on pace for notable season milestones."""
+    """Fire once per player per threshold when their pace first crosses it.
+
+    Only HR (50/60/70/80) and SB (50/60/70/80). Only after 2 weeks (~14 games).
+    Checks notable_events to see if we've already reported this player+threshold.
+    """
     events = []
+    min_games = 14  # ~2 weeks
 
-    # Need enough games to be meaningful
-    min_games = 15
-
-    # Batting pace milestones
     pace_checks = [
-        ("home_runs", [(60, "challenge the single-season record"), (50, "join the 50-HR club"),
-                       (40, "reach 40 home runs")]),
-        ("stolen_bases", [(60, "reach 60 stolen bases"), (50, "reach 50 stolen bases")]),
-        ("hits", [(220, "challenge for the most hits in a season since Ichiro"),
-                  (200, "reach 200 hits")]),
-        ("rbi", [(140, "reach 140 RBI"), (120, "reach 120 RBI")]),
+        ("home_runs", "HR", [80, 70, 60, 50]),
+        ("stolen_bases", "SB", [80, 70, 60, 50]),
     ]
 
-    for stat_col, thresholds in pace_checks:
+    for stat_col, abbrev, thresholds in pace_checks:
         rows = conn.execute(f"""
             SELECT p.name, s.{stat_col}, s.games, p.team
             FROM season_batting_stats s
             JOIN players p ON s.player_id = p.player_id
             WHERE s.season = ? AND s.games >= ?
+            AND s.{stat_col} > 0
             ORDER BY s.{stat_col} DESC
-            LIMIT 10
+            LIMIT 20
         """, (season, min_games)).fetchall()
 
         for name, stat_val, games, team_code in rows:
@@ -656,48 +654,31 @@ def detect_season_pace(conn, season, latest_date=None):
                 continue
             pace = int(stat_val * 162.0 / games)
 
-            # Find highest threshold cleared
-            for threshold, desc in thresholds:
+            for threshold in thresholds:
                 if pace >= threshold:
+                    # Check if we already fired this player+threshold this season
+                    already = conn.execute("""
+                        SELECT 1 FROM notable_events
+                        WHERE headline LIKE ? AND headline LIKE ?
+                        AND game_date >= ? LIMIT 1
+                    """, (f"%{name}%", f"%on pace for {threshold}+ {abbrev}%",
+                          f"{season}-01-01")).fetchone()
+
+                    if already:
+                        break  # Already reported this threshold, skip lower ones too
+
                     team = team_display(team_code) if team_code else ""
                     events.append({
-                        "headline": f"{name} is on pace for {pace} {stat_col.replace('_', ' ')}",
-                        "detail": f"Would {desc}.",
+                        "headline": f"{name} is on pace for {threshold}+ {abbrev} this season ({stat_val} {abbrev} through {games} games, {pace} pace).",
+                        "detail": "",
                         "category": "Milestone",
                         "game_date": latest_date,
                         "player_names": [name],
                         "team_names": [team] if team else [],
                         "detection_type": f"pace_{stat_col}",
-                        "priority": 1,
+                        "priority": 2,
                     })
-                    break  # Only highest threshold
-
-    # Pitching pace: strikeouts
-    rows = conn.execute("""
-        SELECT p.name, s.strikeouts, s.games, p.team
-        FROM season_pitching_stats s
-        JOIN players p ON s.player_id = p.player_id
-        WHERE s.season = ? AND s.games >= ? AND s.games_started >= ?
-        ORDER BY s.strikeouts DESC
-        LIMIT 5
-    """, (season, min_games, min_games - 3)).fetchall()
-
-    for name, so, games, team_code in rows:
-        if not so or games == 0:
-            continue
-        pace = int(so * 162.0 / games)
-        if pace >= 300:
-            team = team_display(team_code) if team_code else ""
-            events.append({
-                "headline": f"{name} is on pace for {pace} strikeouts",
-                "detail": "Would be among the highest single-season totals in MLB history.",
-                "category": "Milestone",
-                "game_date": latest_date,
-                "player_names": [name],
-                "team_names": [team] if team else [],
-                "detection_type": "pace_pitching_k",
-                "priority": 1,
-            })
+                    break  # Only report highest new threshold
 
     return events
 
@@ -1946,8 +1927,7 @@ def detect_all(db_path=None, season=None, from_poll=False):
     events += detect_onbase_streaks(conn, season, latest_date, min_games=onbase_streak_min)
     events += detect_hr_streaks(conn, season, latest_date, min_games=hr_streak_min)
     events += detect_pitching_streaks(conn, season, latest_date)
-    # detect_season_pace disabled — replaced by records/milestones system
-    # which requires contribution on the date and has proper thresholds
+    events += detect_season_pace(conn, season, latest_date)
     t1_count = len(events)
     print(f"    Tier 1: {t1_count} events")
 
