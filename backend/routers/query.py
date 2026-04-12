@@ -799,6 +799,33 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
         season_part = f" {season}" if season else ""
         return f"most {stat}{season_part}"
 
+    # --- Pattern 6: Time range modifier ---
+    # "since 2010", "in 2023", "last 10 years", "this season", "last season"
+    time_match = _re.match(r'^(?:since|after)\s+(20[012]\d)[\?\.]?$', lower)
+    if time_match:
+        year = time_match.group(1)
+        query = ctx["query"]
+        # Replace any existing time reference or append
+        cleaned = _re.sub(r'\b(?:all[- ]?time|career|since \d{4}|in history)\b', '', query).strip()
+        return f"{cleaned} since {year}"
+
+    time_match2 = _re.match(r'^(?:in|for)\s+(20[012]\d)[\?\.]?$', lower)
+    if time_match2:
+        year = time_match2.group(1)
+        query = ctx["query"]
+        cleaned = _re.sub(r'\b(?:all[- ]?time|career|since \d{4}|in history|this season|last season|\d{4})\b', '', query).strip()
+        return f"{cleaned} {year}"
+
+    if lower in ("this season", "this year"):
+        query = ctx["query"]
+        cleaned = _re.sub(r'\b(?:all[- ]?time|career|since \d{4}|in history|last season|\d{4})\b', '', query).strip()
+        return f"{cleaned} this season"
+
+    if lower in ("last season", "last year"):
+        query = ctx["query"]
+        cleaned = _re.sub(r'\b(?:all[- ]?time|career|since \d{4}|in history|this season|\d{4})\b', '', query).strip()
+        return f"{cleaned} last season"
+
     return None
 
 
