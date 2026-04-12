@@ -1888,7 +1888,10 @@ def _simulate_records_for_date(conn, target_date):
                                      "hits": "hits", "stolen_bases": "stolen bases",
                                      "doubles": "doubles"}
                     stat_label = _stat_display.get(stat, stat.replace("_", " "))
-                    if prev_high and prev_date:
+                    # For hits, just state the threshold — "topping 3 hits" is silly
+                    if stat == "hits":
+                        context = f"his first career {today_val}-hit game"
+                    elif prev_high and prev_date:
                         try:
                             from datetime import datetime as _dt
                             prev_fmt = _dt.strptime(prev_date, "%Y-%m-%d").strftime("%b %-d, %Y")
