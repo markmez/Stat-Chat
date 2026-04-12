@@ -345,8 +345,9 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "player": pname, "team": team or "",
                         "detail": (
                             f"{pname} has a {era:.2f} ERA with {total_k} K through {starts} starts "
-                            f"({ip_display} IP) — the last pitcher with numbers like that over a full season was "
-                            f"{last_dom['name']} ({last_dom['era']:.2f} ERA, {last_dom['k']} K) in {last_dom['season']}."
+                            f"({ip_display} IP) — on pace to join "
+                            f"{last_dom['name']} ({last_dom['era']:.2f} ERA, {last_dom['k']} K in {last_dom['season']}) "
+                            f"if he keeps it up."
                         ),
                     })
                     _set_cooldown(pid, "pitch_dom")
