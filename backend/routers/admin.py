@@ -1698,6 +1698,25 @@ async def records_simulate_week(
         conn.close()
 
 
+def _action_phrase(label, game_val):
+    """Convert a stat label + today's value into a natural action phrase."""
+    if label == "home runs":
+        return "hit a homer" if game_val == 1 else f"hit {game_val} homers"
+    if label == "hits":
+        return f"went {game_val}-for with {game_val} hits" if game_val > 1 else "singled"
+    if label == "RBI":
+        return "knocked in a run" if game_val == 1 else f"knocked in {game_val} runs"
+    if label == "runs":
+        return "scored a run" if game_val == 1 else f"scored {game_val} runs"
+    if label == "stolen bases":
+        return "stole a base" if game_val == 1 else f"stole {game_val} bases"
+    if label == "doubles":
+        return "hit a double" if game_val == 1 else f"hit {game_val} doubles"
+    if label == "walks":
+        return "drew a walk" if game_val == 1 else f"drew {game_val} walks"
+    return f"added {game_val} {label}"
+
+
 def _simulate_records_for_date(conn, target_date):
     """Find all record-related events for a specific date.
 
@@ -1966,7 +1985,7 @@ def _simulate_records_for_date(conn, target_date):
                     events.append({
                         "type": "record_approach",
                         "player": pname, "team": team_name,
-                        "detail": f"{pname} hit {label.replace('home runs', 'a homer').replace('hits', str(game_val) + ' hits').replace('stolen bases', 'a stolen base')}, giving him {int(career_total)} career {label} as a member of the {team_name} — {diff} from the franchise record held by {rec[1]} ({int(rec[0])}).",
+                        "detail": f"{pname} {_action_phrase(label, game_val)}, giving him {int(career_total)} career {label} as a member of the {team_name} — {diff} from the franchise record held by {rec[1]} ({int(rec[0])}).",
                     })
                 elif diff <= 0 and rec[1] != pname:
                     # Only fire on the day they actually crossed
