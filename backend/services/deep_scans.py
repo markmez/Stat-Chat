@@ -310,20 +310,18 @@ def _find_last_slash_match(conn, exclude_pid, season, games, avg, obp, slg):
     Uses season_batting_stats with a game count window (±5 games) for performance.
     Not exact "first N games" but close enough and fast.
     """
-    min_games = max(games - 5, 5)
-    max_games = games + 5
+    # Compare against players who played a full season (400+ PA)
+    # and still had stats this good — that's the real test
     row = conn.execute("""
         SELECT p.name, s.season
         FROM season_batting_stats s
         JOIN players p ON s.player_id = p.player_id
         WHERE s.season < ? AND s.player_id != ?
-        AND s.games BETWEEN ? AND ?
+        AND s.plate_appearances >= 400
         AND s.batting_avg >= ? AND s.obp >= ? AND s.slg >= ?
-        AND s.plate_appearances >= ?
         ORDER BY s.season DESC
         LIMIT 1
-    """, (season, exclude_pid, min_games, max_games, avg, obp, slg,
-          max(games * 2, 20))).fetchone()
+    """, (season, exclude_pid, avg, obp, slg)).fetchone()
 
     if row:
         return {"name": row[0], "season": row[1]}
@@ -332,16 +330,17 @@ def _find_last_slash_match(conn, exclude_pid, season, games, avg, obp, slg):
 
 def _find_last_hr_pace(conn, exclude_pid, season, games, hr):
     """Find last player with >= hr home runs through <= games games.
-    Uses season_batting_stats with game count window for performance."""
+    Compares against full-season players (400+ PA) who hit this many HR."""
     row = conn.execute("""
         SELECT p.name, s.season
         FROM season_batting_stats s
         JOIN players p ON s.player_id = p.player_id
         WHERE s.season < ? AND s.player_id != ?
-        AND s.games <= ? AND s.home_runs >= ?
+        AND s.plate_appearances >= 400
+        AND s.home_runs >= ?
         ORDER BY s.season DESC
         LIMIT 1
-    """, (season, exclude_pid, games, hr)).fetchone()
+    """, (season, exclude_pid, hr)).fetchone()
 
     if row:
         return {"name": row[0], "season": row[1]}
@@ -350,16 +349,17 @@ def _find_last_hr_pace(conn, exclude_pid, season, games, hr):
 
 def _find_last_sb_pace(conn, exclude_pid, season, games, sb):
     """Find last player with >= sb stolen bases through <= games games.
-    Uses season_batting_stats with game count window for performance."""
+    Compares against full-season players (400+ PA) who stole this many."""
     row = conn.execute("""
         SELECT p.name, s.season
         FROM season_batting_stats s
         JOIN players p ON s.player_id = p.player_id
         WHERE s.season < ? AND s.player_id != ?
-        AND s.games <= ? AND s.stolen_bases >= ?
+        AND s.plate_appearances >= 400
+        AND s.stolen_bases >= ?
         ORDER BY s.season DESC
         LIMIT 1
-    """, (season, exclude_pid, games, sb)).fetchone()
+    """, (season, exclude_pid, sb)).fetchone()
 
     if row:
         return {"name": row[0], "season": row[1]}
@@ -367,17 +367,18 @@ def _find_last_sb_pace(conn, exclude_pid, season, games, sb):
 
 
 def _find_last_power_speed(conn, exclude_pid, season, games, hr, sb):
-    """Find last player with >= hr HR AND >= sb SB through <= games games.
-    Uses season_batting_stats with game count window for performance."""
+    """Find last player with >= hr HR AND >= sb SB.
+    Compares against full-season players (400+ PA) with both stats this high."""
     row = conn.execute("""
         SELECT p.name, s.season
         FROM season_batting_stats s
         JOIN players p ON s.player_id = p.player_id
         WHERE s.season < ? AND s.player_id != ?
-        AND s.games <= ? AND s.home_runs >= ? AND s.stolen_bases >= ?
+        AND s.plate_appearances >= 400
+        AND s.home_runs >= ? AND s.stolen_bases >= ?
         ORDER BY s.season DESC
         LIMIT 1
-    """, (season, exclude_pid, games, hr, sb)).fetchone()
+    """, (season, exclude_pid, hr, sb)).fetchone()
 
     if row:
         return {"name": row[0], "season": row[1]}
@@ -387,18 +388,17 @@ def _find_last_power_speed(conn, exclude_pid, season, games, hr, sb):
 def _find_last_pitching_dominance(conn, exclude_pid, season, starts, era, total_k):
     """Find last pitcher with ERA <= this and K >= this through same number of starts."""
     k_per_start = total_k / max(starts, 1)
-    # Use season_pitching_stats — compare full-season ERA and K with similar starts count
+    # Compare against qualified full-season pitchers (162+ IP)
     row = conn.execute("""
         SELECT p.name, sp.season
         FROM season_pitching_stats sp
         JOIN players p ON sp.player_id = p.player_id
         WHERE sp.season < ? AND sp.player_id != ?
-        AND sp.games_started BETWEEN ? AND ?
+        AND sp.ip_outs >= 486
         AND sp.era <= ? AND sp.strikeouts >= ?
         ORDER BY sp.season DESC
         LIMIT 1
-    """, (season, exclude_pid, max(starts - 2, 1), starts + 2,
-          era, total_k)).fetchone()
+    """, (season, exclude_pid, era, total_k)).fetchone()
 
     if row:
         return {"name": row[0], "season": row[1]}
