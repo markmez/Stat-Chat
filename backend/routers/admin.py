@@ -1606,12 +1606,8 @@ async def records_simulate(
     conn = sqlite3.connect(DB_PATH, timeout=10)
     try:
         events = _simulate_records_for_date(conn, date_str)
-        try:
-            from services.deep_scans import run_deep_scans
-            deep_events = run_deep_scans(conn, int(date_str[:4]), date_str)
-            events.extend(deep_events)
-        except Exception as e:
-            events.append({"type": "error", "detail": f"Deep scan error: {e}"})
+        # Deep scans disabled in sandbox (too heavy for browsing historical dates)
+        # They run in production via detect_all on the current date only
         return {"date": date_str, "events": events}
     finally:
         conn.close()
