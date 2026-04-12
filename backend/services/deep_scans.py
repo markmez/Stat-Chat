@@ -247,8 +247,8 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "player": pname, "team": team or "",
                         "detail": (
                             f"{pname} has {hr} HR through {games} games — "
-                            f"the first to reach that mark this quickly since "
-                            f"{last_hr['name']} in {last_hr['season']}."
+                            f"the last player on that pace was "
+                            f"{last_hr['name']} ({last_hr['value']} HR) in {last_hr['season']}."
                         ),
                     })
             elif last_hr is None:
@@ -276,8 +276,8 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "player": pname, "team": team or "",
                         "detail": (
                             f"{pname} has {sb} SB through {games} games — "
-                            f"the first to reach that mark this quickly since "
-                            f"{last_sb['name']} in {last_sb['season']}."
+                            f"the last player to steal at that rate was "
+                            f"{last_sb['name']} ({last_sb['value']} SB) in {last_sb['season']}."
                         ),
                     })
             if any(e.get("scan") == "sb_accumulation" and e.get("player") == pname for e in events):
@@ -295,8 +295,8 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "player": pname, "team": team or "",
                         "detail": (
                             f"{pname} has {hr} HR and {sb} SB through {games} games — "
-                            f"the first with that power-speed combo this early since "
-                            f"{last_ps['name']} in {last_ps['season']}."
+                            f"the last player with that power-speed combo was "
+                            f"{last_ps['name']} ({last_ps['hr']} HR, {last_ps['sb']} SB) in {last_ps['season']}."
                         ),
                     })
             if any(e.get("scan") == "power_speed" and e.get("player") == pname for e in events):
@@ -345,8 +345,8 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "player": pname, "team": team or "",
                         "detail": (
                             f"{pname} has a {era:.2f} ERA with {total_k} K through {starts} starts "
-                            f"({ip_display} IP) — the first to dominate like that through "
-                            f"{starts} starts since {last_dom['name']} in {last_dom['season']}."
+                            f"({ip_display} IP) — the last pitcher with numbers like that over a full season was "
+                            f"{last_dom['name']} ({last_dom['era']:.2f} ERA, {last_dom['k']} K) in {last_dom['season']}."
                         ),
                     })
                     _set_cooldown(pid, "pitch_dom")
@@ -407,7 +407,7 @@ def _find_last_hr_pace(conn, exclude_pid, season, games, hr):
     """Find last player with >= hr home runs through <= games games.
     Compares against full-season players (400+ PA) who hit this many HR."""
     row = conn.execute("""
-        SELECT p.name, s.season
+        SELECT p.name, s.season, s.home_runs
         FROM season_batting_stats s
         JOIN players p ON s.player_id = p.player_id
         WHERE s.season < ? AND s.player_id != ?
@@ -418,7 +418,7 @@ def _find_last_hr_pace(conn, exclude_pid, season, games, hr):
     """, (season, exclude_pid, hr)).fetchone()
 
     if row:
-        return {"name": row[0], "season": row[1]}
+        return {"name": row[0], "season": row[1], "value": int(row[2])}
     return None
 
 
@@ -426,7 +426,7 @@ def _find_last_sb_pace(conn, exclude_pid, season, games, sb):
     """Find last player with >= sb stolen bases through <= games games.
     Compares against full-season players (400+ PA) who stole this many."""
     row = conn.execute("""
-        SELECT p.name, s.season
+        SELECT p.name, s.season, s.stolen_bases
         FROM season_batting_stats s
         JOIN players p ON s.player_id = p.player_id
         WHERE s.season < ? AND s.player_id != ?
@@ -437,7 +437,7 @@ def _find_last_sb_pace(conn, exclude_pid, season, games, sb):
     """, (season, exclude_pid, sb)).fetchone()
 
     if row:
-        return {"name": row[0], "season": row[1]}
+        return {"name": row[0], "season": row[1], "value": int(row[2])}
     return None
 
 
@@ -445,7 +445,7 @@ def _find_last_power_speed(conn, exclude_pid, season, games, hr, sb):
     """Find last player with >= hr HR AND >= sb SB.
     Compares against full-season players (400+ PA) with both stats this high."""
     row = conn.execute("""
-        SELECT p.name, s.season
+        SELECT p.name, s.season, s.home_runs, s.stolen_bases
         FROM season_batting_stats s
         JOIN players p ON s.player_id = p.player_id
         WHERE s.season < ? AND s.player_id != ?
@@ -456,7 +456,7 @@ def _find_last_power_speed(conn, exclude_pid, season, games, hr, sb):
     """, (season, exclude_pid, hr, sb)).fetchone()
 
     if row:
-        return {"name": row[0], "season": row[1]}
+        return {"name": row[0], "season": row[1], "hr": int(row[2]), "sb": int(row[3])}
     return None
 
 
@@ -465,7 +465,7 @@ def _find_last_pitching_dominance(conn, exclude_pid, season, starts, era, total_
     k_per_start = total_k / max(starts, 1)
     # Compare against qualified full-season pitchers (162+ IP)
     row = conn.execute("""
-        SELECT p.name, sp.season
+        SELECT p.name, sp.season, sp.era, sp.strikeouts
         FROM season_pitching_stats sp
         JOIN players p ON sp.player_id = p.player_id
         WHERE sp.season < ? AND sp.player_id != ?
@@ -476,7 +476,7 @@ def _find_last_pitching_dominance(conn, exclude_pid, season, starts, era, total_
     """, (season, exclude_pid, era, total_k)).fetchone()
 
     if row:
-        return {"name": row[0], "season": row[1]}
+        return {"name": row[0], "season": row[1], "era": row[2], "k": int(row[3])}
     return None
 
 
