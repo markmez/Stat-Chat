@@ -1650,50 +1650,53 @@ async def records_simulate_all(
         conn.close()
 
 
-@router.get("/records-simulate-season")
-async def records_simulate_season(
-    year: int = 2025,
-    page: int = 1,
+@router.get("/records-simulate-week")
+async def records_simulate_week(
+    start_date: str = "",
     key: str | None = None,
     authorization: str | None = Header(None),
 ):
-    """Run deep scans across a full season. Paginated — 20 events per page."""
+    """Run deep scans for a week starting from start_date. Returns events grouped by date."""
     verify_admin(authorization, key)
+    if not start_date:
+        raise HTTPException(400, "Missing start_date (YYYY-MM-DD)")
     from datetime import date as _date, timedelta as _td
     from services.deep_scans import run_deep_scans
 
     conn = sqlite3.connect(DB_PATH, timeout=60)
     try:
         cooldowns = {}
-        all_events = []
+        results = []
+        start = _date.fromisoformat(start_date)
 
-        # Get all game dates for this season
+        # Get game dates within this week
+        end = start + _td(days=6)
         dates = conn.execute("""
             SELECT DISTINCT date FROM game_batting_logs
-            WHERE season = ? ORDER BY date
-        """, (year,)).fetchall()
+            WHERE date >= ? AND date <= ? ORDER BY date
+        """, (start.isoformat(), end.isoformat())).fetchall()
 
         for (date_str,) in dates:
             try:
-                deep_events = run_deep_scans(conn, year, date_str, cooldowns)
-                for e in deep_events:
-                    e["date"] = date_str
-                    all_events.extend([e])
+                deep_events = run_deep_scans(conn, int(date_str[:4]), date_str, cooldowns)
+                if deep_events:
+                    results.append({"date": date_str, "events": deep_events})
             except Exception as e:
-                all_events.append({"type": "error", "detail": f"{date_str}: {e}", "date": date_str})
+                results.append({"date": date_str, "events": [{"type": "error", "detail": str(e)}]})
 
-        total = len(all_events)
-        per_page = 20
-        start_idx = (page - 1) * per_page
-        page_events = all_events[start_idx:start_idx + per_page]
-        total_pages = (total + per_page - 1) // per_page
+        total = sum(len(r["events"]) for r in results)
+
+        # Find prev/next week bounds
+        prev_start = (start - _td(days=7)).isoformat()
+        next_start = (start + _td(days=7)).isoformat()
 
         return {
-            "year": year,
+            "start_date": start_date,
+            "end_date": end.isoformat(),
             "total_events": total,
-            "page": page,
-            "total_pages": total_pages,
-            "events": page_events,
+            "results": results,
+            "prev_start": prev_start,
+            "next_start": next_start,
         }
     finally:
         conn.close()
@@ -2357,17 +2360,13 @@ async def records_sandbox(
 </div>
 <div id="sim-results" class="results"></div>
 
-<h2>Deep Scans — Full Season</h2>
+<h2>Deep Scans — Browse by Week</h2>
 <div class="search-row">
-  <select id="season-year" style="padding:8px;border:1px solid #ddd;border-radius:8px;font-size:14px">
-    <option value="2025" selected>2025</option>
-    <option value="2024">2024</option>
-    <option value="2023">2023</option>
-  </select>
-  <button onclick="scanSeason(1)">Scan Season</button>
-  <button class="secondary" id="prev-btn" onclick="scanSeason(currentSeasonPage-1)" disabled>&larr; Prev</button>
-  <button class="secondary" id="next-btn" onclick="scanSeason(currentSeasonPage+1)" disabled>Next &rarr;</button>
-  <span id="page-info" style="font-size:12px;color:#888"></span>
+  <input type="date" id="week-start" value="2025-03-27">
+  <button onclick="scanWeek()">Scan Week</button>
+  <button class="secondary" id="prev-week" onclick="navWeek(-1)">&larr; Prev Week</button>
+  <button class="secondary" id="next-week" onclick="navWeek(1)">Next Week &rarr;</button>
+  <span id="week-info" style="font-size:12px;color:#888"></span>
 </div>
 <div id="season-results" class="results"></div>
 
@@ -2531,38 +2530,39 @@ function renderDateEvents(dt, events) {{
   return html;
 }}
 
-let currentSeasonPage = 1;
+let currentWeekStart = '2025-03-27';
 
-async function scanSeason(page) {{
-  if (page < 1) return;
-  currentSeasonPage = page;
-  const year = document.getElementById('season-year').value;
+async function scanWeek(startDate) {{
+  const dt = startDate || document.getElementById('week-start').value;
+  if (!dt) return;
+  currentWeekStart = dt;
+  document.getElementById('week-start').value = dt;
   const el = document.getElementById('season-results');
-  const pageInfo = document.getElementById('page-info');
-  el.innerHTML = '<p class="loading">Scanning ' + year + ' season (this may take a minute)...</p>';
+  const weekInfo = document.getElementById('week-info');
+  el.innerHTML = '<p class="loading">Scanning week of ' + dt + '...</p>';
   try {{
-    const data = await apiFetch('/admin/records-simulate-season?year=' + year + '&page=' + page);
-    if (!data.events || data.events.length === 0) {{
-      el.innerHTML = '<p class="empty">No deep scan events found for ' + year + '.</p>';
-      pageInfo.textContent = '';
-      document.getElementById('prev-btn').disabled = true;
-      document.getElementById('next-btn').disabled = true;
+    const data = await apiFetch('/admin/records-simulate-week?start_date=' + dt);
+    if (!data.results || data.results.length === 0 || data.total_events === 0) {{
+      el.innerHTML = '<p class="empty">No deep scan events for week of ' + dt + '.</p>';
+      weekInfo.textContent = dt + ' – ' + data.end_date;
       return;
     }}
     let html = '';
-    data.events.forEach(e => {{
-      const cls = e.type.replace(/_/g, '-');
-      const badge = '<span class="badge ' + cls + ' event-badge">' + e.type.replace(/_/g, ' ') + '</span>';
-      const dateLabel = '<span style="color:#888;font-size:11px;margin-right:6px">' + (e.date || '') + '</span>';
-      html += '<div class="event-card ' + cls + '">' + dateLabel + badge + esc(e.detail || '') + '</div>';
+    data.results.forEach(r => {{
+      html += renderDateEvents(r.date, r.events);
     }});
     el.innerHTML = html;
-    pageInfo.textContent = 'Page ' + data.page + ' of ' + data.total_pages + ' (' + data.total_events + ' total events)';
-    document.getElementById('prev-btn').disabled = (data.page <= 1);
-    document.getElementById('next-btn').disabled = (data.page >= data.total_pages);
+    weekInfo.textContent = data.start_date + ' – ' + data.end_date + ' (' + data.total_events + ' events)';
   }} catch (e) {{
     el.innerHTML = '<p class="empty">Error: ' + e.message + '</p>';
   }}
+}}
+
+function navWeek(direction) {{
+  const d = new Date(currentWeekStart + 'T12:00:00');
+  d.setDate(d.getDate() + (direction * 7));
+  const newDate = d.toISOString().slice(0, 10);
+  scanWeek(newDate);
 }}
 
 function esc(s) {{ return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }}
