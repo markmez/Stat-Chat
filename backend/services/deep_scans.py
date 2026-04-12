@@ -30,19 +30,19 @@ DB_PATH = "/data/baseball_stats_full.db"
 
 SCAN_CONFIG = {
     "slash_line_season": {
-        "description": "Slash line (AVG/OBP/SLG) through first N games of season",
-        "gate": "AVG ≥ .330, games ≥ 10",
-        "interesting_if": "Nobody in MLB with all 3 stats this high through same game count in 5+ years",
-        "gate_avg": 0.330,
+        "description": "OPS through first N games of season",
+        "gate": "OPS ≥ .950, games ≥ 10",
+        "interesting_if": "Nobody in MLB with OPS this high over a full season in 5+ years",
+        "gate_ops": 0.950,
         "gate_min_games": 10,
         "min_years_mlb": 5,
         "min_years_team": 3,
     },
     "slash_line_pelt": {
-        "description": "Slash line during PELT-detected hot streak",
-        "gate": "Active hot streak in current_form, AVG ≥ .350 during streak",
-        "interesting_if": "Nobody with a streak this good over same game count in 5+ years",
-        "gate_avg": 0.350,
+        "description": "OPS during PELT-detected hot streak",
+        "gate": "Active hot streak in current_form, OPS ≥ 1.000 during streak",
+        "interesting_if": "Nobody with a streak OPS this high over same game count in 5+ years",
+        "gate_ops": 1.000,
         "min_years_mlb": 5,
         "min_years_team": 3,
     },
@@ -155,9 +155,11 @@ def run_deep_scans(conn, season, target_date):
         slg = slg_num / ab if ab > 0 else 0
 
         # === SLASH LINE (season start) ===
+        ops = obp_val + slg
         cfg = SCAN_CONFIG["slash_line_season"]
-        if games >= cfg["gate_min_games"] and avg >= cfg["gate_avg"]:
-            last_match = _find_last_slash_match(conn, pid, season, games, avg, obp_val, slg)
+        if games >= cfg["gate_min_games"] and ops >= cfg["gate_ops"]:
+            last_match = _find_last_ops_match(conn, pid, season, ops)
+            ops_display = f"{ops:.3f}"
             if last_match:
                 years_ago = season - last_match["season"]
                 if years_ago >= cfg["min_years_mlb"]:
@@ -166,32 +168,33 @@ def run_deep_scans(conn, season, target_date):
                         "scan": "slash_line_season",
                         "player": pname, "team": team or "",
                         "detail": (
-                            f"{pname} is slashing {_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)} "
-                            f"through {games} games — the first player to do that since "
+                            f"{pname} is posting a {ops_display} OPS "
+                            f"({_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)}) "
+                            f"through {games} games — the last qualified hitter with an OPS that high was "
                             f"{last_match['name']} in {last_match['season']} ({years_ago} years ago)."
                         ),
                     })
                 elif years_ago >= cfg["min_years_team"]:
-                    # Check team context
                     events.append({
                         "type": "deep_scan",
                         "scan": "slash_line_season",
                         "player": pname, "team": team or "",
                         "detail": (
-                            f"{pname} is slashing {_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)} "
-                            f"through {games} games — the first to do that since "
+                            f"{pname} is posting a {ops_display} OPS "
+                            f"({_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)}) "
+                            f"through {games} games — the last to do that was "
                             f"{last_match['name']} in {last_match['season']}."
                         ),
                     })
             elif last_match is None:
-                # Nobody found at all in our data
                 events.append({
                     "type": "deep_scan",
                     "scan": "slash_line_season",
                     "player": pname, "team": team or "",
                     "detail": (
-                        f"{pname} is slashing {_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)} "
-                        f"through {games} games — no player in our records has matched that through the same point."
+                        f"{pname} is posting a {ops_display} OPS "
+                        f"({_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)}) "
+                        f"through {games} games — no qualified hitter in our records has matched that."
                     ),
                 })
 
@@ -315,29 +318,22 @@ def run_deep_scans(conn, season, target_date):
 # Historical comparison queries
 # ---------------------------------------------------------------------------
 
-def _find_last_slash_match(conn, exclude_pid, season, games, avg, obp, slg):
-    """Find the most recent player (before this season) who had AVG/OBP/SLG
-    all >= the given values through a similar number of games.
-
-    Uses season_batting_stats with a game count window (±5 games) for performance.
-    Not exact "first N games" but close enough and fast.
-    """
-    # Compare against players who played a full season (400+ PA)
-    # and still had stats this good — that's the real test
+def _find_last_ops_match(conn, exclude_pid, season, ops):
+    """Find the most recent qualified hitter (400+ PA) with OPS >= the given value."""
     row = conn.execute("""
         SELECT p.name, s.season
         FROM season_batting_stats s
         JOIN players p ON s.player_id = p.player_id
         WHERE s.season < ? AND s.player_id != ?
         AND s.plate_appearances >= 400
-        AND s.batting_avg >= ? AND s.obp >= ? AND s.slg >= ?
+        AND s.ops >= ?
         ORDER BY s.season DESC
         LIMIT 1
-    """, (season, exclude_pid, avg, obp, slg)).fetchone()
+    """, (season, exclude_pid, ops)).fetchone()
 
     if row:
         return {"name": row[0], "season": row[1]}
-    return None  # Nobody found
+    return None
 
 
 def _find_last_hr_pace(conn, exclude_pid, season, games, hr):
@@ -440,9 +436,9 @@ def _run_pelt_scans(conn, season, target_date, bat_games):
         cf_slg = cf[3] or 0
 
         cfg = SCAN_CONFIG["slash_line_pelt"]
-        if num_games >= 7 and cf_avg >= cfg["gate_avg"]:
-            # Find last player with a stretch this good over this many games
-            last = _find_last_streak_slash(conn, pid, season, num_games, cf_avg, cf_obp, cf_slg)
+        cf_ops = (cf_obp or 0) + (cf_slg or 0)
+        if num_games >= 7 and cf_ops >= cfg.get("gate_ops", 1.000):
+            last = _find_last_streak_ops(conn, pid, season, num_games, cf_ops)
             if last:
                 years_ago = season - last["season"]
                 if years_ago >= cfg["min_years_mlb"]:
@@ -451,7 +447,8 @@ def _run_pelt_scans(conn, season, target_date, bat_games):
                         "scan": "slash_line_pelt",
                         "player": pname, "team": team or "",
                         "detail": (
-                            f"{pname} is slashing {_format_avg(cf_avg)}/{_format_avg(cf_obp)}/{_format_avg(cf_slg)} "
+                            f"{pname} is posting a {cf_ops:.3f} OPS "
+                            f"({_format_avg(cf_avg)}/{_format_avg(cf_obp)}/{_format_avg(cf_slg)}) "
                             f"over his current {num_games}-game hot streak — "
                             f"the last player with a stretch that dominant was "
                             f"{last['name']} in {last['season']}."
@@ -461,24 +458,19 @@ def _run_pelt_scans(conn, season, target_date, bat_games):
     return events
 
 
-def _find_last_streak_slash(conn, exclude_pid, season, window, avg, obp, slg):
-    """Find last player with a rolling N-game window where AVG/OBP/SLG >= given values.
-
-    This is computationally expensive — uses a simplified approach:
-    checks season-level current_form data from prior seasons.
-    """
-    # Simplified: check current_form from prior seasons
+def _find_last_streak_ops(conn, exclude_pid, season, window, ops):
+    """Find last player with a hot streak OPS >= the given value.
+    Uses current_form from prior seasons as proxy for rolling windows."""
     row = conn.execute("""
         SELECT p.name, cf.season
         FROM current_form cf
         JOIN players p ON cf.player_id = p.player_id
         WHERE cf.season < ? AND cf.player_id != ?
-        AND cf.num_games >= ? AND cf.num_games <= ?
-        AND cf.batting_avg >= ? AND cf.obp >= ? AND cf.slg >= ?
+        AND cf.num_games >= ?
+        AND cf.ops >= ?
         ORDER BY cf.season DESC
         LIMIT 1
-    """, (season, exclude_pid, max(window - 5, 5), window + 10,
-          avg, obp, slg)).fetchone()
+    """, (season, exclude_pid, max(window - 5, 5), ops)).fetchone()
 
     if row:
         return {"name": row[0], "season": row[1]}

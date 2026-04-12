@@ -2231,14 +2231,14 @@ async def records_sandbox(
     &bull; X/X combos: 20/20, 30/30, 40/40<br>
     &bull; All require contribution to the stat on that date<br>
     <br>
-    <b>Deep Scans — Slash Line (season)</b><br>
-    &bull; Gate: AVG &ge; .330, games &ge; 10<br>
-    &bull; Checks: last player with AVG/OBP/SLG all &ge; through same game count<br>
+    <b>Deep Scans — OPS (season)</b><br>
+    &bull; Gate: OPS &ge; .950, games &ge; 10<br>
+    &bull; Checks: last qualified hitter (400+ PA) with OPS this high<br>
     &bull; Interesting if: 5+ years MLB, 3+ years team<br>
     <br>
-    <b>Deep Scans — Slash Line (PELT streak)</b><br>
-    &bull; Gate: Active hot streak &ge; 7 games, AVG &ge; .350 during streak<br>
-    &bull; Checks: last player with a stretch that dominant<br>
+    <b>Deep Scans — OPS (PELT streak)</b><br>
+    &bull; Gate: Active hot streak &ge; 7 games, OPS &ge; 1.000 during streak<br>
+    &bull; Checks: last player with a streak OPS this high<br>
     <br>
     <b>Deep Scans — HR Accumulation</b><br>
     &bull; Gate: HR &ge; 8 through &le; 30 games, OR HR &ge; 15 through &le; 50 games<br>
