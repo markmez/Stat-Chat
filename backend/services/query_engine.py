@@ -3098,17 +3098,22 @@ def _execute_game_log_count(conn, plan: QueryPlan) -> Optional[str]:
             extra_pills = f"\n[SUGGEST]most {threshold}+ K games by a pitcher[/SUGGEST]"
         return f"No players found with games meeting that criteria{season_note}.{extra_pills}" + _empty_result_pills(plan)
 
-    # Total count of such games
+    # Count total qualifying players (not just the limited set)
     cur.execute(
-        f"SELECT COUNT(*) FROM {table} g "
+        f"SELECT COUNT(DISTINCT g.player_id) "
+        f"FROM {table} g "
         f"WHERE {col_expr} >= ?{season_filter}",
         tuple(params[:1] + (params[1:2] if plan.season else [])),
     )
-    total_games = cur.fetchone()[0]
+    total_players = cur.fetchone()[0]
 
     scope_label = str(plan.season) if plan.season else "All-Time"
-    total_players = len(rows)
-    title = f"**{total_games} games with {threshold}+ {stat_name} in {scope_label}** ({total_players} players)\n"
+    shown = len(rows)
+    if shown < total_players:
+        count_note = f"Showing top {shown} of {total_players} players"
+    else:
+        count_note = f"{total_players} player{'s' if total_players != 1 else ''}"
+    title = f"**Most {threshold}+ {stat_name} Games ({scope_label})**\n{count_note}.\n"
     parts = [title]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
