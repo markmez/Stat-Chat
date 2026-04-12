@@ -1293,7 +1293,7 @@ def detect_matchup_previews(conn, season):
         if any(s[4] is game for s in selected):
             continue
         selected.append((score, matched, batting_team, pitcher_team, game))
-        if len(selected) >= 3:
+        if len(selected) >= 2:
             break
 
     # Step 6: If fewer than 3, relax suppression
@@ -1304,7 +1304,7 @@ def detect_matchup_previews(conn, season):
             if any(s[4] is game for s in selected):
                 continue
             selected.append((score, matched, batting_team, pitcher_team, game))
-            if len(selected) >= 3:
+            if len(selected) >= 2:
                 break
 
     # Step 7: For each selected pitcher, find best opposing batter by career OPS (800+ PA)
