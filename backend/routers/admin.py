@@ -1982,9 +1982,9 @@ def _simulate_records_for_date(conn, target_date):
                 continue
 
             # Career total through target date using game logs
-            gl_col = game_col if game_col != "win" else "win"
+            # game_col is the game log column name (win, strikeouts, save)
             career_total = conn.execute(f"""
-                SELECT COALESCE(SUM({stat_col if stat_col != 'wins' else 'win'}), 0) FROM game_pitching_logs
+                SELECT COALESCE(SUM({game_col}), 0) FROM game_pitching_logs
                 WHERE player_id = ? AND date <= ?
             """, (pid, target_date)).fetchone()[0]
 
