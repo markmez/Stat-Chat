@@ -357,40 +357,40 @@ def _find_last_ops_match(conn, exclude_pid, season, games, ops):
     """Find the most recent player with OPS >= the given value through
     the same number of games (first N games of a season).
 
-    Uses game logs with ROW_NUMBER — bounded to last 25 years and only
-    checking the specific OPS threshold, so the query is targeted.
+    Scans one year at a time working backwards to avoid massive window
+    function queries. Stops at first match.
     """
-    min_season = season - 25
-    row = conn.execute("""
-        SELECT p.name, sub.season FROM (
-            SELECT player_id, season,
-                   CAST(SUM(hits) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) AS REAL) /
-                       NULLIF(SUM(at_bats) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) + SUM(COALESCE(sacrifice_flies, 0)), 0)
-                   +
-                   CAST(SUM(hits) - SUM(doubles) - SUM(triples) - SUM(home_runs)
-                        + 2*SUM(doubles) + 3*SUM(triples) + 4*SUM(home_runs) AS REAL) /
-                       NULLIF(SUM(at_bats), 0)
-                   AS ops_calc
-            FROM (
-                SELECT g.player_id, g.season, g.hits, g.at_bats, g.walks,
-                       g.hit_by_pitch, g.sacrifice_flies, g.doubles, g.triples, g.home_runs,
-                       ROW_NUMBER() OVER (PARTITION BY g.player_id, g.season ORDER BY g.date) as gnum
-                FROM game_batting_logs g
-                WHERE g.at_bats > 0 AND g.season >= ? AND g.season < ?
-            ) numbered
-            WHERE gnum <= ?
-            GROUP BY player_id, season
-            HAVING SUM(at_bats) >= ?
-        ) sub
-        JOIN players p ON sub.player_id = p.player_id
-        WHERE sub.player_id != ?
-        AND sub.ops_calc >= ?
-        ORDER BY sub.season DESC
-        LIMIT 1
-    """, (min_season, season, games, max(games * 2, 20), exclude_pid, ops)).fetchone()
+    for check_season in range(season - 1, season - 26, -1):
+        row = conn.execute("""
+            SELECT p.name, sub.season FROM (
+                SELECT player_id, season,
+                       CAST(SUM(hits) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) AS REAL) /
+                           NULLIF(SUM(at_bats) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) + SUM(COALESCE(sacrifice_flies, 0)), 0)
+                       +
+                       CAST(SUM(hits) - SUM(doubles) - SUM(triples) - SUM(home_runs)
+                            + 2*SUM(doubles) + 3*SUM(triples) + 4*SUM(home_runs) AS REAL) /
+                           NULLIF(SUM(at_bats), 0)
+                       AS ops_calc
+                FROM (
+                    SELECT g.player_id, g.season, g.hits, g.at_bats, g.walks,
+                           g.hit_by_pitch, g.sacrifice_flies, g.doubles, g.triples, g.home_runs,
+                           ROW_NUMBER() OVER (PARTITION BY g.player_id ORDER BY g.date) as gnum
+                    FROM game_batting_logs g
+                    WHERE g.at_bats > 0 AND g.season = ?
+                ) numbered
+                WHERE gnum <= ?
+                GROUP BY player_id, season
+                HAVING SUM(at_bats) >= ?
+            ) sub
+            JOIN players p ON sub.player_id = p.player_id
+            WHERE sub.player_id != ?
+            AND sub.ops_calc >= ?
+            LIMIT 1
+        """, (check_season, games, max(games * 2, 20), exclude_pid, ops)).fetchone()
 
-    if row:
-        return {"name": row[0], "season": row[1]}
+        if row:
+            return {"name": row[0], "season": row[1]}
+
     return None
 
 
