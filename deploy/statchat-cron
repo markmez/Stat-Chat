@@ -6,8 +6,10 @@
 # Weekend early starts: 7:30 PM ET (Sat/Sun only)
 # Backup: 10:00 AM ET — catches data MSF publishes late
 #
-# WEEKLY RECONCILIATION — Sunday 6 AM ET
-# WEEKLY VACUUM — Sunday 5 AM ET
+# WEEKLY MAINTENANCE — Tuesday (Monday is common off day, less data urgency)
+#   4:00 AM ET: VACUUM
+#   4:30 AM ET: Full reconciliation
+#   3:00 AM ET: Records rebuild (runs 2+ hours, finishes before 5:35 AM cascade)
 
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
@@ -28,14 +30,15 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # Backup pipeline: 10:00 AM ET (14:00 UTC) — catches data MSF publishes late
 0 14 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 
-# Weekly full reconciliation: Sunday 6:00 AM ET (10:00 UTC)
-0 10 * * 0 statchat /opt/statchat/repo/deploy/refresh.sh --full-refresh >> /data/refresh.log 2>&1
+# WEEKLY MAINTENANCE — Tuesday morning (Monday common off day)
+# VACUUM: Tuesday + Friday 4:00 AM ET (08:00 UTC)
+0 8 * * 2,5 statchat /opt/statchat/repo/deploy/vacuum.sh >> /data/refresh.log 2>&1
 
-# VACUUM: Sunday + Wednesday 5:00 AM ET (09:00 UTC) — reclaim wasted DB space
-0 9 * * 0,3 statchat /opt/statchat/repo/deploy/vacuum.sh >> /data/refresh.log 2>&1
+# Weekly full reconciliation: Tuesday 4:30 AM ET (08:30 UTC)
+30 8 * * 2 statchat /opt/statchat/repo/deploy/refresh.sh --full-refresh >> /data/refresh.log 2>&1
 
-# Weekly records rebuild: Sunday 7:00 AM ET (11:00 UTC) — team + MLB records tables
-0 11 * * 0 statchat /opt/statchat/venv/bin/python /opt/statchat/repo/backend/data_pipeline/build_records.py --db /data/baseball_stats_full.db >> /data/refresh.log 2>&1
+# Weekly records rebuild: Tuesday 3:00 AM ET (07:00 UTC) — runs 2+ hours, finishes before 5:35 AM cascade
+0 7 * * 2 statchat /opt/statchat/venv/bin/python /opt/statchat/repo/backend/data_pipeline/build_records.py --db /data/baseball_stats_full.db >> /data/refresh.log 2>&1
 
 # Health monitor: every 5 min, pings Healthchecks.io if API + DB are up
 */5 * * * * statchat /opt/statchat/repo/deploy/healthcheck.sh
