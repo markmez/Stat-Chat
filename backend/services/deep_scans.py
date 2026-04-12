@@ -414,7 +414,7 @@ def _run_pelt_scans(conn, season, target_date, bat_games):
 
         # Check if player has an active hot streak in current_form
         cf = conn.execute("""
-            SELECT num_games, batting_avg, obp, slg, ops, start_game_num
+            SELECT num_games, batting_avg, obp, slg, ops
             FROM current_form
             WHERE player_id = ? AND season = ?
         """, (pid, season)).fetchone()
