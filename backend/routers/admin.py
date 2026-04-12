@@ -2360,13 +2360,13 @@ async def records_sandbox(
 </div>
 <div id="sim-results" class="results"></div>
 
-<h2>Deep Scans — Browse by Week</h2>
+<h2>Deep Scans — Browse by Date</h2>
 <div class="search-row">
-  <input type="date" id="week-start" value="2025-03-27">
-  <button onclick="scanWeek()">Scan Week</button>
-  <button class="secondary" id="prev-week" onclick="navWeek(-1)">&larr; Prev Week</button>
-  <button class="secondary" id="next-week" onclick="navWeek(1)">Next Week &rarr;</button>
-  <span id="week-info" style="font-size:12px;color:#888"></span>
+  <input type="date" id="deep-date" value="2025-04-10">
+  <button onclick="scanDeepDate()">Scan Date</button>
+  <button class="secondary" id="prev-deep" onclick="navDeepDate(-1)">&larr; Prev Day</button>
+  <button class="secondary" id="next-deep" onclick="navDeepDate(1)">Next Day &rarr;</button>
+  <span id="deep-info" style="font-size:12px;color:#888"></span>
 </div>
 <div id="season-results" class="results"></div>
 
@@ -2530,39 +2530,35 @@ function renderDateEvents(dt, events) {{
   return html;
 }}
 
-let currentWeekStart = '2025-03-27';
+let currentDeepDate = '2025-04-10';
 
-async function scanWeek(startDate) {{
-  const dt = startDate || document.getElementById('week-start').value;
+async function scanDeepDate(dt) {{
+  dt = dt || document.getElementById('deep-date').value;
   if (!dt) return;
-  currentWeekStart = dt;
-  document.getElementById('week-start').value = dt;
+  currentDeepDate = dt;
+  document.getElementById('deep-date').value = dt;
   const el = document.getElementById('season-results');
-  const weekInfo = document.getElementById('week-info');
-  el.innerHTML = '<p class="loading">Scanning week of ' + dt + '...</p>';
+  const info = document.getElementById('deep-info');
+  el.innerHTML = '<p class="loading">Scanning ' + dt + '...</p>';
   try {{
-    const data = await apiFetch('/admin/records-simulate-week?start_date=' + dt);
-    if (!data.results || data.results.length === 0 || data.total_events === 0) {{
-      el.innerHTML = '<p class="empty">No deep scan events for week of ' + dt + '.</p>';
-      weekInfo.textContent = dt + ' – ' + data.end_date;
+    const data = await apiFetch('/admin/records-simulate?date_str=' + dt);
+    if (!data.events || data.events.length === 0) {{
+      el.innerHTML = '<p class="empty">No events for ' + dt + '.</p>';
+      info.textContent = dt;
       return;
     }}
-    let html = '';
-    data.results.forEach(r => {{
-      html += renderDateEvents(r.date, r.events);
-    }});
-    el.innerHTML = html;
-    weekInfo.textContent = data.start_date + ' – ' + data.end_date + ' (' + data.total_events + ' events)';
+    el.innerHTML = renderDateEvents(dt, data.events);
+    info.textContent = data.events.length + ' events';
   }} catch (e) {{
     el.innerHTML = '<p class="empty">Error: ' + e.message + '</p>';
   }}
 }}
 
-function navWeek(direction) {{
-  const d = new Date(currentWeekStart + 'T12:00:00');
-  d.setDate(d.getDate() + (direction * 7));
+function navDeepDate(direction) {{
+  const d = new Date(currentDeepDate + 'T12:00:00');
+  d.setDate(d.getDate() + direction);
   const newDate = d.toISOString().slice(0, 10);
-  scanWeek(newDate);
+  scanDeepDate(newDate);
 }}
 
 function esc(s) {{ return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }}
