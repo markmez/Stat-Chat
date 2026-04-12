@@ -1970,11 +1970,14 @@ def _simulate_records_for_date(conn, target_date):
                         "detail": f"{pname} hit {label.replace('home runs', 'a homer').replace('hits', str(game_val) + ' hits').replace('stolen bases', 'a stolen base')}, giving him {int(career_total)} career {label} as a member of the {team_name} — {diff} from the franchise record held by {rec[1]} ({int(rec[0])}).",
                     })
                 elif diff <= 0 and rec[1] != pname:
-                    events.append({
-                        "type": "record_crossing",
-                        "player": pname, "team": team_name,
-                        "detail": f"{pname} passed {rec[1]} for the {team_name} career {label} record ({int(career_total)} vs {int(rec[0])})",
-                    })
+                    # Only fire on the day they actually crossed
+                    yesterday_total = career_total - game_val
+                    if yesterday_total < int(rec[0]):
+                        events.append({
+                            "type": "record_crossing",
+                            "player": pname, "team": team_name,
+                            "detail": f"{pname} passed {rec[1]} for the {team_name} career {label} record ({int(career_total)} vs {int(rec[0])})",
+                        })
 
         for stat_col, game_col, label, _ in PITCH_COUNTING:
             game_val = pitch.get(game_col, 0)
@@ -2005,11 +2008,13 @@ def _simulate_records_for_date(conn, target_date):
                         "detail": f"{pname} now has {int(career_total)} career {label} with the {team_name} — {diff} from the franchise record held by {rec[1]} ({int(rec[0])}).",
                     })
                 elif diff <= 0 and rec[1] != pname:
-                    events.append({
-                        "type": "record_crossing",
-                        "player": pname, "team": team_name,
-                        "detail": f"{pname} passed {rec[1]} for the {team_name} career {label} record ({int(career_total)} vs {int(rec[0])})",
-                    })
+                    yesterday_total = career_total - game_val
+                    if yesterday_total < int(rec[0]):
+                        events.append({
+                            "type": "record_crossing",
+                            "player": pname, "team": team_name,
+                            "detail": f"{pname} passed {rec[1]} for the {team_name} career {label} record ({int(career_total)} vs {int(rec[0])})",
+                        })
 
         # ===== SEASON RECORD APPROACHES (only later in season) =====
         # Only check when player has 50+ games (avoid early-season noise)
