@@ -267,6 +267,9 @@ QUALITY THRESHOLD — READ CAREFULLY:
     well" or "he had an off night," don't include it. Quality over
     quantity — only include items that pass the bar above. Could be
     2 items or 10, depending on the day.
+15. NEVER write about a player struggling, having a poor start, slumping,
+    or having a bad game. No negative narratives. The feed celebrates
+    what players ARE doing, not what they aren't.
 
 STYLE RULES:
 14. Do NOT pad sentences with empty context. If you don't have a meaningful
