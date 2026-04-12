@@ -2535,7 +2535,7 @@ def _execute_career_threshold(conn, plan: QueryPlan) -> Optional[str]:
         f"{where_clause} "
         f"GROUP BY {prefix}.player_id "
         f"HAVING SUM({prefix}.{stat_col}) {plan.comparison} ?{extra_having} "
-        f"ORDER BY career_total DESC"
+        f"ORDER BY career_total DESC LIMIT 500"
     )
 
     cur = conn.cursor()
@@ -2709,7 +2709,7 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
             f"SELECT p.name, {stat_expr} AS stat_val{extra_select_clause} "
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
-            f"{where} ORDER BY stat_val DESC",
+            f"{where} ORDER BY stat_val DESC LIMIT 500",
             tuple(query_params),
         )
     else:
@@ -2717,7 +2717,7 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
             f"SELECT p.name, {stat_expr} AS stat_val, {prefix}.season{extra_select_clause} "
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
-            f"{where} ORDER BY stat_val DESC",
+            f"{where} ORDER BY stat_val DESC LIMIT 500",
             tuple(query_params),
         )
     rows = cur.fetchall()
