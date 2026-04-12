@@ -831,6 +831,7 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
 
 async def _stream(question: str, device_id: str, history: list[dict], contextual: bool = False):
     """Core pipeline: quota check → route → SQL → execute → stream answer."""
+    original_question = question  # Before any rewriting
 
     def event(data: dict) -> str:
         return f"data: {json.dumps(data)}\n\n"
@@ -886,7 +887,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 done_event["rewritten_query"] = local_rewrite
                 yield event(done_event)
                 increment_count(device_id)
-                log_query(local_rewrite, device_id, "query engine")
+                log_query(local_rewrite, device_id, "query engine", is_followup=True, original_query=original_question)
                 return
             # Local rewrite didn't intercept — use it as the question for the rest of pipeline
             question = local_rewrite
@@ -919,7 +920,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                         done_event["rewritten_query"] = rewritten_query
                     yield event(done_event)
                     increment_count(device_id)
-                    log_query(rewritten, device_id, "intercepted")
+                    log_query(rewritten, device_id, "intercepted", is_followup=True, original_query=original_question)
                     return
             # Use rewritten question for the rest of the pipeline
             question = rewritten
@@ -958,7 +959,8 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         yield event(done_event)
         if not no_count:
             increment_count(device_id)
-        log_query(question, device_id, "query engine")
+        log_query(question, device_id, "query engine",
+                  is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None)
         return
 
     # 3. Haiku SQL fallback — cheap SQL generation, no Sonnet needed
@@ -983,7 +985,8 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             done_event["rewritten_query"] = rewritten_query
         yield event(done_event)
         increment_count(device_id)
-        log_query(question, device_id, "haiku")
+        log_query(question, device_id, "haiku",
+                  is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None)
         return
 
     # 4. Knowledge mode — answer from Claude's baseball knowledge
@@ -1005,4 +1008,5 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         done_event["rewritten_query"] = rewritten_query
     yield event(done_event)
     increment_count(device_id)
-    log_query(question, device_id, "sonnet")
+    log_query(question, device_id, "sonnet",
+              is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None)
