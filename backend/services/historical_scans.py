@@ -1294,9 +1294,12 @@ def template_facts(conn, facts, season, latest_date):
             except Exception:
                 pass
 
-            # "but still taking" for rate stats when player had a bad day (0 hits)
+            # "but still took" for rate stats when player had a bad day (0 hits)
             if stat in ("batting_avg", "obp", "ops", "slg") and game_row and (game_row[0] or 0) == 0:
-                took_verb = "but still " + took_verb
+                if took_verb == "taking back":
+                    took_verb = "but still took back"
+                else:
+                    took_verb = "but still took"
 
             headline = f"{game_intro}, {took_verb} the {scope} lead in {stat_label} ({val_str}), passing {runner_up} ({ru_str})."
             secondary_names.append(runner_up)
