@@ -1607,6 +1607,13 @@ async def records_simulate(
     conn = sqlite3.connect(DB_PATH, timeout=10)
     try:
         events = _simulate_records_for_date(conn, date_str)
+        # Add deep scans
+        try:
+            from services.deep_scans import run_deep_scans
+            deep_events = run_deep_scans(conn, int(date_str[:4]), date_str)
+            events.extend(deep_events)
+        except Exception as e:
+            events.append({"type": "error", "detail": f"Deep scan error: {e}"})
         return {"date": date_str, "events": events}
     finally:
         conn.close()
@@ -2172,8 +2179,10 @@ async def records_sandbox(
   .badge.milestone-approach {{ background: #fef3c7; color: #92400e; }}
   .badge.milestone-crossing {{ background: #dcfce7; color: #166534; }}
   .badge.career-first {{ background: #dbeafe; color: #1A40B3; }}
-  .badge.first-threshold {{ background: #e0e7ff; color: #3730a3; }}
-  .event-card.first-threshold {{ border-left-color: #6366f1; background: #eef2ff; }}
+  .badge.deep-scan {{ background: #fef3c7; color: #78350f; }}
+  .event-card.deep-scan {{ border-left-color: #f59e0b; background: #fffbeb; }}
+  .badge.error {{ background: #fee2e2; color: #991b1b; }}
+  .event-card.error {{ border-left-color: #ef4444; background: #fef2f2; }}
   .badge.career-high {{ background: #f3e8ff; color: #6b21a8; }}
   .badge.holds {{ background: #fce7f3; color: #9d174d; }}
   .event-card {{
@@ -2204,11 +2213,48 @@ async def records_sandbox(
 </style>
 </head>
 <body>
-<h1>Records Sandbox</h1>
+<h1>Records &amp; Deep Scans Sandbox</h1>
 
 <div class="stat-cards">
   {status_html}
 </div>
+
+<details style="margin-bottom:16px;font-size:12px;color:#555">
+  <summary style="cursor:pointer;font-weight:600;color:#1A40B3">Detection Rules &amp; Thresholds</summary>
+  <div style="margin-top:8px;padding:12px;background:#f5f7fa;border-radius:8px;line-height:1.6">
+    <b>Records</b><br>
+    &bull; Career firsts: HR (always), Win (after week 3)<br>
+    &bull; Career highs: Hits 4+, HR 3+, RBI 5+, SB 3+, K 10+ (pitching)<br>
+    &bull; Team record approaches: within 3 (franchise-scoped)<br>
+    &bull; Season milestones: HR 20/30/40/50/60/70/80, SB 20/30/40/50/60/70/80<br>
+    &bull; Approaching: 40 within 2, 50+ within 3<br>
+    &bull; X/X combos: 20/20, 30/30, 40/40<br>
+    &bull; All require contribution to the stat on that date<br>
+    <br>
+    <b>Deep Scans — Slash Line (season)</b><br>
+    &bull; Gate: AVG &ge; .330, games &ge; 10<br>
+    &bull; Checks: last player with AVG/OBP/SLG all &ge; through same game count<br>
+    &bull; Interesting if: 5+ years MLB, 3+ years team<br>
+    <br>
+    <b>Deep Scans — Slash Line (PELT streak)</b><br>
+    &bull; Gate: Active hot streak &ge; 7 games, AVG &ge; .350 during streak<br>
+    &bull; Checks: last player with a stretch that dominant<br>
+    <br>
+    <b>Deep Scans — HR Accumulation</b><br>
+    &bull; Gate: HR &ge; 8 through &le; 30 games, OR HR &ge; 15 through &le; 50 games<br>
+    <br>
+    <b>Deep Scans — SB Accumulation</b><br>
+    &bull; Gate: SB &ge; 10 through &le; 30 games, OR SB &ge; 20 through &le; 50 games<br>
+    <br>
+    <b>Deep Scans — Power-Speed</b><br>
+    &bull; Gate: HR &ge; 5 AND SB &ge; 5 through &le; 25 games<br>
+    <br>
+    <b>Deep Scans — Pitching Dominance</b><br>
+    &bull; Gate: Starts &ge; 3, ERA &le; 1.50, K/start &ge; 8<br>
+    <br>
+    <b>Cooldown</b>: 5 games after firing before re-check (not yet enforced in sandbox)
+  </div>
+</details>
 
 <div class="build-section">
   <button onclick="buildRecords()" id="build-btn">Build Records</button>
