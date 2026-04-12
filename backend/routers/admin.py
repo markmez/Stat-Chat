@@ -2022,18 +2022,18 @@ def _simulate_records_for_date(conn, target_date):
         # ===== SEASON RECORD APPROACHES (only later in season) =====
         # Only check when player has 50+ games (avoid early-season noise)
         season_games = conn.execute("""
-            SELECT games FROM season_batting_stats
-            WHERE player_id = ? AND season = ? LIMIT 1
-        """, (pid, season)).fetchone()
+            SELECT COUNT(*) FROM game_batting_logs
+            WHERE player_id = ? AND season = ? AND date <= ?
+        """, (pid, season, target_date)).fetchone()
         if season_games and season_games[0] and season_games[0] >= 50:
             for stat_col, game_col, label, _ in BAT_COUNTING:
                 game_val = bat.get(game_col, 0) if game_col in bat else bat.get(stat_col, 0)
                 if game_val <= 0:
                     continue
                 season_total = conn.execute(f"""
-                    SELECT COALESCE({stat_col}, 0) FROM season_batting_stats
-                    WHERE player_id = ? AND season = ? LIMIT 1
-                """, (pid, season)).fetchone()
+                    SELECT COALESCE(SUM({stat_col}), 0) FROM game_batting_logs
+                    WHERE player_id = ? AND season = ? AND date <= ?
+                """, (pid, season, target_date)).fetchone()
                 if not season_total:
                     continue
                 sv = season_total[0]
@@ -2054,10 +2054,10 @@ def _simulate_records_for_date(conn, target_date):
 
         # ===== SEASON MILESTONE THRESHOLDS =====
         season_bat = conn.execute("""
-            SELECT home_runs, stolen_bases FROM season_batting_stats
-            WHERE player_id = ? AND season = ? LIMIT 1
-        """, (pid, season)).fetchone()
-        if season_bat:
+            SELECT SUM(home_runs), SUM(stolen_bases) FROM game_batting_logs
+            WHERE player_id = ? AND season = ? AND date <= ?
+        """, (pid, season, target_date)).fetchone()
+        if season_bat and season_bat[0] is not None:
             hr, sb = season_bat[0] or 0, season_bat[1] or 0
 
             def _career_threshold_count(stat_col, threshold):
