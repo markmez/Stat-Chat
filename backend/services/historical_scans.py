@@ -682,15 +682,22 @@ def scan_leaderboard_changes(conn, season, latest_date):
         ("home_runs", "HR", "home runs", 3, "home_runs"),
         ("rbi", "RBI", "RBI", 5, "rbi"),
         ("hits", "hits", "hits", 10, "hits"),
-        ("stolen_bases", "SB", "stolen bases", 3, None),  # no game log col
+        ("stolen_bases", "SB", "stolen bases", 3, "stolen_bases"),
         ("batting_avg", "AVG", "batting average", None, "hits"),
         ("obp", "OBP", "OBP", None, "hits"),
         ("ops", "OPS", "OPS", None, "hits"),
         ("slg", "SLG", "slugging", None, "hits"),
     ]
 
-    # Min PA for rate stats — higher threshold reduces noise from small samples
-    min_pa_rate = 30
+    # Min PA for rate stats — MLB prorated: (team_games / 162) * 502
+    # Use max games played this season as proxy for team games
+    max_games = conn.execute("""
+        SELECT MAX(g) FROM (
+            SELECT COUNT(*) as g FROM game_batting_logs
+            WHERE season = ? GROUP BY player_id
+        )
+    """, (season,)).fetchone()[0] or 16
+    min_pa_rate = max(30, int((max_games / 162) * 502))
 
     for col, abbrev, label, min_val, game_col in bat_stats:
         is_rate = col in ("batting_avg", "obp", "ops", "slg")
@@ -721,12 +728,12 @@ def scan_leaderboard_changes(conn, season, latest_date):
             if leader_val is None or runner_up_val is None:
                 continue
 
-            # Did the leader play on latest_date? (Required for counting stats, not rate stats)
+            # Did the leader play on latest_date? Required for all stats.
             played = conn.execute("""
                 SELECT COUNT(*) FROM game_batting_logs
                 WHERE player_id = ? AND season = ? AND date = ?
             """, (leader_pid, season, latest_date)).fetchone()[0]
-            if not played and not is_rate:
+            if not played:
                 continue
 
             # Get the leader's game contribution today
@@ -806,47 +813,39 @@ def scan_leaderboard_changes(conn, season, latest_date):
                                 })
                             break  # Only report one tie per stat/scope
 
-            # For rate stats: leader can change through inaction (other player drops)
+            # For rate stats: leader must have played today (no inaction events)
             else:
                 if leader_val <= runner_up_val:
                     continue
 
-                # Did the leader play on latest_date?
-                leader_played_today = conn.execute("""
-                    SELECT COUNT(*) FROM game_batting_logs
-                    WHERE player_id = ? AND season = ? AND date = ?
-                """, (leader_pid, season, latest_date)).fetchone()[0] > 0
+                team = leader_team
+                league = _league_for_team(team)
 
-                if leader_played_today:
-                    # Standard: leader took the lead through their own play
-                    team = leader_team
-                    league = _league_for_team(team)
+                if scope == "MLB":
+                    league_rows = conn.execute(f"""
+                        SELECT p.player_id
+                        FROM season_batting_stats s
+                        JOIN players p ON s.player_id = p.player_id
+                        WHERE s.season = ? {pa_filter}
+                        AND s.team IN ({','.join(repr(t) for t in (AL_TEAMS if league == 'AL' else NL_TEAMS))})
+                        ORDER BY s.{col} DESC LIMIT 1
+                    """, (season,)).fetchone()
+                    if league_rows and league_rows[0] == leader_pid:
+                        continue
 
-                    if scope == "MLB":
-                        league_rows = conn.execute(f"""
-                            SELECT p.player_id
-                            FROM season_batting_stats s
-                            JOIN players p ON s.player_id = p.player_id
-                            WHERE s.season = ? {pa_filter}
-                            AND s.team IN ({','.join(repr(t) for t in (AL_TEAMS if league == 'AL' else NL_TEAMS))})
-                            ORDER BY s.{col} DESC LIMIT 1
-                        """, (season,)).fetchone()
-                        if league_rows and league_rows[0] == leader_pid:
-                            continue
-
-                    facts.append({
-                        "type": "leaderboard_change",
-                        "player": leader_name,
-                        "player_id": leader_pid,
-                        "team": leader_team,
-                        "stat": col,
-                        "stat_label": label,
-                        "stat_abbrev": abbrev,
-                        "value": leader_val,
-                        "scope": scope,
-                        "runner_up": runner_up_name,
-                        "runner_up_val": runner_up_val,
-                    })
+                facts.append({
+                    "type": "leaderboard_change",
+                    "player": leader_name,
+                    "player_id": leader_pid,
+                    "team": leader_team,
+                    "stat": col,
+                    "stat_label": label,
+                    "stat_abbrev": abbrev,
+                    "value": leader_val,
+                    "scope": scope,
+                    "runner_up": runner_up_name,
+                    "runner_up_val": runner_up_val,
+                })
     # Pitching leaderboard changes
     pitch_stats = [
         ("strikeouts", "K", "strikeouts", 5, "strikeouts"),
@@ -856,7 +855,14 @@ def scan_leaderboard_changes(conn, season, latest_date):
         ("whip", "WHIP", "WHIP", None, "walks"),
     ]
 
-    min_ip_rate = 10  # ~3.1 IP minimum for rate stats early season
+    # Min IP for rate stats — MLB prorated: 1 IP per team game
+    max_team_games = conn.execute("""
+        SELECT MAX(g) FROM (
+            SELECT COUNT(*) as g FROM game_pitching_logs
+            WHERE season = ? GROUP BY player_id
+        )
+    """, (season,)).fetchone()[0] or 16
+    min_ip_rate = max(10, max_team_games)  # ip_outs = min_ip_rate * 3
 
     for col, abbrev, label, min_val, game_col in pitch_stats:
         is_rate = col in ("era", "whip")
@@ -887,12 +893,12 @@ def scan_leaderboard_changes(conn, season, latest_date):
             if leader_val is None or runner_up_val is None:
                 continue
 
-            # Did the leader pitch on latest_date?
+            # Did the leader pitch on latest_date? Required for all stats.
             played = conn.execute("""
                 SELECT COUNT(*) FROM game_pitching_logs
                 WHERE player_id = ? AND season = ? AND date = ?
             """, (leader_pid, season, latest_date)).fetchone()[0]
-            if not played and not is_rate:
+            if not played:
                 continue
 
             # Get the leader's game contribution today
@@ -940,22 +946,21 @@ def scan_leaderboard_changes(conn, season, latest_date):
                         "is_pitching": True,
                     })
             else:
-                # Rate stat: leader changed through play
-                if played:
-                    facts.append({
-                        "type": "leaderboard_change",
-                        "player": leader_name,
-                        "player_id": leader_pid,
-                        "team": leader_team,
-                        "stat": col,
-                        "stat_label": label,
-                        "stat_abbrev": abbrev,
-                        "value": leader_val,
-                        "runner_up": runner_up_name,
-                        "runner_up_val": runner_up_val,
-                        "scope": scope,
-                        "is_pitching": True,
-                    })
+                # Rate stat: leader must have played today (already checked above)
+                facts.append({
+                    "type": "leaderboard_change",
+                    "player": leader_name,
+                    "player_id": leader_pid,
+                    "team": leader_team,
+                    "stat": col,
+                    "stat_label": label,
+                    "stat_abbrev": abbrev,
+                    "value": leader_val,
+                    "runner_up": runner_up_name,
+                    "runner_up_val": runner_up_val,
+                    "scope": scope,
+                    "is_pitching": True,
+                })
 
     return facts
 
