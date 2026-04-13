@@ -2641,6 +2641,9 @@ def _execute_career_threshold(conn, plan: QueryPlan) -> Optional[str]:
     if plan.active_only:
         current_year = datetime.now().year
         where_parts.append(f"{prefix}.season >= {current_year - 1}")
+    if plan.since_year:
+        where_parts.append(f"{prefix}.season >= ?")
+        where_params.append(plan.since_year)
 
     where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
@@ -2672,7 +2675,8 @@ def _execute_career_threshold(conn, plan: QueryPlan) -> Optional[str]:
         else:
             filter_desc += f" and {ef_val}+ {ef['stat'].display_abbrev}"
 
-    parts = [f"**Career {filter_desc} (All-Time)**"]
+    scope_label = f"Since {plan.since_year}" if plan.since_year else "All-Time"
+    parts = [f"**Career {filter_desc} ({scope_label})**"]
     parts.append(f"{len(rows)} matched.\n")
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
