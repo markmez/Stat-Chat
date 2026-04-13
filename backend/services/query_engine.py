@@ -1091,6 +1091,7 @@ def decompose(question: str) -> QueryPlan:
         _add_consumed(plan, "in a game in one game in a single game single")
 
     # Game-log counting: "most 3-hit games", "most games with 3+ RBI", "most 10-K games"
+    multi_game_match = None
     # Pattern 0: "multi-stat games" — treat "multi" as 2+
     _multi_match = re.search(r'multi[- ]?(hit|hr|home run|homer|rbi|strikeout|k|xbh|extra[- ]?base[- ]?hit|walk|bb|steal|stolen base|sb|run)\s*game', lower)
     if _multi_match:
