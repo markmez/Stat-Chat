@@ -1263,8 +1263,10 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
     if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)\+?\s*[- ]?\s*hit\s+games?|\d+\+\s+\w+\s+games?', lower):
         return None
 
-    # Reject year-over-year comparisons — "Betts 2023 vs 2024" needs the query engine
+    # Reject year-over-year comparisons — "Betts 2023 vs 2024" or "Soto last year vs this year"
     if re.search(r'20[012]\d\s*(?:vs\.?|versus|compared to|to)\s*20[012]\d', lower):
+        return None
+    if re.search(r'(?:last|this)\s+(?:year|season)\s+(?:vs\.?|versus|compared to)\s+(?:last|this)\s+(?:year|season)', lower):
         return None
 
     # Reject cross-season analytical questions — these should fall through to Claude

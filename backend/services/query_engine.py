@@ -875,6 +875,27 @@ def decompose(question: str) -> QueryPlan:
                 plan.player_name = player
                 _add_consumed(plan, name_text)
 
+    # Relative year comparison: "Soto last year vs this year"
+    if not plan.compare_years:
+        rel_yoy = re.search(r'last\s+(?:year|season)\s+(?:vs\.?|versus|compared to)\s+this\s+(?:year|season)', lower)
+        if not rel_yoy:
+            rel_yoy = re.search(r'this\s+(?:year|season)\s+(?:vs\.?|versus|compared to)\s+last\s+(?:year|season)', lower)
+        if rel_yoy:
+            current_year = date.today().year
+            plan.compare_years = (current_year - 1, current_year)
+            plan.query_type = "year_comparison"
+            _add_consumed(plan, rel_yoy.group(0))
+            name_text = lower[:rel_yoy.start()].strip()
+            if name_text:
+                from services import name_matcher as _nm
+                player = _nm.match_player(name_text)
+                if not player:
+                    result = _nm.match_player_with_prominence(name_text)
+                    player = result[0] if result else None
+                if player:
+                    plan.player_name = player
+                    _add_consumed(plan, name_text)
+
     # Only detect explicit season if since_year/since_date didn't already claim the year
     if not plan.since_year and not plan.since_date and not plan.compare_years:
         season = detect_season(lower, default_to_most_recent=False)
