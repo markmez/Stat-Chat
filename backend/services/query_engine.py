@@ -2389,23 +2389,13 @@ def _execute_consecutive_seasons_alltime(conn, plan, table, n_seasons) -> Option
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
 
-    # Headers: just the stat abbreviation per season
-    headers = [abbrev] * n_seasons
-    parts.append(f"HEADER: {', '.join(headers)}")
+    parts.append("HEADER: Years")
 
     for i, row in enumerate(unique_rows):
         name = row[0]
         start_yr = row[1]
         end_yr = start_yr + n_seasons - 1
-        yr_range = f"{str(start_yr)[-2:]}-{str(end_yr)[-2:]}"
-        vals = []
-        for j in range(n_seasons):
-            v = row[2 + j]
-            if isinstance(v, float) and v < 1:
-                vals.append(_format_rate(v))
-            else:
-                vals.append(str(int(v)))
-        parts.append(f"ROW {i+1}. {name} ('{yr_range}): {', '.join(vals)}")
+        parts.append(f"ROW {i+1}. {name}: {start_yr}–{end_yr}")
 
     parts.append("[/LEADERBOARD]")
     return "\n".join(parts)
