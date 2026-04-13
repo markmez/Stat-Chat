@@ -1271,14 +1271,16 @@ def template_facts(conn, facts, season, latest_date):
                 game_intro = f"{player}"
 
             if isinstance(val, float):
-                if val >= 1.0:
+                # ERA/WHIP: 2 decimals, keep leading digit
+                if stat in ("era", "whip"):
+                    val_str = f"{val:.2f}"
+                    ru_str = f"{runner_up_val:.2f}"
+                elif val >= 1.0:
                     val_str = f"{val:.3f}"
+                    ru_str = f"{runner_up_val:.3f}" if runner_up_val >= 1.0 else f".{int(runner_up_val * 1000):03d}"
                 else:
                     val_str = f".{int(val * 1000):03d}"
-                if runner_up_val >= 1.0:
-                    ru_str = f"{runner_up_val:.3f}"
-                else:
-                    ru_str = f".{int(runner_up_val * 1000):03d}"
+                    ru_str = f"{runner_up_val:.3f}" if runner_up_val >= 1.0 else f".{int(runner_up_val * 1000):03d}"
             else:
                 val_str = str(val)
                 ru_str = str(runner_up_val)
