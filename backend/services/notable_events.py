@@ -677,8 +677,28 @@ def detect_season_pace(conn, season, latest_date=None):
                         break  # Already reported this threshold, skip lower ones too
 
                     team = team_display(team_code) if team_code else ""
+                    # Get last game line
+                    game_row = conn.execute("""
+                        SELECT hits, at_bats, home_runs, rbi, stolen_bases
+                        FROM game_batting_logs g
+                        JOIN players p ON g.player_id = p.player_id
+                        WHERE p.name = ? AND g.date = ?
+                    """, (name, latest_date)).fetchone()
+                    game_intro = ""
+                    if game_row:
+                        gh, gab, ghr, grbi, gsb = [x or 0 for x in game_row]
+                        parts = [f"{gh}-for-{gab}"]
+                        if ghr: parts.append(f"{'a homer' if ghr == 1 else f'{ghr} homers'}")
+                        if gsb: parts.append(f"{'a stolen base' if gsb == 1 else f'{gsb} steals'}")
+                        if grbi: parts.append(f"{grbi} RBI")
+                        game_intro = f"{name} went {parts[0]}"
+                        if len(parts) > 1:
+                            game_intro += f" with {', '.join(parts[1:])}"
+                        game_intro += " and is "
+                    else:
+                        game_intro = f"{name} is "
                     events.append({
-                        "headline": f"{name} is on pace for {threshold}+ {abbrev} this season ({stat_val} {abbrev} through {games} games, {pace} pace).",
+                        "headline": f"{game_intro}on pace for {threshold}+ {abbrev} this season ({stat_val} {abbrev} through {games} games).",
                         "detail": "",
                         "category": "Milestone",
                         "game_date": latest_date,
