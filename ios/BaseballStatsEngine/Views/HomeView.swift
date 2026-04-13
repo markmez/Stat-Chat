@@ -23,6 +23,8 @@ struct HomeView: View {
     @State private var lastNameSearchCount: Int = UserDefaults.standard.integer(forKey: "lastNameSearchCount")
     @State private var matchupPills: [String] = []
     @State private var drawerTab: DrawerTab = .notable
+    @State private var lastLeftHome: Date?
+    @State private var feedRefreshTrigger: Bool = false
     private enum DrawerTab { case notable, leaders, history }
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
@@ -41,6 +43,17 @@ struct HomeView: View {
                 .navigationDestination(for: TeamCardDestination.self) { dest in
                     TeamCardView(teamCode: dest.code, navigationPath: $path)
                 }
+        }
+        .onChange(of: path.count) { oldCount, newCount in
+            if newCount > 0 && oldCount == 0 {
+                // Leaving home screen
+                lastLeftHome = Date()
+            } else if newCount == 0 && oldCount > 0 {
+                // Returned to home screen — refresh feed if 5+ min away
+                if let left = lastLeftHome, Date().timeIntervalSince(left) >= 300 {
+                    feedRefreshTrigger.toggle()
+                }
+            }
         }
         .sheet(isPresented: Binding(
             get: { appState.showPaywall },
@@ -223,10 +236,11 @@ struct HomeView: View {
                 }
             }
 
-            // Dismiss overlay — tap above the drawer to collapse
+            // Dismiss overlay — tap anywhere outside the drawer to collapse
             if feedExpanded {
                 Color.black.opacity(0.15)
                     .ignoresSafeArea()
+                    .contentShape(Rectangle())
                     .onTapGesture {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                             feedExpanded = false
@@ -234,7 +248,7 @@ struct HomeView: View {
                     }
             }
 
-            // Notable events drawer
+            // Notable events drawer — must be above the dismiss overlay
             notableDrawer
                 .transition(.move(edge: .bottom))
         }
@@ -310,7 +324,9 @@ struct HomeView: View {
                         },
                         showHeader: false,
                         matchupPills: $matchupPills,
-                        hasExpandedTrayToday: NotableEventsFeed.hasExpandedTray()
+                        hasExpandedTrayToday: NotableEventsFeed.hasExpandedTray(),
+                        trayExpanded: feedExpanded,
+                        refreshTrigger: feedRefreshTrigger
                     )
                 }
                 .overlay(

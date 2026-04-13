@@ -41,9 +41,13 @@ struct NotableEventsFeed: View {
     var showHeader: Bool = true
     @Binding var matchupPills: [String]
     var hasExpandedTrayToday: Bool = false
+    var trayExpanded: Bool = false
+    var refreshTrigger: Bool = false
 
     @State private var events: [NotableEvent] = []
     @State private var lastLoadTime: Date?
+    @State private var seenHeadlines: [String: Set<String>] = Self.loadSeenHeadlines()
+    @State private var dwellTimers: [String: Date] = [:]  // headline -> appeared time
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
 
@@ -87,6 +91,30 @@ struct NotableEventsFeed: View {
         return fmt.string(from: date)
     }
 
+    // MARK: - Scroll depth tracking
+
+    private static func loadSeenHeadlines() -> [String: Set<String>] {
+        guard let dict = UserDefaults.standard.dictionary(forKey: "seenEventHeadlines") as? [String: [String]] else { return [:] }
+        return dict.mapValues { Set($0) }
+    }
+
+    private func saveSeenHeadlines() {
+        // Only keep last 3 days
+        let cal = Calendar.current
+        let cutoff = cal.date(byAdding: .day, value: -3, to: Date())!
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        let cutoffStr = fmt.string(from: cutoff)
+        let recent = seenHeadlines.filter { $0.key >= cutoffStr }
+        UserDefaults.standard.set(recent.mapValues { Array($0) }, forKey: "seenEventHeadlines")
+    }
+
+    private func markSeen(_ event: NotableEvent) {
+        guard !event.headline.isEmpty else { return }
+        let wasNew = seenHeadlines[event.gameDate, default: []].insert(event.headline).inserted
+        if wasNew { saveSeenHeadlines() }
+    }
+
     var body: some View {
         if !events.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
@@ -113,6 +141,22 @@ struct NotableEventsFeed: View {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(events.enumerated()), id: \.element.id) { index, event in
                         eventCard(event, isLast: index == events.count - 1)
+                            .onAppear {
+                                if index == 0 && !trayExpanded {
+                                    // Collapsed peek: mark first event seen immediately
+                                    markSeen(event)
+                                } else if trayExpanded {
+                                    // Expanded: start dwell timer
+                                    dwellTimers[event.headline] = Date()
+                                }
+                            }
+                            .onDisappear {
+                                // Check if event was visible for 1.5s+
+                                if let appeared = dwellTimers.removeValue(forKey: event.headline),
+                                   Date().timeIntervalSince(appeared) >= 1.5 {
+                                    markSeen(event)
+                                }
+                            }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -145,6 +189,23 @@ struct NotableEventsFeed: View {
                 Task {
                     if let last = lastLoadTime, Date().timeIntervalSince(last) < 300 { return }
                     await loadEvents()
+                }
+            }
+            .onChange(of: refreshTrigger) {
+                // Reload when returning to home screen after 5+ min in-app
+                Task { await loadEvents() }
+            }
+            .onChange(of: trayExpanded) { _, expanded in
+                if !expanded {
+                    // Tray collapsed: flush dwell timers, mark any that hit 1.5s
+                    let now = Date()
+                    for (headline, appeared) in dwellTimers {
+                        if now.timeIntervalSince(appeared) >= 1.5,
+                           let event = events.first(where: { $0.headline == headline }) {
+                            markSeen(event)
+                        }
+                    }
+                    dwellTimers.removeAll()
                 }
             }
     }
@@ -218,6 +279,58 @@ struct NotableEventsFeed: View {
                 }
                 merged = result + older
             }
+
+            // Reorder: bubble unseen events to top within each feed group.
+            // Today's previews/on-this-date share a group with the most recent
+            // game results since they appear together as one feed session.
+            let savedSeen = Self.loadSeenHeadlines()
+            let allSeenHeadlines = savedSeen.values.reduce(into: Set<String>()) { $0.formUnion($1) }
+            let today = Self.todayETString()
+
+            // Find the most recent game date (non-today, has actual game results)
+            let latestGameDate = merged.first(where: { $0.gameDate != today && $0.category != "Tonight" })?.gameDate
+            // Top group: today + latest game date (if today has events)
+            let hasTodayEvents = merged.contains { $0.gameDate == today }
+            var topGroupDates: Set<String> = []
+            if hasTodayEvents, let gd = latestGameDate {
+                topGroupDates = [today, gd]
+            } else if hasTodayEvents {
+                topGroupDates = [today]
+            } else if let gd = latestGameDate {
+                topGroupDates = [gd]
+            }
+
+            var reordered: [NotableEvent] = []
+            var idx = 0
+
+            // First group: combined top dates
+            if !topGroupDates.isEmpty {
+                var topGroup: [NotableEvent] = []
+                while idx < merged.count && topGroupDates.contains(merged[idx].gameDate) {
+                    topGroup.append(merged[idx])
+                    idx += 1
+                }
+                let unseenTop = topGroup.filter { !allSeenHeadlines.contains($0.headline) }
+                let seenTop = topGroup.filter { allSeenHeadlines.contains($0.headline) }
+                reordered.append(contentsOf: unseenTop)
+                reordered.append(contentsOf: seenTop)
+            }
+
+            // Remaining groups: one per date
+            while idx < merged.count {
+                let currentDate = merged[idx].gameDate
+                var dateGroup: [NotableEvent] = []
+                while idx < merged.count && merged[idx].gameDate == currentDate {
+                    dateGroup.append(merged[idx])
+                    idx += 1
+                }
+                let seenSet = savedSeen[currentDate] ?? []
+                let unseen = dateGroup.filter { !seenSet.contains($0.headline) }
+                let seen = dateGroup.filter { seenSet.contains($0.headline) }
+                reordered.append(contentsOf: unseen)
+                reordered.append(contentsOf: seen)
+            }
+            merged = reordered
 
             // Mark as visited today
             Self.markVisitedToday()
@@ -346,5 +459,5 @@ struct NotableEventsFeed: View {
 }
 
 #Preview {
-    NotableEventsFeed(matchupPills: .constant([]))
+    NotableEventsFeed(matchupPills: .constant([]), trayExpanded: true)
 }
