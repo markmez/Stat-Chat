@@ -849,9 +849,11 @@ def decompose(question: str) -> QueryPlan:
         plan.per_season = True
         plan.season_count = int(per_season_match.group(1))
         plan.query_type = "threshold"
-        current_year = datetime.now().year
-        plan.since_year = current_year - plan.season_count + 1
-        plan.scope = f"since_{plan.since_year}"
+        # Don't override scope if "all time" / "career" / "ever" was already detected
+        if plan.scope not in ("career", "all_time"):
+            current_year = datetime.now().year
+            plan.since_year = current_year - plan.season_count + 1
+            plan.scope = f"since_{plan.since_year}"
         _add_consumed(plan, "each every all of the last past over in during straight consecutive seasons years back to back back-to-back season year")
 
     # Year-over-year comparison: "Mookie Betts 2023 vs 2024"
@@ -2313,11 +2315,112 @@ def _build_suggestions(plan: QueryPlan, stat_name: str, scope_label: str) -> lis
     return pills
 
 
+def _execute_consecutive_seasons_alltime(conn, plan, table, n_seasons) -> Optional[str]:
+    """All-time: find players who met a threshold in N consecutive seasons."""
+    conditions = []
+    if plan.stat:
+        stat_col = plan.stat.db_column
+        if plan.threshold is not None:
+            conditions.append((stat_col, plan.comparison, plan.threshold, plan.stat.is_rate))
+    for ef in plan.extra_filters:
+        if ef.get("stat"):
+            conditions.append((ef["stat"].db_column, ef.get("comparison", ">="), ef["threshold"], ef["stat"].is_rate))
+
+    if not conditions:
+        return None
+
+    # Build self-join: s1 JOIN s2 ON same player + season+1, etc.
+    first_col = conditions[0][0]
+    first_thresh = conditions[0][2]
+    _labels = {
+        "home_runs": "HR", "hits": "H", "rbi": "RBI", "runs": "R",
+        "stolen_bases": "SB", "walks": "BB", "strikeouts": "K", "wins": "W",
+        "saves": "SV", "batting_avg": "AVG", "ops": "OPS", "era": "ERA",
+    }
+    abbrev = _labels.get(first_col, first_col)
+    thresh_display = int(first_thresh) if first_thresh == int(first_thresh) else first_thresh
+
+    # Build JOIN chain
+    aliases = [f"s{i+1}" for i in range(n_seasons)]
+    joins = [f"{table} {aliases[0]}"]
+    for i in range(1, n_seasons):
+        joins.append(
+            f"JOIN {table} {aliases[i]} ON {aliases[0]}.player_id = {aliases[i]}.player_id "
+            f"AND {aliases[i]}.season = {aliases[0]}.season + {i}"
+        )
+
+    # WHERE conditions for each season alias
+    wheres = []
+    for alias in aliases:
+        for col, comp, thresh, is_rate in conditions:
+            wheres.append(f"{alias}.{col} {comp} {thresh}")
+
+    # Build SELECT with stat values per season
+    selects = [f"p.name", f"{aliases[0]}.season AS start_year"]
+    for alias in aliases:
+        selects.append(f"{alias}.{first_col}")
+
+    sql = (
+        f"SELECT {', '.join(selects)} "
+        f"FROM {' '.join(joins)} "
+        f"JOIN players p ON {aliases[0]}.player_id = p.player_id "
+        f"WHERE {' AND '.join(wheres)} "
+        f"ORDER BY {aliases[0]}.season DESC "
+        f"LIMIT 500"
+    )
+
+    rows = conn.execute(sql).fetchall()
+
+    if not rows:
+        return f"No players found with {thresh_display}+ {abbrev} in {n_seasons} consecutive seasons." + _empty_result_pills(plan)
+
+    # Dedupe: show each player's most recent streak only
+    seen_players = set()
+    unique_rows = []
+    for row in rows:
+        name = row[0]
+        if name not in seen_players:
+            seen_players.add(name)
+            unique_rows.append(row)
+
+    title = f"**{thresh_display}+ {abbrev} in {n_seasons} Consecutive Seasons (All-Time)**"
+    parts = [title]
+    parts.append(f"{len(unique_rows)} matched.")
+    parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+    parts.append("[LEADERBOARD]")
+
+    # Headers: year columns
+    headers = [f"Yr {i+1}" for i in range(n_seasons)]
+    parts.append(f"HEADER: {', '.join(headers)}")
+
+    for i, row in enumerate(unique_rows):
+        name = row[0]
+        start_yr = row[1]
+        vals = []
+        for j in range(n_seasons):
+            v = row[2 + j]
+            yr = start_yr + j
+            yr_short = str(yr)[-2:]
+            if isinstance(v, float) and v < 1:
+                vals.append(f"'{yr_short} {_format_rate(v)}")
+            else:
+                vals.append(f"'{yr_short} {int(v)}")
+        parts.append(f"ROW {i+1}. {name}: {', '.join(vals)}")
+
+    parts.append("[/LEADERBOARD]")
+    return "\n".join(parts)
+
+
 def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
     """Multi-season consistency: find players meeting criteria in EVERY season."""
     table, prefix = _table_and_prefix(plan)
     current_year = date.today().year
     n_seasons = plan.season_count or 3
+
+    # All-time consecutive season scan (self-join approach)
+    if plan.scope in ("all_time", "career") or (not plan.season and not plan.since_year):
+        return _execute_consecutive_seasons_alltime(conn, plan, table, n_seasons)
+
     # Use completed seasons — current year likely has too few games
     # If we're past July, include current year; otherwise use last N completed
     month = date.today().month
@@ -2411,8 +2514,9 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
         "era": "ERA", "whip": "WHIP", "k_per_9": "K/9", "innings_pitched": "IP",
     }
 
-    title = f"**Players meeting criteria in each of the last {n_seasons} seasons ({start_year}-{most_recent})**\n"
+    title = f"**Players meeting criteria in each of the last {n_seasons} seasons ({start_year}-{most_recent})**"
     parts = [title]
+    parts.append(f"{len(results)} matched.")
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
     # Build header: STAT 'YR for each season (no Games column — keeps it compact)
@@ -2453,9 +2557,15 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
         parts.append(f"ROW {i+1}. {name}: " + ", ".join(vals))
 
     parts.append("[/LEADERBOARD]")
-    parts.append(f"\n{len(results)} player{'s' if len(results) != 1 else ''} qualified.")
 
-    # All-time consecutive season scan not yet implemented — omit see-also
+    # See-also for all-time version
+    _labels_sa = {"home_runs": "HR", "rbi": "RBI", "hits": "H", "stolen_bases": "SB",
+                  "strikeouts": "K", "wins": "W"}
+    first_col_sa = conditions[0][0] if conditions else ""
+    first_label_sa = _labels_sa.get(first_col_sa, first_col_sa)
+    thresh_sa = int(conditions[0][2]) if conditions and conditions[0][2] == int(conditions[0][2]) else ""
+    if thresh_sa:
+        parts.append(f"\n[SUGGEST]{thresh_sa}+ {first_label_sa} in {n_seasons} straight seasons all time[/SUGGEST]")
 
     return "\n".join(parts)
 
