@@ -14,7 +14,7 @@ struct SuggestionPillsView: View {
     @State private var nextSwapIndex = 0
     @State private var fadingId: String?
 
-    private var maxVisible: Int { compact ? 4 : 6 }
+    private var maxVisible: Int { compact ? 3 : 4 }
     private let swapInterval: TimeInterval = 4.0
     private let fadeDuration: TimeInterval = 0.5
 
@@ -31,12 +31,12 @@ struct SuggestionPillsView: View {
                         onTap(suggestion.text)
                     } label: {
                         Text(suggestion.text)
-                            .font(.system(.caption, design: .rounded, weight: .medium))
+                            .font(.system(.subheadline, design: .rounded, weight: .medium))
                             .foregroundStyle(.white)
                             .lineLimit(1)
                             .truncationMode(.tail)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 9)
                             .frame(maxWidth: UIScreen.main.bounds.width - 56)
                             .background(
                                 LinearGradient(

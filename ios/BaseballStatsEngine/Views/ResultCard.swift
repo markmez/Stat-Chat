@@ -75,13 +75,13 @@ struct ResultCard: View {
                                     } label: {
                                         HStack(spacing: 6) {
                                             Image(systemName: "magnifyingglass")
-                                                .font(.system(size: 12, weight: .medium))
+                                                .font(.system(size: 13, weight: .medium))
                                             Text(query)
-                                                .font(.system(.footnote, design: .rounded, weight: .medium))
+                                                .font(.system(.subheadline, design: .rounded, weight: .medium))
                                         }
                                         .foregroundStyle(.white)
                                         .padding(.horizontal, 14)
-                                        .padding(.vertical, 8)
+                                        .padding(.vertical, 9)
                                         .background(
                                             LinearGradient(
                                                 colors: [lightBlue, deepBlue],
@@ -148,23 +148,50 @@ struct ResultCard: View {
                 .padding(.vertical, 6)
 
         case .tip(let text):
-            HStack(alignment: .top, spacing: 5) {
-                Image(systemName: "lightbulb")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary.opacity(0.45))
-                Group {
-                    Text("Tip: ").fontWeight(.medium) +
-                    Text(text).italic()
+            if UserDefaults.standard.integer(forKey: "lastNameSearchCount") < 2 {
+                HStack(alignment: .top, spacing: 5) {
+                    Image(systemName: "lightbulb.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.yellow)
+                    Group {
+                        Text("Tip: ").fontWeight(.medium) +
+                        Text(text).italic()
+                    }
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.secondary)
                 }
-                .font(.system(.caption, design: .rounded))
-                .foregroundStyle(.secondary.opacity(0.55))
+                .padding(.horizontal, 20)
+            }
+
+        case .context(let text):
+            Text(text)
+                .font(.system(.subheadline, design: .rounded, weight: .medium))
+                .foregroundStyle(.primary.opacity(0.7))
+                .padding(.horizontal, 20)
+                .padding(.top, 2)
+
+        case .gameLogs(let entries):
+            GameLogsResultView(entries: entries)
+                .padding(.horizontal, 6)
+
+        case .aiDisclaimer(let text):
+            HStack(alignment: .top, spacing: 5) {
+                Image(systemName: "sparkle")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary.opacity(0.35))
+                Text(text)
+                    .font(.system(.caption2, design: .rounded))
+                    .foregroundStyle(.secondary.opacity(0.45))
+                    .italic()
             }
             .padding(.horizontal, 20)
+            .padding(.top, 8)
 
         case .subtitle(let text):
             Text(text)
                 .font(.system(.caption, design: .rounded))
-                .foregroundStyle(.secondary.opacity(0.55))
+                .italic()
+                .foregroundStyle(.secondary)
                 .padding(.horizontal, 20)
                 .padding(.top, -2)
 

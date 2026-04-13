@@ -120,7 +120,7 @@ struct LeaderboardView: View {
                             }
                             .font(.system(.caption2, design: .monospaced, weight: .semibold))
                             .foregroundStyle(sortColumn == idx ? deepBlue : deepBlue.opacity(0.7))
-                            .frame(minWidth: colWidth, alignment: .leading)
+                            .frame(width: colWidth, alignment: .leading)
                             .padding(.leading, idx > 0 ? valueGap : 0)
                         }
                         .buttonStyle(.plain)
@@ -128,7 +128,7 @@ struct LeaderboardView: View {
                         Text(header)
                             .font(.system(.caption2, design: .monospaced, weight: .semibold))
                             .foregroundStyle(.secondary)
-                            .frame(minWidth: colWidth, alignment: .leading)
+                            .frame(width: colWidth, alignment: .leading)
                             .padding(.leading, idx > 0 ? valueGap : 0)
                     }
                 }
@@ -292,9 +292,13 @@ struct LeaderboardView: View {
     /// Parse "1. Aaron Judge" into ("1.", "Aaron Judge")
     private func parseLabel(_ label: String) -> (rank: String, name: String) {
         if let dotIdx = label.firstIndex(of: ".") {
-            let rank = String(label[...dotIdx])
-            let name = String(label[label.index(after: dotIdx)...]).trimmingCharacters(in: .whitespaces)
-            return (rank, name)
+            let before = String(label[..<dotIdx]).trimmingCharacters(in: .whitespaces)
+            // Only treat as rank if the part before the dot is a number
+            if Int(before) != nil {
+                let rank = String(label[...dotIdx])
+                let name = String(label[label.index(after: dotIdx)...]).trimmingCharacters(in: .whitespaces)
+                return (rank, name)
+            }
         }
         return ("", label)
     }

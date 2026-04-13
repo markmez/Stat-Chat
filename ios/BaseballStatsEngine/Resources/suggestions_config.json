@@ -477,6 +477,11 @@
       "text": "Switch hitters with over .800 OPS this season",
       "weight": 1.0,
       "id": "d85"
+    },
+    {
+      "text": "Players with 3000 hits and 500 HR",
+      "weight": 1.0,
+      "id": "d86"
     }
   ],
   "templates": {

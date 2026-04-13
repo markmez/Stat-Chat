@@ -302,6 +302,14 @@ struct HomeView: View {
                         hasExpandedTrayToday: NotableEventsFeed.hasExpandedTray()
                     )
                 }
+                .overlay(
+                    !feedExpanded ? Color.clear.contentShape(Rectangle()).onTapGesture {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            feedExpanded = true
+                            NotableEventsFeed.markExpandedTrayToday()
+                        }
+                    } : nil
+                )
             case .leaders:
                 StatLeadersView(
                     onPlayerTap: { name in
@@ -309,6 +317,14 @@ struct HomeView: View {
                     }
                 )
                 .scrollDisabled(!feedExpanded)
+                .overlay(
+                    !feedExpanded ? Color.clear.contentShape(Rectangle()).onTapGesture {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            feedExpanded = true
+                            NotableEventsFeed.markExpandedTrayToday()
+                        }
+                    } : nil
+                )
             case .history:
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -322,7 +338,7 @@ struct HomeView: View {
                                             .font(.system(size: 13))
                                             .foregroundStyle(.secondary.opacity(0.5))
                                         Text(query)
-                                            .font(.system(.subheadline, design: .rounded))
+                                            .font(.system(.callout, design: .rounded))
                                             .foregroundStyle(.primary)
                                             .lineLimit(1)
                                         Spacer()
@@ -355,6 +371,14 @@ struct HomeView: View {
                     }
                 }
                 .scrollDisabled(!feedExpanded)
+                .overlay(
+                    !feedExpanded ? Color.clear.contentShape(Rectangle()).onTapGesture {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            feedExpanded = true
+                            NotableEventsFeed.markExpandedTrayToday()
+                        }
+                    } : nil
+                )
             }
         }
         .frame(height: drawerHeight)
@@ -386,8 +410,20 @@ struct HomeView: View {
     @ViewBuilder
     private func drawerTabButton(_ title: String, tab: DrawerTab) -> some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                drawerTab = tab
+            if feedExpanded {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    drawerTab = tab
+                }
+            } else if tab == .leaders && !appState.searchHistory.isEmpty {
+                // 3-tab layout: middle tab is too close to drag handle, just expand
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    feedExpanded = true
+                    NotableEventsFeed.markExpandedTrayToday()
+                }
+            } else {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    drawerTab = tab
+                }
             }
         } label: {
             VStack(spacing: 6) {
@@ -434,7 +470,7 @@ struct HomeView: View {
                     appState.showPaywall = true
                 } label: {
                     Text("Upgrade for Unlimited")
-                        .font(.system(.caption, design: .rounded, weight: .semibold))
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
                         .foregroundStyle(deepBlue)
                 }
             }

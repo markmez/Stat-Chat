@@ -259,7 +259,7 @@ struct NotableEventsFeed: View {
                         ctaURL: "statchat://matchup/\(event.playerNames[0]) vs \(event.playerNames[1])"
                     )
                     Text(attributed)
-                        .font(.system(.subheadline, design: .rounded))
+                        .font(.system(.callout, design: .rounded))
                         .foregroundStyle(.primary)
                         .lineSpacing(3)
 
@@ -276,7 +276,7 @@ struct NotableEventsFeed: View {
                     Text(highlightedText(
                         event.detail.isEmpty ? event.headline : event.headline + " " + event.detail,
                         playerNames: event.playerNames, teamNames: event.teamNames))
-                        .font(.system(.subheadline, design: .rounded))
+                        .font(.system(.callout, design: .rounded))
                         .foregroundStyle(.primary)
                         .lineSpacing(3)
                 }

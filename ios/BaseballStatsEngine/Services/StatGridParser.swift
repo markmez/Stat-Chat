@@ -1,5 +1,10 @@
 import Foundation
 
+struct GameLogEntry: Sendable {
+    let date: String      // "2026-04-08"
+    let line: String      // "2-4, 1 HR, 4 RBI, 1 R, 0 BB, 1 SO, 0 SB"
+}
+
 enum StatGridParser {
 
     struct StatGrid: Sendable {
@@ -36,6 +41,9 @@ enum StatGridParser {
         case statGrid(StatGrid)
         case leaderboard(StatGrid)
         case tip(String)
+        case aiDisclaimer(String)
+        case context(String)
+        case gameLogs([GameLogEntry])
         case querySuggestion(String)
         case seeAlso([String])
         case didYouMean(query: String)
@@ -43,7 +51,7 @@ enum StatGridParser {
         case partialGrid(String)
     }
 
-    private static let tagTypes = ["STATGRID", "LEADERBOARD", "TIP", "SUGGEST", "SEEALSO", "DIDYOUMEAN", "SUBTITLE"]
+    private static let tagTypes = ["STATGRID", "LEADERBOARD", "GAMELOGS", "TIP", "AIDISCLAIMER", "CONTEXT", "SUGGEST", "SEEALSO", "DIDYOUMEAN", "SUBTITLE"]
 
     static func parse(_ content: String, isStreaming: Bool) -> [Segment] {
         var segments: [Segment] = []
@@ -77,6 +85,28 @@ enum StatGridParser {
                 case "TIP":
                     let trimmed = blockContent.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty { segments.append(.tip(trimmed)) }
+                case "CONTEXT":
+                    let trimmed = blockContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { segments.append(.context(trimmed)) }
+                case "GAMELOGS":
+                    let lines = blockContent.components(separatedBy: "\n")
+                        .map { $0.trimmingCharacters(in: .whitespaces) }
+                        .filter { $0.hasPrefix("GAME ") }
+                    var entries: [GameLogEntry] = []
+                    for line in lines {
+                        let content = String(line.dropFirst("GAME ".count))
+                        let parts = content.split(separator: "|", maxSplits: 1)
+                        if parts.count == 2 {
+                            entries.append(GameLogEntry(
+                                date: String(parts[0]).trimmingCharacters(in: .whitespaces),
+                                line: String(parts[1]).trimmingCharacters(in: .whitespaces)
+                            ))
+                        }
+                    }
+                    if !entries.isEmpty { segments.append(.gameLogs(entries)) }
+                case "AIDISCLAIMER":
+                    let trimmed = blockContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { segments.append(.aiDisclaimer(trimmed)) }
                 case "SUGGEST":
                     let trimmed = blockContent.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty { segments.append(.querySuggestion(trimmed)) }
