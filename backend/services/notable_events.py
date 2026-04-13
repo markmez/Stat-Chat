@@ -679,9 +679,10 @@ def detect_season_pace(conn, season, latest_date=None):
                     # Check if we already fired this player+threshold this season
                     already = conn.execute("""
                         SELECT 1 FROM notable_events
-                        WHERE headline LIKE ? AND headline LIKE ?
-                        AND game_date >= ? LIMIT 1
-                    """, (f"%{name}%", f"%on pace for {threshold}+ {abbrev}%",
+                        WHERE headline LIKE ? AND detection_type = ?
+                        AND detail = ? AND game_date >= ? LIMIT 1
+                    """, (f"%{name}%", f"pace_{stat_col}",
+                          f"threshold_{threshold}",
                           f"{season}-01-01")).fetchone()
 
                     if already:
@@ -705,12 +706,13 @@ def detect_season_pace(conn, season, latest_date=None):
                         game_intro = f"{name} went {parts[0]}"
                         if len(parts) > 1:
                             game_intro += f" with {', '.join(parts[1:])}"
-                        game_intro += " and is "
+                        game_intro += ". "
                     else:
-                        game_intro = f"{name} is "
+                        game_intro = ""
+                    projected = int(stat_val * 162 / games)
                     events.append({
-                        "headline": f"{game_intro}on pace for {threshold}+ {abbrev} this season ({stat_val} {abbrev} through {games} games).",
-                        "detail": "",
+                        "headline": f"{game_intro}{name} now has {stat_val} {abbrev} and is on pace for {projected}.",
+                        "detail": f"threshold_{threshold}",
                         "category": "Milestone",
                         "game_date": latest_date,
                         "player_names": [name],

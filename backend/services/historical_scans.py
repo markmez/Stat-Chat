@@ -1019,17 +1019,20 @@ def _get_game_line(conn, player_id, date, season):
 
     # Batting line
     row = conn.execute("""
-        SELECT hits, at_bats, home_runs, rbi, doubles, triples, walks
+        SELECT hits, at_bats, home_runs, rbi, doubles, triples, walks,
+               stolen_bases
         FROM game_batting_logs
         WHERE player_id = ? AND date = ? AND season = ?
     """, (player_id, date, season)).fetchone()
     if row and (row[0] or 0) + (row[6] or 0) > 0:
-        h, ab, hr, rbi, d, t, bb = row
+        h, ab, hr, rbi, d, t, bb, sb = row
+        sb = sb or 0
         base = f"{h}-for-{ab}"
         extras = []
-        if hr: extras.append(f"{hr} HR")
+        if hr: extras.append(f"{'a homer' if hr == 1 else f'{hr} HR'}")
         if d: extras.append(f"{d} 2B")
         if t: extras.append(f"{t} 3B")
+        if sb: extras.append(f"{'a stolen base' if sb == 1 else f'{sb} SB'}")
         if rbi: extras.append(f"{rbi} RBI")
         if bb and h == 0: extras.append(f"{bb} BB")
         if not extras:
@@ -1219,7 +1222,7 @@ def template_facts(conn, facts, season, latest_date):
                 # For rate stats, show the components that drive the rate
                 game_row = conn.execute("""
                     SELECT hits, at_bats, walks, hit_by_pitch, home_runs,
-                           doubles, triples
+                           doubles, triples, rbi, stolen_bases
                     FROM game_batting_logs
                     WHERE player_id = ? AND date = (
                         SELECT MAX(date) FROM game_batting_logs
@@ -1228,10 +1231,11 @@ def template_facts(conn, facts, season, latest_date):
                     LIMIT 1
                 """, (pid, pid, season, season)).fetchone()
                 if game_row:
-                    h, ab, bb, hbp, hr, d, t = game_row
+                    h, ab, bb, hbp, hr, d, t, rbi, sb = game_row
                     h, ab, bb = h or 0, ab or 0, bb or 0
                     hbp, hr, d, t = hbp or 0, hr or 0, d or 0, t or 0
-                    parts = [f"{h} for {ab}"]
+                    rbi, sb = rbi or 0, sb or 0
+                    parts = [f"{h}-for-{ab}"]
                     if bb > 0:
                         parts.append(f"{'a walk' if bb == 1 else f'{bb} walks'}")
                     if hr > 0:
@@ -1241,6 +1245,10 @@ def template_facts(conn, facts, season, latest_date):
                         if d > 0: xbh_parts.append(f"{'a double' if d == 1 else f'{d} doubles'}")
                         if t > 0: xbh_parts.append(f"{'a triple' if t == 1 else f'{t} triples'}")
                         parts.extend(xbh_parts)
+                    if sb > 0:
+                        parts.append(f"{'a stolen base' if sb == 1 else f'{sb} stolen bases'}")
+                    if rbi > 0:
+                        parts.append(f"{rbi} RBI")
                     if len(parts) == 1:
                         game_intro = f"{player} went {parts[0]}"
                     elif len(parts) == 2:
