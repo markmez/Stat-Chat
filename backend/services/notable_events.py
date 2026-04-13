@@ -1349,7 +1349,7 @@ def detect_matchup_previews(conn, season):
     if len(matchup_data) >= 3:
         ex_batter = matchup_data[2][0].split()[-1]  # Last name
         ex_pitcher = matchup_data[2][1].split()[-1]
-        example_hint = f'Try searching "{ex_batter} vs {ex_pitcher}" or "{ex_batter} tonight"'
+        example_hint = f'Preview other matchups by searching "{ex_batter} vs {ex_pitcher}" or "{ex_batter} tonight"'
 
     # Generate feed events for first 2 only
     for batter_name, pitcher_name, batting_team, pitcher_team, game, compelling in matchup_data[:2]:
