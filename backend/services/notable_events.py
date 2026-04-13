@@ -17,6 +17,7 @@ import os
 import time
 from datetime import date, datetime
 from services.historical_scans import _get_game_line
+from services.qualification import min_pa as _qual_min_pa
 
 DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
 
@@ -1205,7 +1206,7 @@ def detect_hitting_streaks_relaxed(conn, season, latest_date):
 def detect_league_leaders(conn, season, latest_date=None):
     """Surface current league leaders in key stats."""
     events = []
-    min_pa = max(20, int(10 * 3.1))  # rough early-season minimum
+    min_pa = _qual_min_pa(conn, season)
 
     leaders = [
         ("home_runs", "home runs", "plate_appearances", min_pa),

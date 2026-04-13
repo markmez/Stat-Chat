@@ -10,6 +10,7 @@ comparisons from the index.
 
 import sqlite3
 from datetime import date
+from .qualification import min_pa as _qual_min_pa, min_ip_outs as _qual_min_ip_outs
 
 
 def _player_name(conn, player_id):
@@ -689,15 +690,7 @@ def scan_leaderboard_changes(conn, season, latest_date):
         ("slg", "SLG", "slugging", None, "hits"),
     ]
 
-    # Min PA for rate stats — MLB prorated: (team_games / 162) * 502
-    # Use max distinct game dates as proxy for team games
-    max_games = conn.execute("""
-        SELECT MAX(g) FROM (
-            SELECT COUNT(DISTINCT date) as g FROM game_batting_logs
-            WHERE season = ? GROUP BY player_id
-        )
-    """, (season,)).fetchone()[0] or 16
-    min_pa_rate = max(30, int((max_games / 162) * 502))
+    min_pa_rate = _qual_min_pa(conn, season)
 
     for col, abbrev, label, min_val, game_col in bat_stats:
         is_rate = col in ("batting_avg", "obp", "ops", "slg")
@@ -855,19 +848,11 @@ def scan_leaderboard_changes(conn, season, latest_date):
         ("whip", "WHIP", "WHIP", None, "walks"),
     ]
 
-    # Min IP for rate stats — MLB prorated: 1 IP per team game
-    # Use batting logs for team games (more reliable than pitching appearances)
-    max_team_games = conn.execute("""
-        SELECT MAX(g) FROM (
-            SELECT COUNT(DISTINCT date) as g FROM game_batting_logs
-            WHERE season = ? GROUP BY player_id
-        )
-    """, (season,)).fetchone()[0] or 16
-    min_ip_rate = max(10, max_team_games)  # ip_outs = min_ip_rate * 3
+    min_ip_outs_val = _qual_min_ip_outs(conn, season)
 
     for col, abbrev, label, min_val, game_col in pitch_stats:
         is_rate = col in ("era", "whip")
-        ip_filter = f"AND sp.ip_outs >= {min_ip_rate * 3}" if is_rate else ""
+        ip_filter = f"AND sp.ip_outs >= {min_ip_outs_val}" if is_rate else ""
         val_filter = f"AND sp.{col} >= {min_val}" if min_val else ""
         order = "ASC" if col in ("era", "whip") else "DESC"
 

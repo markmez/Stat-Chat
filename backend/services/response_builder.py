@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Optional
 
 from .name_matcher import StatInfo
+from .qualification import min_pa as _qual_min_pa, min_ip_outs as _qual_min_ip_outs
 
 DB_PATH = os.getenv(
     "DB_PATH",
@@ -1943,12 +1944,10 @@ def build_multi_threshold(filters: list, season: int,
         has_rate = any(f["stat"].is_rate for f in filters)
         if has_rate:
             if is_pitching:
-                where_parts.append(f"{prefix}.ip_outs >= 486")
+                ip_min = _qual_min_ip_outs(conn, season)
+                where_parts.append(f"{prefix}.ip_outs >= {ip_min}")
             else:
-                cur.execute(f"SELECT MAX(games) FROM {table} WHERE season = ?", (season,))
-                r = cur.fetchone()
-                max_games = int(r[0]) if r and r[0] else 162
-                pa_min = 400 if max_games >= 140 else 200
+                pa_min = _qual_min_pa(conn, season)
                 where_parts.append(f"{prefix}.plate_appearances >= {pa_min}")
 
         # Select all filter stat columns
@@ -2717,11 +2716,7 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
             # PA minimum for rate stats
             pa_min = None
             if stat_info.is_rate:
-                cur = conn.cursor()
-                cur.execute("SELECT MAX(games) FROM season_batting_stats WHERE season = ?", (yr,))
-                r = cur.fetchone()
-                max_games = int(r[0]) if r and r[0] else 162
-                pa_min = 400 if max_games >= 140 else 200
+                pa_min = _qual_min_pa(conn, yr)
             pa_filter = f" AND s.plate_appearances >= {pa_min}" if pa_min else ""
 
             cur = conn.cursor()
@@ -2954,11 +2949,7 @@ def build_pitching_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
             ip_filter = ""
             ip_note = None
             if stat_info.is_rate:
-                cur = conn.cursor()
-                cur.execute("SELECT MAX(games) FROM season_pitching_stats WHERE season = ?", (yr,))
-                r = cur.fetchone()
-                max_games = int(r[0]) if r and r[0] else 162
-                ip_outs_min = max(1, max_games * 3)  # 1 IP per team game
+                ip_outs_min = _qual_min_ip_outs(conn, yr)
                 ip_filter = f" AND sp.ip_outs >= {ip_outs_min}"
                 ip_note = f"Min. {ip_outs_min // 3}.{ip_outs_min % 3} IP."
 
@@ -3139,13 +3130,10 @@ def build_threshold(stat_info: StatInfo, threshold: float, comparison: str,
         qual_filter = ""
         if stat_info.is_rate:
             if is_pitching:
-                qual_filter = f" AND {prefix}.ip_outs >= 486"
+                ip_min = _qual_min_ip_outs(conn, season)
+                qual_filter = f" AND {prefix}.ip_outs >= {ip_min}"
             else:
-                cur = conn.cursor()
-                cur.execute(f"SELECT MAX(games) FROM {table} WHERE season = ?", (season,))
-                r = cur.fetchone()
-                max_games = int(r[0]) if r and r[0] else 162
-                pa_min = 400 if max_games >= 140 else 200
+                pa_min = _qual_min_pa(conn, season)
                 qual_filter = f" AND {prefix}.plate_appearances >= {pa_min}"
                 pa_note = f"Min. {pa_min} PA."
 
@@ -3384,9 +3372,11 @@ def build_filtered_leaderboard(rank_stat: StatInfo, filter_stat: StatInfo,
         # PA/IP minimum when rate stats involved
         qual_filter = ""
         if not is_pitching and (rank_stat.is_rate or filter_stat.is_rate):
-            qual_filter = f" AND {prefix}.plate_appearances >= 400"
+            pa_min = _qual_min_pa(conn, season or datetime.now().year)
+            qual_filter = f" AND {prefix}.plate_appearances >= {pa_min}"
         elif is_pitching and (rank_stat.is_rate or filter_stat.is_rate):
-            qual_filter = f" AND {prefix}.ip_outs >= 486"
+            ip_min = _qual_min_ip_outs(conn, season or datetime.now().year)
+            qual_filter = f" AND {prefix}.ip_outs >= {ip_min}"
 
         # Handle innings_pitched specially (TEXT column, use ip_outs for comparison)
         if filter_stat.db_column == "innings_pitched":
@@ -3877,11 +3867,7 @@ def build_pitching_team_stats(team_code: str, stat_info: Optional[StatInfo] = No
 
         if stat_info:
             # Prorate IP minimum for early season
-            cur = conn.cursor()
-            cur.execute("SELECT MAX(games) FROM season_pitching_stats WHERE season = ?", (season,))
-            r = cur.fetchone()
-            max_games_p = int(r[0]) if r and r[0] else 162
-            ip_min_p = max(1, max_games_p * 3)  # 1 IP per team game
+            ip_min_p = _qual_min_ip_outs(conn, season)
             ip_filter = f" AND sp.ip_outs >= {ip_min_p}" if stat_info.is_rate else ""
             order_dir = "ASC" if stat_info.display_abbrev in _LOWER_IS_BETTER_PITCHING else "DESC"
 
