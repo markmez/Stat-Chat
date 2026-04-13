@@ -1262,11 +1262,14 @@ def template_facts(conn, facts, season, latest_date):
             elif game_line:
                 game_intro = f"{player} went {game_line}"
             elif stat == "stolen_bases":
-                game_intro = f"{player} swiped a bag"
+                _sb_phrases = ["swiped a bag", "stole a base", "added a stolen base"]
+                game_intro = f"{player} {_sb_phrases[hash(player) % len(_sb_phrases)]}"
             elif stat == "saves":
-                game_intro = f"{player} earned a save"
+                _sv_phrases = ["earned a save", "closed it out", "nailed down a save"]
+                game_intro = f"{player} {_sv_phrases[hash(player) % len(_sv_phrases)]}"
             elif stat == "wins":
-                game_intro = f"{player} picked up a win"
+                _win_phrases = ["picked up a win", "earned the victory", "got the win"]
+                game_intro = f"{player} {_win_phrases[hash(player) % len(_win_phrases)]}"
             else:
                 game_intro = f"{player}"
 

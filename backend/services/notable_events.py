@@ -620,7 +620,7 @@ def detect_pitching_streaks(conn, season, latest_date):
             last_so = last[4] or 0
             game_line = f"{name} went {last_ip} IP, {last_er} ER, {last_so} K and "
             events.append({
-                "headline": f"{game_line}now has {qs} consecutive quality starts.",
+                "headline": f"{game_line}now has {qs} consecutive quality starts (6+ IP, ≤3 ER).",
                 "detail": "",
                 "category": "Streak",
                 "game_date": starts[0][0],
