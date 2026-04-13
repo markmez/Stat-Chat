@@ -680,9 +680,8 @@ def detect_season_pace(conn, season, latest_date=None):
                     already = conn.execute("""
                         SELECT 1 FROM notable_events
                         WHERE headline LIKE ? AND detection_type = ?
-                        AND detail = ? AND game_date >= ? LIMIT 1
-                    """, (f"%{name}%", f"pace_{stat_col}",
-                          f"threshold_{threshold}",
+                        AND game_date >= ? LIMIT 1
+                    """, (f"%{name}%", f"pace_{stat_col}_{threshold}",
                           f"{season}-01-01")).fetchone()
 
                     if already:
@@ -716,12 +715,12 @@ def detect_season_pace(conn, season, latest_date=None):
                         pace_line = f"{name} now has {stat_val} {abbrev} and is on pace for {projected}."
                     events.append({
                         "headline": pace_line,
-                        "detail": f"threshold_{threshold}",
+                        "detail": "",
                         "category": "Milestone",
                         "game_date": latest_date,
                         "player_names": [name],
                         "team_names": [team] if team else [],
-                        "detection_type": f"pace_{stat_col}",
+                        "detection_type": f"pace_{stat_col}_{threshold}",
                         "priority": 2,
                     })
                     break  # Only report highest new threshold
