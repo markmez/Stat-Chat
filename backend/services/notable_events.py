@@ -1101,15 +1101,47 @@ def detect_hot_streaks_pelt(conn, season, latest_date=None):
         LIMIT 5
     """, (season,)).fetchall()
 
-    for name, ops, avg, num_games, hr, h, ab, obp, slg, season_ops in rows:
-        # Build one-line summary with slash line + HR if any
+    _streak_phrases = ["is on a tear", "is on a hot streak", "has been red hot", "is locked in"]
+    for idx, (name, ops, avg, num_games, hr, h, ab, obp, slg, season_ops) in enumerate(rows):
+        # Get last game line for context
+        game_row = conn.execute("""
+            SELECT g.hits, g.at_bats, g.home_runs, g.rbi, g.walks
+            FROM game_batting_logs g
+            JOIN players p ON g.player_id = p.player_id
+            WHERE p.name = ? AND g.date = ?
+        """, (name, latest_date)).fetchone()
+
+        game_intro = ""
+        if game_row:
+            gh, gab, ghr, grbi, gbb = game_row
+            gh, gab, ghr, grbi = gh or 0, gab or 0, ghr or 0, grbi or 0
+            parts = [f"{gh}-for-{gab}"]
+            if ghr:
+                parts.append(f"{'a homer' if ghr == 1 else f'{ghr} homers'}")
+            if grbi:
+                parts.append(f"{grbi} RBI")
+            if len(parts) == 1:
+                game_intro = f"{name} went {parts[0]} and "
+            else:
+                game_intro = f"{name} went {parts[0]} with {', '.join(parts[1:])} and "
+
+        # Slash line + HR
         if avg and obp and slg:
             slash = f".{int(avg*1000):03d}/.{int(obp*1000):03d}/.{int(slg*1000):03d}"
         else:
             slash = f"{_fmt_ops(ops)} OPS"
         hr_part = f" with {hr} HR" if hr else ""
+
+        # Vary the language
+        phrase = _streak_phrases[idx % len(_streak_phrases)]
+
+        if game_intro:
+            headline = f"{game_intro}{phrase} — {slash}{hr_part} over the last {num_games} games."
+        else:
+            headline = f"{name} {phrase} — {slash}{hr_part} over the last {num_games} games."
+
         events.append({
-            "headline": f"{name} is on a tear — {slash}{hr_part} over the last {num_games} games.",
+            "headline": headline,
             "detail": "",
             "category": "Streak",
             "game_date": latest_date,
