@@ -82,6 +82,42 @@ async def refresh_live_data(
         raise HTTPException(500, str(e))
 
 
+@router.post("/redetect")
+async def redetect_events(
+    clear_date: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Re-run event detection without pulling new data. Fast (~30s).
+
+    Optional: clear_date=YYYY-MM-DD to delete existing events for that date
+    before re-detecting (forces fresh generation with latest code).
+    """
+    verify_admin(authorization)
+    from services.notable_events import detect_all
+
+    if clear_date:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        try:
+            # Keep career_first and onbase_streak (these are fine)
+            deleted = conn.execute("""
+                DELETE FROM notable_events
+                WHERE game_date = ? AND detection_type NOT IN ('career_first', 'onbase_streak')
+            """, (clear_date,)).rowcount
+            conn.commit()
+        finally:
+            conn.close()
+    else:
+        deleted = 0
+
+    count = detect_all(DB_PATH)
+    return {
+        "status": "ok",
+        "events_detected": count,
+        "events_cleared": deleted,
+        "clear_date": clear_date,
+    }
+
+
 @router.post("/redownload-db")
 async def redownload_db(
     authorization: str | None = Header(None),
