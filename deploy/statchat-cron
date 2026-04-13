@@ -1,34 +1,41 @@
-# StatChat data refresh — game-end oriented schedule
+# StatChat data refresh
 #
-# Nightly cascade (90 min apart): 11:35 PM, 1:05 AM, 2:35 AM ET
-# Morning catch-alls: 5:35 AM, 8:00 AM ET
-# Afternoon games: 5:00 PM ET daily
+# WEEKNIGHTS (Mon-Fri mornings, Sun-Thu games):
+#   1:00 AM, 2:35 AM, 4:05 AM, 5:35 AM, 8:00 AM, 10:00 AM ET
+# WEEKENDS (Sat-Sun mornings, Fri-Sat games — shifted later):
+#   2:35 AM, 5:35 AM, 7:00 AM, 8:30 AM, 10:00 AM, 11:30 AM ET
+# Afternoon: 5:00 PM ET daily
 # Weekend early starts: 7:30 PM ET (Sat/Sun only)
-# Backup: 10:00 AM ET — catches data MSF publishes late
 #
-# WEEKLY MAINTENANCE — Tuesday (Monday is common off day, less data urgency)
-#   4:00 AM ET: VACUUM
+# WEEKLY MAINTENANCE — Tuesday (Monday is common off day)
+#   3:00 AM ET: Records rebuild (runs 2+ hours)
+#   4:00 AM ET: VACUUM (Tue + Fri)
 #   4:30 AM ET: Full reconciliation
-#   3:00 AM ET: Records rebuild (runs 2+ hours, finishes before 5:35 AM cascade)
 
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 
-# Nightly cascade (90 min apart) + morning catch-alls
-35 3 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
-5 5 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
-35 6 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
-35 9 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
-0 12 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+# Weeknight cascade: 1:00 AM, 2:35 AM, 4:05 AM, 5:35 AM, 8:00 AM ET (Mon-Fri)
+0 5 * * 1,2,3,4,5 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+35 6 * * 1,2,3,4,5 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+5 8 * * 1,2,3,4,5 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+35 9 * * 1,2,3,4,5 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+0 12 * * 1,2,3,4,5 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+0 14 * * 1,2,3,4,5 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 
-# Afternoon games: 5:00 PM ET (21:00 UTC)
+# Weekend cascade: 2:35 AM, 5:35 AM, 7:00 AM, 8:30 AM, 10:00 AM, 11:30 AM ET (Sat-Sun)
+35 6 * * 0,6 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+35 9 * * 0,6 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+0 11 * * 0,6 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+30 12 * * 0,6 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+0 14 * * 0,6 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+30 15 * * 0,6 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
+
+# Afternoon games: 5:00 PM ET (21:00 UTC) daily
 0 21 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 
 # Weekend early starts: 7:30 PM ET (23:30 UTC, Sat/Sun only)
 30 23 * * 0,6 statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
-
-# Backup pipeline: 10:00 AM ET (14:00 UTC) — catches data MSF publishes late
-0 14 * * * statchat /opt/statchat/repo/deploy/refresh.sh >> /data/refresh.log 2>&1
 
 # WEEKLY MAINTENANCE — Tuesday morning (Monday common off day)
 # VACUUM: Tuesday + Friday 4:00 AM ET (08:00 UTC)
