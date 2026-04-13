@@ -1293,7 +1293,7 @@ def detect_matchup_previews(conn, season):
         if any(s[4] is game for s in selected):
             continue
         selected.append((score, matched, batting_team, pitcher_team, game))
-        if len(selected) >= 2:
+        if len(selected) >= 3:
             break
 
     # Step 6: If fewer than 3, relax suppression
@@ -1304,10 +1304,12 @@ def detect_matchup_previews(conn, season):
             if any(s[4] is game for s in selected):
                 continue
             selected.append((score, matched, batting_team, pitcher_team, game))
-            if len(selected) >= 2:
+            if len(selected) >= 3:
                 break
 
     # Step 7: For each selected pitcher, find best opposing batter by career OPS (800+ PA)
+    # Show first 2 in feed, use 3rd as example text for "try searching" hint
+    matchup_data = []  # (batter_name, pitcher_name, batting_team, pitcher_team, game, compelling)
     for _, pitcher_name, batting_team, pitcher_team, game in selected:
         top_batter = conn.execute("""
             SELECT p.name
@@ -1334,32 +1336,37 @@ def detect_matchup_previews(conn, season):
 
         batter_name = top_batter[0]
 
-        # Find one compelling stat for the card
         compelling = _find_compelling_matchup_stat(
             conn, batter_name, pitcher_name, season
         )
         if not compelling:
             compelling = f"{batter_name} faces {pitcher_name} tonight."
 
-        # Append CTA intro — iOS looks for "matchup preview." in detail
+        matchup_data.append((batter_name, pitcher_name, batting_team, pitcher_team, game, compelling))
+
+    # Build example hint from 3rd matchup (if available)
+    example_hint = ""
+    if len(matchup_data) >= 3:
+        ex_batter = matchup_data[2][0].split()[-1]  # Last name
+        ex_pitcher = matchup_data[2][1].split()[-1]
+        example_hint = f'Try searching "{ex_batter} vs {ex_pitcher}" or "{ex_batter} tonight"'
+
+    # Generate feed events for first 2 only
+    for batter_name, pitcher_name, batting_team, pitcher_team, game, compelling in matchup_data[:2]:
         compelling += " See more in this"
-
-        away_team = game.get("away", "")
-        home_team = game.get("home", "")
-        away_display = team_display(away_team)
-        home_display = team_display(home_team)
-
-        # Parse start time for display
-        time_str = _parse_game_time_et(game.get("start_time", ""))
 
         game_context = "Matchup Preview"
 
+        detail = " matchup preview."
+        if example_hint:
+            detail += f" {example_hint}"
+
         events.append({
             "headline": compelling,
-            "detail": " matchup preview.",
+            "detail": detail,
             "category": "Tonight",
             "game_date": today,
-            "expires_at": game.get("start_time", ""),  # ISO timestamp — hide after game starts
+            "expires_at": game.get("start_time", ""),
             "player_names": [batter_name, pitcher_name],
             "team_names": [team_display(batting_team), team_display(pitcher_team)],
             "detection_type": "matchup_preview",
