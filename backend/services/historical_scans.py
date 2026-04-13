@@ -1263,6 +1263,10 @@ def template_facts(conn, facts, season, latest_date):
                 game_intro = f"{player} went {game_line}"
             elif stat == "stolen_bases":
                 game_intro = f"{player} swiped a bag"
+            elif stat == "saves":
+                game_intro = f"{player} earned a save"
+            elif stat == "wins":
+                game_intro = f"{player} picked up a win"
             else:
                 game_intro = f"{player}"
 
