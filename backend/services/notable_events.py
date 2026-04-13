@@ -710,8 +710,12 @@ def detect_season_pace(conn, season, latest_date=None):
                     else:
                         game_intro = ""
                     projected = int(stat_val * 162 / games)
+                    if game_intro:
+                        pace_line = f"{game_intro}He now has {stat_val} {abbrev} and is on pace for {projected}."
+                    else:
+                        pace_line = f"{name} now has {stat_val} {abbrev} and is on pace for {projected}."
                     events.append({
-                        "headline": f"{game_intro}{name} now has {stat_val} {abbrev} and is on pace for {projected}.",
+                        "headline": pace_line,
                         "detail": f"threshold_{threshold}",
                         "category": "Milestone",
                         "game_date": latest_date,
