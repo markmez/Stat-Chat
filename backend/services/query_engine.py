@@ -1091,8 +1091,18 @@ def decompose(question: str) -> QueryPlan:
         _add_consumed(plan, "in a game in one game in a single game single")
 
     # Game-log counting: "most 3-hit games", "most games with 3+ RBI", "most 10-K games"
+    # Pattern 0: "multi-stat games" — treat "multi" as 2+
+    _multi_match = re.search(r'multi[- ]?(hit|hr|home run|homer|rbi|strikeout|k|xbh|extra[- ]?base[- ]?hit|walk|bb|steal|stolen base|sb|run)\s*game', lower)
+    if _multi_match:
+        _full = _multi_match.group(0)
+        class _MultiMatch:
+            def group(self, n):
+                return "2" if n == 1 else _full
+        multi_game_match = _MultiMatch()
+        _add_consumed(plan, "multi")
     # Pattern 1: "N-stat games" / "N+ stat games"
-    multi_game_match = re.search(r'(\d+)[+-]?\s*(?:hit|hr|home run|homer|rbi|strikeout|k|xbh|extra[- ]?base[- ]?hit|walk|bb|steal|stolen base|sb|run)\s*game', lower)
+    if not multi_game_match:
+        multi_game_match = re.search(r'(\d+)[+-]?\s*(?:hit|hr|home run|homer|rbi|strikeout|k|xbh|extra[- ]?base[- ]?hit|walk|bb|steal|stolen base|sb|run)\s*game', lower)
     # Pattern 2: "games with N+ stat"
     if not multi_game_match:
         multi_game_match = re.search(r'games?\s+with\s+(\d+)\+?\s*(?:hit|hr|home run|homer|rbi|strikeout|k|xbh|extra[- ]?base[- ]?hit|walk|bb|steal|stolen base|sb|run)', lower)
