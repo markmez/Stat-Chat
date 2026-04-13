@@ -690,10 +690,10 @@ def scan_leaderboard_changes(conn, season, latest_date):
     ]
 
     # Min PA for rate stats — MLB prorated: (team_games / 162) * 502
-    # Use max games played this season as proxy for team games
+    # Use max distinct game dates as proxy for team games
     max_games = conn.execute("""
         SELECT MAX(g) FROM (
-            SELECT COUNT(*) as g FROM game_batting_logs
+            SELECT COUNT(DISTINCT date) as g FROM game_batting_logs
             WHERE season = ? GROUP BY player_id
         )
     """, (season,)).fetchone()[0] or 16
@@ -859,7 +859,7 @@ def scan_leaderboard_changes(conn, season, latest_date):
     # Use batting logs for team games (more reliable than pitching appearances)
     max_team_games = conn.execute("""
         SELECT MAX(g) FROM (
-            SELECT COUNT(*) as g FROM game_batting_logs
+            SELECT COUNT(DISTINCT date) as g FROM game_batting_logs
             WHERE season = ? GROUP BY player_id
         )
     """, (season,)).fetchone()[0] or 16
