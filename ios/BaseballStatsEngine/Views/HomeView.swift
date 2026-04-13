@@ -223,6 +223,17 @@ struct HomeView: View {
                 }
             }
 
+            // Dismiss overlay — tap above the drawer to collapse
+            if feedExpanded {
+                Color.black.opacity(0.15)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            feedExpanded = false
+                        }
+                    }
+            }
+
             // Notable events drawer
             notableDrawer
                 .transition(.move(edge: .bottom))
@@ -414,15 +425,12 @@ struct HomeView: View {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     drawerTab = tab
                 }
-            } else if tab == .leaders && !appState.searchHistory.isEmpty {
-                // 3-tab layout: middle tab is too close to drag handle, just expand
+            } else {
+                // Collapsed: expand AND switch to tapped tab
+                drawerTab = tab
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                     feedExpanded = true
                     NotableEventsFeed.markExpandedTrayToday()
-                }
-            } else {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    drawerTab = tab
                 }
             }
         } label: {

@@ -13,8 +13,8 @@ struct LeaderboardView: View {
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
 
-    /// Whether this leaderboard has multiple stat columns (sortable)
-    private var isSortable: Bool { grid.headers.count >= 2 }
+    /// Whether this leaderboard has stat columns (sortable)
+    private var isSortable: Bool { grid.headers.count >= 1 }
 
     /// Rows sorted by the active column, or original order if no sort active
     private var sortedRows: [StatGridParser.StatGrid.Row] {
@@ -283,8 +283,12 @@ struct LeaderboardView: View {
                 .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
         )
         .onAppear {
-            // Don't auto-sort — preserve the backend's intentional ordering.
-            // User can tap a column header to sort if desired.
+            // Show chevron on first column — data arrives pre-sorted descending by it.
+            // This makes the sort affordance visible without changing the order.
+            if !initialized && isSortable {
+                sortColumn = 0
+                sortAscending = false
+            }
             initialized = true
         }
     }
@@ -304,10 +308,24 @@ struct LeaderboardView: View {
     }
 
     /// Parse a display value into a sortable number.
-    /// Handles: "58", ".322", "1.96", "2024", "--", etc.
+    /// Handles: "58", ".322", "1.96", "2024", "2023–2025", "--", etc.
     private func numericValue(_ str: String) -> Double {
         let cleaned = str.trimmingCharacters(in: .whitespaces)
         if cleaned == "--" || cleaned.isEmpty { return -.infinity }
+        // Year ranges: "2023–2025" or "2023-2025" → sort by first year
+        if cleaned.contains("–") || (cleaned.count >= 9 && cleaned.contains("-")) {
+            let parts = cleaned.components(separatedBy: CharacterSet(charactersIn: "–-"))
+            if let first = parts.first, let val = Double(first.trimmingCharacters(in: .whitespaces)) {
+                return val
+            }
+        }
+        // Date labels: "4/8", "10/15" → sort as month.day
+        if cleaned.contains("/") && cleaned.count <= 5 {
+            let parts = cleaned.split(separator: "/")
+            if parts.count == 2, let m = Double(parts[0]), let d = Double(parts[1]) {
+                return m * 100 + d  // 4/8 → 408, 10/15 → 1015
+            }
+        }
         // Rate stats displayed without leading zero: ".322" → 0.322
         if cleaned.hasPrefix("."), let val = Double("0" + cleaned) { return val }
         if let val = Double(cleaned) { return val }
