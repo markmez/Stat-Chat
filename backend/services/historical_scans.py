@@ -1259,6 +1259,26 @@ def template_facts(conn, facts, season, latest_date):
                         game_intro = f"{player} went {parts[0]} with {', '.join(extras[:-1])} and {extras[-1]}"
                 else:
                     game_intro = f"{player}"
+            elif stat in ("era", "whip", "k_per_9", "bb_per_9") and pid:
+                # Pitching rate stats — show last start line
+                pitch_row = conn.execute("""
+                    SELECT innings_pitched, ip_outs, hits, earned_runs, strikeouts, walks
+                    FROM game_pitching_logs
+                    WHERE player_id = ? AND date = (
+                        SELECT MAX(date) FROM game_pitching_logs
+                        WHERE player_id = ? AND season = ?
+                    ) AND season = ?
+                    LIMIT 1
+                """, (pid, pid, season, season)).fetchone()
+                if pitch_row:
+                    ip_text, ip_outs, ph, per, pso, pbb = pitch_row
+                    ip_display = ip_text or f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
+                    parts = [f"{ip_display} IP"]
+                    parts.append(f"{per or 0} ER")
+                    if pso: parts.append(f"{pso} K")
+                    game_intro = f"{player} threw {', '.join(parts)}"
+                else:
+                    game_intro = f"{player}"
             elif game_line:
                 game_intro = f"{player} went {game_line}"
             elif stat == "stolen_bases":
