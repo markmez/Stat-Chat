@@ -1338,8 +1338,10 @@ def template_facts(conn, facts, season, latest_date):
             scope = f["scope"]
             stat_label = f["stat_label"]
             tied_with = f["tied_with"]
-            game_intro = f"{player} went {game_line}" if game_line else f"{player}"
-            headline = f"{game_intro}, tying {tied_with} for the {scope} lead in {stat_label} ({val})."
+            if game_line:
+                headline = f"{player} went {game_line}, tying {tied_with} for the {scope} lead in {stat_label} ({val})."
+            else:
+                headline = f"{player} tied {tied_with} for the {scope} lead in {stat_label} ({val})."
             secondary_names.append(tied_with)
 
         elif f["type"] == "youngest_debut_since":
