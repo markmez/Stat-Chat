@@ -2411,7 +2411,7 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
         "era": "ERA", "whip": "WHIP", "k_per_9": "K/9", "innings_pitched": "IP",
     }
 
-    title = f"**Players meeting criteria in each of the last {n_seasons} seasons** ({start_year}-{most_recent})\n"
+    title = f"**Players meeting criteria in each of the last {n_seasons} seasons ({start_year}-{most_recent})**\n"
     parts = [title]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
 
@@ -2455,10 +2455,7 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
     parts.append("[/LEADERBOARD]")
     parts.append(f"\n{len(results)} player{'s' if len(results) != 1 else ''} qualified.")
 
-    # See-also for all-time version
-    first_label = _labels.get(conditions[0][0], conditions[0][0])
-    thresh_display = int(conditions[0][2]) if conditions[0][2] == int(conditions[0][2]) else conditions[0][2]
-    parts.insert(1, f"[DIDYOUMEAN]{thresh_display}+ {first_label} in {n_seasons} straight seasons all time[/DIDYOUMEAN]")
+    # All-time consecutive season scan not yet implemented — omit see-also
 
     return "\n".join(parts)
 
