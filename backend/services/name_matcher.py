@@ -1972,7 +1972,17 @@ def _extract_threshold(text: str, skip_years: bool = True,
         if skip_years:
             int_num = int(num)
             if 1900 <= int_num <= 2099 and "." not in num_str:
-                continue
+                # Check if this number is directly adjacent to a stat keyword —
+                # "2000 strikeouts" is a threshold, not a year
+                after = text[m.end():].lstrip("+").lstrip()
+                stat_adjacent = stat and any(
+                    after.startswith(kw) for kw in [
+                        stat.display_name.lower(), stat.display_abbrev.lower(),
+                        stat.db_column.replace("_", " "),
+                    ]
+                )
+                if not stat_adjacent:
+                    continue
         # "hitting 300" → .300  (whole-number batting avg shorthand)
         # Only apply when no specific stat is provided, or stat IS a sub-1 rate stat.
         # "200 hit club" has stat=hits (counting), so "hit" here is a noun, not a verb.
