@@ -944,7 +944,13 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     try:
         intercepted = try_intercept(question)
     except Exception as e:
-        logger.warning("intercept_error question=%r error=%s type=%s", question, e, type(e).__name__)
+        logger.error("intercept_error question=%r error=%s type=%s", question, e, type(e).__name__)
+        # Log to dashboard + alert
+        try:
+            from services.metering import log_query as _lq
+            _lq(question, device_id, "query_engine_error")
+        except Exception:
+            pass
         intercepted = None
     if intercepted is not None:
         no_count = intercepted.startswith("__NO_COUNT__")

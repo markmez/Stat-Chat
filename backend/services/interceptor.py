@@ -390,7 +390,13 @@ def try_intercept(question: str):
     # Only answers when it fully understands the query (no unexplained words).
     # If it bails, go straight to Haiku/Sonnet — no old parsers.
     from services.query_engine import decompose, execute as qe_execute
-    plan = decompose(trimmed)
+    try:
+        plan = decompose(trimmed)
+    except Exception as e:
+        logger.error("query_engine_decompose_error question=%r error=%s type=%s",
+                     trimmed, e, type(e).__name__)
+        _ping_qe_error(trimmed, f"decompose: {type(e).__name__}: {e}")
+        return None
     logger.info("query_engine_plan question=%r valid=%s scope=%s stat=%s unexplained=%s active=%s since_date=%s",
                 trimmed, plan.is_valid, plan.scope, plan.stat, plan.unexplained_words, plan.active_only, plan.since_date)
     if plan.is_valid:
