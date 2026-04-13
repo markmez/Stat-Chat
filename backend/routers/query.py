@@ -582,7 +582,7 @@ import re as _re
 from services import name_matcher as _nm
 
 
-def _strip_bold_title(text: str) -> str:
+def _strip_bold_title(text: str, original_question: str = "") -> str:
     """Strip the bold **title** line from a response and convert scope info to subtitle.
 
     Before: **Switch-Hitting Players with 20+ HR (2025)**\n9 matched.\n...
@@ -614,9 +614,18 @@ def _strip_bold_title(text: str) -> str:
                 scope = "Active"
             # Don't show "All-Time" or "Career" — that's the default, not an inference
 
-        # Skip scope display for defaults — only show when we inferred something
+        # Skip scope display for defaults and explicit mentions
         if scope in ("All-Time", "Career"):
             scope = None
+        elif scope and original_question:
+            oq = original_question.lower()
+            # If the user explicitly mentioned the year/timeframe, don't restate
+            if (scope.isdigit() and scope in oq) or \
+               ("this season" in oq or "this year" in oq) or \
+               ("last season" in oq or "last year" in oq) or \
+               (scope.startswith("Since ") and "since" in oq) or \
+               ("vs" in oq and _re.search(r'20[012]\d.*vs.*20[012]\d', oq)):
+                scope = None
 
         # Check if next line has a count like "9 matched." or "14 matched."
         count_line = ""
@@ -885,7 +894,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 intercepted = None
             if intercepted is not None:
                 logger.info("followup_local_intercepted rewritten=%r", local_rewrite)
-                intercepted = _strip_bold_title(intercepted)
+                intercepted = _strip_bold_title(intercepted, original_question)
                 yield event({"type": "text", "text": intercepted})
                 done_event = {"type": "done", "intercepted": True}
                 done_event["rewritten_query"] = local_rewrite
@@ -917,7 +926,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                     intercepted = None
                 if intercepted is not None:
                     logger.info("followup_intercepted rewritten=%r", rewritten)
-                    intercepted = _strip_bold_title(intercepted)
+                    intercepted = _strip_bold_title(intercepted, original_question)
                     yield event({"type": "text", "text": intercepted})
                     done_event = {"type": "done", "intercepted": True}
                     if rewritten_query:
@@ -961,7 +970,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         if no_count:
             intercepted = intercepted.replace("__NO_COUNT__", "", 1)
         logger.info("query_intercepted question=%r no_count=%s", question, no_count)
-        intercepted = _strip_bold_title(intercepted)
+        intercepted = _strip_bold_title(intercepted, original_question)
         yield event({"type": "text", "text": intercepted})
         done_event = {"type": "done", "intercepted": True}
         if rewritten_query:
