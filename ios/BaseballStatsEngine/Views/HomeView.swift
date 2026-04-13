@@ -25,7 +25,7 @@ struct HomeView: View {
     @State private var drawerTab: DrawerTab = .notable
     @State private var lastLeftHome: Date?
     @State private var feedRefreshTrigger: Bool = false
-    private enum DrawerTab { case notable, leaders, history }
+    private enum DrawerTab: Int, CaseIterable { case notable = 0, leaders = 1, history = 2 }
 
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
@@ -207,9 +207,7 @@ struct HomeView: View {
                     }
 
                     SuggestionPillsView(
-                        searchHistory: appState.searchHistory,
-                        compact: !StoreKitService.shared.isSubscribed,
-                        matchupPills: matchupPills
+                        searchHistory: appState.searchHistory
                     ) { query in
                         questionText = query
                     }
@@ -227,6 +225,7 @@ struct HomeView: View {
                 // Reserve space for the drawer
                 Color.clear.frame(height: peekHeight + 10)
             }
+            .contentShape(Rectangle())
             .onTapGesture {
                 isInputFocused = false
                 if feedExpanded {
@@ -300,7 +299,8 @@ struct HomeView: View {
                     }
             )
 
-            // Tab content
+            // Tab content — horizontal swipe to switch tabs when expanded
+            Group {
             switch drawerTab {
             case .notable:
                 DrawerScrollView(
@@ -407,6 +407,27 @@ struct HomeView: View {
                     } : nil
                 )
             }
+            } // Group
+            .simultaneousGesture(
+                feedExpanded ?
+                DragGesture(minimumDistance: 30)
+                    .onEnded { value in
+                        // Only switch tabs if swipe is more horizontal than vertical
+                        guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                        let availableTabs: [DrawerTab] = appState.searchHistory.isEmpty
+                            ? [.notable, .leaders]
+                            : DrawerTab.allCases
+                        guard let currentIndex = availableTabs.firstIndex(of: drawerTab) else { return }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            if value.translation.width < -50 && currentIndex < availableTabs.count - 1 {
+                                drawerTab = availableTabs[currentIndex + 1]
+                            } else if value.translation.width > 50 && currentIndex > 0 {
+                                drawerTab = availableTabs[currentIndex - 1]
+                            }
+                        }
+                    }
+                : nil
+            )
         }
         .frame(height: drawerHeight)
         .padding(.horizontal, 12)

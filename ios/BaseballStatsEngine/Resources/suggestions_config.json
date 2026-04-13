@@ -12,9 +12,9 @@
   "defaults": [
     {
       "id": "d1",
-      "text": "Who led the league in home runs last season?",
+      "text": "Home run leaders last season",
       "weight": 1.0,
-      "inSeasonText": "Who leads the league in home runs this season?"
+      "inSeasonText": "Home run leaders this season"
     },
     {
       "id": "d2",
@@ -24,9 +24,9 @@
     },
     {
       "id": "d4",
-      "text": "Who had the most stolen bases last season?",
+      "text": "Stolen base leaders last season",
       "weight": 1.0,
-      "inSeasonText": "Who has the most stolen bases this season?"
+      "inSeasonText": "Stolen base leaders this season"
     },
     {
       "id": "d5",
@@ -36,9 +36,9 @@
     },
     {
       "id": "d6",
-      "text": "How many home runs did Ohtani hit last season?",
+      "text": "Ohtani home runs last season",
       "weight": 0.9,
-      "inSeasonText": "How many home runs has Ohtani hit this season?"
+      "inSeasonText": "Ohtani home runs this season"
     },
     {
       "id": "d7",
@@ -48,7 +48,7 @@
     },
     {
       "id": "d8",
-      "text": "Who has come closest to hitting .400 since Ted Williams?",
+      "text": "Closest to .400 since Ted Williams",
       "weight": 0.8
     },
     {
@@ -59,27 +59,26 @@
     },
     {
       "id": "d10",
-      "text": "Lowest ERA among starters last season",
+      "text": "Starter ERA leaders last season",
       "weight": 0.9,
-      "inSeasonText": "Lowest ERA among starters this season"
+      "inSeasonText": "Starter ERA leaders this season"
     },
     {
       "id": "d11",
-      "text": "Compare Lindor and Bobby Witt Jr last season",
-      "weight": 0.8,
-      "inSeasonText": "Compare Lindor and Bobby Witt Jr this season"
+      "text": "Compare Lindor and Witt Jr",
+      "weight": 0.8
     },
     {
       "id": "d12",
-      "text": "Kyle Tucker's splits vs lefties last season",
+      "text": "Tucker vs lefties last season",
       "weight": 0.8,
-      "inSeasonText": "Kyle Tucker's splits vs lefties this season"
+      "inSeasonText": "Tucker vs lefties this season"
     },
     {
       "id": "d13",
-      "text": "Did Trea Turner have any hot streaks last season?",
+      "text": "Turner hot streaks last season",
       "weight": 0.8,
-      "inSeasonText": "Did Trea Turner have any hot streaks this season?",
+      "inSeasonText": "Turner hot streaks this season",
       "seasonFilter": "afterApril12"
     },
     {
@@ -95,37 +94,37 @@
     },
     {
       "id": "d17",
-      "text": "How many times has someone hit 50 home runs?",
+      "text": "50+ HR seasons all time",
       "weight": 0.8
     },
     {
       "id": "d18",
-      "text": "How many players have stolen 60 bases in a season?",
+      "text": "60+ stolen bases in a season, ever",
       "weight": 0.7
     },
     {
       "id": "d19",
-      "text": "Who had the highest OPS+ last season?",
+      "text": "OPS+ leaders last season",
       "weight": 0.9,
-      "inSeasonText": "Who has the highest OPS+ this season?"
+      "inSeasonText": "OPS+ leaders this season"
     },
     {
       "id": "d20",
-      "text": "Who hit the most doubles last season?",
+      "text": "Doubles leaders last season",
       "weight": 0.8,
-      "inSeasonText": "Who has hit the most doubles this season?"
+      "inSeasonText": "Doubles leaders this season"
     },
     {
       "id": "d21",
-      "text": "Who led the league in RBIs last season?",
+      "text": "RBI leaders last season",
       "weight": 1.0,
-      "inSeasonText": "Who leads the league in RBIs this season?"
+      "inSeasonText": "RBI leaders this season"
     },
     {
       "id": "d22",
-      "text": "Most strikeouts by a pitcher last season",
+      "text": "Pitching K leaders last season",
       "weight": 0.9,
-      "inSeasonText": "Most strikeouts by a pitcher this season"
+      "inSeasonText": "Pitching K leaders this season"
     },
     {
       "id": "d23",
@@ -147,9 +146,9 @@
     },
     {
       "id": "d26",
-      "text": "Who hit the most triples last season?",
+      "text": "Triples leaders last season",
       "weight": 0.8,
-      "inSeasonText": "Who has hit the most triples this season?"
+      "inSeasonText": "Triples leaders this season"
     },
     {
       "id": "d27",
@@ -159,9 +158,9 @@
     },
     {
       "id": "d28",
-      "text": "Who led the league in wins last season?",
+      "text": "Wins leaders last season",
       "weight": 0.9,
-      "inSeasonText": "Who leads the league in wins this season?"
+      "inSeasonText": "Wins leaders this season"
     },
     {
       "id": "d29",
@@ -185,15 +184,15 @@
     },
     {
       "id": "d33",
-      "text": "Yordan Alvarez's slash line last season",
+      "text": "Alvarez slash line last season",
       "weight": 0.8,
-      "inSeasonText": "Yordan Alvarez's slash line this season"
+      "inSeasonText": "Alvarez slash line this season"
     },
     {
       "id": "d34",
-      "text": "When was Bryce Harper's coldest stretch last season?",
+      "text": "Harper cold streaks last season",
       "weight": 0.8,
-      "inSeasonText": "When was Bryce Harper's coldest stretch this season?",
+      "inSeasonText": "Harper cold streaks this season",
       "seasonFilter": "afterApril12"
     },
     {
@@ -201,12 +200,6 @@
       "text": "Corey Seager's stats last season",
       "weight": 0.8,
       "inSeasonText": "Corey Seager's stats this season"
-    },
-    {
-      "id": "d36",
-      "text": "Rafael Devers in September last season",
-      "weight": 0.8,
-      "seasonFilter": "offseasonOnly"
     },
     {
       "id": "d38",
@@ -235,21 +228,21 @@
     },
     {
       "id": "d80",
-      "text": "How did Ozzie Albies hit against sliders last season?",
+      "text": "Albies vs sliders last season",
       "weight": 0.8,
-      "inSeasonText": "How has Ozzie Albies hit against sliders this season?"
+      "inSeasonText": "Albies vs sliders this season"
     },
     {
       "id": "d81",
-      "text": "Willy Adames with two strikes last season",
+      "text": "Adames with two strikes last season",
       "weight": 0.8,
-      "inSeasonText": "Willy Adames with two strikes this season"
+      "inSeasonText": "Adames with two strikes this season"
     },
     {
       "id": "d82",
-      "text": "William Contreras RISP stats last season",
+      "text": "Contreras RISP stats last season",
       "weight": 0.8,
-      "inSeasonText": "William Contreras RISP stats this season"
+      "inSeasonText": "Contreras RISP stats this season"
     },
     {
       "id": "d41",
@@ -259,24 +252,22 @@
     },
     {
       "id": "d42",
-      "text": "Compare Devers and Jose Ramirez last season",
-      "weight": 0.8,
-      "inSeasonText": "Compare Devers and Jose Ramirez this season"
+      "text": "Compare Devers and Ramirez",
+      "weight": 0.8
     },
     {
       "id": "d43",
-      "text": "Vlad Guerrero Jr vs Pete Alonso last season",
-      "weight": 0.8,
-      "inSeasonText": "Vlad Guerrero Jr vs Pete Alonso this season"
+      "text": "Compare Guerrero Jr and Alonso",
+      "weight": 0.8
     },
     {
       "id": "d44",
-      "text": "Most 30/30 seasons in baseball history?",
+      "text": "Most 30/30 seasons all time",
       "weight": 0.8
     },
     {
       "id": "d45",
-      "text": "Who has the longest hitting streak ever?",
+      "text": "Longest hitting streak all time",
       "weight": 0.8
     },
     {
@@ -286,20 +277,20 @@
     },
     {
       "id": "d47",
-      "text": "How many triple crowns have there been?",
+      "text": "Triple crown winners all time",
       "weight": 0.7
     },
     {
       "id": "d48",
-      "text": "Who had the most complete games last season?",
+      "text": "Complete game leaders last season",
       "weight": 0.7,
-      "inSeasonText": "Who has the most complete games this season?"
+      "inSeasonText": "Complete game leaders this season"
     },
     {
       "id": "d49",
-      "text": "Did Ohtani have any hot streaks last season?",
+      "text": "Ohtani hot streaks last season",
       "weight": 0.8,
-      "inSeasonText": "Has Ohtani had any hot streaks this season?",
+      "inSeasonText": "Ohtani hot streaks this season",
       "seasonFilter": "afterApril12"
     },
     {
@@ -320,12 +311,12 @@
     },
     {
       "id": "d53",
-      "text": "Highest batting average with 30+ home runs?",
+      "text": "Highest AVG with 30+ HR last year",
       "weight": 0.8
     },
     {
       "id": "d54",
-      "text": "Lowest ERA with 200+ innings pitched?",
+      "text": "Lowest ERA with 200+ IP this decade",
       "weight": 0.8
     },
     {
@@ -335,32 +326,28 @@
     },
     {
       "id": "d56",
-      "text": "Highest OPS with fewer than 50 strikeouts?",
+      "text": "Highest OPS with under 50 K",
       "weight": 0.8
     },
     {
       "id": "d57",
-      "text": "Who has the most RBIs in a single game?",
+      "text": "Most RBIs in a single game",
       "weight": 0.7,
-      "seasonFilter": "earlySeason"
     },
     {
       "id": "d58",
-      "text": "Who has the most career grand slams?",
+      "text": "Most career grand slams",
       "weight": 0.7,
-      "seasonFilter": "earlySeason"
     },
     {
       "id": "d59",
-      "text": "Has anyone pitched a perfect game since 2010?",
+      "text": "Perfect games since 2010",
       "weight": 0.7,
-      "seasonFilter": "earlySeason"
     },
     {
       "id": "d60",
-      "text": "Who struck out the most batters in a single season?",
+      "text": "Most K in a single season",
       "weight": 0.7,
-      "seasonFilter": "earlySeason"
     },
     {
       "id": "d61",
@@ -441,30 +428,30 @@
     {
       "text": "Most 3-hit games in 2025",
       "weight": 1.0,
-      "id": "d78"
+      "id": "d87"
     },
     {
       "text": "4+ XBH games last year",
       "weight": 1.0,
-      "id": "d79"
+      "id": "d88"
     },
     {
       "text": "Best career ERA active players",
       "weight": 1.0,
-      "id": "d80"
+      "id": "d89"
     },
     {
       "text": "Active home run leaders",
       "weight": 1.0,
-      "id": "d81"
+      "id": "d90"
     },
     {
-      "text": "Sub-3 ERA relievers each of last 3 years",
+      "text": "Sub-3 ERA relievers last 3 years",
       "weight": 1.0,
-      "id": "d82"
+      "id": "d91"
     },
     {
-      "text": "Left-handed hitters with 30+ HR last year",
+      "text": "LHH with 30+ HR last year",
       "weight": 1.0,
       "id": "d83"
     },
@@ -474,7 +461,7 @@
       "id": "d84"
     },
     {
-      "text": "Switch hitters with over .800 OPS this season",
+      "text": "Switch hitters .800+ OPS",
       "weight": 1.0,
       "id": "d85"
     },

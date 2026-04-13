@@ -12,10 +12,6 @@ final class SuggestionEngine {
 
     private(set) var config: SuggestionConfig
 
-    // Cached dynamic leader names (refreshed hourly)
-    private var dynamicSuggestions: [Suggestion] = []
-    private var dynamicLoadedAt: Date?
-
     // UserDefaults keys
     private let impressionsKey = "suggestion_impressions"
     private let tappedKey = "suggestion_tapped"
@@ -75,8 +71,12 @@ final class SuggestionEngine {
         set { UserDefaults.standard.set(newValue, forKey: impressionsKey) }
     }
 
+    var tappedIds: Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: tappedKey) ?? [])
+    }
+
     private var tapped: Set<String> {
-        get { Set(UserDefaults.standard.stringArray(forKey: tappedKey) ?? []) }
+        get { tappedIds }
         set { UserDefaults.standard.set(Array(newValue), forKey: tappedKey) }
     }
 
@@ -92,12 +92,6 @@ final class SuggestionEngine {
         tapped = t
     }
 
-    private func shouldShow(_ id: String) -> Bool {
-        if tapped.contains(id) { return false }
-        if (impressions[id] ?? 0) >= config.algorithm.impressionThreshold { return false }
-        return true
-    }
-
     private func resetMonthlyIfNeeded() {
         let now = Date()
         let calendar = Calendar.current
@@ -110,47 +104,130 @@ final class SuggestionEngine {
         UserDefaults.standard.set(now, forKey: lastResetKey)
     }
 
-    // MARK: - Build pool
+    // MARK: - Build sequence
 
+    /// Curated pill order. First-time users see these in this exact sequence.
+    /// After full cycle, pills randomize. Tapped pills are skipped.
+    private static let sequenceOrder: [String] = [
+        "d44",  // Most 30/30 seasons all time
+        "d88",  // 4+ XBH games last year
+        "d32",  // Bobby Witt Jr
+        "d79",  // Last player to steal 80 bases
+        "d55",  // Most wins with an ERA over 5.00?
+        "d48",  // Complete game leaders this season
+        "d49",  // Ohtani hot streaks this season
+        "d54",  // Lowest ERA with 200+ IP this decade
+        "d43",  // Compare Guerrero Jr and Alonso
+        "d72",  // Babe Ruth
+        "d1",   // Home run leaders this season
+        "d2",   // Top 10 in OPS this season
+        "d41",  // Compare Soto and Judge this season
+        "d4",   // Stolen base leaders this season
+        "d6",   // Ohtani home runs this season
+        "d45",  // Longest hitting streak all time
+        "d12",  // Tucker vs lefties this season
+        "d8",   // Closest to .400 since Ted Williams
+        "d14",  // Elly De La Cruz this season
+        "d17",  // 50+ HR seasons all time
+        "d7",   // Judge home vs away this season
+        "d21",  // RBI leaders this season
+        "d31",  // Gunnar Henderson
+        "d10",  // Starter ERA leaders this season
+        "d11",  // Compare Lindor and Witt Jr
+        "d29",  // Mookie Betts
+        "d9",   // Top 5 in batting average this season
+        "d80",  // Albies vs sliders this season
+        "d90",  // Active home run leaders
+        "d13",  // Turner hot streaks this season
+        "d22",  // Pitching K leaders this season
+        "d51",  // Most home runs while batting .300+?
+        "d62",  // Corbin Carroll
+        "d19",  // OPS+ leaders this season
+        "d53",  // Highest AVG with 30+ HR last year
+        "d67",  // Fernando Tatis Jr
+        "d23",  // Top 10 in hits this season
+        "d42",  // Compare Devers and Ramirez
+        "d81",  // Adames with two strikes this season
+        "d86",  // Players with 3000 hits and 500 HR
+        "d24",  // Who has the best WHIP this season?
+        "d5",   // How is Juan Soto doing this season?
+        "d52",  // Most stolen bases with under 10 CS?
+        "d68",  // Jackson Chourio
+        "d83",  // LHH with 30+ HR last year
+        "d61",  // Longest hitting streak this season
+        "d50",  // Jose Ramirez home vs away this season
+        "d34",  // Harper cold streaks this season
+        "d20",  // Doubles leaders this season
+        "d56",  // Highest OPS with under 50 K
+        "d63",  // Julio Rodriguez
+        "d91",  // Sub-3 ERA relievers last 3 years
+        "d25",  // Most saves this season
+        "d82",  // Contreras RISP stats this season
+        "d30",  // Freddie Freeman
+        "d18",  // 60+ stolen bases in a season, ever
+        "d85",  // Switch hitters .800+ OPS
+        "d28",  // Wins leaders this season
+        "d33",  // Alvarez slash line this season
+        "d60",  // Most K in a single season
+        "d64",  // Adley Rutschman
+        "d87",  // Most 3-hit games in 2025
+        "d26",  // Triples leaders this season
+        "d73",  // Mickey Mantle
+        "d89",  // Best career ERA active players
+        "d27",  // Top 5 in walks this season
+        "d84",  // Rookie pitchers with ERA under 3
+        "d76",  // Ketel Marte
+        "d16",  // What does BABIP measure?
+        "d65",  // Marcell Ozuna
+        "d78",  // Youngest player to hit 40 home runs
+        "d74",  // Willie Mays
+        "d38",  // What does ISO measure?
+        "d35",  // Corey Seager's stats this season
+        "d46",  // How many players have hit 40/40?
+        "d77",  // Marcus Semien
+        "d75",  // Hank Aaron
+        "d57",  // Most RBIs in a single game
+        "d69",  // Jarren Duran
+        "d47",  // Triple crown winners all time
+        "d70",  // Matt Olson
+        "d59",  // Perfect games since 2010
+        "d71",  // CJ Abrams
+        "d58",  // Most career grand slams
+        "d66",  // Manny Machado
+    ]
+
+    /// Legacy entry point for AnimatedPlaceholder
     func buildPool(searchHistory: [String]) -> [Suggestion] {
-        let algo = config.algorithm
+        buildSequence(searchHistory: searchHistory)
+    }
 
-        // 1. Dynamic tier
-        loadDynamicLeadersIfNeeded()
-        let dynamic = dynamicSuggestions.filter { shouldShow($0.id) }
-        let dynamicPick = Array(dynamic.shuffled().prefix(algo.dynamicSlots))
+    func buildSequence(searchHistory: [String]) -> [Suggestion] {
+        let tappedSet = tappedIds
 
-        // 2. Personalized tier
-        let personalized = buildPersonalized(searchHistory: searchHistory)
-            .filter { shouldShow($0.id) }
-        let personalizedPick = Array(personalized.shuffled().prefix(algo.personalizedSlots))
-
-        // 3. Defaults tier
-        let defaults = buildDefaults()
-        let defaultsPick = Array(defaults.shuffled().prefix(algo.defaultSlots))
-
-        // Merge — if any tier underperforms, fill from others
-        var pool = dynamicPick + personalizedPick + defaultsPick
-        let target = algo.poolSize
-
-        if pool.count < target {
-            let usedIds = Set(pool.map(\.id))
-            let overflow = (dynamic + personalized + defaults)
-                .filter { !usedIds.contains($0.id) && shouldShow($0.id) }
-                .shuffled()
-            pool.append(contentsOf: overflow.prefix(target - pool.count))
+        // Build ID → display text map
+        var idToText: [String: String] = [:]
+        for d in config.defaults where passesSeasonFilter(d) {
+            idToText[d.id] = displayText(for: d)
         }
 
-        // Last resort fallback for first-time users
-        if pool.count < target {
-            let usedIds = Set(pool.map(\.id))
-            let fallback = config.defaults
-                .filter { !usedIds.contains($0.id) && passesSeasonFilter($0) }
-                .map { Suggestion(id: $0.id, text: displayText(for: $0)) }
-            pool.append(contentsOf: fallback.prefix(target - pool.count))
+        // Build sequence in curated order, then append any unordered pills
+        var result: [Suggestion] = []
+        var usedIds: Set<String> = []
+
+        for id in Self.sequenceOrder {
+            guard let text = idToText[id], !tappedSet.contains(id) else { continue }
+            result.append(Suggestion(id: id, text: text))
+            usedIds.insert(id)
         }
 
-        return Array(pool.prefix(target)).shuffled()
+        // Append any pills not in the sequence order (future additions via S3)
+        let remaining = config.defaults
+            .filter { passesSeasonFilter($0) && !usedIds.contains($0.id) && !tappedSet.contains($0.id) }
+            .map { Suggestion(id: $0.id, text: displayText(for: $0)) }
+            .shuffled()
+        result.append(contentsOf: remaining)
+
+        return result
     }
 
     // MARK: - Season awareness
@@ -161,11 +238,8 @@ final class SuggestionEngine {
         let month = cal.component(.month, from: now)
         let day = cal.component(.day, from: now)
 
-        // Before March 30 → offseason
         if month < 3 || (month == 3 && day < 30) { return .offseason }
-        // March 30 – April 12 → early season (no streaks yet)
         if month == 3 || (month == 4 && day <= 12) { return .earlySeason }
-        // April 13+ → in season
         return .inSeason
     }
 
@@ -173,7 +247,6 @@ final class SuggestionEngine {
         case offseason, earlySeason, inSeason
     }
 
-    /// Returns the display text for a default, applying in-season grammar when appropriate.
     private func displayText(for d: SuggestionConfig.DefaultSuggestion) -> String {
         switch seasonState {
         case .offseason:
@@ -183,427 +256,15 @@ final class SuggestionEngine {
         }
     }
 
-    /// Returns false if a query's seasonFilter excludes it from the current date.
     private func passesSeasonFilter(_ d: SuggestionConfig.DefaultSuggestion) -> Bool {
         guard let filter = d.seasonFilter else { return true }
         switch filter {
         case "offseasonOnly":
             return seasonState == .offseason
         case "afterApril12":
-            return seasonState == .inSeason // not offseason, not earlySeason
-        case "earlySeason":
-            return seasonState == .earlySeason  // backfill queries, only during early season
+            return seasonState == .inSeason
         default:
             return true
         }
     }
-
-    // MARK: - Defaults tier
-
-    private func buildDefaults() -> [Suggestion] {
-        // Weighted selection: higher weight = more copies in the pool
-        var weighted: [Suggestion] = []
-        for d in config.defaults where shouldShow(d.id) && passesSeasonFilter(d) {
-            let text = displayText(for: d)
-            let copies = max(1, Int(d.weight * 10))
-            for _ in 0..<copies {
-                weighted.append(Suggestion(id: d.id, text: text))
-            }
-        }
-        // Deduplicate after shuffle (pick unique IDs)
-        var seen: Set<String> = []
-        var result: [Suggestion] = []
-        for s in weighted.shuffled() {
-            if seen.insert(s.id).inserted {
-                result.append(s)
-            }
-        }
-        return result
-    }
-
-    // MARK: - Dynamic tier (in-season leaders)
-
-    private func loadDynamicLeadersIfNeeded() {
-        if let loadedAt = dynamicLoadedAt, Date().timeIntervalSince(loadedAt) < 3600 {
-            return // cache valid for 1 hour
-        }
-
-        let db = DatabaseService()
-
-        // Find the most recent season
-        guard let seasonResult = try? db.execute(sql: "SELECT MAX(season) FROM season_batting_stats"),
-              let seasonRow = seasonResult.rows.first,
-              let season = Int(seasonRow[0]) else { return }
-
-        let currentYear = Calendar.current.component(.year, from: Date())
-        let seasonLabel = season == currentYear ? "this season" : "last season"
-
-        var suggestions: [Suggestion] = []
-        let allQueries = config.dynamicQueries.batting + config.dynamicQueries.pitching
-
-        for query in allQueries {
-            let sql = query.sql.replacingOccurrences(of: "{season}", with: String(season))
-            guard let result = try? db.execute(sql: sql) else { continue }
-            for row in result.rows {
-                let name = row[0]
-                guard let template = query.templates.randomElement() else { continue }
-                let text = template
-                    .replacingOccurrences(of: "{player}", with: name)
-                    .replacingOccurrences(of: "{seasonLabel}", with: seasonLabel)
-                let id = "dyn_\(abs(text.hashValue))"
-                suggestions.append(Suggestion(id: id, text: text))
-            }
-        }
-
-        dynamicSuggestions = suggestions
-        dynamicLoadedAt = Date()
-    }
-
-    // MARK: - Personalized tier
-
-    private enum Category: String, CaseIterable {
-        case streak, comparison, splits, leaderboard, statExplanation, playerLookup, homeAway, milestone
-    }
-
-    private func buildPersonalized(searchHistory: [String]) -> [Suggestion] {
-        guard !searchHistory.isEmpty else { return [] }
-
-        let searchedPlayers = extractSearchedPlayers(from: searchHistory)
-        let usedCategories = detectUsedCategories(in: searchHistory)
-        let teamCounts = countTeams(from: searchedPlayers, history: searchHistory)
-
-        let topTeams = teamCounts.sorted { $0.value > $1.value }.prefix(2).map(\.key)
-        let searchedNames = Set(searchedPlayers.map { $0.lowercased() })
-        var teammates: [String] = []
-        for team in topTeams {
-            teammates.append(contentsOf: topPlayersForTeam(team, excluding: searchedNames).prefix(3))
-        }
-
-        let leagueStars = topLeagueStars(excluding: searchedNames)
-        let allPlayers = searchedPlayers + teammates + leagueStars
-        var availableCategories = Set(Category.allCases)
-        if seasonState == .earlySeason { availableCategories.remove(.streak) }
-        let unusedCategories = availableCategories.subtracting(usedCategories)
-
-        var selected: [Suggestion] = []
-        var usedTexts: Set<String> = []
-
-        // Discovery: untried categories
-        for category in unusedCategories.shuffled().prefix(3) {
-            if let s = generateForCategory(category, players: allPlayers, usedTexts: &usedTexts) {
-                selected.append(s)
-            }
-        }
-
-        // Searched players in untried categories
-        for player in searchedPlayers.prefix(4) {
-            let playerCats = detectPlayerCategories(player: player, in: searchHistory)
-            let untried = availableCategories.subtracting(playerCats)
-            if let cat = untried.shuffled().first,
-               let s = generateForPlayer(player, category: cat, allPlayers: allPlayers, usedTexts: &usedTexts) {
-                selected.append(s)
-            }
-        }
-
-        // League stars and teammates
-        let discoveryPlayers = (leagueStars.shuffled().prefix(2) + teammates.shuffled().prefix(1))
-        for player in discoveryPlayers {
-            let discoveryCats: [Category] = seasonState == .earlySeason
-                ? [.playerLookup, .splits, .homeAway]
-                : [.playerLookup, .splits, .streak, .homeAway]
-            let cat = discoveryCats.randomElement()!
-            if let s = generateForPlayer(player, category: cat, allPlayers: allPlayers, usedTexts: &usedTexts) {
-                selected.append(s)
-            }
-        }
-
-        return selected
-    }
-
-    // MARK: - Player/team extraction
-
-    // Players whose names collide with common baseball terms — exclude from suggestions
-    private static let suggestionExclusions: Set<String> = [
-        "home run baker",
-    ]
-
-    private func extractSearchedPlayers(from history: [String]) -> [String] {
-        var players: [String] = []
-        var seen: Set<String> = []
-        for query in history {
-            let cleaned = query.contains("→") ? String(query.split(separator: "→").last ?? Substring(query)) : query
-            if let name = PlayerNameMatcher.matchPlayer(cleaned.trimmingCharacters(in: .whitespaces)),
-               !seen.contains(name.lowercased()),
-               !Self.suggestionExclusions.contains(name.lowercased()) {
-                players.append(name)
-                seen.insert(name.lowercased())
-            }
-        }
-        return players
-    }
-
-    private func countTeams(from players: [String], history: [String]) -> [String: Int] {
-        var counts: [String: Int] = [:]
-        let db = DatabaseService()
-        for player in players {
-            let sanitized = player.replacingOccurrences(of: "'", with: "''")
-            if let result = try? db.execute(sql: "SELECT team FROM players WHERE name = '\(sanitized)' LIMIT 1"),
-               let row = result.rows.first, !row[0].isEmpty {
-                let team = String(row[0].split(separator: "/").last ?? Substring(row[0]))
-                counts[team, default: 0] += 1
-            }
-        }
-        for query in history {
-            let lower = query.lowercased()
-            for (aliases, code) in Self.teamAliases {
-                if aliases.contains(where: { lower.contains($0) }) {
-                    counts[code, default: 0] += 1
-                }
-            }
-        }
-        return counts
-    }
-
-    private func topPlayersForTeam(_ teamCode: String, excluding: Set<String>) -> [String] {
-        let db = DatabaseService()
-        var players: [String] = []
-
-        let batterSql = """
-            SELECT p.name FROM season_batting_stats s
-            JOIN players p ON s.player_id = p.player_id
-            WHERE s.team LIKE '%\(teamCode)%'
-              AND s.season = (SELECT MAX(season) FROM season_batting_stats)
-              AND s.at_bats >= 100
-            ORDER BY s.ops DESC LIMIT 5
-            """
-        if let result = try? db.execute(sql: batterSql) {
-            for row in result.rows where !excluding.contains(row[0].lowercased()) {
-                players.append(row[0])
-            }
-        }
-
-        let pitcherSql = """
-            SELECT p.name FROM season_pitching_stats sp
-            JOIN players p ON sp.player_id = p.player_id
-            WHERE sp.team LIKE '%\(teamCode)%'
-              AND sp.season = (SELECT MAX(season) FROM season_pitching_stats)
-              AND sp.games_started >= 10
-            ORDER BY sp.era ASC LIMIT 2
-            """
-        if let result = try? db.execute(sql: pitcherSql) {
-            for row in result.rows where !excluding.contains(row[0].lowercased()) {
-                players.append(row[0])
-            }
-        }
-
-        return players
-    }
-
-    private func topLeagueStars(excluding: Set<String>) -> [String] {
-        let db = DatabaseService()
-        var stars: [String] = []
-        let sql = """
-            SELECT p.name FROM season_batting_stats s
-            JOIN players p ON s.player_id = p.player_id
-            WHERE s.season = (SELECT MAX(season) FROM season_batting_stats)
-              AND s.at_bats >= 400
-            ORDER BY s.ops DESC LIMIT 15
-            """
-        if let result = try? db.execute(sql: sql) {
-            for row in result.rows where !excluding.contains(row[0].lowercased()) {
-                stars.append(row[0])
-            }
-        }
-        return Array(stars.prefix(8))
-    }
-
-    // MARK: - Category detection
-
-    private func detectUsedCategories(in history: [String]) -> Set<Category> {
-        var used: Set<Category> = []
-        for query in history {
-            let lower = query.lowercased()
-            if ["streak", "hot", "cold", "slump", "fire"].contains(where: { lower.contains($0) }) { used.insert(.streak) }
-            if [" vs ", " vs. ", " or ", "compare", "versus"].contains(where: { lower.contains($0) }) { used.insert(.comparison) }
-            if ["lefties", "righties", "platoon", "splits", "left-handed", "right-handed"].contains(where: { lower.contains($0) }) { used.insert(.splits) }
-            if ["home", "away", "road"].contains(where: { lower.contains($0) }) { used.insert(.homeAway) }
-            if ["leaders", "top ", "most ", "best ", "highest", "lowest", "who led"].contains(where: { lower.contains($0) }) { used.insert(.leaderboard) }
-            if ["what is", "what's", "explain", "what does"].contains(where: { lower.contains($0) }) { used.insert(.statExplanation) }
-            if ["how many times", "has anyone ever", "how many players"].contains(where: { lower.contains($0) }) { used.insert(.milestone) }
-            if PlayerNameMatcher.matchPlayer(query) != nil { used.insert(.playerLookup) }
-        }
-        return used
-    }
-
-    private func detectPlayerCategories(player: String, in history: [String]) -> Set<Category> {
-        var used: Set<Category> = []
-        let playerLower = player.lowercased()
-        for query in history {
-            let lower = query.lowercased()
-            guard lower.contains(playerLower) || lower.contains(player.split(separator: " ").last?.lowercased() ?? "") else { continue }
-            if ["streak", "hot", "cold", "slump"].contains(where: { lower.contains($0) }) { used.insert(.streak) }
-            if [" vs ", "compare", "versus"].contains(where: { lower.contains($0) }) { used.insert(.comparison) }
-            if ["lefties", "righties", "platoon", "splits"].contains(where: { lower.contains($0) }) { used.insert(.splits) }
-            if ["home", "away", "road"].contains(where: { lower.contains($0) }) { used.insert(.homeAway) }
-            used.insert(.playerLookup)
-        }
-        return used
-    }
-
-    // MARK: - Query generation
-
-    private func generateForCategory(_ category: Category, players: [String], usedTexts: inout Set<String>) -> Suggestion? {
-        switch category {
-        case .leaderboard:
-            let pool = config.defaults.filter { passesSeasonFilter($0) && ($0.text.lowercased().contains("top ") || $0.text.lowercased().contains("who led") || $0.text.lowercased().contains("who had the") || $0.text.lowercased().contains("lowest")) }
-            return pickUnused(from: pool.map { displayText(for: $0) }, ids: pool.map(\.id), usedTexts: &usedTexts)
-        case .milestone:
-            let pool = config.defaults.filter { passesSeasonFilter($0) && ($0.text.lowercased().contains("how many times") || $0.text.lowercased().contains("how many players") || $0.text.lowercased().contains("closest to")) }
-            return pickUnused(from: pool.map { displayText(for: $0) }, ids: pool.map(\.id), usedTexts: &usedTexts)
-        case .statExplanation:
-            let pool = config.defaults.filter { passesSeasonFilter($0) && ($0.text.lowercased().contains("what is") || $0.text.lowercased().contains("what does")) }
-            return pickUnused(from: pool.map { displayText(for: $0) }, ids: pool.map(\.id), usedTexts: &usedTexts)
-        default:
-            if let player = players.randomElement() {
-                return generateForPlayer(player, category: category, allPlayers: players, usedTexts: &usedTexts)
-            }
-            return nil
-        }
-    }
-
-    /// Minimum season year with game-level data (game logs, splits, streaks).
-    /// Season-level stats exist for all years, but detailed data only from 2016+.
-    private static let localGameDataMinYear = 2016
-
-    private func generateForPlayer(_ player: String, category: Category, allPlayers: [String], usedTexts: inout Set<String>) -> Suggestion? {
-        let historical = !isCurrentPlayer(player)
-        let lastYear = lastSeasonYear(for: player)
-
-        // Skip players entirely outside our local data range — we can't answer anything locally
-        guard let playerLastYear = lastYear, playerLastYear >= Self.localGameDataMinYear else {
-            // Allow only leaderboard/milestone/statExplanation (not player-specific)
-            if category == .leaderboard || category == .milestone || category == .statExplanation {
-                return generateForCategory(category, players: allPlayers, usedTexts: &usedTexts)
-            }
-            return nil
-        }
-
-        let yearStr = historical ? String(playerLastYear) : "his career"
-        let t = config.templates
-
-        // Streak, splits, homeAway need game-level data — only available for localGameDataMinYear+
-        // For historical players, check that their last season has game data
-        let hasGameData = playerLastYear >= Self.localGameDataMinYear
-
-        let templates: [String]
-        switch category {
-        case .streak:
-            guard hasGameData else { return nil }
-            templates = historical ? t.historical.streak : t.current.streak
-        case .splits:
-            guard hasGameData else { return nil }
-            templates = historical ? t.historical.splits : t.current.splits
-        case .homeAway:
-            guard hasGameData else { return nil }
-            templates = historical ? t.historical.homeAway : t.current.homeAway
-        case .playerLookup: templates = historical ? t.historical.playerLookup : t.current.playerLookup
-        case .comparison:
-            let others = allPlayers.filter { $0 != player && (lastSeasonYear(for: $0) ?? 0) >= Self.localGameDataMinYear }
-            guard let other = others.randomElement() else { return nil }
-            let pool = historical ? t.historical.comparison : t.current.comparison
-            guard let template = pool.randomElement() else { return nil }
-            let compSeasonLabel = seasonState == .offseason ? "last season" : "this season"
-            let text = template
-                .replacingOccurrences(of: "{player1}", with: player)
-                .replacingOccurrences(of: "{player2}", with: other)
-                .replacingOccurrences(of: "{seasonLabel}", with: compSeasonLabel)
-            if usedTexts.contains(text) { return nil }
-            usedTexts.insert(text)
-            return Suggestion(id: "p_\(abs(text.hashValue))", text: text)
-        case .leaderboard, .milestone, .statExplanation:
-            return generateForCategory(category, players: allPlayers, usedTexts: &usedTexts)
-        }
-
-        guard let template = templates.randomElement() else { return nil }
-        let seasonLabel = seasonState == .offseason ? "last season" : "this season"
-        let text = template
-            .replacingOccurrences(of: "{player}", with: player)
-            .replacingOccurrences(of: "{year}", with: yearStr)
-            .replacingOccurrences(of: "{seasonLabel}", with: seasonLabel)
-        if usedTexts.contains(text) { return nil }
-        usedTexts.insert(text)
-        return Suggestion(id: "p_\(abs(text.hashValue))", text: text)
-    }
-
-    private func pickUnused(from texts: [String], ids: [String], usedTexts: inout Set<String>) -> Suggestion? {
-        let pairs = zip(ids, texts).filter { !usedTexts.contains($0.1) }
-        guard let pick = pairs.shuffled().first else { return nil }
-        usedTexts.insert(pick.1)
-        return Suggestion(id: pick.0, text: pick.1)
-    }
-
-    // MARK: - Historical player detection
-
-    private func lastSeasonYear(for player: String) -> Int? {
-        let db = DatabaseService()
-        let sanitized = player.replacingOccurrences(of: "'", with: "''")
-        if let result = try? db.execute(sql: """
-            SELECT MAX(season) FROM season_batting_stats s
-            JOIN players p ON s.player_id = p.player_id
-            WHERE p.name = '\(sanitized)'
-            """),
-           let row = result.rows.first, let year = Int(row[0]) {
-            return year
-        }
-        if let result = try? db.execute(sql: """
-            SELECT MAX(season) FROM season_pitching_stats sp
-            JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name = '\(sanitized)'
-            """),
-           let row = result.rows.first, let year = Int(row[0]) {
-            return year
-        }
-        return nil
-    }
-
-    private func isCurrentPlayer(_ player: String) -> Bool {
-        guard let lastYear = lastSeasonYear(for: player) else { return true }
-        let currentYear = Calendar.current.component(.year, from: Date())
-        return lastYear >= currentYear - 1
-    }
-
-    // MARK: - Team aliases
-
-    private static let teamAliases: [([String], String)] = [
-        (["yankees", "yanks", "nyy"], "NYA"),
-        (["mets", "nym"], "NYN"),
-        (["dodgers", "lad"], "LAN"),
-        (["red sox", "boston", "bos"], "BOS"),
-        (["cubs", "chc"], "CHN"),
-        (["white sox", "chw"], "CHA"),
-        (["astros", "houston", "hou"], "HOU"),
-        (["braves", "atlanta", "atl"], "ATL"),
-        (["phillies", "philadelphia", "phi"], "PHI"),
-        (["padres", "san diego", "sdp"], "SDN"),
-        (["rangers", "texas", "tex"], "TEX"),
-        (["blue jays", "toronto", "tor"], "TOR"),
-        (["orioles", "baltimore", "bal"], "BAL"),
-        (["twins", "minnesota", "min"], "MIN"),
-        (["guardians", "cleveland", "cle"], "CLE"),
-        (["mariners", "seattle", "sea"], "SEA"),
-        (["rays", "tampa", "tbr"], "TBA"),
-        (["angels", "anaheim", "laa"], "ANA"),
-        (["giants", "san francisco", "sfg"], "SFN"),
-        (["cardinals", "st. louis", "stl"], "SLN"),
-        (["brewers", "milwaukee", "mil"], "MIL"),
-        (["reds", "cincinnati", "cin"], "CIN"),
-        (["pirates", "pittsburgh", "pit"], "PIT"),
-        (["royals", "kansas city", "kcr"], "KCA"),
-        (["tigers", "detroit", "det"], "DET"),
-        (["diamondbacks", "arizona", "ari"], "ARI"),
-        (["rockies", "colorado", "col"], "COL"),
-        (["nationals", "washington", "wsh"], "WAS"),
-        (["marlins", "miami", "mia"], "MIA"),
-        (["athletics", "oakland", "oak"], "OAK"),
-    ]
 }

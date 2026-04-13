@@ -1,20 +1,18 @@
 import SwiftUI
 
-/// Shows multiple tappable suggestion pills that rotate periodically.
-/// Displays 2 rows of gradient capsule pills, fading one out at a time.
+/// Shows 3 tappable suggestion pills that rotate one at a time with fade transitions.
+/// Pills follow a curated sequence, then randomize after full cycle.
 struct SuggestionPillsView: View {
     var searchHistory: [String] = []
-    var compact: Bool = false
-    var matchupPills: [String] = []
     let onTap: (String) -> Void
 
-    @State private var pool: [Suggestion] = []
+    @State private var allPills: [Suggestion] = []
     @State private var visible: [Suggestion] = []
-    @State private var visibleSet: Set<String> = []
-    @State private var nextSwapIndex = 0
+    @State private var nextIndex = 3  // next pill to pull from allPills
+    @State private var nextSwapSlot = 0  // which of the 3 visible slots to swap next
     @State private var fadingId: String?
+    @State private var shownIds: Set<String> = []  // pills shown this session
 
-    private var maxVisible: Int { compact ? 3 : 4 }
     private let swapInterval: TimeInterval = 4.0
     private let fadeDuration: TimeInterval = 0.5
 
@@ -51,52 +49,41 @@ struct SuggestionPillsView: View {
                 }
             }
             .padding(.horizontal, 24)
+            .onAppear {
+                fadingId = nil
+            }
             .task(id: "rotate") {
                 await rotatePills()
             }
-            .onChange(of: matchupPills) { _, newPills in
-                // Inject matchup pills when feed loads (may arrive after initial pool build)
-                pool.removeAll { $0.id.hasPrefix("matchup_") }
-                for pill in newPills {
-                    let s = Suggestion(id: "matchup_\(pill)", text: pill)
-                    let idx = pool.isEmpty ? 0 : Int.random(in: 0..<pool.count)
-                    pool.insert(s, at: idx)
-                }
-            }
         } else {
             // Reserve height matching loaded pills to prevent logo shift
-            Color.clear.frame(height: compact ? 70 : 100)
+            Color.clear.frame(height: 70)
                 .task {
-                    pool = SuggestionEngine.shared.buildPool(searchHistory: searchHistory)
-                    // Inject matchup preview pills scattered through the pool
-                    // so at most 1 appears on initial load
-                    for pill in matchupPills {
-                        let s = Suggestion(id: "matchup_\(pill)", text: pill)
-                        let idx = pool.isEmpty ? 0 : Int.random(in: 0..<pool.count)
-                        pool.insert(s, at: idx)
-                    }
-                    let initial = Array(pool.prefix(maxVisible))
-                    visible = initial
-                    visibleSet = Set(initial.map(\.id))
+                    allPills = SuggestionEngine.shared.buildSequence(searchHistory: searchHistory)
+                    guard allPills.count >= 3 else { return }
+                    visible = Array(allPills.prefix(3))
+                    shownIds = Set(visible.map(\.id))
+                    nextIndex = 3
                 }
         }
     }
 
     @MainActor
     private func rotatePills() async {
-        guard pool.count > maxVisible else { return }
+        guard allPills.count > 3 else { return }
 
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(swapInterval))
             guard !Task.isCancelled else { break }
 
-            let candidates = pool.filter { !visibleSet.contains($0.id) }
-            guard let replacement = candidates.randomElement() else { continue }
+            // Find the next pill to show
+            let replacement = nextPill()
+            guard let replacement else { continue }
 
-            let idx = nextSwapIndex % visible.count
-            let removed = visible[idx]
+            let slot = nextSwapSlot % visible.count
+            let removed = visible[slot]
 
-            // Fade out the old pill
+            // Fade out
             withAnimation(.easeOut(duration: fadeDuration)) {
                 fadingId = removed.id
             }
@@ -104,10 +91,9 @@ struct SuggestionPillsView: View {
             try? await Task.sleep(for: .seconds(fadeDuration))
             guard !Task.isCancelled else { break }
 
-            // Swap content and fade in
-            visible[idx] = replacement
-            visibleSet.remove(removed.id)
-            visibleSet.insert(replacement.id)
+            // Swap and fade in
+            visible[slot] = replacement
+            shownIds.insert(replacement.id)
             fadingId = replacement.id
 
             withAnimation(.easeIn(duration: fadeDuration)) {
@@ -115,7 +101,36 @@ struct SuggestionPillsView: View {
             }
 
             SuggestionEngine.shared.recordImpression(replacement.id)
-            nextSwapIndex += 1
+            nextSwapSlot += 1
         }
+    }
+
+    private func nextPill() -> Suggestion? {
+        let visibleIds = Set(visible.map(\.id))
+
+        // Walk through the sequence, skipping currently visible pills
+        while nextIndex < allPills.count {
+            let candidate = allPills[nextIndex]
+            nextIndex += 1
+            if !visibleIds.contains(candidate.id) {
+                return candidate
+            }
+        }
+
+        // Full cycle complete — reshuffle and restart, excluding tapped
+        let tapped = SuggestionEngine.shared.tappedIds
+        allPills = allPills.filter { !tapped.contains($0.id) }.shuffled()
+        shownIds.removeAll()
+        nextIndex = 0
+
+        while nextIndex < allPills.count {
+            let candidate = allPills[nextIndex]
+            nextIndex += 1
+            if !visibleIds.contains(candidate.id) {
+                return candidate
+            }
+        }
+
+        return nil
     }
 }
