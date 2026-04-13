@@ -26,6 +26,7 @@ from .name_matcher import (
     stat_alias_map, _extract_threshold,
     _POSITION_MAP, team_alias_map, _sorted_team_aliases,
 )
+from .qualification import min_pa as _qual_min_pa, min_ip_outs as _qual_min_ip_outs
 
 logger = logging.getLogger("statchat.query_engine")
 
@@ -1831,33 +1832,17 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
         return "", ""
 
     if plan.is_pitching:
-        # MLB qualification rule: 1.0 IP per team game scheduled
-        if season:
-            cur = conn.cursor()
-            cur.execute(f"SELECT MAX(games) FROM season_pitching_stats WHERE season = ?", (season,))
-            r = cur.fetchone()
-            max_games = int(r[0]) if r and r[0] else 162
-            ip_min = max(1, max_games * 3)  # 1 IP per game = 3 ip_outs per game
-        else:
-            ip_min = 162 * 3  # full season: 162 IP
+        ip_min = _qual_min_ip_outs(conn, season or datetime.now().year)
         ip_display = f"{ip_min // 3}.{ip_min % 3}"
-        full_season_ip = 162
-        if season and max_games < 140:
-            label = f"Showing pitchers on pace for {full_season_ip}+ IP ({ip_display} IP minimum)"
+        if season and ip_min < 486:
+            label = f"Showing pitchers on pace for 162+ IP ({ip_display} IP minimum)"
         else:
             label = f"Min. {ip_display} IP."
         return f" AND {prefix}.ip_outs >= {ip_min}", label
     else:
-        if season:
-            cur = conn.cursor()
-            cur.execute(f"SELECT MAX(games) FROM season_batting_stats WHERE season = ?", (season,))
-            r = cur.fetchone()
-            max_games = int(r[0]) if r and r[0] else 162
-            pa_min = max(1, int(400 * max_games / 162))
-        else:
-            pa_min = 400
-        if season and max_games < 140:
-            label = f"Showing hitters on pace for 400+ PA ({pa_min} PA minimum)"
+        pa_min = _qual_min_pa(conn, season or datetime.now().year)
+        if season and pa_min < 502:
+            label = f"Showing hitters on pace for 502+ PA ({pa_min} PA minimum)"
         else:
             label = f"Min. {pa_min} PA."
         return f" AND {prefix}.plate_appearances >= {pa_min}", label
@@ -3314,12 +3299,12 @@ def _execute_per_team_leaders(conn, plan: QueryPlan) -> Optional[str]:
     lower_better = col in ("era", "whip", "bb_per_9", "hr_per_9")
     order = "ASC" if lower_better else "DESC"
 
-    # PA/IP minimum for rate stats only — counting stats don't need minimums
+    # PA/IP minimum for rate stats — MLB prorated
     if is_rate:
         if plan.is_pitching:
-            min_filter = "AND s.ip_outs >= 30"  # ~10 IP
+            min_filter = f"AND s.ip_outs >= {_qual_min_ip_outs(conn, season)}"
         else:
-            min_filter = "AND s.plate_appearances >= 15"
+            min_filter = f"AND s.plate_appearances >= {_qual_min_pa(conn, season)}"
     else:
         min_filter = ""
 
