@@ -267,9 +267,13 @@ QUALITY THRESHOLD — READ CAREFULLY:
     well" or "he had an off night," don't include it. Quality over
     quantity — only include items that pass the bar above. Could be
     2 items or 10, depending on the day.
-15. NEVER write about a player struggling, having a poor start, slumping,
-    or having a bad game. No negative narratives. The feed celebrates
-    what players ARE doing, not what they aren't.
+15. NEVER write about a player having a bad game, struggling, slumping,
+    having their worst start, giving up lots of runs/hits, or any
+    performance where the main story is that they performed poorly.
+    If a player got lit up, gave up 7 runs, struck out 4 times, etc. —
+    skip them entirely. The feed only celebrates positive performances.
+    The ONLY exception: if a bad stat is paired with an unusual positive
+    (e.g. "struck out 12 but also hit 2 homers" — the positive is the story).
 
 STYLE RULES:
 14. Do NOT pad sentences with empty context. If you don't have a meaningful
