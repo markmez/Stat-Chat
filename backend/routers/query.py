@@ -610,12 +610,13 @@ def _strip_bold_title(text: str) -> str:
             # Try extracting year from title like "2026 ERA Leaders"
             year_match = _re.search(r'\b(20[012]\d)\b', title_content)
             scope = year_match.group(1) if year_match else None
-            if not scope and "career" in title_content.lower():
-                scope = "Career"
-            elif not scope and "all-time" in title_content.lower():
-                scope = "All-Time"
-            elif not scope and "active" in title_content.lower():
+            if not scope and "active" in title_content.lower():
                 scope = "Active"
+            # Don't show "All-Time" or "Career" — that's the default, not an inference
+
+        # Skip scope display for defaults — only show when we inferred something
+        if scope in ("All-Time", "Career"):
+            scope = None
 
         # Check if next line has a count like "9 matched." or "14 matched."
         count_line = ""
