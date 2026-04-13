@@ -245,8 +245,11 @@ struct NotableEventsFeed: View {
 
                 // Combined text — tweet-style
                 if event.category == "Tonight" && event.playerNames.count >= 2 {
-                    // Matchup preview: headline text + inline CTA
-                    let fullText = event.headline + event.detail
+                    // Matchup preview: headline text + inline CTA + optional hint
+                    let detailClean = event.detail.replacingOccurrences(
+                        of: "\\[MATCHUP_HINT\\].*?\\[/MATCHUP_HINT\\]",
+                        with: "", options: .regularExpression)
+                    let fullText = event.headline + detailClean
                     let attributed = highlightedTextWithCTA(
                         fullText,
                         playerNames: event.playerNames,
@@ -259,6 +262,16 @@ struct NotableEventsFeed: View {
                         .font(.system(.subheadline, design: .rounded))
                         .foregroundStyle(.primary)
                         .lineSpacing(3)
+
+                    // Matchup hint subtext
+                    if let hintRange = event.detail.range(of: "\\[MATCHUP_HINT\\](.*?)\\[/MATCHUP_HINT\\]", options: .regularExpression),
+                       let capture = event.detail.range(of: "(?<=\\[MATCHUP_HINT\\]).*?(?=\\[/MATCHUP_HINT\\])", options: .regularExpression) {
+                        let hint = String(event.detail[capture])
+                        Text(hint)
+                            .font(.system(.caption, design: .rounded))
+                            .italic()
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     Text(highlightedText(
                         event.detail.isEmpty ? event.headline : event.headline + " " + event.detail,

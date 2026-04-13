@@ -1357,13 +1357,10 @@ def detect_matchup_previews(conn, season):
 
         game_context = "Matchup Preview"
 
-        detail = " matchup preview."
-        if example_hint:
-            detail += f" {example_hint}"
-
+        hint_part = f"[MATCHUP_HINT]{example_hint}[/MATCHUP_HINT]" if example_hint else ""
         events.append({
             "headline": compelling,
-            "detail": detail,
+            "detail": f" matchup preview.{hint_part}",
             "category": "Tonight",
             "game_date": today,
             "expires_at": game.get("start_time", ""),
