@@ -2955,6 +2955,9 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
 
     count = len(rows)
     parts = [title, f"{count} matched.\n"]
+    # Show PA/IP minimum note for current-season rate stats
+    if is_rate and season and season == date.today().year and pa_label:
+        parts.append(f"[SUBTITLE]{pa_label}[/SUBTITLE]")
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
 
