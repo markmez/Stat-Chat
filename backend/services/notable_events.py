@@ -661,6 +661,16 @@ def detect_season_pace(conn, season, latest_date=None):
         for name, stat_val, games, team_code in rows:
             if not stat_val or games == 0:
                 continue
+
+            # Must have contributed to this stat on latest_date
+            contributed = conn.execute(f"""
+                SELECT {stat_col} FROM game_batting_logs g
+                JOIN players p ON g.player_id = p.player_id
+                WHERE p.name = ? AND g.date = ? AND g.{stat_col} > 0
+            """, (name, latest_date)).fetchone()
+            if not contributed:
+                continue
+
             pace = int(stat_val * 162.0 / games)
 
             for threshold in thresholds:
