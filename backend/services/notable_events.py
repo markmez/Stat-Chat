@@ -588,8 +588,12 @@ def detect_pitching_streaks(conn, season, latest_date):
 
         if scoreless >= 2:
             name = _player_name(conn, pid)
+            last = starts[0]
+            last_ip = f"{(last[1] or 0) // 3}.{(last[1] or 0) % 3}"
+            last_so = last[4] or 0
+            game_line = f"{name} threw {last_ip} scoreless IP with {last_so} K and "
             events.append({
-                "headline": f"{name} has thrown {scoreless} consecutive scoreless starts, allowing 0 earned runs in 5+ innings each time.",
+                "headline": f"{game_line}now has {scoreless} consecutive scoreless starts.",
                 "detail": "",
                 "category": "Streak",
                 "game_date": starts[0][0],
@@ -610,8 +614,13 @@ def detect_pitching_streaks(conn, season, latest_date):
 
         if qs >= 4:
             name = _player_name(conn, pid)
+            last = starts[0]
+            last_ip = f"{(last[1] or 0) // 3}.{(last[1] or 0) % 3}"
+            last_er = last[2] or 0
+            last_so = last[4] or 0
+            game_line = f"{name} went {last_ip} IP, {last_er} ER, {last_so} K and "
             events.append({
-                "headline": f"{name} has {qs} consecutive quality starts — at least 6 IP with 3 or fewer earned runs each outing.",
+                "headline": f"{game_line}now has {qs} consecutive quality starts.",
                 "detail": "",
                 "category": "Streak",
                 "game_date": starts[0][0],
