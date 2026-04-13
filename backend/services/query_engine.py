@@ -2716,21 +2716,41 @@ def _execute_year_comparison(conn, plan: QueryPlan) -> Optional[str]:
     from services.name_matcher import is_pitcher as _is_pitcher
     is_pitcher = _is_pitcher(name)
 
-    if is_pitcher:
-        table = "season_pitching_stats"
-        cols = "games, wins, losses, era, games_started, saves, innings_pitched, hits, earned_runs, strikeouts, walks, whip"
-        headers = "G, W, L, ERA, GS, SV, IP, H, ER, K, BB, WHIP"
-    else:
-        table = "season_batting_stats"
-        cols = "games, at_bats, runs, hits, doubles, triples, home_runs, rbi, stolen_bases, caught_stealing, walks, strikeouts, batting_avg, obp, slg, ops, ops_plus"
-        headers = "G, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, SO, AVG, OBP, SLG, OPS, OPS+"
+    bat_cols = "games, at_bats, runs, hits, doubles, triples, home_runs, rbi, stolen_bases, caught_stealing, walks, strikeouts, batting_avg, obp, slg, ops, ops_plus"
+    bat_headers = "G, AB, R, H, 2B, 3B, HR, RBI, SB, CS, BB, SO, AVG, OBP, SLG, OPS, OPS+"
+    pitch_cols = "games, wins, losses, era, games_started, saves, innings_pitched, hits, earned_runs, strikeouts, walks, whip"
+    pitch_headers = "G, W, L, ERA, GS, SV, IP, H, ER, K, BB, WHIP"
+    rate_cols = {"era", "batting_avg", "obp", "slg", "ops", "whip"}
 
-    col_list = [c.strip() for c in cols.split(",")]
+    def _format_row(row_data, col_list):
+        vals = []
+        for i, col_name in enumerate(col_list):
+            v = row_data[i]
+            if v is None:
+                vals.append("--")
+            elif col_name.strip() in rate_cols:
+                vals.append(_format_val(col_name.strip(), v, True))
+            elif col_name.strip() == "innings_pitched":
+                vals.append(str(v) if v else "--")
+            else:
+                vals.append(str(int(v)) if isinstance(v, float) and v == int(v) else str(v))
+        return ", ".join(vals)
+
+    # Determine which tables to show
+    if is_pitcher:
+        primary_table = "season_pitching_stats"
+        primary_cols, primary_headers = pitch_cols, pitch_headers
+    else:
+        primary_table = "season_batting_stats"
+        primary_cols, primary_headers = bat_cols, bat_headers
+
+    primary_col_list = [c.strip() for c in primary_cols.split(",")]
+    primary_header_list = [h.strip() for h in primary_headers.split(",")]
 
     rows = {}
     for yr in (year1, year2):
         r = conn.execute(
-            f"SELECT {cols}, team FROM {table} WHERE player_id = ? AND season = ?",
+            f"SELECT {primary_cols} FROM {primary_table} WHERE player_id = ? AND season = ?",
             (pid, yr)).fetchone()
         if r:
             rows[yr] = r
@@ -2738,39 +2758,47 @@ def _execute_year_comparison(conn, plan: QueryPlan) -> Optional[str]:
     if not rows:
         return f"No stats found for {name} in {year1} or {year2}."
 
-    # Get team for display
-    team = None
-    for yr in (year2, year1):
-        if yr in rows:
-            team = rows[yr][-1]  # last column is team
-            break
-
     parts = [f"**{name} — {year1} vs {year2}**\n"]
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
-    parts.append("[STATGRID]")
-    parts.append(f"HEADER: {headers}")
 
-    header_list = [h.strip() for h in headers.split(",")]
-    rate_cols = {"era", "batting_avg", "obp", "slg", "ops", "whip"}
-
+    # Primary stats (batting or pitching)
     for yr in (year1, year2):
+        parts.append("[STATGRID]")
+        parts.append(f"HEADER: {primary_headers}")
         if yr in rows:
-            vals = []
-            for i, col_name in enumerate(col_list):
-                v = rows[yr][i]
-                if v is None:
-                    vals.append("--")
-                elif col_name.strip() in rate_cols:
-                    vals.append(_format_val(col_name.strip(), v, True))
-                elif col_name.strip() == "innings_pitched":
-                    vals.append(str(v) if v else "--")
-                else:
-                    vals.append(str(int(v)) if isinstance(v, float) and v == int(v) else str(v))
-            parts.append(f"ROW {yr}: {', '.join(vals)}")
+            parts.append(f"ROW {yr}: {_format_row(rows[yr], primary_col_list)}")
         else:
-            parts.append(f"ROW {yr}: {'--' + (', --' * (len(header_list) - 1))}")
+            parts.append(f"ROW {yr}: {'--' + (', --' * (len(primary_header_list) - 1))}")
+        parts.append("[/STATGRID]")
 
-    parts.append("[/STATGRID]")
+    # Check for secondary stats (two-way player: show pitching if primary is batting, vice versa)
+    if not is_pitcher:
+        secondary_table = "season_pitching_stats"
+        secondary_cols, secondary_headers = pitch_cols, pitch_headers
+    else:
+        secondary_table = "season_batting_stats"
+        secondary_cols, secondary_headers = bat_cols, bat_headers
+
+    secondary_col_list = [c.strip() for c in secondary_cols.split(",")]
+    secondary_header_list = [h.strip() for h in secondary_headers.split(",")]
+
+    secondary_rows = {}
+    for yr in (year1, year2):
+        r = conn.execute(
+            f"SELECT {secondary_cols} FROM {secondary_table} WHERE player_id = ? AND season = ?",
+            (pid, yr)).fetchone()
+        if r:
+            secondary_rows[yr] = r
+
+    if secondary_rows:
+        label = "Pitching" if not is_pitcher else "Batting"
+        parts.append(f"\n**{label}**")
+        for yr in (year1, year2):
+            if yr in secondary_rows:
+                parts.append("[STATGRID]")
+                parts.append(f"HEADER: {secondary_headers}")
+                parts.append(f"ROW {yr}: {_format_row(secondary_rows[yr], secondary_col_list)}")
+                parts.append("[/STATGRID]")
 
     # Suggestions
     parts.append(f"\n[SUGGEST]{name} career stats[/SUGGEST]")
