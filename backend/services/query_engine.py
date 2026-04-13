@@ -2389,23 +2389,23 @@ def _execute_consecutive_seasons_alltime(conn, plan, table, n_seasons) -> Option
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
 
-    # Headers: year columns
-    headers = [f"Yr {i+1}" for i in range(n_seasons)]
+    # Headers: just the stat abbreviation per season
+    headers = [abbrev] * n_seasons
     parts.append(f"HEADER: {', '.join(headers)}")
 
     for i, row in enumerate(unique_rows):
         name = row[0]
         start_yr = row[1]
+        end_yr = start_yr + n_seasons - 1
+        yr_range = f"{str(start_yr)[-2:]}-{str(end_yr)[-2:]}"
         vals = []
         for j in range(n_seasons):
             v = row[2 + j]
-            yr = start_yr + j
-            yr_short = str(yr)[-2:]
             if isinstance(v, float) and v < 1:
-                vals.append(f"'{yr_short} {_format_rate(v)}")
+                vals.append(_format_rate(v))
             else:
-                vals.append(f"'{yr_short} {int(v)}")
-        parts.append(f"ROW {i+1}. {name}: {', '.join(vals)}")
+                vals.append(str(int(v)))
+        parts.append(f"ROW {i+1}. {name} ('{yr_range}): {', '.join(vals)}")
 
     parts.append("[/LEADERBOARD]")
     return "\n".join(parts)
@@ -2565,7 +2565,7 @@ def _execute_per_season_threshold(conn, plan: QueryPlan) -> Optional[str]:
     first_label_sa = _labels_sa.get(first_col_sa, first_col_sa)
     thresh_sa = int(conditions[0][2]) if conditions and conditions[0][2] == int(conditions[0][2]) else ""
     if thresh_sa:
-        parts.append(f"\n[SUGGEST]{thresh_sa}+ {first_label_sa} in {n_seasons} straight seasons all time[/SUGGEST]")
+        parts.insert(2, f"[DIDYOUMEAN]{thresh_sa}+ {first_label_sa} in {n_seasons} straight seasons all time[/DIDYOUMEAN]")
 
     return "\n".join(parts)
 
