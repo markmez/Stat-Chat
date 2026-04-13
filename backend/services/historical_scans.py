@@ -856,9 +856,10 @@ def scan_leaderboard_changes(conn, season, latest_date):
     ]
 
     # Min IP for rate stats — MLB prorated: 1 IP per team game
+    # Use batting logs for team games (more reliable than pitching appearances)
     max_team_games = conn.execute("""
         SELECT MAX(g) FROM (
-            SELECT COUNT(*) as g FROM game_pitching_logs
+            SELECT COUNT(*) as g FROM game_batting_logs
             WHERE season = ? GROUP BY player_id
         )
     """, (season,)).fetchone()[0] or 16
