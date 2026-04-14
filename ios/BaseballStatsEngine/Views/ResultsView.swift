@@ -282,7 +282,9 @@ struct ResultsView: View {
         guard !trimmed.isEmpty, !appState.isLoading else { return }
         inputText = ""
 
-        switch PlayerNameMatcher.resolveSearch(trimmed, history: appState) {
+        // Don't pass history — follow-up queries shouldn't add the raw text
+        // to search history. The rewritten standalone query gets added later.
+        switch PlayerNameMatcher.resolveSearch(trimmed, history: nil) {
         case .player(let name, _):
             selectedPlayerName = name
         case .team(let code):
