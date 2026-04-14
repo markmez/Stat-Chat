@@ -137,7 +137,9 @@ async def simulate_passing(
         game_contribs = conn.execute(f"""
             SELECT player_id, date, SUM({gcol})
             FROM {game_table}
-            WHERE season = ? ORDER BY date
+            WHERE season = ?
+            GROUP BY player_id, date
+            ORDER BY date
         """, (season,)).fetchall()
 
         # Group by date
