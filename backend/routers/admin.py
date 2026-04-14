@@ -109,19 +109,105 @@ async def simulate_passing(
         WHERE season = ?{date_filter} ORDER BY date
     """, params).fetchall()]
 
-    from services.notable_events import detect_alltime_passing
+    # Optimized simulation: build career totals once, then walk through dates
+    CONFIGS = [
+        ("home_runs",     "season_batting_stats",  "game_batting_logs",   "home runs",    "HR",  75),
+        ("hits",          "season_batting_stats",  "game_batting_logs",   "hits",         "H",   150),
+        ("rbi",           "season_batting_stats",  "game_batting_logs",   "RBI",          "RBI", 150),
+        ("stolen_bases",  "season_batting_stats",  "game_batting_logs",   "stolen bases", "SB",  100),
+        ("doubles",       "season_batting_stats",  "game_batting_logs",   "doubles",      "2B",  100),
+        ("wins",          "season_pitching_stats", "game_pitching_logs",  "wins",         "W",   75),
+        ("strikeouts",    "season_pitching_stats", "game_pitching_logs",  "strikeouts",   "K",   75),
+    ]
+
     all_events = []
-    for d in dates:
-        try:
-            evts = detect_alltime_passing(conn, season, d)
-            for e in evts:
-                all_events.append({
-                    "date": d,
-                    "type": e["detection_type"],
-                    "headline": e["headline"],
-                })
-        except Exception as ex:
-            all_events.append({"date": d, "type": "ERROR", "headline": str(ex)})
+    for col, table, game_table, label, abbrev, top_n in CONFIGS:
+        # Pre-season career totals (everything before the season)
+        pre_career = {}
+        for pid, name, total in conn.execute(f"""
+            SELECT s.player_id, p.name, SUM(s.{col})
+            FROM {table} s JOIN players p ON s.player_id = p.player_id
+            WHERE s.season < ?
+            GROUP BY s.player_id
+        """, (season,)).fetchall():
+            pre_career[pid] = (name, total or 0)
+
+        # All game contributions for this season, by date
+        gcol = "CASE WHEN win = 1 THEN 1 ELSE 0 END" if col == "wins" else col
+        game_contribs = conn.execute(f"""
+            SELECT player_id, date, SUM({gcol})
+            FROM {game_table}
+            WHERE season = ? ORDER BY date
+        """, (season,)).fetchall()
+
+        # Group by date
+        from collections import defaultdict
+        by_date = defaultdict(list)
+        for pid, d, val in game_contribs:
+            by_date[d].append((pid, val or 0))
+
+        # Walk through dates, accumulating career totals
+        running = dict(pre_career)  # pid → (name, running_total)
+
+        # Also need players who only appear in this season
+        for pid, d, val in game_contribs:
+            if pid not in running:
+                name_row = conn.execute("SELECT name FROM players WHERE player_id = ?", (pid,)).fetchone()
+                running[pid] = (name_row[0] if name_row else pid, 0)
+
+        # Build sorted all-time list from pre-career + all season data
+        # (for rank checking at end of range)
+        full_career = {}
+        for pid, (name, pre) in running.items():
+            full_career[pid] = (name, pre)
+
+        for d in dates:
+            if d not in by_date:
+                continue
+            # Update running totals for today's games
+            for pid, val in by_date[d]:
+                if pid in running:
+                    name, prev = running[pid]
+                    running[pid] = (name, prev + val)
+
+            # Build today's all-time ranking
+            ranked = sorted(running.items(), key=lambda x: -x[1][1])
+
+            if len(ranked) < top_n:
+                continue
+
+            cutoff = ranked[top_n - 1][1][1]
+
+            # Check each player who played today
+            for pid, val in by_date[d]:
+                if val == 0:
+                    continue
+                name, career_total = running[pid]
+                if career_total < cutoff:
+                    continue
+                career_before = career_total - val
+
+                # Find best person passed
+                best_passed = None
+                for rank, (rpid, (rname, rtotal)) in enumerate(ranked, 1):
+                    if rpid == pid or rank > top_n:
+                        break
+                    if career_before < rtotal and career_total >= rtotal:
+                        if best_passed is None or rank < best_passed[0]:
+                            best_passed = (rank, rname, rtotal)
+
+                if best_passed:
+                    passed_rank, passed_name, _ = best_passed
+                    from services.notable_events import _ordinal
+                    headline = (
+                        f"{name} now has {career_total} career {label}, "
+                        f"passing {passed_name} for {_ordinal(passed_rank)} on the all-time list."
+                    )
+                    all_events.append({
+                        "date": d,
+                        "type": f"alltime_passing_{col}",
+                        "headline": headline,
+                    })
 
     conn.close()
 
