@@ -196,8 +196,10 @@ async def simulate_passing(
                 # Find best person passed
                 best_passed = None
                 for rank, (rpid, (rname, rtotal)) in enumerate(ranked, 1):
-                    if rpid == pid or rank > top_n:
+                    if rank > top_n:
                         break
+                    if rpid == pid:
+                        continue
                     if career_before < rtotal and career_total >= rtotal:
                         if best_passed is None or rank < best_passed[0]:
                             best_passed = (rank, rname, rtotal)
