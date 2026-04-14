@@ -4336,7 +4336,6 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
 
             # Build pitching game log display
             parts = []
-            parts.append(f"[TIP]Tap a player name for their full profile.[/TIP]")
             parts.append("[GAMELOGS]")
             for row in reversed(pitch_rows):
                 gdate, ip_text, ip_outs, h, er, so, bb, hr, win, opp = row
