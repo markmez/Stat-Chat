@@ -284,6 +284,13 @@ STYLE RULES:
     Note the pace as a fun fact but do NOT editorialize about sustainability.
 17. Less is more. A clean stat line with one piece of context beats a
     sentence stuffed with qualifiers.
+18. NEVER use dangling references — don't say "the 5 steals" or "the
+    3 homers" unless those stats were already mentioned earlier in the
+    same sentence. Every stat must be introduced before being referenced.
+19. When comparing current stats to a prior period, be explicit about
+    what you're comparing. "Matches his second-half pace" is ambiguous —
+    does it mean equal totals or similar rate? Say "on a similar pace to"
+    or "already has X, which took him until August last year."
 
 DATA SNAPSHOT:
 {snapshot}"""
