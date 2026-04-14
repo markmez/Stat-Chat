@@ -1146,6 +1146,8 @@ def parse_comparison(input_str: str) -> Optional[dict]:
             cleaned = after_comma
 
     # Try splitting on delimiters
+    _comparison_suffixes = ["career", "career stats", "stats", "numbers",
+                            "all time", "all-time", "historically"]
     delimiters = [" compared to ", " versus ", " vs. ", " vs ", " or ", " and ", " to ", " with "]
     for delimiter in delimiters:
         if delimiter not in cleaned:
@@ -1153,6 +1155,13 @@ def parse_comparison(input_str: str) -> Optional[dict]:
         idx = cleaned.index(delimiter)
         part1 = cleaned[:idx].strip()
         part2 = cleaned[idx + len(delimiter):].strip()
+
+        # Strip trailing context words that aren't part of a player name
+        for suffix in _comparison_suffixes:
+            if part2.endswith(f" {suffix}"):
+                part2 = part2[:-(len(suffix) + 1)].strip()
+            if part1.endswith(f" {suffix}"):
+                part1 = part1[:-(len(suffix) + 1)].strip()
 
         if not part1 or not part2:
             continue
