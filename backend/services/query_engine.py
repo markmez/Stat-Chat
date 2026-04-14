@@ -2996,6 +2996,12 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
                                     vals.extend([str(int(raw)), str(int(raw * pace_factor))])
                             parts.append(f"ROW {i+1}. {row[0]}: {', '.join(vals)}")
                         parts.append("[/LEADERBOARD]")
+
+                        # Add time-scope pills since nobody has reached the threshold yet
+                        last_year = season - 1
+                        parts.append(f"\n[SUGGEST]{filter_desc} in {last_year}[/SUGGEST]")
+                        parts.append(f"[SUGGEST]{filter_desc} all time[/SUGGEST]")
+
                         return "\n".join(parts)
             except Exception as e:
                 logger.warning("pace_fallback_error error=%s", e)
