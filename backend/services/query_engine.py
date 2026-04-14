@@ -1710,6 +1710,17 @@ def execute(plan: QueryPlan) -> Optional[str]:
             elif alt:
                 result += alt  # Less ambiguous — keep as pill
 
+        # "HR/hits by a pitcher" ambiguity: allowed vs hit
+        # Only for all-time or pre-2022 seasons (universal DH started 2022)
+        if (result and plan.is_pitching and plan.stat
+                and plan.stat.db_column in ("home_runs", "hits")
+                and (not plan.season or plan.season < 2022 or plan.scope in ("career", "all_time"))
+                and "by a pitcher" in plan.original_question.lower()):
+            if plan.stat.db_column == "home_runs":
+                see_also.append("most HR hit by a pitcher all time")
+            else:
+                see_also.append("most hits by a pitcher as a batter all time")
+
         # "Within vs by" alternate interpretation for team queries
         if result and plan.has_team_context and plan.stat:
             abbrev = plan.stat.display_abbrev
