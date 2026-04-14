@@ -1020,13 +1020,14 @@ def _get_game_line(conn, player_id, date, season):
     # Batting line
     row = conn.execute("""
         SELECT hits, at_bats, home_runs, rbi, doubles, triples, walks,
-               stolen_bases
+               stolen_bases, COALESCE(hit_by_pitch, 0)
         FROM game_batting_logs
         WHERE player_id = ? AND date = ? AND season = ?
     """, (player_id, date, season)).fetchone()
-    if row and (row[0] or 0) + (row[6] or 0) > 0:
-        h, ab, hr, rbi, d, t, bb, sb = row
+    if row and (row[0] or 0) + (row[6] or 0) + (row[8] or 0) > 0:
+        h, ab, hr, rbi, d, t, bb, sb, hbp = row
         sb = sb or 0
+        hbp = hbp or 0
         base = f"{h}-for-{ab}"
         extras = []
         if hr: extras.append(f"{'a homer' if hr == 1 else f'{hr} HR'}")
@@ -1035,6 +1036,7 @@ def _get_game_line(conn, player_id, date, season):
         if sb: extras.append(f"{'a stolen base' if sb == 1 else f'{sb} SB'}")
         if rbi: extras.append(f"{rbi} RBI")
         if bb and h == 0: extras.append(f"{bb} BB")
+        if hbp and h == 0 and bb == 0: extras.append("a HBP")
         if not extras:
             return base, "batting"
         elif len(extras) == 1:
@@ -1093,8 +1095,6 @@ def template_facts(conn, facts, season, latest_date):
             # Batting start-of-season streak
             streak = f["streak"]
             label = f["label"]
-            game_intro = f"{player} went {game_line}" if game_line else f"{player}"
-
             if hist_count == 0:
                 context = f"no other player has done this in over 100 years"
             elif hist_count <= 10:
@@ -1106,15 +1106,20 @@ def template_facts(conn, facts, season, latest_date):
                 context = f"the last player to do this was {last['player']} in {last['season']}"
                 secondary_names.append(last["player"])
 
-            headline = f"{game_intro}, and {label} — {context}."
+            if game_line:
+                headline = f"{player} went {game_line}, and {label} — {context}."
+            else:
+                headline = f"{player} {label} — {context}."
 
         elif f["type"].startswith("cross_season_"):
             streak = f["streak"]
             label = f["label"]
-            game_intro = f"{player} went {game_line}" if game_line else f"{player}"
             ctx = "dating back to last season" if f["spans_seasons"] else "this season"
 
-            headline = f"{game_intro}, extending the longest active {label} in MLB to {streak} games, {ctx}."
+            if game_line:
+                headline = f"{player} went {game_line}, extending the longest active {label} in MLB to {streak} games, {ctx}."
+            else:
+                headline = f"{player} extended the longest active {label} in MLB to {streak} games, {ctx}."
 
         elif f["type"] == "10k_0bb_first_2_starts":
             k = f["k"]
