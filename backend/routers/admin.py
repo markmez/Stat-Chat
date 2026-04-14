@@ -228,13 +228,46 @@ async def simulate_passing(
     from collections import Counter
     type_counts = Counter(e["type"] for e in all_events if e["type"] != "ERROR")
 
-    return {
-        "season": season,
-        "total_events": len(all_events),
-        "game_dates": len(dates),
-        "by_type": dict(type_counts),
-        "events": all_events,
-    }
+    # Render as HTML
+    from fastapi.responses import HTMLResponse
+    date_range = f"{start_date or 'start'} to {end_date or 'end'}" if start_date or end_date else "full season"
+    type_summary = "".join(f"<li>{t}: <b>{c}</b></li>" for t, c in sorted(type_counts.items(), key=lambda x: -x[1]))
+
+    rows_html = ""
+    for e in all_events:
+        stat = e["type"].replace("alltime_passing_", "").upper()
+        rows_html += f"""<tr>
+            <td style="white-space:nowrap;padding:8px 12px;color:#666">{e["date"]}</td>
+            <td style="padding:8px 6px"><span style="background:#e8f0fe;color:#1a40b3;padding:2px 8px;border-radius:10px;font-size:12px">{stat}</span></td>
+            <td style="padding:8px 12px">{e["headline"]}</td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html>
+<html><head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>All-Time Passing Simulation</title>
+<style>
+  body {{ font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }}
+  .card {{ background: white; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+  h1 {{ color: #1a40b3; margin: 0 0 4px; }}
+  .subtitle {{ color: #666; margin: 0 0 16px; }}
+  table {{ width: 100%; border-collapse: collapse; }}
+  tr:nth-child(even) {{ background: #f9f9f9; }}
+  tr:hover {{ background: #eef3ff; }}
+  ul {{ margin: 8px 0; padding-left: 20px; }}
+</style>
+</head><body>
+<div class="card">
+  <h1>All-Time Passing Simulation</h1>
+  <p class="subtitle">{season} &middot; {date_range} &middot; {len(all_events)} events across {len(dates)} game dates</p>
+  <ul>{type_summary}</ul>
+</div>
+<div class="card">
+  <table>{rows_html}</table>
+</div>
+</body></html>"""
+
+    return HTMLResponse(html)
 
 
 @router.post("/redetect")
