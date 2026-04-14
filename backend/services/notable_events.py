@@ -2083,77 +2083,87 @@ def detect_alltime_passing(conn, season, latest_date):
                 })
 
     # --- Derived game-log stats (multi-HR games, 3-HR games) ---
+    # These scan game logs, so we only compute counts for triggered players
+    # (those who had a qualifying game today), not the full leaderboard.
     for leaderboard_sql, game_table, label, abbrev, top_n, trigger_cond in DERIVED_CONFIGS:
-        all_time = conn.execute(leaderboard_sql).fetchall()
-
-        if len(all_time) < top_n:
-            continue
-
-        rank_map = {}
-        for rank, (pid, name, total) in enumerate(all_time, 1):
-            rank_map[pid] = (rank, name, total)
-
-        cutoff_total = all_time[top_n - 1][2]
-
         # Find players who had a qualifying game today (e.g., 2+ HR)
         triggered = conn.execute(f"""
-            SELECT DISTINCT g.player_id
-            FROM {game_table} g
+            SELECT g.player_id, p.name
+            FROM {game_table} g JOIN players p ON g.player_id = p.player_id
             WHERE g.date = ? AND g.season = ? AND {trigger_cond}
         """, (latest_date, season)).fetchall()
 
-        for (pid,) in triggered:
-            if pid not in rank_map:
-                continue
-            _, player_name, career_total = rank_map[pid]
+        if not triggered:
+            continue
 
-            if career_total < cutoff_total:
-                continue
+        # For each triggered player, compute their career count
+        for pid, player_name in triggered:
+            career_total = conn.execute(f"""
+                SELECT COUNT(*) FROM {game_table}
+                WHERE player_id = ? AND {trigger_cond}
+            """, (pid,)).fetchone()[0]
 
-            # Career count BEFORE today = total - 1 (today's game added exactly 1 qualifying game)
             career_before = career_total - 1
 
-            best_passed = None
-            for passed_rank, (passed_pid, passed_name, passed_total) in enumerate(all_time, 1):
-                if passed_pid == pid:
-                    continue
-                if passed_rank > top_n:
-                    break
-                if career_before < passed_total and career_total >= passed_total:
-                    if best_passed is None or passed_rank < best_passed[0]:
-                        best_passed = (passed_rank, passed_name, passed_total)
+            # Find their rank and who they passed — only need to check
+            # players with totals between career_before and career_total
+            # Build a small leaderboard of players with more qualifying games
+            above = conn.execute(f"""
+                SELECT g.player_id, p.name, COUNT(*) as cnt
+                FROM {game_table} g JOIN players p ON g.player_id = p.player_id
+                WHERE g.player_id != ? AND {trigger_cond}
+                GROUP BY g.player_id
+                HAVING cnt >= ? AND cnt <= ?
+                ORDER BY cnt DESC
+            """, (pid, career_before, career_total)).fetchall()
 
-            if best_passed:
-                passed_rank, passed_name, _ = best_passed
-                game_line, _ = _get_game_line(conn, pid, latest_date, season)
-                team = conn.execute(
-                    "SELECT team FROM players WHERE player_id = ?", (pid,)
-                ).fetchone()
-                team_name = team[0] if team else ""
+            if not above:
+                continue
 
-                ordinal = _ordinal(passed_rank)
-                if game_line:
-                    headline = (
-                        f"{player_name} went {game_line}. "
-                        f"That's his {_ordinal(career_total)} career {label}, "
-                        f"passing {passed_name} for {ordinal} on the all-time list."
-                    )
-                else:
-                    headline = (
-                        f"{player_name} now has {career_total} career {label}, "
-                        f"passing {passed_name} for {ordinal} on the all-time list."
-                    )
+            # Current rank = count of players with more + 1
+            rank_count = conn.execute(f"""
+                SELECT COUNT(DISTINCT player_id) FROM (
+                    SELECT player_id, COUNT(*) as cnt FROM {game_table}
+                    WHERE {trigger_cond} GROUP BY player_id HAVING cnt > ?
+                )
+            """, (career_total,)).fetchone()[0]
+            new_rank = rank_count + 1
 
-                events.append({
-                    "headline": headline,
-                    "detail": "",
-                    "category": "Milestone",
-                    "game_date": latest_date,
-                    "player_names": [player_name, passed_name],
-                    "team_names": [team_name] if team_name else [],
-                    "detection_type": f"alltime_passing_{abbrev.lower().replace('-', '_')}",
-                    "priority": 1,
-                })
+            if new_rank > top_n:
+                continue
+
+            # Best person passed = highest-ranked (lowest cnt above career_before)
+            passed_name = above[-1][1]  # last in descending order = closest above
+
+            game_line, _ = _get_game_line(conn, pid, latest_date, season)
+            team = conn.execute(
+                "SELECT team FROM players WHERE player_id = ?", (pid,)
+            ).fetchone()
+            team_name = team[0] if team else ""
+
+            ordinal = _ordinal(new_rank)
+            if game_line:
+                headline = (
+                    f"{player_name} went {game_line}. "
+                    f"That's his {_ordinal(career_total)} career {label}, "
+                    f"passing {passed_name} for {ordinal} on the all-time list."
+                )
+            else:
+                headline = (
+                    f"{player_name} now has {career_total} career {label}, "
+                    f"passing {passed_name} for {ordinal} on the all-time list."
+                )
+
+            events.append({
+                "headline": headline,
+                "detail": "",
+                "category": "Milestone",
+                "game_date": latest_date,
+                "player_names": [player_name, passed_name],
+                "team_names": [team_name] if team_name else [],
+                "detection_type": f"alltime_passing_{abbrev.lower().replace('-', '_')}",
+                "priority": 1,
+            })
 
     return events
 
