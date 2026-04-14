@@ -989,19 +989,22 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             "pinch hit", "pinch-hit",
             "best at each", "worst at each", "by position",
             "outperforming", "underperforming",
-            "which team's", "which teams",
             "if i were", "if you were",
             "strategy", "should i",
         ]
         if any(kw in lower for kw in keyword_signals):
             return True
         cross_entity = [
-            "each team", "every team", "per team",
-            "all teams", "across teams", "across the league",
+            "across teams", "across the league",
             "best player on each", "worst player on each",
         ]
         if any(ce in lower for ce in cross_entity):
-            if not _re.search(r'\b(leaders?|most|best|worst|highest|lowest)\s+\w+\s+(on|per|for) each team\b', lower):
+            return True
+        # "each team" / "every team" / "per team" — only insight if NOT a simple
+        # per-team leaderboard (which the query engine handles)
+        if any(ce in lower for ce in ["each team", "every team", "per team"]):
+            if not _re.search(r'\b\w+\s*(leaders?|leader)\b.*\b(each|every|per)\s+team\b', lower) \
+               and not _re.search(r'\b(each|every|per)\s+team\b.*\b(leaders?|leader)\b', lower):
                 return True
         conditionals = ["if .* then", "assuming", "given that",
                         "what would happen", "how would", "simulate", "predict"]
