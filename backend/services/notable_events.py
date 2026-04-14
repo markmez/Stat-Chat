@@ -1147,7 +1147,20 @@ def detect_hot_streaks_pelt(conn, season, latest_date=None):
     """, (season,)).fetchall()
 
     _streak_phrases = ["is on a tear", "is on a hot streak", "has been red hot", "is locked in"]
+    STREAK_COOLDOWN_DAYS = 5
+
     for idx, (name, ops, avg, num_games, hr, h, ab, obp, slg, season_ops) in enumerate(rows):
+        # Cooldown: skip if this player had a hot_streak_pelt event within the last N days
+        recent = conn.execute("""
+            SELECT 1 FROM notable_events
+            WHERE detection_type = 'hot_streak_pelt'
+              AND headline LIKE ?
+              AND game_date > date(?, '-' || ? || ' days')
+              AND game_date < ?
+            LIMIT 1
+        """, (f"%{name}%", latest_date, STREAK_COOLDOWN_DAYS, latest_date)).fetchone()
+        if recent:
+            continue
         # Get last game line for context
         game_row = conn.execute("""
             SELECT g.hits, g.at_bats, g.home_runs, g.rbi, g.walks
