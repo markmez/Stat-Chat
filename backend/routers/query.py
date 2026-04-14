@@ -582,6 +582,30 @@ import re as _re
 from services import name_matcher as _nm
 
 
+_PRE_1898_PITCHING_STATS = {"wins", "complete_games", "win", "W", "CG"}
+_PRE_1898_NOTE = "\n[DISCLAIMER]Data begins in 1898. Career totals for pre-1898 pitchers (Cy Young, Pud Galvin, others) may be incomplete.[/DISCLAIMER]"
+
+
+def _add_pre1898_note(text: str, question: str) -> str:
+    """Add a note about pre-1898 data when showing all-time pitching career stats."""
+    lower = question.lower()
+    # Only for all-time / career queries, not single-season
+    is_alltime = any(kw in lower for kw in ["all time", "all-time", "career", "ever", "history"])
+    if not is_alltime:
+        return text
+    # Only wins and complete games — K/ERA records are post-1898
+    is_pitching_affected = any(kw in lower for kw in ["wins", "most wins", "complete game", "complete games"])
+    if not is_pitching_affected:
+        return text
+    # Don't double-add
+    if "1898" in text:
+        return text
+    # Add before the last [/LEADERBOARD] or at the end
+    if "[/LEADERBOARD]" in text:
+        return text.replace("[/LEADERBOARD]", f"[/LEADERBOARD]{_PRE_1898_NOTE}", 1)
+    return text + _PRE_1898_NOTE
+
+
 def _strip_bold_title(text: str, original_question: str = "") -> str:
     """Strip the bold **title** line from a response and convert scope info to subtitle.
 
@@ -895,6 +919,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             if intercepted is not None:
                 logger.info("followup_local_intercepted rewritten=%r", local_rewrite)
                 intercepted = _strip_bold_title(intercepted, original_question)
+                intercepted = _add_pre1898_note(intercepted, original_question)
                 yield event({"type": "text", "text": intercepted})
                 done_event = {"type": "done", "intercepted": True}
                 done_event["rewritten_query"] = local_rewrite
@@ -927,6 +952,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 if intercepted is not None:
                     logger.info("followup_intercepted rewritten=%r", rewritten)
                     intercepted = _strip_bold_title(intercepted, original_question)
+                intercepted = _add_pre1898_note(intercepted, original_question)
                     yield event({"type": "text", "text": intercepted})
                     done_event = {"type": "done", "intercepted": True}
                     if rewritten_query:

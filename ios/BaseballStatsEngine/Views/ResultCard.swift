@@ -187,6 +187,13 @@ struct ResultCard: View {
             .padding(.horizontal, 20)
             .padding(.top, 8)
 
+        case .disclaimer(let text):
+            Text(text)
+                .font(.system(.caption2, design: .rounded))
+                .foregroundStyle(.secondary.opacity(0.4))
+                .padding(.horizontal, 20)
+                .padding(.top, 10)
+
         case .subtitle(let text):
             Text(text)
                 .font(.system(.caption, design: .rounded))

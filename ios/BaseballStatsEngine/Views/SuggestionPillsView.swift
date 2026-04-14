@@ -8,10 +8,12 @@ struct SuggestionPillsView: View {
 
     @State private var allPills: [Suggestion] = []
     @State private var visible: [Suggestion] = []
-    @State private var nextIndex = 3  // next pill to pull from allPills
-    @State private var nextSwapSlot = 0  // which of the 3 visible slots to swap next
+    @State private var nextIndex = 0
+    @State private var nextSwapSlot = 0
     @State private var fadingId: String?
-    @State private var shownIds: Set<String> = []  // pills shown this session
+    @State private var shownIds: Set<String> = []
+
+    private static let positionKey = "suggestion_sequence_position"
 
     private let swapInterval: TimeInterval = 4.0
     private let fadeDuration: TimeInterval = 0.5
@@ -61,9 +63,13 @@ struct SuggestionPillsView: View {
                 .task {
                     allPills = SuggestionEngine.shared.buildSequence(searchHistory: searchHistory)
                     guard allPills.count >= 3 else { return }
-                    visible = Array(allPills.prefix(3))
+
+                    // Resume from saved position in the sequence
+                    let saved = UserDefaults.standard.integer(forKey: Self.positionKey)
+                    let start = saved < allPills.count - 2 ? saved : 0
+                    visible = Array(allPills[start..<min(start + 3, allPills.count)])
                     shownIds = Set(visible.map(\.id))
-                    nextIndex = 3
+                    nextIndex = start + 3
                 }
         }
     }
@@ -101,6 +107,7 @@ struct SuggestionPillsView: View {
             }
 
             SuggestionEngine.shared.recordImpression(replacement.id)
+            UserDefaults.standard.set(nextIndex, forKey: Self.positionKey)
             nextSwapSlot += 1
         }
     }
@@ -122,6 +129,7 @@ struct SuggestionPillsView: View {
         allPills = allPills.filter { !tapped.contains($0.id) }.shuffled()
         shownIds.removeAll()
         nextIndex = 0
+        UserDefaults.standard.set(0, forKey: Self.positionKey)
 
         while nextIndex < allPills.count {
             let candidate = allPills[nextIndex]

@@ -42,6 +42,7 @@ enum StatGridParser {
         case leaderboard(StatGrid)
         case tip(String)
         case aiDisclaimer(String)
+        case disclaimer(String)
         case context(String)
         case gameLogs([GameLogEntry])
         case querySuggestion(String)
@@ -51,7 +52,7 @@ enum StatGridParser {
         case partialGrid(String)
     }
 
-    private static let tagTypes = ["STATGRID", "LEADERBOARD", "GAMELOGS", "TIP", "AIDISCLAIMER", "CONTEXT", "SUGGEST", "SEEALSO", "DIDYOUMEAN", "SUBTITLE"]
+    private static let tagTypes = ["STATGRID", "LEADERBOARD", "GAMELOGS", "TIP", "AIDISCLAIMER", "DISCLAIMER", "CONTEXT", "SUGGEST", "SEEALSO", "DIDYOUMEAN", "SUBTITLE"]
 
     static func parse(_ content: String, isStreaming: Bool) -> [Segment] {
         var segments: [Segment] = []
@@ -107,6 +108,9 @@ enum StatGridParser {
                 case "AIDISCLAIMER":
                     let trimmed = blockContent.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty { segments.append(.aiDisclaimer(trimmed)) }
+                case "DISCLAIMER":
+                    let trimmed = blockContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { segments.append(.disclaimer(trimmed)) }
                 case "SUGGEST":
                     let trimmed = blockContent.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty { segments.append(.querySuggestion(trimmed)) }
