@@ -1727,16 +1727,22 @@ def execute(plan: QueryPlan) -> Optional[str]:
             league_prefix = f"{plan.league} " if plan.league else ""
             last_year = plan.season - 1
 
+            # Format threshold for display (handle rate stats like .300)
+            def _fmt_thresh(stat, thresh):
+                if stat and stat.is_rate and thresh < 1:
+                    return f".{int(thresh * 1000):03d}+"
+                return f"{int(thresh)}+"
+
             # Reconstruct the query with extra filters for multi-threshold
             if plan.extra_filters:
-                parts = [f"{int(plan.threshold)}+ {abbrev}"]
+                parts = [f"{_fmt_thresh(plan.stat, plan.threshold)} {abbrev}"]
                 for ef in plan.extra_filters:
-                    ef_val = int(ef["threshold"])
-                    ef_ab = ef["stat"].display_abbrev
-                    parts.append(f"{ef_val}+ {ef_ab}")
+                    parts.append(f"{_fmt_thresh(ef['stat'], ef['threshold'])} {ef['stat'].display_abbrev}")
                 query_desc = " and ".join(parts)
+            elif plan.query_type == "leaderboard":
+                query_desc = f"{league_prefix}{abbrev} leaders"
             else:
-                query_desc = f"{league_prefix}{abbrev} leaders" if plan.query_type == "leaderboard" else f"{int(plan.threshold)}+ {abbrev}"
+                query_desc = f"{_fmt_thresh(plan.stat, plan.threshold)} {abbrev}"
 
             try:
                 gp = conn.execute(
@@ -1745,17 +1751,17 @@ def execute(plan: QueryPlan) -> Optional[str]:
                 ).fetchone()
                 games_played = gp[0] if gp and gp[0] else 0
                 if games_played < 40:
-                    if plan.extra_filters:
-                        see_also.append(f"{query_desc} in {last_year}")
-                    else:
+                    if plan.query_type == "leaderboard":
                         see_also.append(f"{last_year} {query_desc}")
+                    else:
+                        see_also.append(f"{query_desc} in {last_year}")
             except Exception:
                 pass
 
-            if plan.extra_filters:
-                see_also.append(f"{query_desc} all time")
-            else:
+            if plan.query_type == "leaderboard":
                 see_also.append(f"career {query_desc}")
+            else:
+                see_also.append(f"{query_desc} all time")
 
         # Combine all see-alsos into one DIDYOUMEAN — insert after title, before container
         if see_also and result:
