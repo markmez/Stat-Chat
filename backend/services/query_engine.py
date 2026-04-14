@@ -953,6 +953,16 @@ def decompose(question: str) -> QueryPlan:
             and plan.stat and plan.stat.db_column in _PITCHING_DEFAULT_STATS):
         plan.is_pitching = True
 
+    # "HR hit by a pitcher" / "as a batter" = batting stats for pitchers
+    # Plain "HR by a pitcher" stays as pitching (with see-also for batting)
+    if (plan.is_pitching and plan.stat
+            and plan.stat.db_column in ("home_runs", "hits")
+            and re.search(r'\b(?:hit|drove|collected|as a batter)\b', lower)
+            and not any(w in lower for w in ["allowed", "given up", "surrendered", "gave up"])):
+        plan.is_pitching = False
+        if not plan.position:
+            plan.position = ["P"]
+
     # Mark ambiguous when no explicit batting/pitching context was given
     # Game log queries (multi-HR games, 4-hit games) are inherently unambiguous
     if (plan.stat and plan.stat.db_column in _AMBIGUOUS_STATS
@@ -1711,11 +1721,13 @@ def execute(plan: QueryPlan) -> Optional[str]:
                 result += alt  # Less ambiguous — keep as pill
 
         # "HR/hits by a pitcher" ambiguity: allowed vs hit
-        # Only for all-time or pre-2022 seasons (universal DH started 2022)
+        # Only when user didn't explicitly say "allowed/given up"
+        _oq_lower = plan.original_question.lower()
         if (result and plan.is_pitching and plan.stat
                 and plan.stat.db_column in ("home_runs", "hits")
                 and (not plan.season or plan.season < 2022 or plan.scope in ("career", "all_time"))
-                and "by a pitcher" in plan.original_question.lower()):
+                and "by a pitcher" in _oq_lower
+                and not any(w in _oq_lower for w in ["allowed", "given up", "surrendered", "gave up"])):
             if plan.stat.db_column == "home_runs":
                 see_also.append("most HR hit by a pitcher all time")
             else:
