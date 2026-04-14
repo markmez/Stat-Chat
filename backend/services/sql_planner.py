@@ -96,12 +96,12 @@ def plan_and_execute(question: str) -> str | None:
                 },
                 json={
                     "model": "claude-sonnet-4-6",
-                    "max_tokens": 2000,
+                    "max_tokens": 4000,
                     "system": SYSTEM_PROMPT,
                     "tools": [TOOL_DEF],
                     "messages": messages,
                 },
-                timeout=30,
+                timeout=60,
             )
 
             if resp.status_code != 200:
