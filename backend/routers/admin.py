@@ -85,18 +85,29 @@ async def refresh_live_data(
 @router.get("/simulate-passing")
 async def simulate_passing(
     season: int = 2025,
+    start_date: str | None = None,
+    end_date: str | None = None,
     authorization: str | None = Header(None),
 ):
-    """Simulate all-time passing events across a full season."""
+    """Simulate all-time passing events across a date range."""
     verify_admin(authorization)
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = None
 
-    # Get all distinct game dates for the season
-    dates = [r[0] for r in conn.execute("""
+    # Get distinct game dates, optionally filtered by range
+    date_filter = ""
+    params = [season]
+    if start_date:
+        date_filter += " AND date >= ?"
+        params.append(start_date)
+    if end_date:
+        date_filter += " AND date <= ?"
+        params.append(end_date)
+
+    dates = [r[0] for r in conn.execute(f"""
         SELECT DISTINCT date FROM game_batting_logs
-        WHERE season = ? ORDER BY date
-    """, (season,)).fetchall()]
+        WHERE season = ?{date_filter} ORDER BY date
+    """, params).fetchall()]
 
     from services.notable_events import detect_alltime_passing
     all_events = []
