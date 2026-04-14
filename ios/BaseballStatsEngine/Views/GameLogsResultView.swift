@@ -133,12 +133,19 @@ struct GameLogsResultView: View {
         }
     }
 
+    /// Whether game logs span multiple calendar years
+    private var spansMultipleYears: Bool {
+        guard let first = entries.first?.date.prefix(4),
+              let last = entries.last?.date.prefix(4) else { return false }
+        return first != last
+    }
+
     private func formatDate(_ dateStr: String) -> String {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
         guard let date = fmt.date(from: dateStr) else { return dateStr }
         let display = DateFormatter()
-        display.dateFormat = "M/d"
+        display.dateFormat = spansMultipleYears ? "M/d/yy" : "M/d"
         return display.string(from: date)
     }
 }
