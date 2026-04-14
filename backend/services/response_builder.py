@@ -4355,7 +4355,14 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
             era = (total_er / total_ip * 9) if total_ip > 0 else 0
             ip_str = f"{total_outs // 3}.{total_outs % 3}"
 
-            parts.insert(0, f"**{display_name}** — {label} {n_games} Games\n{ip_str} IP, {total_er} ER, {total_so} K, {total_bb} BB, {era:.2f} ERA\n")
+            era_fmt = f"{era:.2f}"
+            parts.insert(0, (
+                f"**{display_name} — {label} {n_games} Games**\n"
+                f"[STATGRID]\n"
+                f"HEADER: IP, ER, K, BB, ERA\n"
+                f"ROW: {ip_str}, {total_er}, {total_so}, {total_bb}, {era_fmt}\n"
+                f"[/STATGRID]\n"
+            ))
 
             conn.close()
             return "\n".join(parts)
