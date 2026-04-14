@@ -1716,7 +1716,7 @@ def execute(plan: QueryPlan) -> Optional[str]:
             season = plan.season or date.today().year
             see_also.append(f"{abbrev} leader on each team {season}")
 
-        # Unqualified season: suggest last season (early) + career
+        # Unqualified season: suggest the same query with a different time scope
         # Skip if user explicitly said "this season", "this year", or the year number
         _explicit_season = any(p in plan.original_question.lower() for p in [
             "this season", "this year", str(date.today().year)])
@@ -1726,6 +1726,18 @@ def execute(plan: QueryPlan) -> Optional[str]:
             abbrev = plan.stat.display_abbrev
             league_prefix = f"{plan.league} " if plan.league else ""
             last_year = plan.season - 1
+
+            # Reconstruct the query with extra filters for multi-threshold
+            if plan.extra_filters:
+                parts = [f"{int(plan.threshold)}+ {abbrev}"]
+                for ef in plan.extra_filters:
+                    ef_val = int(ef["threshold"])
+                    ef_ab = ef["stat"].display_abbrev
+                    parts.append(f"{ef_val}+ {ef_ab}")
+                query_desc = " and ".join(parts)
+            else:
+                query_desc = f"{league_prefix}{abbrev} leaders" if plan.query_type == "leaderboard" else f"{int(plan.threshold)}+ {abbrev}"
+
             try:
                 gp = conn.execute(
                     "SELECT MAX(games) FROM season_batting_stats WHERE season = ?",
@@ -1733,10 +1745,17 @@ def execute(plan: QueryPlan) -> Optional[str]:
                 ).fetchone()
                 games_played = gp[0] if gp and gp[0] else 0
                 if games_played < 40:
-                    see_also.append(f"{last_year} {league_prefix}{abbrev} leaders")
+                    if plan.extra_filters:
+                        see_also.append(f"{query_desc} in {last_year}")
+                    else:
+                        see_also.append(f"{last_year} {query_desc}")
             except Exception:
                 pass
-            see_also.append(f"career {league_prefix}{abbrev} leaders")
+
+            if plan.extra_filters:
+                see_also.append(f"{query_desc} all time")
+            else:
+                see_also.append(f"career {query_desc}")
 
         # Combine all see-alsos into one DIDYOUMEAN — insert after title, before container
         if see_also and result:
