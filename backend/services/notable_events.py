@@ -1959,6 +1959,26 @@ def detect_alltime_passing(conn, season, latest_date):
         ("strikeouts",    "season_pitching_stats", "game_pitching_logs",  "strikeouts",   "K",   75),
     ]
 
+    # Derived game-log stats: (sql_for_leaderboard, game_table, label, abbrev, top_n, trigger_condition)
+    DERIVED_CONFIGS = [
+        (
+            """SELECT g.player_id, p.name, COUNT(*) as career_total
+               FROM game_batting_logs g JOIN players p ON g.player_id = p.player_id
+               WHERE g.home_runs >= 2
+               GROUP BY g.player_id ORDER BY career_total DESC""",
+            "game_batting_logs", "multi-HR games", "multi-HR", 50,
+            "g.home_runs >= 2",  # trigger: today's game had 2+ HR
+        ),
+        (
+            """SELECT g.player_id, p.name, COUNT(*) as career_total
+               FROM game_batting_logs g JOIN players p ON g.player_id = p.player_id
+               WHERE g.home_runs >= 3
+               GROUP BY g.player_id ORDER BY career_total DESC""",
+            "game_batting_logs", "3-HR games", "3-HR", 25,
+            "g.home_runs >= 3",  # trigger: today's game had 3+ HR
+        ),
+    ]
+
     for col, table, game_table, label, abbrev, top_n in CONFIGS:
         # Build all-time career leaderboard
         all_time = conn.execute(f"""
@@ -2059,6 +2079,79 @@ def detect_alltime_passing(conn, season, latest_date):
                     "player_names": [player_name, passed_name],
                     "team_names": [team_name] if team_name else [],
                     "detection_type": f"alltime_passing_{col}",
+                    "priority": 1,
+                })
+
+    # --- Derived game-log stats (multi-HR games, 3-HR games) ---
+    for leaderboard_sql, game_table, label, abbrev, top_n, trigger_cond in DERIVED_CONFIGS:
+        all_time = conn.execute(leaderboard_sql).fetchall()
+
+        if len(all_time) < top_n:
+            continue
+
+        rank_map = {}
+        for rank, (pid, name, total) in enumerate(all_time, 1):
+            rank_map[pid] = (rank, name, total)
+
+        cutoff_total = all_time[top_n - 1][2]
+
+        # Find players who had a qualifying game today (e.g., 2+ HR)
+        triggered = conn.execute(f"""
+            SELECT DISTINCT g.player_id
+            FROM {game_table} g
+            WHERE g.date = ? AND g.season = ? AND {trigger_cond}
+        """, (latest_date, season)).fetchall()
+
+        for (pid,) in triggered:
+            if pid not in rank_map:
+                continue
+            _, player_name, career_total = rank_map[pid]
+
+            if career_total < cutoff_total:
+                continue
+
+            # Career count BEFORE today = total - 1 (today's game added exactly 1 qualifying game)
+            career_before = career_total - 1
+
+            best_passed = None
+            for passed_rank, (passed_pid, passed_name, passed_total) in enumerate(all_time, 1):
+                if passed_pid == pid:
+                    continue
+                if passed_rank > top_n:
+                    break
+                if career_before < passed_total and career_total >= passed_total:
+                    if best_passed is None or passed_rank < best_passed[0]:
+                        best_passed = (passed_rank, passed_name, passed_total)
+
+            if best_passed:
+                passed_rank, passed_name, _ = best_passed
+                game_line, _ = _get_game_line(conn, pid, latest_date, season)
+                team = conn.execute(
+                    "SELECT team FROM players WHERE player_id = ?", (pid,)
+                ).fetchone()
+                team_name = team[0] if team else ""
+
+                ordinal = _ordinal(passed_rank)
+                if game_line:
+                    headline = (
+                        f"{player_name} went {game_line}. "
+                        f"That's his {_ordinal(career_total)} career {label}, "
+                        f"passing {passed_name} for {ordinal} on the all-time list."
+                    )
+                else:
+                    headline = (
+                        f"{player_name} now has {career_total} career {label}, "
+                        f"passing {passed_name} for {ordinal} on the all-time list."
+                    )
+
+                events.append({
+                    "headline": headline,
+                    "detail": "",
+                    "category": "Milestone",
+                    "game_date": latest_date,
+                    "player_names": [player_name, passed_name],
+                    "team_names": [team_name] if team_name else [],
+                    "detection_type": f"alltime_passing_{abbrev.lower().replace('-', '_')}",
                     "priority": 1,
                 })
 
