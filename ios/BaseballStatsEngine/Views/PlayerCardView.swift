@@ -979,7 +979,7 @@ struct PlayerCardView: View {
                     runs: g.runs, rbi: g.rbi, walks: g.walks,
                     strikeouts: g.strikeouts, plateAppearances: g.plate_appearances
                 )
-            }
+            }.sorted { $0.date < $1.date }
         } catch {
             // Silently fail — slider just won't appear
         }
@@ -996,7 +996,7 @@ struct PlayerCardView: View {
                     strikeouts: g.strikeouts, homeRuns: g.home_runs,
                     isStart: g.is_start
                 )
-            }
+            }.sorted { $0.date < $1.date }
         } catch {
             // Silently fail — slider just won't appear
         }

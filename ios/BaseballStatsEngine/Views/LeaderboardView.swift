@@ -64,19 +64,25 @@ struct LeaderboardView: View {
     /// Measures the widest value in each column to avoid wasted space.
     private var columnWidths: [CGFloat] {
         let font = UIFont.monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .callout).pointSize, weight: .medium)
+        let headerFont = UIFont.monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .semibold)
 
         return grid.headers.enumerated().map { idx, header in
-            // Find widest string in this column (header + all values)
-            var candidates = [header]
+            // Measure widest VALUE in this column (not header — headers truncate if needed)
+            var valueCandidates: [String] = []
             for row in grid.rows {
                 if idx < row.values.count {
-                    candidates.append(row.values[idx])
+                    valueCandidates.append(row.values[idx])
                 }
             }
-            let widest = candidates.max(by: { $0.count < $1.count }) ?? header
-            let measured = (widest as NSString).size(withAttributes: [.font: font]).width
-            // Minimum 32pt, add 8pt padding
-            return max(32, ceil(measured) + 8)
+            let widestValue = valueCandidates.max(by: { $0.count < $1.count }) ?? ""
+            let valueWidth = (widestValue as NSString).size(withAttributes: [.font: font]).width
+
+            // Header measured at its own (smaller) font
+            let headerWidth = (header as NSString).size(withAttributes: [.font: headerFont]).width
+
+            // Use the wider of header vs values, but cap header influence at 80pt
+            let effectiveHeader = min(80, headerWidth)
+            return max(32, ceil(max(effectiveHeader, valueWidth)) + 8)
         }
     }
 
@@ -113,6 +119,8 @@ struct LeaderboardView: View {
                         } label: {
                             HStack(spacing: 2) {
                                 Text(header)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
                                 if sortColumn == idx {
                                     Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
                                         .font(.system(size: 8, weight: .bold))
@@ -126,6 +134,8 @@ struct LeaderboardView: View {
                         .buttonStyle(.plain)
                     } else {
                         Text(header)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                             .font(.system(.caption2, design: .monospaced, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .frame(width: colWidth, alignment: .leading)

@@ -110,7 +110,7 @@ struct FTUEView: View {
 
     private func animateSequence() {
         let basePause = 1.0
-        let tryToBullet = 2.0    // Try... → first bullet
+        let tryToBullet = 1.4    // Try... → first bullet
         let bulletGap = 2.2      // between each of the 3 bullets
         let toSection2 = 2.0     // 3rd bullet → "Search any player"
         let section2ToBullet = 2.2  // "Search any player" → "Try Judge..."
