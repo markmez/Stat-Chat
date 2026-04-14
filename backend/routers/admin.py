@@ -82,6 +82,51 @@ async def refresh_live_data(
         raise HTTPException(500, str(e))
 
 
+@router.get("/simulate-passing")
+async def simulate_passing(
+    season: int = 2025,
+    authorization: str | None = Header(None),
+):
+    """Simulate all-time passing events across a full season."""
+    verify_admin(authorization)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = None
+
+    # Get all distinct game dates for the season
+    dates = [r[0] for r in conn.execute("""
+        SELECT DISTINCT date FROM game_batting_logs
+        WHERE season = ? ORDER BY date
+    """, (season,)).fetchall()]
+
+    from services.notable_events import detect_alltime_passing
+    all_events = []
+    for d in dates:
+        try:
+            evts = detect_alltime_passing(conn, season, d)
+            for e in evts:
+                all_events.append({
+                    "date": d,
+                    "type": e["detection_type"],
+                    "headline": e["headline"],
+                })
+        except Exception as ex:
+            all_events.append({"date": d, "type": "ERROR", "headline": str(ex)})
+
+    conn.close()
+
+    # Summary by type
+    from collections import Counter
+    type_counts = Counter(e["type"] for e in all_events if e["type"] != "ERROR")
+
+    return {
+        "season": season,
+        "total_events": len(all_events),
+        "game_dates": len(dates),
+        "by_type": dict(type_counts),
+        "events": all_events,
+    }
+
+
 @router.post("/redetect")
 async def redetect_events(
     clear_date: str | None = None,
