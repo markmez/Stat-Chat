@@ -9,19 +9,46 @@ struct GameLogsResultView: View {
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
+    /// The most recent year in the game logs (current year context)
+    private var latestYear: Int {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        let cal = Calendar.current
+        var maxYear = 0
+        for entry in entries {
+            if let date = fmt.date(from: entry.date) {
+                let y = cal.component(.year, from: date)
+                if y > maxYear { maxYear = y }
+            }
+        }
+        return maxYear > 0 ? maxYear : cal.component(.year, from: Date())
+    }
+
+    /// Format a month label — appends 'YY for months in prior years
+    private func monthLabel(date: Date) -> String {
+        let cal = Calendar.current
+        let monthFmt = DateFormatter()
+        monthFmt.dateFormat = "MMMM"
+        let month = monthFmt.string(from: date)
+        let year = cal.component(.year, from: date)
+        if year < latestYear {
+            let yy = String(format: "%02d", year % 100)
+            return "\(month) '\(yy)"
+        }
+        return month
+    }
+
     private var months: [String] {
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
-        let monthFmt = DateFormatter()
-        monthFmt.dateFormat = "MMMM"
         var seen = Set<String>()
         var result: [String] = []
         for entry in entries.reversed() { // chronological
             if let date = fmt.date(from: entry.date) {
-                let month = monthFmt.string(from: date)
-                if !seen.contains(month) {
-                    seen.insert(month)
-                    result.append(month)
+                let label = monthLabel(date: date)
+                if !seen.contains(label) {
+                    seen.insert(label)
+                    result.append(label)
                 }
             }
         }
@@ -32,11 +59,9 @@ struct GameLogsResultView: View {
         guard !selectedMonth.isEmpty else { return entries }
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
-        let monthFmt = DateFormatter()
-        monthFmt.dateFormat = "MMMM"
         return entries.filter { entry in
             guard let date = fmt.date(from: entry.date) else { return false }
-            return monthFmt.string(from: date) == selectedMonth
+            return monthLabel(date: date) == selectedMonth
         }
     }
 
@@ -73,7 +98,8 @@ struct GameLogsResultView: View {
                         Text(formatDate(entry.date))
                             .font(.system(.subheadline, design: .rounded, weight: .semibold))
                             .foregroundStyle(.primary)
-                            .frame(width: 36, alignment: .leading)
+                            .fixedSize()
+                            .frame(minWidth: 36, alignment: .leading)
 
                         Text(entry.line)
                             .font(.system(.subheadline, design: .rounded))

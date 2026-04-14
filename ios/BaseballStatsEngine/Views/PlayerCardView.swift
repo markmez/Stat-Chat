@@ -1426,8 +1426,10 @@ struct PlayerCardView: View {
                 season: season, fromGameNumber: effectiveGameNumber
             )
             let formattedDate = PlayerCardService.formatDateShort(formStartDate)
-            let playerMissedGames = season.games < season.teamGames
-            let availableModes: [FormProjectionMode] = playerMissedGames
+            // Show blended projection when the streak is a subset of the season
+            // (pre-streak games exist to blend with). This also covers missed games
+            // since missing games means streak < games played < team games.
+            let availableModes: [FormProjectionMode] = formNumGames < season.games
                 ? FormProjectionMode.allCases
                 : [.pace]
 
