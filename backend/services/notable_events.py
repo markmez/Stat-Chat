@@ -1161,6 +1161,7 @@ def detect_hot_streaks_pelt(conn, season, latest_date=None):
         """, (f"%{name}%", latest_date, STREAK_COOLDOWN_DAYS, latest_date)).fetchone()
         if recent:
             continue
+
         # Get last game line for context
         game_row = conn.execute("""
             SELECT g.hits, g.at_bats, g.home_runs, g.rbi, g.walks
@@ -2628,6 +2629,18 @@ def detect_all(db_path=None, season=None, from_poll=False):
         DELETE FROM notable_events WHERE game_date = ? AND detection_type != 'ai_insight'
     """, (latest_date,))
     conn.commit()
+
+    # Suppress hot_streak_pelt for players who already have other events today
+    players_with_events = set()
+    for e in events:
+        if e.get("detection_type") != "hot_streak_pelt" and e.get("game_date") == latest_date:
+            for name in e.get("player_names", []):
+                players_with_events.add(name)
+    events = [
+        e for e in events
+        if not (e.get("detection_type") == "hot_streak_pelt"
+                and any(n in players_with_events for n in e.get("player_names", [])))
+    ]
 
     # Deduplicated insert with game context
     cursor = conn.cursor()
