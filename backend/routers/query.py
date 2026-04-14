@@ -952,7 +952,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 if intercepted is not None:
                     logger.info("followup_intercepted rewritten=%r", rewritten)
                     intercepted = _strip_bold_title(intercepted, original_question)
-                intercepted = _add_pre1898_note(intercepted, original_question)
+                    intercepted = _add_pre1898_note(intercepted, original_question)
                     yield event({"type": "text", "text": intercepted})
                     done_event = {"type": "done", "intercepted": True}
                     if rewritten_query:
@@ -997,6 +997,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             intercepted = intercepted.replace("__NO_COUNT__", "", 1)
         logger.info("query_intercepted question=%r no_count=%s", question, no_count)
         intercepted = _strip_bold_title(intercepted, original_question)
+        intercepted = _add_pre1898_note(intercepted, original_question)
         yield event({"type": "text", "text": intercepted})
         done_event = {"type": "done", "intercepted": True}
         if rewritten_query:
