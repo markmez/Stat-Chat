@@ -1036,10 +1036,28 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                   is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None)
         return
 
-    # 4. Knowledge mode — answer from Claude's baseball knowledge
-    # If we got here, neither the interceptor, query engine, nor Haiku could answer.
-    # Answer from Sonnet's own knowledge rather than trying SQL (which produces
-    # worse results for questions that got this far in the pipeline).
+    # 4. Sonnet SQL planner — multi-step reasoning for complex queries
+    try:
+        from services.sql_planner import plan_and_execute
+        planner_result = plan_and_execute(question)
+        if planner_result:
+            logger.info("query_planner question=%r", question)
+            planner_result = _strip_bold_title(planner_result, original_question)
+            planner_result = _add_pre1898_note(planner_result, original_question)
+            yield event({"type": "text", "text": planner_result})
+            done_event = {"type": "done", "planner": True}
+            if rewritten_query:
+                done_event["rewritten_query"] = rewritten_query
+            yield event(done_event)
+            increment_count(device_id)
+            log_query(question, device_id, "planner",
+                      is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None)
+            return
+    except Exception as e:
+        logger.warning("sql_planner_error error=%s", e)
+
+    # 5. Knowledge mode — answer from Claude's baseball knowledge
+    # If we got here, nothing else could answer.
     logger.info("knowledge_mode question=%r", question)
     try:
         async for chunk in llm.stream_knowledge(question, history):
