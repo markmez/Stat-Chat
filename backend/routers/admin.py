@@ -222,19 +222,8 @@ async def simulate_passing(
                         "headline": headline,
                     })
 
-    # Franchise passing — run the actual detection per date
-    from services.notable_events import detect_franchise_passing
-    for d in dates:
-        try:
-            fevts = detect_franchise_passing(conn, season, d)
-            for e in fevts:
-                all_events.append({
-                    "date": d,
-                    "type": e["detection_type"],
-                    "headline": e["headline"],
-                })
-        except Exception as ex:
-            all_events.append({"date": d, "type": "ERROR", "headline": str(ex)})
+    # Franchise passing — too heavy for multi-date simulation.
+    # Use /admin/redetect?clear_date=YYYY-MM-DD to test single dates.
 
     # Sort all events by date
     all_events.sort(key=lambda x: x["date"])
