@@ -2082,6 +2082,71 @@ def detect_alltime_passing(conn, season, latest_date):
                     "priority": 1,
                 })
 
+            # --- All-time RECORD approach/break (only #1 spot) ---
+            record_pid, record_name, record_total = all_time[0]
+            if pid != record_pid and contrib > 0:
+                gap = record_total - career_total
+                prev_gap = record_total - career_before
+
+                if career_total > record_total and career_before <= record_total:
+                    # Broke the record
+                    game_line, _ = _get_game_line(conn, pid, latest_date, season)
+                    player_name = rank_map[pid][1]
+                    team = conn.execute(
+                        "SELECT team FROM players WHERE player_id = ?", (pid,)
+                    ).fetchone()
+                    team_name = team[0] if team else ""
+                    if game_line:
+                        headline = (
+                            f"{player_name} went {game_line}. "
+                            f"He has set a new all-time record with {career_total} career {label}, "
+                            f"passing {record_name} ({record_total})."
+                        )
+                    else:
+                        headline = (
+                            f"{player_name} has set a new all-time record with {career_total} career {label}, "
+                            f"passing {record_name} ({record_total})."
+                        )
+                    events.append({
+                        "headline": headline,
+                        "detail": "",
+                        "category": "Milestone",
+                        "game_date": latest_date,
+                        "player_names": [player_name, record_name],
+                        "team_names": [team_name] if team_name else [],
+                        "detection_type": f"alltime_record_broken_{col}",
+                        "priority": 0,
+                    })
+                elif 0 < gap <= 5 and prev_gap > gap:
+                    # Approaching the record
+                    game_line, _ = _get_game_line(conn, pid, latest_date, season)
+                    player_name = rank_map[pid][1]
+                    team = conn.execute(
+                        "SELECT team FROM players WHERE player_id = ?", (pid,)
+                    ).fetchone()
+                    team_name = team[0] if team else ""
+                    if game_line:
+                        headline = (
+                            f"{player_name} went {game_line}. "
+                            f"He now has {career_total} career {label}, "
+                            f"just {gap} away from {record_name}'s all-time record of {record_total}."
+                        )
+                    else:
+                        headline = (
+                            f"{player_name} now has {career_total} career {label}, "
+                            f"just {gap} away from {record_name}'s all-time record of {record_total}."
+                        )
+                    events.append({
+                        "headline": headline,
+                        "detail": "",
+                        "category": "Milestone",
+                        "game_date": latest_date,
+                        "player_names": [player_name, record_name],
+                        "team_names": [team_name] if team_name else [],
+                        "detection_type": f"alltime_record_approach_{col}",
+                        "priority": 0,
+                    })
+
     # --- Derived game-log stats (multi-HR games, 3-HR games) ---
     # These scan game logs, so we only compute counts for triggered players
     # (those who had a qualifying game today), not the full leaderboard.
