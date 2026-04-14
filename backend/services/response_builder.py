@@ -4320,8 +4320,45 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
         """, (pid, n_games))
         rows = cur.fetchall()
         if not rows:
+            # Try pitching game logs for pitchers
+            cur.execute(f"""
+                SELECT g.date, g.innings_pitched, g.ip_outs, g.hits, g.earned_runs,
+                       g.strikeouts, g.walks, g.home_runs, g.win, g.opponent
+                FROM game_pitching_logs g
+                WHERE g.player_id = ?
+                ORDER BY g.date DESC
+                LIMIT ?
+            """, (pid, n_games))
+            pitch_rows = cur.fetchall()
+            if not pitch_rows:
+                conn.close()
+                return None
+
+            # Build pitching game log display
+            parts = []
+            parts.append(f"[TIP]Tap a player name for their full profile.[/TIP]")
+            parts.append("[GAMELOGS]")
+            for row in reversed(pitch_rows):
+                gdate, ip_text, ip_outs, h, er, so, bb, hr, win, opp = row
+                ip_display = ip_text or f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
+                w_marker = ", W" if win else ""
+                line = f"{ip_display} IP, {h or 0} H, {er or 0} ER, {so or 0} K, {bb or 0} BB{w_marker}"
+                parts.append(f"GAME {gdate}|{line}")
+            parts.append("[/GAMELOGS]")
+
+            # Add totals
+            total_outs = sum(r[2] or 0 for r in pitch_rows)
+            total_er = sum(r[4] or 0 for r in pitch_rows)
+            total_so = sum(r[5] or 0 for r in pitch_rows)
+            total_bb = sum(r[6] or 0 for r in pitch_rows)
+            total_ip = total_outs / 3
+            era = (total_er / total_ip * 9) if total_ip > 0 else 0
+            ip_str = f"{total_outs // 3}.{total_outs % 3}"
+
+            parts.insert(0, f"**{display_name}** — {label} {n_games} Games\n{ip_str} IP, {total_er} ER, {total_so} K, {total_bb} BB, {era:.2f} ERA\n")
+
             conn.close()
-            return None
+            return "\n".join(parts)
 
         totals = {"g": len(rows), "ab": 0, "h": 0, "2b": 0, "3b": 0, "hr": 0,
                   "r": 0, "rbi": 0, "bb": 0, "so": 0}
