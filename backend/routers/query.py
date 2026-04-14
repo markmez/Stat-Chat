@@ -639,7 +639,7 @@ def _strip_bold_title(text: str, original_question: str = "") -> str:
             # Don't show "All-Time" or "Career" — that's the default, not an inference
 
         # Skip scope display for defaults and explicit mentions
-        if scope in ("All-Time", "Career"):
+        if scope in ("All-Time", "Career", "Active", "Career (Active)"):
             scope = None
         elif scope and original_question:
             oq = original_question.lower()

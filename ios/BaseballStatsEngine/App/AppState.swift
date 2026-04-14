@@ -550,36 +550,10 @@ final class AppState: SearchHistoryTracking {
         let lower = query.lowercased()
         var pills: [String] = []
 
-        // Detect player name in query
-        let words = lower.split(separator: " ").map(String.init)
-        var detectedPlayer: String?
-        for i in 0..<words.count {
-            // Try two-word names first (more specific)
-            if i + 1 < words.count {
-                let pair = "\(words[i]) \(words[i + 1])"
-                if let match = PlayerNameMatcher.matchPlayer(pair) {
-                    detectedPlayer = match
-                    break
-                }
-            }
-            // Then single word (last name) — skip common English words
-            if !PlayerNameMatcher.commonWordLastNames.contains(words[i]),
-               let match = PlayerNameMatcher.matchPlayer(words[i]) {
-                detectedPlayer = match
-                break
-            }
-        }
-
-        // Detect stat keyword
+        // Detect stat keyword only — no player name detection
+        // (player name matching produces too many false positives
+        // like "Home Run Baker" from "home run leaders")
         let detectedStat = PlayerNameMatcher.matchStat(lower)
-
-        if let player = detectedPlayer {
-            let season = PlayerNameMatcher.detectSeason(lower, defaultToMostRecent: true) ?? currentSeasonYear
-            pills.append("[SUGGEST]\(player) \(season)[/SUGGEST]")
-            if detectedStat != nil {
-                pills.append("[SUGGEST]\(player) splits[/SUGGEST]")
-            }
-        }
 
         if let stat = detectedStat {
             let statName = stat.pillName
