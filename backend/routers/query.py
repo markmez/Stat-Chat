@@ -979,19 +979,55 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             log_query(question, device_id, "sonnet")
             return
 
-    # 2b. Try local intercept — zero Claude API cost
-    # Runs after follow-up rewrite so the question may already be rewritten.
-    try:
-        intercepted = try_intercept(question)
-    except Exception as e:
-        logger.error("intercept_error question=%r error=%s type=%s", question, e, type(e).__name__)
-        # Log to dashboard + alert
-        try:
-            from services.metering import log_query as _lq
-            _lq(question, device_id, "query_engine_error")
-        except Exception:
-            pass
+    # 2b. Insight query detection — check before interceptor
+    def _is_insight_query(q: str) -> bool:
+        """Detect queries needing multi-step reasoning, not a single SQL query."""
+        lower = q.lower()
+        keyword_signals = [
+            "optimal", "lineup", "build me", "build a",
+            "roster", "draft", "fantasy",
+            "pinch hit", "pinch-hit",
+            "best at each", "worst at each", "by position",
+            "outperforming", "underperforming",
+            "which team's", "which teams",
+            "if i were", "if you were",
+            "strategy", "should i",
+        ]
+        if any(kw in lower for kw in keyword_signals):
+            return True
+        cross_entity = [
+            "each team", "every team", "per team",
+            "all teams", "across teams", "across the league",
+            "best player on each", "worst player on each",
+        ]
+        if any(ce in lower for ce in cross_entity):
+            if not _re.search(r'\b(leaders?|most|best|worst|highest|lowest)\s+\w+\s+(on|per|for) each team\b', lower):
+                return True
+        conditionals = ["if .* then", "assuming", "given that",
+                        "what would happen", "how would", "simulate", "predict"]
+        for pattern in conditionals:
+            if _re.search(pattern, lower):
+                return True
+        return False
+
+    is_insight = _is_insight_query(question)
+    if is_insight:
+        logger.info("insight_query_detected question=%r", question)
+
+    # 2c. Try local intercept — zero Claude API cost (skip for insight queries)
+    if is_insight:
         intercepted = None
+    else:
+        try:
+            intercepted = try_intercept(question)
+        except Exception as e:
+            logger.error("intercept_error question=%r error=%s type=%s", question, e, type(e).__name__)
+            try:
+                from services.metering import log_query as _lq
+                _lq(question, device_id, "query_engine_error")
+            except Exception:
+                pass
+            intercepted = None
     if intercepted is not None:
         no_count = intercepted.startswith("__NO_COUNT__")
         if no_count:
@@ -1009,53 +1045,6 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         log_query(question, device_id, "query engine",
                   is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None)
         return
-
-    # 3. Insight query detection — multi-step queries skip Haiku, go to planner
-    def _is_insight_query(q: str) -> bool:
-        """Detect queries that need multi-step reasoning, not a single SQL query."""
-        lower = q.lower()
-
-        # Keyword signals — explicit multi-step intent
-        keyword_signals = [
-            "optimal", "lineup", "build me", "build a",
-            "roster", "draft", "fantasy",
-            "pinch hit", "pinch-hit",
-            "best at each", "worst at each", "by position",
-            "outperforming", "underperforming",
-            "which team's", "which teams",
-            "if i were", "if you were",
-            "strategy", "should i",
-        ]
-        if any(kw in lower for kw in keyword_signals):
-            return True
-
-        # Structural signals — cross-entity comparisons requiring joins
-        # Multiple "team" + "player" concepts in one question
-        cross_entity = [
-            "each team", "every team", "per team",
-            "all teams", "across teams", "across the league",
-            "best player on each", "worst player on each",
-        ]
-        if any(ce in lower for ce in cross_entity):
-            # Only if not a simple "per team leaders" which the query engine handles
-            if not _re.search(r'\b(leaders?|most|best|worst|highest|lowest)\s+\w+\s+(on|per|for) each team\b', lower):
-                return True
-
-        # Conditional/hypothetical reasoning
-        conditionals = [
-            "if .* then", "assuming", "given that",
-            "what would happen", "how would",
-            "simulate", "predict",
-        ]
-        for pattern in conditionals:
-            if _re.search(pattern, lower):
-                return True
-
-        return False
-
-    is_insight = _is_insight_query(question)
-    if is_insight:
-        logger.info("insight_query_detected question=%r", question)
 
     # Haiku SQL fallback — skip for insight queries (need multi-step planner)
     if not is_insight:
