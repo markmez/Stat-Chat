@@ -109,12 +109,17 @@ async def redetect_events(
     else:
         deleted = 0
 
-    count = detect_all(DB_PATH)
+    import io, contextlib
+    log_buffer = io.StringIO()
+    with contextlib.redirect_stdout(log_buffer):
+        count = detect_all(DB_PATH)
+    log_output = log_buffer.getvalue()
     return {
         "status": "ok",
         "events_detected": count,
         "events_cleared": deleted,
         "clear_date": clear_date,
+        "log": log_output,
     }
 
 
