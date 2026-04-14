@@ -2160,6 +2160,179 @@ def detect_alltime_passing(conn, season, latest_date):
     return events
 
 
+def detect_franchise_passing(conn, season, latest_date):
+    """Detect when a player passes someone on their franchise's all-time career list,
+    or approaches within 5 of the franchise record.
+
+    Checks top 5 per franchise for HR, Hits, RBI, SB, 2B (batting) and W, K (pitching).
+    """
+    from .franchise import get_franchise_codes, get_franchise_name
+    events = []
+
+    CONFIGS = [
+        ("home_runs",     "season_batting_stats",  "game_batting_logs",   "home runs",    "HR"),
+        ("hits",          "season_batting_stats",  "game_batting_logs",   "hits",         "H"),
+        ("rbi",           "season_batting_stats",  "game_batting_logs",   "RBI",          "RBI"),
+        ("stolen_bases",  "season_batting_stats",  "game_batting_logs",   "stolen bases", "SB"),
+        ("doubles",       "season_batting_stats",  "game_batting_logs",   "doubles",      "2B"),
+        ("wins",          "season_pitching_stats", "game_pitching_logs",  "wins",         "W"),
+        ("strikeouts",    "season_pitching_stats", "game_pitching_logs",  "strikeouts",   "K"),
+    ]
+
+    TOP_N = 5
+    APPROACH_WITHIN = 5  # fire "approaching franchise record" events
+
+    # Get teams with active players this season
+    active_teams = [r[0] for r in conn.execute("""
+        SELECT DISTINCT team FROM season_batting_stats WHERE season = ?
+    """, (season,)).fetchall()]
+
+    for col, table, game_table, label, abbrev in CONFIGS:
+        # Get today's contributors
+        if col == "wins":
+            contrib_query = f"""
+                SELECT g.player_id, SUM(CASE WHEN g.win = 1 THEN 1 ELSE 0 END)
+                FROM game_pitching_logs g
+                WHERE g.date = ? AND g.season = ?
+                GROUP BY g.player_id
+                HAVING SUM(CASE WHEN g.win = 1 THEN 1 ELSE 0 END) > 0
+            """
+        else:
+            contrib_query = f"""
+                SELECT g.player_id, SUM(g.{col})
+                FROM {game_table} g
+                WHERE g.date = ? AND g.season = ?
+                GROUP BY g.player_id
+                HAVING SUM(g.{col}) > 0
+            """
+        today_contribs = dict(conn.execute(contrib_query, (latest_date, season)).fetchall())
+
+        if not today_contribs:
+            continue
+
+        # For each active team, build franchise leaderboard and check
+        for team in active_teams:
+            franchise_codes = get_franchise_codes(team)
+            ph = ",".join(["?"] * len(franchise_codes))
+            franchise_name = get_franchise_name(team)
+
+            # Franchise career leaderboard
+            leaders = conn.execute(f"""
+                SELECT s.player_id, p.name, SUM(s.{col}) as career_total
+                FROM {table} s JOIN players p ON s.player_id = p.player_id
+                WHERE s.team IN ({ph})
+                GROUP BY s.player_id
+                HAVING career_total > 0
+                ORDER BY career_total DESC
+                LIMIT 10
+            """, franchise_codes).fetchall()
+
+            if len(leaders) < 2:
+                continue
+
+            record_holder_pid, record_holder_name, record_total = leaders[0]
+
+            # Check each player who contributed today
+            for pid, contrib in today_contribs.items():
+                # Does this player have stats with this franchise?
+                player_franchise = conn.execute(f"""
+                    SELECT SUM(s.{col}) FROM {table} s
+                    WHERE s.player_id = ? AND s.team IN ({ph})
+                """, (pid, *franchise_codes)).fetchone()
+                if not player_franchise or not player_franchise[0]:
+                    continue
+
+                career_total = player_franchise[0]
+                career_before = career_total - contrib
+
+                # Find player's rank and who they passed
+                # Only care about top N+2 (to catch movement into top 5)
+                player_rank = None
+                for rank, (lpid, lname, ltotal) in enumerate(leaders, 1):
+                    if lpid == pid:
+                        player_rank = rank
+                        break
+
+                if player_rank is None or player_rank > TOP_N + 2:
+                    continue
+
+                # Check for passing someone in top N
+                best_passed = None
+                for rank, (lpid, lname, ltotal) in enumerate(leaders, 1):
+                    if lpid == pid or rank > TOP_N:
+                        continue
+                    if career_before < ltotal and career_total >= ltotal:
+                        if best_passed is None or rank < best_passed[0]:
+                            best_passed = (rank, lname, ltotal)
+
+                if best_passed:
+                    passed_rank, passed_name, _ = best_passed
+                    game_line, _ = _get_game_line(conn, pid, latest_date, season)
+                    player_name = conn.execute(
+                        "SELECT name FROM players WHERE player_id = ?", (pid,)
+                    ).fetchone()[0]
+
+                    ordinal = _ordinal(passed_rank)
+                    if game_line:
+                        headline = (
+                            f"{player_name} went {game_line}. "
+                            f"He now has {career_total} career {label} as a {franchise_name[:-1] if franchise_name.endswith('s') else franchise_name} member, "
+                            f"passing {passed_name} for {ordinal} in franchise history."
+                        )
+                    else:
+                        headline = (
+                            f"{player_name} now has {career_total} career {label} as a {franchise_name[:-1] if franchise_name.endswith('s') else franchise_name} member, "
+                            f"passing {passed_name} for {ordinal} in franchise history."
+                        )
+
+                    events.append({
+                        "headline": headline,
+                        "detail": "",
+                        "category": "Milestone",
+                        "game_date": latest_date,
+                        "player_names": [player_name, passed_name],
+                        "team_names": [franchise_name],
+                        "detection_type": f"franchise_passing_{col}",
+                        "priority": 1,
+                    })
+
+                # Check for approaching franchise record (within 5)
+                if pid != record_holder_pid and career_total > 0:
+                    gap = record_total - career_total
+                    prev_gap = record_total - career_before
+                    # Only fire if today's game brought them closer AND they're within threshold
+                    if 0 < gap <= APPROACH_WITHIN and prev_gap > gap:
+                        game_line, _ = _get_game_line(conn, pid, latest_date, season)
+                        player_name = conn.execute(
+                            "SELECT name FROM players WHERE player_id = ?", (pid,)
+                        ).fetchone()[0]
+
+                        if game_line:
+                            headline = (
+                                f"{player_name} went {game_line}. "
+                                f"He now has {career_total} career {label} as a {franchise_name[:-1] if franchise_name.endswith('s') else franchise_name} member, "
+                                f"just {gap} away from {record_holder_name}'s franchise record of {record_total}."
+                            )
+                        else:
+                            headline = (
+                                f"{player_name} now has {career_total} career {label} as a {franchise_name[:-1] if franchise_name.endswith('s') else franchise_name} member, "
+                                f"just {gap} away from {record_holder_name}'s franchise record of {record_total}."
+                            )
+
+                        events.append({
+                            "headline": headline,
+                            "detail": "",
+                            "category": "Milestone",
+                            "game_date": latest_date,
+                            "player_names": [player_name, record_holder_name],
+                            "team_names": [franchise_name],
+                            "detection_type": f"franchise_record_approach_{col}",
+                            "priority": 1,
+                        })
+
+    return events
+
+
 def _ordinal(n):
     """Convert number to ordinal string: 1 → '1st', 2 → '2nd', etc."""
     if 11 <= (n % 100) <= 13:
@@ -2280,6 +2453,15 @@ def detect_all(db_path=None, season=None, from_poll=False):
         print(f"    All-time passing: {len(passing_events)} events")
     except Exception as e:
         print(f"    All-time passing failed: {e}")
+
+    # Franchise career list passing
+    print("  Running franchise passing detection...")
+    try:
+        franchise_events = detect_franchise_passing(conn, season, latest_date)
+        events += franchise_events
+        print(f"    Franchise passing: {len(franchise_events)} events")
+    except Exception as e:
+        print(f"    Franchise passing failed: {e}")
 
     # Tier 3 backfill if needed
     if len(events) < 3:

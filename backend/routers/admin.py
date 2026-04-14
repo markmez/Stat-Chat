@@ -222,6 +222,23 @@ async def simulate_passing(
                         "headline": headline,
                     })
 
+    # Franchise passing — run the actual detection per date
+    from services.notable_events import detect_franchise_passing
+    for d in dates:
+        try:
+            fevts = detect_franchise_passing(conn, season, d)
+            for e in fevts:
+                all_events.append({
+                    "date": d,
+                    "type": e["detection_type"],
+                    "headline": e["headline"],
+                })
+        except Exception as ex:
+            all_events.append({"date": d, "type": "ERROR", "headline": str(ex)})
+
+    # Sort all events by date
+    all_events.sort(key=lambda x: x["date"])
+
     conn.close()
 
     # Summary by type
@@ -235,7 +252,7 @@ async def simulate_passing(
 
     rows_html = ""
     for e in all_events:
-        stat = e["type"].replace("alltime_passing_", "").upper()
+        stat = e["type"].replace("alltime_passing_", "").replace("franchise_passing_", "F:").replace("franchise_record_approach_", "F→").upper()
         rows_html += f"""<tr>
             <td style="white-space:nowrap;padding:8px 12px;color:#666">{e["date"]}</td>
             <td style="padding:8px 6px"><span style="background:#e8f0fe;color:#1a40b3;padding:2px 8px;border-radius:10px;font-size:12px">{stat}</span></td>
@@ -2032,25 +2049,7 @@ def _simulate_records_for_date(conn, target_date):
             return row[0].split("/")[0].strip()
         return None
 
-    # Franchise mapping: current code → all historical codes for the same franchise
-    # Used to check records across the full franchise history
-    _FRANCHISE_MAP = {
-        "ATH": ["ATH", "OAK", "PHA"],            # Athletics: Philly → KC → Oakland → Sacramento
-        "OAK": ["ATH", "OAK", "PHA"],
-        "WAS": ["WAS", "MON"],                     # Nationals ← Expos
-        "MIA": ["MIA", "FLO"],                     # Marlins (Florida → Miami)
-        "ANA": ["ANA", "CAL"],                     # Angels (California → Anaheim)
-        "TBA": ["TBA"],                             # Rays (Devil Rays → Rays, same code)
-        "BAL": ["BAL", "MLA", "SLA"],              # Orioles ← St. Louis Browns ← Milwaukee
-        "MIN": ["MIN", "WS1"],                     # Twins ← Washington Senators (original)
-        "TEX": ["TEX", "WS2"],                     # Rangers ← Washington Senators (expansion)
-        "ATL": ["ATL", "BSN", "MLN"],              # Braves: Boston → Milwaukee → Atlanta
-        "SFN": ["SFN", "NY1"],                     # Giants: New York → San Francisco
-        "LAN": ["LAN", "BRO"],                     # Dodgers: Brooklyn → Los Angeles
-    }
-
-    def get_franchise_codes(code):
-        return _FRANCHISE_MAP.get(code, [code])
+    from services.franchise import get_franchise_codes
 
     for pid in all_pids:
         bat = bat_by_pid.get(pid, {})
