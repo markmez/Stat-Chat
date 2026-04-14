@@ -2180,43 +2180,48 @@ def detect_franchise_passing(conn, season, latest_date):
     ]
 
     TOP_N = 5
-    APPROACH_WITHIN = 5  # fire "approaching franchise record" events
-
-    # Get teams with active players this season
-    active_teams = [r[0] for r in conn.execute("""
-        SELECT DISTINCT team FROM season_batting_stats WHERE season = ?
-    """, (season,)).fetchall()]
+    APPROACH_WITHIN = 5
 
     for col, table, game_table, label, abbrev in CONFIGS:
-        # Get today's contributors
+        # Get today's contributors with their current team
         if col == "wins":
-            contrib_query = f"""
-                SELECT g.player_id, SUM(CASE WHEN g.win = 1 THEN 1 ELSE 0 END)
+            contrib_rows = conn.execute(f"""
+                SELECT g.player_id, SUM(CASE WHEN g.win = 1 THEN 1 ELSE 0 END) as val,
+                       (SELECT team FROM season_pitching_stats
+                        WHERE player_id = g.player_id AND season = ? LIMIT 1) as team
                 FROM game_pitching_logs g
                 WHERE g.date = ? AND g.season = ?
                 GROUP BY g.player_id
-                HAVING SUM(CASE WHEN g.win = 1 THEN 1 ELSE 0 END) > 0
-            """
+                HAVING val > 0
+            """, (season, latest_date, season)).fetchall()
         else:
-            contrib_query = f"""
-                SELECT g.player_id, SUM(g.{col})
+            contrib_rows = conn.execute(f"""
+                SELECT g.player_id, SUM(g.{col}) as val,
+                       (SELECT team FROM season_batting_stats
+                        WHERE player_id = g.player_id AND season = ? LIMIT 1) as team
                 FROM {game_table} g
                 WHERE g.date = ? AND g.season = ?
                 GROUP BY g.player_id
-                HAVING SUM(g.{col}) > 0
-            """
-        today_contribs = dict(conn.execute(contrib_query, (latest_date, season)).fetchall())
+                HAVING val > 0
+            """, (season, latest_date, season)).fetchall()
 
-        if not today_contribs:
+        if not contrib_rows:
             continue
 
-        # For each active team, build franchise leaderboard and check
-        for team in active_teams:
+        # Group contributors by franchise (only query each franchise once)
+        teams_to_check = {}  # team_code → [(pid, contrib)]
+        for pid, contrib, team in contrib_rows:
+            if not team:
+                continue
+            team = team.split("/")[0].strip()
+            teams_to_check.setdefault(team, []).append((pid, contrib))
+
+        for team, player_contribs in teams_to_check.items():
             franchise_codes = get_franchise_codes(team)
             ph = ",".join(["?"] * len(franchise_codes))
             franchise_name = get_franchise_name(team)
 
-            # Franchise career leaderboard
+            # Franchise career leaderboard (top 10 for context)
             leaders = conn.execute(f"""
                 SELECT s.player_id, p.name, SUM(s.{col}) as career_total
                 FROM {table} s JOIN players p ON s.player_id = p.player_id
@@ -2232,29 +2237,19 @@ def detect_franchise_passing(conn, season, latest_date):
 
             record_holder_pid, record_holder_name, record_total = leaders[0]
 
-            # Check each player who contributed today
-            for pid, contrib in today_contribs.items():
-                # Does this player have stats with this franchise?
-                player_franchise = conn.execute(f"""
-                    SELECT SUM(s.{col}) FROM {table} s
-                    WHERE s.player_id = ? AND s.team IN ({ph})
-                """, (pid, *franchise_codes)).fetchone()
-                if not player_franchise or not player_franchise[0]:
-                    continue
-
-                career_total = player_franchise[0]
-                career_before = career_total - contrib
-
-                # Find player's rank and who they passed
-                # Only care about top N+2 (to catch movement into top 5)
-                player_rank = None
+            for pid, contrib in player_contribs:
+                # Find this player in the leaderboard
+                player_entry = None
                 for rank, (lpid, lname, ltotal) in enumerate(leaders, 1):
                     if lpid == pid:
-                        player_rank = rank
+                        player_entry = (rank, lname, ltotal)
                         break
 
-                if player_rank is None or player_rank > TOP_N + 2:
+                if not player_entry or player_entry[0] > TOP_N + 2:
                     continue
+
+                player_rank, player_name, career_total = player_entry
+                career_before = career_total - contrib
 
                 # Check for passing someone in top N
                 best_passed = None
@@ -2268,20 +2263,17 @@ def detect_franchise_passing(conn, season, latest_date):
                 if best_passed:
                     passed_rank, passed_name, _ = best_passed
                     game_line, _ = _get_game_line(conn, pid, latest_date, season)
-                    player_name = conn.execute(
-                        "SELECT name FROM players WHERE player_id = ?", (pid,)
-                    ).fetchone()[0]
-
                     ordinal = _ordinal(passed_rank)
+                    fn = franchise_name[:-1] if franchise_name.endswith("s") else franchise_name
                     if game_line:
                         headline = (
                             f"{player_name} went {game_line}. "
-                            f"He now has {career_total} career {label} as a {franchise_name[:-1] if franchise_name.endswith('s') else franchise_name} member, "
+                            f"He now has {career_total} career {label} as a {fn} member, "
                             f"passing {passed_name} for {ordinal} in franchise history."
                         )
                     else:
                         headline = (
-                            f"{player_name} now has {career_total} career {label} as a {franchise_name[:-1] if franchise_name.endswith('s') else franchise_name} member, "
+                            f"{player_name} now has {career_total} career {label} as a {fn} member, "
                             f"passing {passed_name} for {ordinal} in franchise history."
                         )
 
@@ -2297,25 +2289,21 @@ def detect_franchise_passing(conn, season, latest_date):
                     })
 
                 # Check for approaching franchise record (within 5)
-                if pid != record_holder_pid and career_total > 0:
+                if pid != record_holder_pid:
                     gap = record_total - career_total
                     prev_gap = record_total - career_before
-                    # Only fire if today's game brought them closer AND they're within threshold
                     if 0 < gap <= APPROACH_WITHIN and prev_gap > gap:
                         game_line, _ = _get_game_line(conn, pid, latest_date, season)
-                        player_name = conn.execute(
-                            "SELECT name FROM players WHERE player_id = ?", (pid,)
-                        ).fetchone()[0]
-
+                        fn = franchise_name[:-1] if franchise_name.endswith("s") else franchise_name
                         if game_line:
                             headline = (
                                 f"{player_name} went {game_line}. "
-                                f"He now has {career_total} career {label} as a {franchise_name[:-1] if franchise_name.endswith('s') else franchise_name} member, "
+                                f"He now has {career_total} career {label} as a {fn} member, "
                                 f"just {gap} away from {record_holder_name}'s franchise record of {record_total}."
                             )
                         else:
                             headline = (
-                                f"{player_name} now has {career_total} career {label} as a {franchise_name[:-1] if franchise_name.endswith('s') else franchise_name} member, "
+                                f"{player_name} now has {career_total} career {label} as a {fn} member, "
                                 f"just {gap} away from {record_holder_name}'s franchise record of {record_total}."
                             )
 
