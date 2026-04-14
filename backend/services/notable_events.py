@@ -2099,8 +2099,8 @@ def detect_alltime_passing(conn, season, latest_date):
         # For each triggered player, compute their career count
         for pid, player_name in triggered:
             career_total = conn.execute(f"""
-                SELECT COUNT(*) FROM {game_table}
-                WHERE player_id = ? AND {trigger_cond}
+                SELECT COUNT(*) FROM {game_table} g
+                WHERE g.player_id = ? AND {trigger_cond}
             """, (pid,)).fetchone()[0]
 
             career_before = career_total - 1
@@ -2123,8 +2123,8 @@ def detect_alltime_passing(conn, season, latest_date):
             # Current rank = count of players with more + 1
             rank_count = conn.execute(f"""
                 SELECT COUNT(DISTINCT player_id) FROM (
-                    SELECT player_id, COUNT(*) as cnt FROM {game_table}
-                    WHERE {trigger_cond} GROUP BY player_id HAVING cnt > ?
+                    SELECT g.player_id, COUNT(*) as cnt FROM {game_table} g
+                    WHERE {trigger_cond} GROUP BY g.player_id HAVING cnt > ?
                 )
             """, (career_total,)).fetchone()[0]
             new_rank = rank_count + 1
