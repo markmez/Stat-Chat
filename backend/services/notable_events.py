@@ -1939,6 +1939,141 @@ def detect_for_players(db_path, season, player_ids):
     return inserted
 
 
+def detect_alltime_passing(conn, season, latest_date):
+    """Detect when an active player passes someone on an all-time career list.
+
+    Checks HR, Hits, RBI, SB, 2B (batting) and W, K (pitching).
+    Fires when today's game pushed a player's career total past someone
+    ranked in the top N all-time for that stat.
+    """
+    events = []
+
+    CONFIGS = [
+        # (col, table, game_table, label, abbrev, top_n)
+        ("home_runs",     "season_batting_stats",  "game_batting_logs",   "home runs",    "HR",  75),
+        ("hits",          "season_batting_stats",  "game_batting_logs",   "hits",         "H",   150),
+        ("rbi",           "season_batting_stats",  "game_batting_logs",   "RBI",          "RBI", 150),
+        ("stolen_bases",  "season_batting_stats",  "game_batting_logs",   "stolen bases", "SB",  100),
+        ("doubles",       "season_batting_stats",  "game_batting_logs",   "doubles",      "2B",  100),
+        ("wins",          "season_pitching_stats", "game_pitching_logs",  "wins",         "W",   75),
+        ("strikeouts",    "season_pitching_stats", "game_pitching_logs",  "strikeouts",   "K",   75),
+    ]
+
+    for col, table, game_table, label, abbrev, top_n in CONFIGS:
+        # Build all-time career leaderboard
+        all_time = conn.execute(f"""
+            SELECT s.player_id, p.name, SUM(s.{col}) as career_total
+            FROM {table} s JOIN players p ON s.player_id = p.player_id
+            GROUP BY s.player_id
+            HAVING career_total > 0
+            ORDER BY career_total DESC
+        """).fetchall()
+
+        if len(all_time) < top_n:
+            continue
+
+        # Build rank lookup: player_id → (rank, name, total)
+        rank_map = {}
+        for rank, (pid, name, total) in enumerate(all_time, 1):
+            rank_map[pid] = (rank, name, total)
+
+        # Threshold: minimum career total to be in the top N
+        cutoff_total = all_time[top_n - 1][2]
+
+        # Find active players who played on latest_date and have career totals near the cutoff
+        # Check game contribution on latest_date
+        game_col = col
+        if col == "wins":
+            game_col = "win"  # game_pitching_logs uses 'win' not 'wins'
+
+        active_with_games = conn.execute(f"""
+            SELECT DISTINCT g.player_id
+            FROM {game_table} g
+            WHERE g.date = ? AND g.season = ?
+        """, (latest_date, season)).fetchall()
+
+        for (pid,) in active_with_games:
+            if pid not in rank_map:
+                continue
+            player_rank, player_name, career_total = rank_map[pid]
+
+            # Only care about players in or near the top N
+            if career_total < cutoff_total - 5:
+                continue
+
+            # Get today's contribution
+            if col == "wins":
+                contrib = conn.execute("""
+                    SELECT SUM(CASE WHEN win = 1 THEN 1 ELSE 0 END)
+                    FROM game_pitching_logs
+                    WHERE player_id = ? AND date = ? AND season = ?
+                """, (pid, latest_date, season)).fetchone()[0] or 0
+            else:
+                contrib = conn.execute(f"""
+                    SELECT SUM({col}) FROM {game_table}
+                    WHERE player_id = ? AND date = ? AND season = ?
+                """, (pid, latest_date, season)).fetchone()[0] or 0
+
+            if contrib == 0:
+                continue
+
+            career_before = career_total - contrib
+
+            # Find the highest-ranked person this player just passed
+            best_passed = None  # (rank, name, total)
+            for passed_rank, (passed_pid, passed_name, passed_total) in enumerate(all_time, 1):
+                if passed_pid == pid:
+                    continue
+                if passed_rank > top_n:
+                    break
+                if career_before < passed_total and career_total >= passed_total:
+                    if best_passed is None or passed_rank < best_passed[0]:
+                        best_passed = (passed_rank, passed_name, passed_total)
+
+            if best_passed:
+                passed_rank, passed_name, _ = best_passed
+                game_line, _ = _get_game_line(conn, pid, latest_date, season)
+                team = conn.execute(
+                    "SELECT team FROM players WHERE player_id = ?", (pid,)
+                ).fetchone()
+                team_name = team[0] if team else ""
+
+                ordinal = _ordinal(passed_rank)
+                if game_line:
+                    headline = (
+                        f"{player_name} went {game_line}. "
+                        f"He now has {career_total} career {label}, "
+                        f"passing {passed_name} for {ordinal} on the all-time list."
+                    )
+                else:
+                    headline = (
+                        f"{player_name} now has {career_total} career {label}, "
+                        f"passing {passed_name} for {ordinal} on the all-time list."
+                    )
+
+                events.append({
+                    "headline": headline,
+                    "detail": "",
+                    "category": "Milestone",
+                    "game_date": latest_date,
+                    "player_names": [player_name, passed_name],
+                    "team_names": [team_name] if team_name else [],
+                    "detection_type": f"alltime_passing_{col}",
+                    "priority": 1,
+                })
+
+    return events
+
+
+def _ordinal(n):
+    """Convert number to ordinal string: 1 → '1st', 2 → '2nd', etc."""
+    if 11 <= (n % 100) <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
 def is_detection_locked():
     """Check if the full pipeline is running (polls should skip detection)."""
     import os
@@ -2041,6 +2176,15 @@ def detect_all(db_path=None, season=None, from_poll=False):
         print(f"    Records: {len(record_events)} events")
     except Exception as e:
         print(f"    Records detection failed: {e}")
+
+    # All-time career list passing
+    print("  Running all-time passing detection...")
+    try:
+        passing_events = detect_alltime_passing(conn, season, latest_date)
+        events += passing_events
+        print(f"    All-time passing: {len(passing_events)} events")
+    except Exception as e:
+        print(f"    All-time passing failed: {e}")
 
     # Tier 3 backfill if needed
     if len(events) < 3:
