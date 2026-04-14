@@ -222,8 +222,131 @@ async def simulate_passing(
                         "headline": headline,
                     })
 
-    # Franchise passing — too heavy for multi-date simulation.
-    # Use /admin/redetect?clear_date=YYYY-MM-DD to test single dates.
+    # Franchise passing — incremental simulation
+    from services.franchise import get_franchise_codes, get_franchise_name
+    from services.notable_events import _ordinal
+
+    FRANCHISE_TOP_N = 5
+    FRANCHISE_APPROACH = 5
+
+    franchise_stats = [
+        ("home_runs", "season_batting_stats", "game_batting_logs", "home runs", "HR"),
+        ("hits",      "season_batting_stats", "game_batting_logs", "hits",      "H"),
+        ("rbi",       "season_batting_stats", "game_batting_logs", "RBI",       "RBI"),
+        ("stolen_bases","season_batting_stats","game_batting_logs", "stolen bases","SB"),
+        ("doubles",   "season_batting_stats", "game_batting_logs", "doubles",   "2B"),
+        ("wins",      "season_pitching_stats","game_pitching_logs","wins",      "W"),
+        ("strikeouts","season_pitching_stats","game_pitching_logs","strikeouts","K"),
+    ]
+
+    # Get all active teams
+    active_teams = [r[0] for r in conn.execute(
+        "SELECT DISTINCT team FROM season_batting_stats WHERE season = ?", (season,)
+    ).fetchall()]
+
+    for col, table, game_table, label, abbrev in franchise_stats:
+        # Get game contributions for the season grouped by player+date
+        gcol = "CASE WHEN win = 1 THEN 1 ELSE 0 END" if col == "wins" else col
+        game_contribs = conn.execute(f"""
+            SELECT g.player_id, g.date, SUM({gcol}) as val
+            FROM {game_table} g WHERE g.season = ?
+            GROUP BY g.player_id, g.date ORDER BY g.date
+        """, (season,)).fetchall()
+
+        by_date_all = {}
+        for pid, d, val in game_contribs:
+            by_date_all.setdefault(d, []).append((pid, val or 0))
+
+        # For each franchise, build pre-season leaderboard and walk dates
+        for team in active_teams:
+            franchise_codes = get_franchise_codes(team)
+            ph = ",".join(["?"] * len(franchise_codes))
+            franchise_name = get_franchise_name(team)
+
+            # Pre-season franchise career totals
+            pre = {}
+            for pid, name, total in conn.execute(f"""
+                SELECT s.player_id, p.name, SUM(s.{col})
+                FROM {table} s JOIN players p ON s.player_id = p.player_id
+                WHERE s.team IN ({ph}) AND s.season < ?
+                GROUP BY s.player_id
+            """, (*franchise_codes, season)).fetchall():
+                pre[pid] = (name, total or 0)
+
+            # Players on this team this season
+            team_players = set(r[0] for r in conn.execute(f"""
+                SELECT DISTINCT player_id FROM {table}
+                WHERE team = ? AND season = ?
+            """, (team, season)).fetchall())
+
+            # Ensure all team players are in the map
+            for pid in team_players:
+                if pid not in pre:
+                    nr = conn.execute("SELECT name FROM players WHERE player_id = ?", (pid,)).fetchone()
+                    pre[pid] = (nr[0] if nr else pid, 0)
+
+            running = dict(pre)  # pid → (name, running_total)
+            all_season_dates = sorted(by_date_all.keys())
+            check_dates = set(dates)
+
+            for d in all_season_dates:
+                # Accumulate contributions for players on THIS team
+                day_contribs = {}
+                for pid, val in by_date_all.get(d, []):
+                    if pid in team_players and val > 0:
+                        name, prev = running.get(pid, ("", 0))
+                        running[pid] = (name, prev + val)
+                        day_contribs[pid] = val
+
+                if d not in check_dates or not day_contribs:
+                    continue
+
+                # Build ranked list
+                ranked = sorted(running.items(), key=lambda x: -x[1][1])
+
+                for pid, contrib in day_contribs.items():
+                    name, career_total = running[pid]
+                    career_before = career_total - contrib
+
+                    # Find rank
+                    player_rank = None
+                    for ri, (rpid, _) in enumerate(ranked, 1):
+                        if rpid == pid:
+                            player_rank = ri
+                            break
+                    if not player_rank or player_rank > FRANCHISE_TOP_N + 2:
+                        continue
+
+                    # Check passing
+                    best_passed = None
+                    for ri, (rpid, (rname, rtotal)) in enumerate(ranked, 1):
+                        if rpid == pid or ri > FRANCHISE_TOP_N:
+                            continue
+                        if career_before < rtotal and career_total >= rtotal:
+                            if not best_passed or ri < best_passed[0]:
+                                best_passed = (ri, rname, rtotal)
+
+                    if best_passed:
+                        pr, pn, _ = best_passed
+                        fn = franchise_name[:-1] if franchise_name.endswith("s") else franchise_name
+                        all_events.append({
+                            "date": d,
+                            "type": f"franchise_passing_{col}",
+                            "headline": f"{name} now has {career_total} career {label} as a {fn} member, passing {pn} for {_ordinal(pr)} in franchise history.",
+                        })
+
+                    # Check approaching record
+                    rec_pid, (rec_name, rec_total) = ranked[0]
+                    if pid != rec_pid:
+                        gap = rec_total - career_total
+                        prev_gap = rec_total - career_before
+                        if 0 < gap <= FRANCHISE_APPROACH and prev_gap > gap:
+                            fn = franchise_name[:-1] if franchise_name.endswith("s") else franchise_name
+                            all_events.append({
+                                "date": d,
+                                "type": f"franchise_record_approach_{col}",
+                                "headline": f"{name} now has {career_total} career {label} as a {fn} member, just {gap} away from {rec_name}'s franchise record of {rec_total}.",
+                            })
 
     # Sort all events by date
     all_events.sort(key=lambda x: x["date"])
