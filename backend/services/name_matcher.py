@@ -1378,6 +1378,10 @@ def parse_single_stat_lookup(input_str: str) -> Optional[dict]:
     if re.search(r'\bgame\s*logs?\b', lower):
         return None
 
+    # Reject platoon-filtered queries — handled by platoon parser
+    if re.search(r'\bvs\s+(?:lefties|righties|left|right|lhp|rhp)\b', lower):
+        return None
+
     # Exclude cross-season queries (handled by parse_season_count)
     cross_season_patterns = [
         "how many seasons", "how many times", "how many years",

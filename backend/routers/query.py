@@ -814,7 +814,8 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
     if clean in splits_patterns and player:
         split = splits_patterns[clean]
         season_part = f" {season}" if season else ""
-        return f"{player} {split}{season_part}"
+        stat_part = f" {stat}" if stat else ""
+        return f"{player}{stat_part} {split}{season_part}"
 
     # --- Pattern 4: Comparison ---
     # "compare him to Ohtani", "compare to Soto", "him vs Ohtani"

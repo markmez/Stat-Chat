@@ -240,10 +240,17 @@ def try_intercept(question: str):
         if response:
             return response
 
-    # 7. Platoon splits — "Judge vs lefties"
+    # 7. Platoon splits — "Judge vs lefties", "Judge home runs vs lefties 2025"
     platoon = nm.parse_platoon_splits(trimmed)
     if platoon:
         name, hand, season = platoon["name"], platoon["hand"], platoon["season"]
+        # Check if a specific stat was requested
+        stat_match = nm.match_stat(trimmed.lower())
+        if stat_match and not nm.is_pitcher(name):
+            # Stat-filtered platoon: extract just that stat from split data
+            response = rb.build_platoon_stat_single(name, hand, season, stat_match)
+            if response:
+                return response
         if nm.is_pitcher(name):
             response = rb.build_pitching_platoon_splits(name, hand, season)
         else:

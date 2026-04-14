@@ -1762,6 +1762,59 @@ def build_platoon_splits(name: str, hand: Optional[str] = None, season: int = 0)
         conn.close()
 
 
+def build_platoon_stat_single(name: str, hand: str, season: int, stat_info) -> Optional[str]:
+    """Single stat from platoon splits: 'Judge home runs vs lefties 2025'."""
+    conn = _get_db()
+    try:
+        season = _resolve_season(conn, name, season)
+        display_name, _ = _get_player_info(conn, name)
+
+        split_value = "vs_LHP" if hand == "LHP" else "vs_RHP"
+        hand_label = "left-handed" if hand == "LHP" else "right-handed"
+
+        col = stat_info.db_column
+        _col_map = {
+            "home_runs": "home_runs", "hits": "hits", "rbi": "rbi",
+            "doubles": "doubles", "triples": "triples",
+            "walks": "walks", "strikeouts": "strikeouts",
+            "batting_avg": "batting_avg", "obp": "obp", "slg": "slg",
+            "ops": "ops", "iso": "iso", "babip": "babip",
+            "plate_appearances": "plate_appearances", "at_bats": "at_bats",
+        }
+        ps_col = _col_map.get(col)
+        if not ps_col:
+            return None
+
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT ps.{ps_col}, ps.plate_appearances "
+            "FROM platoon_splits ps "
+            "JOIN players p ON ps.player_id = p.player_id "
+            "WHERE p.name = ? AND ps.season = ? AND ps.split = ?",
+            (_sanitize(name), season, split_value),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+
+        value = row[0]
+        pa = row[1]
+
+        if stat_info.is_rate and value is not None:
+            formatted = _format_rate(value)
+        else:
+            formatted = str(int(value)) if value is not None else "0"
+
+        return (
+            f"**{display_name}** had **{formatted} {stat_info.display_name.lower()}** "
+            f"vs {hand_label} pitchers in {season} ({pa} PA).\n\n"
+            f"[SUGGEST]{display_name} vs {'lefties' if hand == 'LHP' else 'righties'} {season}[/SUGGEST]\n"
+            f"[SUGGEST]{display_name} {season}[/SUGGEST]"
+        )
+    finally:
+        conn.close()
+
+
 # ===================================================================
 # 15. build_pitching_platoon_splits
 # ===================================================================
