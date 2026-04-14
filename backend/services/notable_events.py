@@ -2096,74 +2096,66 @@ def detect_alltime_passing(conn, season, latest_date):
         if not triggered:
             continue
 
-        # For each triggered player, compute their career count
+        # Build the full leaderboard once (cached per config), but only
+        # if someone was triggered today. This is expensive (~10s) but
+        # only runs on days someone actually hit 2+ or 3+ HR.
+        all_time_derived = conn.execute(leaderboard_sql).fetchall()
+        if len(all_time_derived) < top_n:
+            continue
+
+        derived_rank_map = {}
+        for rank, (dpid, dname, dtotal) in enumerate(all_time_derived, 1):
+            derived_rank_map[dpid] = (rank, dname, dtotal)
+
         for pid, player_name in triggered:
-            career_total = conn.execute(f"""
-                SELECT COUNT(*) FROM {game_table} g
-                WHERE g.player_id = ? AND {trigger_cond}
-            """, (pid,)).fetchone()[0]
+            if pid not in derived_rank_map:
+                continue
+            player_rank, _, career_total = derived_rank_map[pid]
+            if player_rank > top_n:
+                continue
 
             career_before = career_total - 1
 
-            # Find their rank and who they passed — only need to check
-            # players with totals between career_before and career_total
-            # Build a small leaderboard of players with more qualifying games
-            above = conn.execute(f"""
-                SELECT g.player_id, p.name, COUNT(*) as cnt
-                FROM {game_table} g JOIN players p ON g.player_id = p.player_id
-                WHERE g.player_id != ? AND {trigger_cond}
-                GROUP BY g.player_id
-                HAVING cnt >= ? AND cnt <= ?
-                ORDER BY cnt DESC
-            """, (pid, career_before, career_total)).fetchall()
+            # Find best person passed
+            best_passed = None
+            for pr, (ppid, pname, ptotal) in enumerate(all_time_derived, 1):
+                if ppid == pid or pr > top_n:
+                    break
+                if career_before < ptotal and career_total >= ptotal:
+                    if best_passed is None or pr < best_passed[0]:
+                        best_passed = (pr, pname, ptotal)
 
-            if not above:
-                continue
+            if best_passed:
+                passed_rank, passed_name, _ = best_passed
+                game_line, _ = _get_game_line(conn, pid, latest_date, season)
+                team = conn.execute(
+                    "SELECT team FROM players WHERE player_id = ?", (pid,)
+                ).fetchone()
+                team_name = team[0] if team else ""
 
-            # Current rank = count of players with more + 1
-            rank_count = conn.execute(f"""
-                SELECT COUNT(DISTINCT player_id) FROM (
-                    SELECT g.player_id, COUNT(*) as cnt FROM {game_table} g
-                    WHERE {trigger_cond} GROUP BY g.player_id HAVING cnt > ?
-                )
-            """, (career_total,)).fetchone()[0]
-            new_rank = rank_count + 1
+                ordinal = _ordinal(passed_rank)
+                if game_line:
+                    headline = (
+                        f"{player_name} went {game_line}. "
+                        f"That's his {_ordinal(career_total)} career {label}, "
+                        f"passing {passed_name} for {ordinal} on the all-time list."
+                    )
+                else:
+                    headline = (
+                        f"{player_name} now has {career_total} career {label}, "
+                        f"passing {passed_name} for {ordinal} on the all-time list."
+                    )
 
-            if new_rank > top_n:
-                continue
-
-            # Best person passed = highest-ranked (lowest cnt above career_before)
-            passed_name = above[-1][1]  # last in descending order = closest above
-
-            game_line, _ = _get_game_line(conn, pid, latest_date, season)
-            team = conn.execute(
-                "SELECT team FROM players WHERE player_id = ?", (pid,)
-            ).fetchone()
-            team_name = team[0] if team else ""
-
-            ordinal = _ordinal(new_rank)
-            if game_line:
-                headline = (
-                    f"{player_name} went {game_line}. "
-                    f"That's his {_ordinal(career_total)} career {label}, "
-                    f"passing {passed_name} for {ordinal} on the all-time list."
-                )
-            else:
-                headline = (
-                    f"{player_name} now has {career_total} career {label}, "
-                    f"passing {passed_name} for {ordinal} on the all-time list."
-                )
-
-            events.append({
-                "headline": headline,
-                "detail": "",
-                "category": "Milestone",
-                "game_date": latest_date,
-                "player_names": [player_name, passed_name],
-                "team_names": [team_name] if team_name else [],
-                "detection_type": f"alltime_passing_{abbrev.lower().replace('-', '_')}",
-                "priority": 1,
-            })
+                events.append({
+                    "headline": headline,
+                    "detail": "",
+                    "category": "Milestone",
+                    "game_date": latest_date,
+                    "player_names": [player_name, passed_name],
+                    "team_names": [team_name] if team_name else [],
+                    "detection_type": f"alltime_passing_{abbrev.lower().replace('-', '_')}",
+                    "priority": 1,
+                })
 
     return events
 
