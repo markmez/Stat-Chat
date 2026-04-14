@@ -1077,8 +1077,20 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
 
     # 4. Sonnet SQL planner — multi-step reasoning for complex queries
     try:
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
         from services.sql_planner import plan_and_execute
-        planner_result = plan_and_execute(question)
+
+        _executor = ThreadPoolExecutor(max_workers=1)
+        loop = asyncio.get_event_loop()
+        future = loop.run_in_executor(_executor, plan_and_execute, question)
+
+        # Send heartbeat while planner works (keeps nginx alive)
+        while not future.done():
+            yield event({"type": "text", "text": ""})
+            await asyncio.sleep(2)
+
+        planner_result = future.result()
         if planner_result:
             logger.info("query_planner question=%r", question)
             planner_result = _strip_bold_title(planner_result, original_question)
