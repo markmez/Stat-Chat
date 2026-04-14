@@ -2251,6 +2251,22 @@ def detect_franchise_passing(conn, season, latest_date):
                 player_rank, player_name, career_total = player_entry
                 career_before = career_total - contrib
 
+                # Check if player has only played for this franchise
+                other_teams = conn.execute(f"""
+                    SELECT COUNT(DISTINCT team) FROM {table}
+                    WHERE player_id = ? AND team NOT IN ({ph})
+                """, (pid, *franchise_codes)).fetchone()[0]
+                is_lifer = other_teams == 0
+
+                # Build franchise context phrase
+                fn = franchise_name[:-1] if franchise_name.endswith("s") else franchise_name
+                if is_lifer:
+                    career_phrase = f"{career_total} career {label}"
+                    franchise_suffix = f" in {franchise_name} history"
+                else:
+                    career_phrase = f"{career_total} career {label} as a {fn}"
+                    franchise_suffix = " in franchise history"
+
                 # Check for passing someone in top N
                 best_passed = None
                 for rank, (lpid, lname, ltotal) in enumerate(leaders, 1):
@@ -2264,17 +2280,16 @@ def detect_franchise_passing(conn, season, latest_date):
                     passed_rank, passed_name, _ = best_passed
                     game_line, _ = _get_game_line(conn, pid, latest_date, season)
                     ordinal = _ordinal(passed_rank)
-                    fn = franchise_name[:-1] if franchise_name.endswith("s") else franchise_name
                     if game_line:
                         headline = (
                             f"{player_name} went {game_line}. "
-                            f"He now has {career_total} career {label} as a {fn} member, "
-                            f"passing {passed_name} for {ordinal} in franchise history."
+                            f"He now has {career_phrase}, "
+                            f"passing {passed_name} for {ordinal}{franchise_suffix}."
                         )
                     else:
                         headline = (
-                            f"{player_name} now has {career_total} career {label} as a {fn} member, "
-                            f"passing {passed_name} for {ordinal} in franchise history."
+                            f"{player_name} now has {career_phrase}, "
+                            f"passing {passed_name} for {ordinal}{franchise_suffix}."
                         )
 
                     events.append({
@@ -2294,16 +2309,15 @@ def detect_franchise_passing(conn, season, latest_date):
                     prev_gap = record_total - career_before
                     if 0 < gap <= APPROACH_WITHIN and prev_gap > gap:
                         game_line, _ = _get_game_line(conn, pid, latest_date, season)
-                        fn = franchise_name[:-1] if franchise_name.endswith("s") else franchise_name
                         if game_line:
                             headline = (
                                 f"{player_name} went {game_line}. "
-                                f"He now has {career_total} career {label} as a {fn} member, "
+                                f"He now has {career_phrase}, "
                                 f"just {gap} away from {record_holder_name}'s franchise record of {record_total}."
                             )
                         else:
                             headline = (
-                                f"{player_name} now has {career_total} career {label} as a {fn} member, "
+                                f"{player_name} now has {career_phrase}, "
                                 f"just {gap} away from {record_holder_name}'s franchise record of {record_total}."
                             )
 

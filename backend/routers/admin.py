@@ -329,10 +329,21 @@ async def simulate_passing(
                     if best_passed:
                         pr, pn, _ = best_passed
                         fn = franchise_name[:-1] if franchise_name.endswith("s") else franchise_name
+                        # Check if player has only played for this franchise
+                        other = conn.execute(f"""
+                            SELECT COUNT(DISTINCT team) FROM {table}
+                            WHERE player_id = ? AND team NOT IN ({ph})
+                        """, (pid, *franchise_codes)).fetchone()[0]
+                        if other == 0:
+                            cp = f"{career_total} career {label}"
+                            fs = f" in {franchise_name} history"
+                        else:
+                            cp = f"{career_total} career {label} as a {fn}"
+                            fs = " in franchise history"
                         all_events.append({
                             "date": d,
                             "type": f"franchise_passing_{col}",
-                            "headline": f"{name} now has {career_total} career {label} as a {fn} member, passing {pn} for {_ordinal(pr)} in franchise history.",
+                            "headline": f"{name} now has {cp}, passing {pn} for {_ordinal(pr)}{fs}.",
                         })
 
                     # Check approaching record
@@ -342,10 +353,18 @@ async def simulate_passing(
                         prev_gap = rec_total - career_before
                         if 0 < gap <= FRANCHISE_APPROACH and prev_gap > gap:
                             fn = franchise_name[:-1] if franchise_name.endswith("s") else franchise_name
+                            other = conn.execute(f"""
+                                SELECT COUNT(DISTINCT team) FROM {table}
+                                WHERE player_id = ? AND team NOT IN ({ph})
+                            """, (pid, *franchise_codes)).fetchone()[0]
+                            if other == 0:
+                                cp = f"{career_total} career {label}"
+                            else:
+                                cp = f"{career_total} career {label} as a {fn}"
                             all_events.append({
                                 "date": d,
                                 "type": f"franchise_record_approach_{col}",
-                                "headline": f"{name} now has {career_total} career {label} as a {fn} member, just {gap} away from {rec_name}'s franchise record of {rec_total}.",
+                                "headline": f"{name} now has {cp}, just {gap} away from {rec_name}'s franchise record of {rec_total}.",
                             })
 
     # Sort all events by date
