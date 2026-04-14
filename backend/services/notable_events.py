@@ -2083,7 +2083,25 @@ def detect_alltime_passing(conn, season, latest_date):
                 })
 
             # --- All-time RECORD approach/break (only #1 spot) ---
-            record_pid, record_name, record_total = all_time[0]
+            # Use verified record totals — our DB starts at 1898, so some
+            # all-time leaders have incomplete data (e.g., Cy Young 511 W
+            # but we only have 295 from 1898+).
+            VERIFIED_RECORDS = {
+                "home_runs":    ("Barry Bonds", 762),
+                "hits":         ("Pete Rose", 4256),
+                "rbi":          ("Hank Aaron", 2297),
+                "stolen_bases": ("Rickey Henderson", 1406),
+                "doubles":      ("Tris Speaker", 792),  # BBRef: 792; our DB has 793
+                "wins":         ("Cy Young", 511),
+                "strikeouts":   ("Nolan Ryan", 5714),
+            }
+            verified = VERIFIED_RECORDS.get(col)
+            if verified:
+                record_name, record_total = verified
+            else:
+                record_name, record_total = all_time[0][1], all_time[0][2]
+            record_pid = all_time[0][0]  # still need pid to avoid self-check
+
             if pid != record_pid and contrib > 0:
                 gap = record_total - career_total
                 prev_gap = record_total - career_before
