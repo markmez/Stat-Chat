@@ -161,14 +161,20 @@ async def simulate_passing(
         for pid, (name, pre) in running.items():
             full_career[pid] = (name, pre)
 
-        for d in dates:
-            if d not in by_date:
-                continue
+        # Walk ALL season dates for accumulation, emit events for filtered range
+        all_season_dates = sorted(by_date.keys())
+        check_dates = set(dates)
+
+        for d in all_season_dates:
             # Update running totals for today's games
             for pid, val in by_date[d]:
                 if pid in running:
                     name, prev = running[pid]
                     running[pid] = (name, prev + val)
+
+            # Only check for passings on requested dates
+            if d not in check_dates:
+                continue
 
             # Build today's all-time ranking
             ranked = sorted(running.items(), key=lambda x: -x[1][1])
