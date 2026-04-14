@@ -87,9 +87,12 @@ async def simulate_passing(
     season: int = 2025,
     start_date: str | None = None,
     end_date: str | None = None,
+    key: str | None = None,
     authorization: str | None = Header(None),
 ):
     """Simulate all-time passing events across a date range."""
+    if key:
+        authorization = f"Bearer {key}"
     verify_admin(authorization)
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = None
