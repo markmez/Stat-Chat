@@ -459,6 +459,31 @@ async def redetect_events(
     }
 
 
+@router.post("/run-metering-sql")
+async def run_metering_sql(
+    sql: str = "",
+    authorization: str | None = Header(None),
+):
+    """Run SQL against metering.db."""
+    verify_admin(authorization)
+    if not sql:
+        raise HTTPException(400, "No SQL provided")
+    from services.metering import METERING_DB_PATH
+    conn = sqlite3.connect(METERING_DB_PATH)
+    try:
+        if sql.strip().upper().startswith("SELECT"):
+            rows = conn.execute(sql).fetchall()
+            return {"rows": [list(r) for r in rows[:100]]}
+        else:
+            cur = conn.execute(sql)
+            conn.commit()
+            return {"status": "ok", "rows_affected": cur.rowcount}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+    finally:
+        conn.close()
+
+
 @router.post("/redownload-db")
 async def redownload_db(
     authorization: str | None = Header(None),
