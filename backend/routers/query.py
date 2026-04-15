@@ -1052,7 +1052,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                   is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None)
         return
 
-    # Haiku SQL fallback — skip for insight queries (need multi-step planner)
+    # Haiku SQL fallback — skip for insight queries (need insight engine)
     if not is_insight:
         haiku_result = await _try_haiku_sql(question)
     else:
@@ -1081,7 +1081,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                   is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None)
         return
 
-    # 4. Sonnet SQL planner — multi-step reasoning for complex queries
+    # 4. Insight engine — multi-step Sonnet reasoning for complex queries
     try:
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
@@ -1091,28 +1091,28 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         loop = asyncio.get_event_loop()
         future = loop.run_in_executor(_executor, plan_and_execute, question)
 
-        # Send heartbeat while planner works (keeps nginx alive)
+        # Send heartbeat while insight engine works (keeps nginx alive)
         while not future.done():
             yield event({"type": "text", "text": ""})
             await asyncio.sleep(2)
 
-        planner_result = future.result()
-        if planner_result:
-            logger.info("query_planner question=%r", question)
-            planner_result = _strip_bold_title(planner_result, original_question)
-            planner_result = _add_pre1898_note(planner_result, original_question)
-            planner_result += "\n\n[AIDISCLAIMER]Stats verified against our database. Analysis is AI-generated.[/AIDISCLAIMER]"
-            yield event({"type": "text", "text": planner_result})
-            done_event = {"type": "done", "planner": True}
+        insight_result = future.result()
+        if insight_result:
+            logger.info("query_insight question=%r", question)
+            insight_result = _strip_bold_title(insight_result, original_question)
+            insight_result = _add_pre1898_note(insight_result, original_question)
+            insight_result += "\n\n[AIDISCLAIMER]Stats verified against our database. Analysis is AI-generated.[/AIDISCLAIMER]"
+            yield event({"type": "text", "text": insight_result})
+            done_event = {"type": "done", "insight": True}
             if rewritten_query:
                 done_event["rewritten_query"] = rewritten_query
             yield event(done_event)
             increment_count(device_id)
-            log_query(question, device_id, "planner",
+            log_query(question, device_id, "sonnet",
                       is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None)
             return
     except Exception as e:
-        logger.warning("sql_planner_error error=%s", e)
+        logger.warning("insight_engine_error error=%s", e)
 
     # 5. Knowledge mode — answer from Claude's baseball knowledge
     # If we got here, nothing else could answer.

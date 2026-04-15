@@ -19,7 +19,7 @@ import requests
 
 from schema_description import SCHEMA_DESCRIPTION
 
-logger = logging.getLogger("statchat.sql_planner")
+logger = logging.getLogger("statchat.insight_engine")
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
@@ -71,12 +71,12 @@ MAX_TOOL_ROUNDS = 8  # prevent runaway query chains
 
 
 def plan_and_execute(question: str) -> str | None:
-    """Run the Sonnet SQL planner on a question.
+    """Run the insight engine on a question.
 
-    Returns the formatted answer text, or None if the planner fails.
+    Returns the formatted answer text, or None on failure.
     """
     if not ANTHROPIC_API_KEY:
-        logger.warning("sql_planner: no API key")
+        logger.warning("insight_engine: no API key")
         return None
 
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -105,7 +105,7 @@ def plan_and_execute(question: str) -> str | None:
             )
 
             if resp.status_code != 200:
-                logger.error("sql_planner: API error %s: %s", resp.status_code, resp.text[:200])
+                logger.error("insight_engine: API error %s: %s", resp.status_code, resp.text[:200])
                 return None
 
             result = resp.json()
@@ -117,7 +117,7 @@ def plan_and_execute(question: str) -> str | None:
                 text_parts = [c["text"] for c in content if c.get("type") == "text"]
                 answer = "\n".join(text_parts).strip()
                 if answer:
-                    logger.info("sql_planner: answered in %d rounds", round_num + 1)
+                    logger.info("insight_engine: answered in %d rounds", round_num + 1)
                     return answer
                 return None
 
@@ -129,7 +129,7 @@ def plan_and_execute(question: str) -> str | None:
                         tool_id = block["id"]
                         sql = block["input"].get("sql", "")
                         purpose = block["input"].get("purpose", "")
-                        logger.info("sql_planner: step %d — %s", round_num + 1, purpose)
+                        logger.info("insight_engine: step %d — %s", round_num + 1, purpose)
 
                         # Safety: only allow SELECT
                         if not sql.strip().upper().startswith("SELECT"):
@@ -165,14 +165,14 @@ def plan_and_execute(question: str) -> str | None:
                 messages.append({"role": "assistant", "content": content})
                 messages.append({"role": "user", "content": tool_results})
             else:
-                logger.warning("sql_planner: unexpected stop_reason=%s", stop_reason)
+                logger.warning("insight_engine: unexpected stop_reason=%s", stop_reason)
                 return None
 
-        logger.warning("sql_planner: hit max rounds (%d)", MAX_TOOL_ROUNDS)
+        logger.warning("insight_engine: hit max rounds (%d)", MAX_TOOL_ROUNDS)
         return None
 
     except Exception as e:
-        logger.error("sql_planner: error %s", e)
+        logger.error("insight_engine: error %s", e)
         return None
     finally:
         conn.close()
