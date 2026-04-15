@@ -422,7 +422,7 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
     achievements.season_awards.sort(key=lambda sa: sa.season)
 
     # Sort items: MLB records first, then all-time ranks, then franchise ranks, then franchise records
-    _type_order = {"mlb_record": 0, "alltime_rank": 1, "franchise_rank": 2, "franchise_record": 3}
+    _type_order = {"mlb_record": 0, "alltime_rank": 1, "franchise_record": 2, "franchise_rank": 3}
     achievements.items.sort(key=lambda item: _type_order.get(item.type, 9))
 
     return achievements
