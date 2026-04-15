@@ -1490,10 +1490,7 @@ async def player_card(
         ).fetchone()
         achievements = None
         if pid_row:
-            try:
-                achievements = _build_achievements(conn, pid_row[0], name, pitcher and not two_way)
-            except Exception:
-                pass
+            achievements = _build_achievements(conn, pid_row[0], name, pitcher and not two_way)
 
         return PlayerCardResponse(
             player_info=info,
