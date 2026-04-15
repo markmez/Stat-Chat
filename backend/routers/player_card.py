@@ -238,21 +238,15 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
         award_years.setdefault(row[0], []).append(row[1])
 
     # Display order for summary
-    # MVP/CY/ROY/WS_MVP: list each year individually
-    # ALL_STAR/GG/SS: count + year list in parens
-    _individual_awards = {"MVP", "CY", "ROY", "WS_MVP", "ALCS_MVP", "NLCS_MVP", "HOF"}
+    # All awards grouped with year lists. HOF is standalone (no year list).
     _summary_order = ["HOF", "MVP", "CY", "ROY", "WS_MVP", "ALL_STAR", "GG", "SS"]
     for award_code in _summary_order:
         years = award_years.get(award_code, [])
         if not years:
             continue
         label = _AWARD_DISPLAY.get(award_code, award_code)
-        if award_code in _individual_awards:
-            for yr in years:
-                if award_code == "HOF":
-                    achievements.awards_summary.append(f"{label}")
-                else:
-                    achievements.awards_summary.append(f"{yr} {label}")
+        if award_code == "HOF":
+            achievements.awards_summary.append(label)
         else:
             year_strs = ", ".join(f"'{str(y)[2:]}" for y in years)
             if len(years) > 1:
