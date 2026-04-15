@@ -398,13 +398,10 @@ def _lookup_last_threshold_year(name: str, stat: StatInfo, threshold: float) -> 
 # ---------------------------------------------------------------------------
 
 def _sort_by_prominence(names: list[str]) -> tuple[list[str], Optional[int]]:
-    """Sort player names by prominence. Returns (sorted_names, dominant_index).
+    """Sort player names by pre-computed prominence_score from players table.
 
-    Prominence score weights starters and closers over middle relievers:
-    - Batting games count as-is
-    - Pitching game starts × 5 (starters are more prominent)
-    - Saves × 3 (closers are more prominent than middle relievers)
-    - Remaining pitching appearances × 1
+    Returns (sorted_names, dominant_index).
+    Score is computed by the pipeline: career_games + pitching_weight + awards * 500.
     """
     if len(names) <= 1:
         return (names, 0 if names else None)
@@ -417,50 +414,15 @@ def _sort_by_prominence(names: list[str]) -> tuple[list[str], Optional[int]]:
         cur = conn.cursor()
         for name in names:
             sanitized = name.replace("'", "''")
-            last_season = 0
-            score = 0
-            # Batting contribution
             cur.execute(f"""
-                SELECT COALESCE(MAX(s.season), 0), COALESCE(SUM(s.games), 0)
-                FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id
-                WHERE p.name = '{sanitized}'
+                SELECT COALESCE(last_season, 0), COALESCE(prominence_score, 0)
+                FROM players WHERE name = '{sanitized}'
             """)
             row = cur.fetchone()
             if row:
-                last_season = max(last_season, int(row[0]))
-                score += int(row[1])
-            # Pitching contribution — weight starts and saves
-            cur.execute(f"""
-                SELECT COALESCE(MAX(sp.season), 0),
-                       COALESCE(SUM(sp.games), 0),
-                       COALESCE(SUM(sp.games_started), 0),
-                       COALESCE(SUM(sp.saves), 0)
-                FROM season_pitching_stats sp JOIN players p ON sp.player_id = p.player_id
-                WHERE p.name = '{sanitized}'
-            """)
-            row = cur.fetchone()
-            if row:
-                last_season = max(last_season, int(row[0]))
-                p_games = int(row[1])
-                p_starts = int(row[2])
-                p_saves = int(row[3])
-                # Starts × 5, saves × 3, remaining appearances × 1
-                relief_appearances = max(0, p_games - p_starts)
-                score += p_starts * 5 + p_saves * 3 + relief_appearances
-            # Awards boost — All-Stars, MVPs, etc. are more prominent
-            try:
-                cur.execute(f"""
-                    SELECT COUNT(*) FROM awards a
-                    JOIN players p ON a.player_id = p.player_id
-                    WHERE p.name = '{sanitized}'
-                    AND a.award IN ('ALL_STAR', 'MVP', 'CY', 'ROY', 'HOF', 'SS', 'GG',
-                                    'WS_MVP', 'ALCS_MVP', 'NLCS_MVP')
-                """)
-                award_count = cur.fetchone()[0]
-                score += award_count * 200  # Each award is worth ~200 games of prominence
-            except Exception:
-                pass
-            infos.append((name, last_season, score))
+                infos.append((name, int(row[0]), int(row[1])))
+            else:
+                infos.append((name, 0, 0))
         conn.close()
     except Exception:
         return (names, None)

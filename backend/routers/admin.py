@@ -472,6 +472,19 @@ async def rebuild_records(authorization: str | None = Header(None)):
     return {"status": "ok", "stdout": result.stdout, "stderr": result.stderr}
 
 
+@router.post("/rebuild-prominence")
+async def rebuild_prominence(authorization: str | None = Header(None)):
+    """Recompute prominence_score for all players."""
+    verify_admin(authorization)
+    import subprocess
+    result = subprocess.run(
+        ["python3", "data_pipeline/compute_prominence.py", DB_PATH],
+        capture_output=True, text=True, timeout=120,
+        cwd=os.path.dirname(os.path.dirname(__file__))
+    )
+    return {"status": "ok", "stdout": result.stdout, "stderr": result.stderr}
+
+
 @router.post("/run-metering-sql")
 async def run_metering_sql(
     sql: str = "",
