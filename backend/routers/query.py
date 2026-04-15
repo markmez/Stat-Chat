@@ -297,9 +297,15 @@ def _format_haiku_result(result_text: str, question: str = "") -> str:
     # Find the name column (case-insensitive, multiple aliases)
     name_col = None
     for c in columns:
-        if c.lower() in ("name", "player_name", "player"):
+        if c.lower() in ("name", "player_name", "player", "p.name", "player_name_team"):
             name_col = c
             break
+    # Fallback: if first column contains player-like values (has spaces, no digits), treat as name
+    if not name_col and data_rows:
+        first_col = columns[0]
+        sample = str(data_rows[0].get(first_col, ""))
+        if " " in sample and not sample.replace(" ", "").replace("(", "").replace(")", "").isdigit():
+            name_col = first_col
     has_name = name_col is not None
     # Normalize name column to "name" for downstream processing
     if has_name and name_col != "name":
@@ -363,6 +369,13 @@ def _format_haiku_result(result_text: str, question: str = "") -> str:
             label_cols.add(c)
 
     stat_cols = [c for c in columns if c not in label_cols]
+
+    # Ensure "season"/"year" comes AFTER the primary stat, not before
+    # Haiku sometimes puts season first in the SELECT which makes it look like the sort column
+    season_cols = [c for c in stat_cols if c.lower() in ("season", "year")]
+    non_season = [c for c in stat_cols if c.lower() not in ("season", "year")]
+    if season_cols and non_season:
+        stat_cols = non_season[:1] + season_cols + non_season[1:]
 
     # Strip columns where every row has the same value (no information)
     if multi_row and len(data_rows) > 1:
