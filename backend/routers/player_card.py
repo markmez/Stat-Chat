@@ -295,12 +295,12 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
         if rank <= top_n:
             if rank == 1:
                 achievements.items.append(AchievementItem(
-                    text=f"All-time MLB leader in {label} ({career_total:,})",
+                    text=f"All-time MLB leader in {label}: {career_total:,}",
                     type="mlb_record",
                 ))
             else:
                 achievements.items.append(AchievementItem(
-                    text=f"{_ordinal(rank)} all-time in {label} ({career_total:,})",
+                    text=f"{_ordinal(rank)} all-time in {label}: {career_total:,}",
                     type="alltime_rank",
                 ))
 
@@ -333,7 +333,7 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
 
             if fran_rank <= 5:
                 achievements.items.append(AchievementItem(
-                    text=f"{_ordinal(fran_rank)} in {franchise_name} history in {label} ({ft:,})",
+                    text=f"{_ordinal(fran_rank)} in {franchise_name} history in {label}: {ft:,}",
                     type="franchise_rank",
                 ))
 
