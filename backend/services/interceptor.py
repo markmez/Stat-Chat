@@ -119,17 +119,28 @@ def try_intercept(question: str):
     tonight = nm.parse_tonight_preview(trimmed)
     if tonight:
         try:
-            from services.daily_games import get_player_team, get_opponent_starter, has_game_today
+            from services.daily_games import get_player_team, get_opponent_starter, get_todays_games, has_game_today
             player_name = tonight["name"]
             team = get_player_team(player_name)
             if team:
                 result = get_opponent_starter(team)
                 if result:
-                    pitcher_name, _ = result
+                    pitcher_name, opp_team = result
                     # Match pitcher name against our DB
                     matched_pitcher = nm.match_player(pitcher_name)
                     if matched_pitcher:
-                        response = rb.build_matchup(player_name, matched_pitcher)
+                        # Build game context (e.g., "Yankees at Red Sox")
+                        from services.notable_events import RETRO_TO_DISPLAY
+                        game_ctx = None
+                        games = get_todays_games()
+                        for g in games:
+                            if g["away"] == team:
+                                game_ctx = f"{RETRO_TO_DISPLAY.get(team, team)} at {RETRO_TO_DISPLAY.get(opp_team, opp_team)}"
+                                break
+                            elif g["home"] == team:
+                                game_ctx = f"{RETRO_TO_DISPLAY.get(opp_team, opp_team)} at {RETRO_TO_DISPLAY.get(team, team)}"
+                                break
+                        response = rb.build_matchup(player_name, matched_pitcher, game_context=game_ctx)
                         if response:
                             return response
                     else:

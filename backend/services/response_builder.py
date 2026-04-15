@@ -4642,7 +4642,8 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
 # ===================================================================
 
 def build_matchup(batter_name: str, pitcher_name: str,
-                  season: Optional[int] = None) -> Optional[str]:
+                  season: Optional[int] = None,
+                  game_context: Optional[str] = None) -> Optional[str]:
     """Matchup preview: batter vs pitcher with pitch-mix-weighted projection."""
     conn = _get_db()
     try:
@@ -4839,7 +4840,10 @@ def build_matchup(batter_name: str, pitcher_name: str,
             return None  # No useful data
 
         parts = []
-        parts.append(f"**{batter_display} vs. {pitcher_display}**")
+        title = f"**{batter_display} vs. {pitcher_display}**"
+        if game_context:
+            title += f" · {game_context}"
+        parts.append(title)
 
         # --- Blended projection (43% pitch mix, 43% platoon, 14% current form) ---
         # Compute blend from whichever components are available, reweighting if missing
