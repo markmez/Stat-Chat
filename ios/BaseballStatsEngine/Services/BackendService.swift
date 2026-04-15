@@ -185,6 +185,22 @@ final class BackendService: Sendable {
         let loss: Bool?
     }
 
+    struct AchievementItemData: Decodable, Sendable {
+        let text: String
+        let type: String
+    }
+
+    struct SeasonAwardData: Decodable, Sendable {
+        let season: Int
+        let awards: [String]
+    }
+
+    struct AchievementsData: Decodable, Sendable {
+        let awards_summary: [String]?
+        let items: [AchievementItemData]?
+        let season_awards: [SeasonAwardData]?
+    }
+
     struct PlayerCardData: Decodable, Sendable {
         let player_info: PlayerInfoData?
         let batting_seasons: [BattingSeasonData]
@@ -201,6 +217,7 @@ final class BackendService: Sendable {
         let pitching_current_form: PitchingCurrentFormData?
         let game_logs: [GameLogEntryData]?
         let pitching_game_logs: [PitchingGameLogEntryData]?
+        let achievements: AchievementsData?
     }
 
     struct PlayerInfoData: Decodable, Sendable {

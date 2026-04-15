@@ -358,7 +358,14 @@ struct HomeView: View {
                         ForEach(appState.searchHistory, id: \.self) { query in
                             HStack(spacing: 0) {
                                 Button {
-                                    path.append(ResultsDestination(question: query))
+                                    switch PlayerNameMatcher.resolveSearch(query, history: nil) {
+                                    case .player(let name, let alts):
+                                        path.append(PlayerCardDestination(name: name, alternatives: alts, source: "history"))
+                                    case .team(let code):
+                                        path.append(TeamCardDestination(code: code))
+                                    case .question(let q):
+                                        path.append(ResultsDestination(question: q))
+                                    }
                                 } label: {
                                     HStack(spacing: 10) {
                                         Image(systemName: "magnifyingglass")

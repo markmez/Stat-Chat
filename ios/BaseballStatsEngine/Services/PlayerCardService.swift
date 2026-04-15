@@ -82,6 +82,22 @@ struct SeasonData: Sendable {
     let currentForm: CurrentFormData?
 }
 
+struct AchievementItem: Sendable {
+    let text: String  // "4th in Yankees HR history (372)"
+    let type: String  // "award", "alltime_rank", "franchise_rank"
+}
+
+struct SeasonAward: Sendable {
+    let season: Int
+    let awards: [String]  // ["MVP", "All-Star", "Silver Slugger"]
+}
+
+struct PlayerAchievements: Sendable {
+    let awardsSummary: [String]  // ["3x MVP", "7x All-Star", "ROY"]
+    let items: [AchievementItem]  // ranking items
+    let seasonAwards: [SeasonAward]  // per-year for career display
+}
+
 struct PlayerCard: Sendable {
     let name: String
     let team: String
@@ -106,6 +122,7 @@ struct PlayerCard: Sendable {
     let pitchingCareerHomeAwaySplits: StatGridParser.StatGrid?
     let gameLogs: [GameLogDisplay]
     let pitchingGameLogs: [PitchingGameLogDisplay]
+    let achievements: PlayerAchievements?
 }
 
 struct GameLogDisplay: Sendable, Identifiable {
@@ -524,7 +541,8 @@ enum PlayerCardService {
             pitchingCareerPlatoonSplits: pitchingCareerPlatoon,
             pitchingCareerHomeAwaySplits: pitchingCareerHomeAway,
             gameLogs: [],
-            pitchingGameLogs: []
+            pitchingGameLogs: [],
+            achievements: nil
         )
     }
 
@@ -731,6 +749,16 @@ enum PlayerCardService {
             return PitchingGameLogDisplay(date: g.date, opponent: g.opponent ?? "", line: parts.joined(separator: ", ") + result)
         }
 
+        // Parse achievements
+        var achievements: PlayerAchievements? = nil
+        if let ach = data.achievements {
+            achievements = PlayerAchievements(
+                awardsSummary: ach.awards_summary ?? [],
+                items: (ach.items ?? []).map { AchievementItem(text: $0.text, type: $0.type) },
+                seasonAwards: (ach.season_awards ?? []).map { SeasonAward(season: $0.season, awards: $0.awards) }
+            )
+        }
+
         return PlayerCard(
             name: displayName,
             team: headerTeam,
@@ -754,7 +782,8 @@ enum PlayerCardService {
             pitchingCareerPlatoonSplits: pitchingCareerPlatoon,
             pitchingCareerHomeAwaySplits: pitchingCareerHomeAway,
             gameLogs: gameLogs,
-            pitchingGameLogs: pitchingGameLogs
+            pitchingGameLogs: pitchingGameLogs,
+            achievements: achievements
         )
     }
 

@@ -5,8 +5,9 @@ struct LoadingIndicator: View {
     @State private var baseball2Opacity: Double = 0.0
     @State private var baseball3Opacity: Double = 0.0
     @State private var showPhrase = false
-    @State private var currentPhraseIndex = 0
+    @State private var currentPhrase = ""
     @State private var phraseOpacity: Double = 0
+    @State private var remainingPhrases: [String] = []
 
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
@@ -24,7 +25,9 @@ struct LoadingIndicator: View {
         "Adjusting my pitch-com...",
         "Writing out the lineup card...",
         "Spitting some sunflower seeds...",
-        "Chalking the batter's box...",
+        "Arguing the call...",
+        "Dusting off home plate...",
+        "Putting on my oven mitts...",
         "Sacrificing...",
     ]
 
@@ -76,9 +79,9 @@ struct LoadingIndicator: View {
 
         // Baseball phrases — appear after 3s, rotate every 3s
         if showPhrase {
-            Text(Self.phrases[currentPhraseIndex % Self.phrases.count])
-                .font(.system(.caption, design: .rounded))
-                .foregroundStyle(.secondary)
+            Text(currentPhrase)
+                .font(.system(.subheadline, design: .rounded, weight: .medium))
+                .foregroundStyle(.primary)
                 .opacity(phraseOpacity)
                 .transition(.opacity)
         }
@@ -98,18 +101,24 @@ struct LoadingIndicator: View {
             // Show first phrase after 3s
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
-            currentPhraseIndex = Int.random(in: 0..<Self.phrases.count)
+
+            // Shuffle deck — draw without replacement, refill when empty
+            remainingPhrases = Self.phrases.shuffled()
+            currentPhrase = remainingPhrases.removeFirst()
             showPhrase = true
             withAnimation(.easeIn(duration: 0.4)) { phraseOpacity = 1 }
 
-            // Rotate phrases every 3s
+            // Rotate phrases every 3.4s
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(3))
+                try? await Task.sleep(for: .seconds(3.4))
                 guard !Task.isCancelled else { break }
                 withAnimation(.easeOut(duration: 0.3)) { phraseOpacity = 0 }
                 try? await Task.sleep(for: .milliseconds(300))
                 guard !Task.isCancelled else { break }
-                currentPhraseIndex = (currentPhraseIndex + 1) % Self.phrases.count
+                if remainingPhrases.isEmpty {
+                    remainingPhrases = Self.phrases.shuffled()
+                }
+                currentPhrase = remainingPhrases.removeFirst()
                 withAnimation(.easeIn(duration: 0.3)) { phraseOpacity = 1 }
             }
         }

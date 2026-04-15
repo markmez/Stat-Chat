@@ -497,6 +497,9 @@ struct PlayerCardView: View {
             // Career totals + 162-game pace
             careerWithPaceSection(card: card)
 
+            // Achievements
+            achievementsSection(card: card)
+
             // Career splits
             careerSplitsSection(card: card)
 
@@ -506,6 +509,9 @@ struct PlayerCardView: View {
         } else {
             // Historical player: career + pace, all seasons chronological
             careerWithPaceSection(card: card)
+
+            // Achievements
+            achievementsSection(card: card)
 
             careerSplitsSection(card: card)
 
@@ -552,6 +558,7 @@ struct PlayerCardView: View {
                                         .foregroundStyle(.secondary)
                                         .padding(.horizontal, 20)
                                 }
+                                seasonAwardBadges(year: season.year, achievements: card.achievements)
 
                                 StatGridView(grid: season.stats)
                                     .padding(.horizontal, 6)
@@ -700,6 +707,7 @@ struct PlayerCardView: View {
                                         .foregroundStyle(.secondary)
                                         .padding(.horizontal, 20)
                                 }
+                                seasonAwardBadges(year: season.year, achievements: card.achievements)
 
                                 StatGridView(grid: season.stats)
                                     .padding(.horizontal, 6)
@@ -1947,6 +1955,107 @@ struct PlayerCardView: View {
     }
 
     // MARK: - Career + 162-Game Pace (combined container)
+
+    @ViewBuilder
+    private func seasonHeaderLabel(year: Int, isExpanded: Bool, achievements: PlayerAchievements?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("\(String(year)) Season")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            seasonAwardBadges(year: year, achievements: achievements)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private func seasonAwardBadges(year: Int, achievements: PlayerAchievements?) -> some View {
+        if let ach = achievements,
+           let sa = ach.seasonAwards.first(where: { $0.season == year }),
+           !sa.awards.isEmpty {
+            HStack(spacing: 6) {
+                ForEach(sa.awards, id: \.self) { award in
+                    HStack(spacing: 5) {
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(LinearGradient(
+                                colors: [lightBlue, deepBlue],
+                                startPoint: .top, endPoint: .bottom
+                            ))
+                            .frame(width: 2.5, height: 12)
+                        Text(award)
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+
+    @ViewBuilder
+    private func achievementsSection(card: PlayerCard) -> some View {
+        if let ach = card.achievements,
+           (!ach.awardsSummary.isEmpty || !ach.items.isEmpty) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Achievements")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 20)
+
+                achievementsPillsView(awards: ach.awardsSummary)
+                achievementsRankingsView(items: ach.items)
+            }
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+        }
+    }
+
+    @ViewBuilder
+    private func achievementsPillsView(awards: [String]) -> some View {
+        if !awards.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(awards, id: \.self) { award in
+                    HStack(alignment: .top, spacing: 8) {
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(LinearGradient(
+                                colors: [lightBlue, deepBlue],
+                                startPoint: .top, endPoint: .bottom
+                            ))
+                            .frame(width: 3, height: 16)
+                        Text(award)
+                            .font(.system(.subheadline, design: .rounded, weight: .medium))
+                            .foregroundStyle(.primary)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+
+    @ViewBuilder
+    private func achievementsRankingsView(items: [AchievementItem]) -> some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "chart.bar")
+                            .font(.system(size: 11))
+                            .foregroundStyle(deepBlue.opacity(0.6))
+                            .frame(width: 16)
+                        Text(item.text)
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+    }
 
     @ViewBuilder
     private func careerWithPaceSection(card: PlayerCard) -> some View {
