@@ -439,22 +439,16 @@ def _resolve_player_name(conn: sqlite3.Connection, name: str) -> str:
     """Resolve ambiguous names to the most prominent player (most career games).
     Returns the resolved full name, or the original name if no match."""
     safe = _sanitize(name)
-    # Exact match — check if unique
-    rows = conn.execute(
-        "SELECT name FROM players WHERE name = ?", (safe,)
-    ).fetchall()
-    if len(rows) == 1:
-        return rows[0][0]
-    # Multiple exact matches or no exact match — try last name with prominence
-    # Find by last name, rank by career games
-    best = conn.execute(
+    # Check for exact full-name match AND last-name matches, pick most prominent
+    # "Harper" should resolve to "Bryce Harper" (2000+ games) not "Harper" (1 game)
+    candidates = conn.execute(
         "SELECT p.name, COALESCE(p.career_games, 0) as cg FROM players p "
-        "WHERE p.name LIKE ? OR p.name = ? "
+        "WHERE p.name = ? OR p.name LIKE ? "
         "ORDER BY cg DESC LIMIT 1",
-        (f"% {safe}", safe),
+        (safe, f"% {safe}"),
     ).fetchone()
-    if best:
-        return best[0]
+    if candidates:
+        return candidates[0]
     return name
 
 
