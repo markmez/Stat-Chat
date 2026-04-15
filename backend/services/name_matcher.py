@@ -447,6 +447,19 @@ def _sort_by_prominence(names: list[str]) -> tuple[list[str], Optional[int]]:
                 # Starts × 5, saves × 3, remaining appearances × 1
                 relief_appearances = max(0, p_games - p_starts)
                 score += p_starts * 5 + p_saves * 3 + relief_appearances
+            # Awards boost — All-Stars, MVPs, etc. are more prominent
+            try:
+                cur.execute(f"""
+                    SELECT COUNT(*) FROM awards a
+                    JOIN players p ON a.player_id = p.player_id
+                    WHERE p.name = '{sanitized}'
+                    AND a.award IN ('ALL_STAR', 'MVP', 'CY', 'ROY', 'HOF', 'SS', 'GG',
+                                    'WS_MVP', 'ALCS_MVP', 'NLCS_MVP')
+                """)
+                award_count = cur.fetchone()[0]
+                score += award_count * 200  # Each award is worth ~200 games of prominence
+            except Exception:
+                pass
             infos.append((name, last_season, score))
         conn.close()
     except Exception:
