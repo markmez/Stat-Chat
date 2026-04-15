@@ -1012,7 +1012,16 @@ def decompose(question: str) -> QueryPlan:
     # Stats that default to pitching when no batting/pitching context is explicit
     _PITCHING_DEFAULT_STATS = {"strikeouts", "walks"}
     _AMBIGUOUS_STATS = {"strikeouts", "walks"}
-    has_batting_context = any(w in lower for w in ["hitter", "hitters", "batter", "batters", "batting", "hitting"])
+    _BATTING_ONLY_STATS = {"home_runs", "rbi", "stolen_bases", "doubles", "triples",
+                           "batting_avg", "obp", "slg", "ops", "ops_plus", "iso", "babip"}
+    has_batting_context = any(w in lower for w in ["hitter", "hitters", "batter", "batters", "batting", "hitting", "players"])
+    # Extra filters containing batting-only stats imply batting context
+    # e.g., "fewest strikeouts with 30+ HR" — HR is batting-only, so K must be batting too
+    if not has_batting_context and plan.extra_filters:
+        has_batting_context = any(
+            ef.get("stat") and ef["stat"].db_column in _BATTING_ONLY_STATS
+            for ef in plan.extra_filters
+        )
     has_pitching_context = plan.is_pitching
     if (not plan.is_pitching and not has_batting_context
             and plan.stat and plan.stat.db_column in _PITCHING_DEFAULT_STATS):
@@ -1720,20 +1729,28 @@ def _empty_result_pills(plan: QueryPlan) -> str:
 def _ambiguous_suggest(plan: QueryPlan) -> str:
     """Generate alternate interpretation for ambiguous batting/pitching stats.
     Truly ambiguous (SO, BB): DIDYOUMEAN before results.
-    Less ambiguous (H, HR, etc.): SUGGEST pill after results."""
+    Less ambiguous (H, HR, etc.): SUGGEST pill after results.
+
+    Reconstructs the user's original query with the opposite context
+    instead of a generic "SO leaders (hitters)" label.
+    """
     if not plan.ambiguous_stat or not plan.stat:
         return ""
-    abbrev = plan.stat.display_abbrev
     col = plan.stat.db_column
-    # Truly ambiguous — equally valid as batting or pitching
     truly_ambiguous = col in ("strikeouts", "walks")
+
+    # Reconstruct the query with the opposite interpretation
+    oq = plan.original_question.strip()
     if plan.is_pitching:
-        alt = f"{abbrev} leaders (hitters)"
+        # Currently pitching → suggest batting version
+        # Insert "by a hitter" or "by hitters" into the query
+        alt = f"{oq} (hitters)"
     else:
-        alt = f"{abbrev} leaders (pitchers)"
+        # Currently batting → suggest pitching version
+        alt = f"{oq} (pitchers)"
 
     if truly_ambiguous:
-        return f"__DIDYOUMEAN__{alt}"  # Marker — execute() will position before results
+        return f"__DIDYOUMEAN__{alt}"
     else:
         return f"\n[SUGGEST]{alt}[/SUGGEST]"
 
