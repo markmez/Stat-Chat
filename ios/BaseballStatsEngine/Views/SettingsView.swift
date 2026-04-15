@@ -65,6 +65,24 @@ struct SettingsView: View {
                                 .font(.system(.caption, design: .rounded))
                                 .foregroundStyle(.secondary)
                         }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Lahman Baseball Database")
+                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(.primary)
+                            Text("Awards and honors data from the Lahman Baseball Database, available under the Creative Commons Attribution-ShareAlike 3.0 license.")
+                                .font(.system(.caption, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Wikipedia")
+                                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(.primary)
+                            Text("Player biographies sourced from Wikipedia, available under the Creative Commons Attribution-ShareAlike 3.0 license.")
+                                .font(.system(.caption, design: .rounded))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
 

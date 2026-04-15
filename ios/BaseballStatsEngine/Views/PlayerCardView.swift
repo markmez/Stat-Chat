@@ -242,6 +242,17 @@ struct PlayerCardView: View {
                                             .font(.system(.body, design: .rounded))
                                             .foregroundStyle(.primary.opacity(0.85))
                                             .lineSpacing(3)
+                                        if let wikiURL = URL(string: "https://en.wikipedia.org/wiki/\(card.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? card.name)") {
+                                            Link(destination: wikiURL) {
+                                                HStack(spacing: 3) {
+                                                    Text("Source: Wikipedia")
+                                                    Image(systemName: "arrow.up.right.square")
+                                                        .font(.system(size: 9))
+                                                }
+                                                .font(.system(.caption2, design: .rounded))
+                                                .foregroundStyle(deepBlue.opacity(0.5))
+                                            }
+                                        }
                                     }
                                 }
                                 .padding(.horizontal, 20)
@@ -1978,9 +1989,9 @@ struct PlayerCardView: View {
         if let ach = achievements,
            let sa = ach.seasonAwards.first(where: { $0.season == year }),
            !sa.awards.isEmpty {
-            HStack(spacing: 6) {
+            FlowLayout(spacing: 6) {
                 ForEach(sa.awards, id: \.self) { award in
-                    HStack(spacing: 5) {
+                    HStack(spacing: 4) {
                         RoundedRectangle(cornerRadius: 1.5)
                             .fill(LinearGradient(
                                 colors: [lightBlue, deepBlue],
@@ -2007,53 +2018,41 @@ struct PlayerCardView: View {
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 20)
 
-                achievementsPillsView(awards: ach.awardsSummary)
-                achievementsRankingsView(items: ach.items)
+                VStack(alignment: .leading, spacing: 3) {
+                    // Awards
+                    ForEach(ach.awardsSummary, id: \.self) { award in
+                        achievementRow(text: award, showIcon: false)
+                    }
+                    // Records & rankings
+                    ForEach(Array(ach.items.enumerated()), id: \.offset) { _, item in
+                        achievementRow(text: item.text, showIcon: true)
+                    }
+                }
+                .padding(.horizontal, 20)
             }
             .padding(.top, 8)
             .padding(.bottom, 4)
         }
     }
 
-    @ViewBuilder
-    private func achievementsPillsView(awards: [String]) -> some View {
-        if !awards.isEmpty {
-            VStack(alignment: .leading, spacing: 3) {
-                ForEach(awards, id: \.self) { award in
-                    HStack(alignment: .top, spacing: 8) {
-                        RoundedRectangle(cornerRadius: 1.5)
-                            .fill(LinearGradient(
-                                colors: [lightBlue, deepBlue],
-                                startPoint: .top, endPoint: .bottom
-                            ))
-                            .frame(width: 3, height: 16)
-                        Text(award)
-                            .font(.system(.subheadline, design: .rounded, weight: .medium))
-                            .foregroundStyle(.primary)
-                    }
-                }
+    private func achievementRow(text: String, showIcon: Bool) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            if showIcon {
+                Image(systemName: "chart.bar")
+                    .font(.system(size: 12))
+                    .foregroundStyle(deepBlue.opacity(0.6))
+                    .frame(width: 14, height: 16)
+            } else {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(LinearGradient(
+                        colors: [lightBlue, deepBlue],
+                        startPoint: .top, endPoint: .bottom
+                    ))
+                    .frame(width: 3, height: 16)
             }
-            .padding(.horizontal, 20)
-        }
-    }
-
-    @ViewBuilder
-    private func achievementsRankingsView(items: [AchievementItem]) -> some View {
-        if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    HStack(alignment: .top, spacing: 6) {
-                        Image(systemName: "chart.bar")
-                            .font(.system(size: 11))
-                            .foregroundStyle(deepBlue.opacity(0.6))
-                            .frame(width: 16)
-                        Text(item.text)
-                            .font(.system(.caption, design: .rounded))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .padding(.horizontal, 20)
+            Text(text)
+                .font(.system(.subheadline, design: .rounded, weight: .medium))
+                .foregroundStyle(.primary)
         }
     }
 

@@ -189,13 +189,6 @@
       "inSeasonText": "Alvarez slash line this season"
     },
     {
-      "id": "d34",
-      "text": "Harper cold streaks last season",
-      "weight": 0.8,
-      "inSeasonText": "Harper cold streaks this season",
-      "seasonFilter": "afterApril12"
-    },
-    {
       "id": "d35",
       "text": "Corey Seager's stats last season",
       "weight": 0.8,

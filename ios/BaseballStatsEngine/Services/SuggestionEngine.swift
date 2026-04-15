@@ -156,7 +156,6 @@ final class SuggestionEngine {
         "d83",  // LHH with 30+ HR last year
         "d61",  // Longest hitting streak this season
         "d50",  // Jose Ramirez home vs away this season
-        "d34",  // Harper cold streaks this season
         "d20",  // Doubles leaders this season
         "d56",  // Highest OPS with under 50 K
         "d63",  // Julio Rodriguez
