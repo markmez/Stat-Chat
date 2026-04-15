@@ -6,7 +6,7 @@ that knows the full database schema and can handle any combination of
 stat + filters + scope + grouping.
 
 Claude (Haiku/Sonnet) is the fallback for questions requiring knowledge
-OUTSIDE the database (awards, game events, historical context).
+OUTSIDE the database (game events, historical context).
 """
 
 import logging
@@ -370,6 +370,8 @@ class QueryPlan:
         """A plan is valid if we have a stat, no unexplained words, and it's a type we handle."""
         if self.query_type in ("definition", "multi_threshold"):
             return False  # Handled by specialized parsers
+        if self.query_type == "award_lookup":
+            return self.award_filter is not None
         if self.query_type == "streak_sequence":
             return len(self.streak_conditions) > 0 and len(self.unexplained_words) == 0
         if self.query_type == "year_comparison":
@@ -572,6 +574,45 @@ def decompose(question: str) -> QueryPlan:
         if not has_leaderboard:
             plan.query_type = "definition"
             return plan  # Let the old stat definition parser handle it
+
+    # --- Pure award lookup ---
+    # "who won MVP last year", "2024 Cy Young winner", "all-star selections for Judge"
+    _AWARD_LOOKUP_PATTERNS = {
+        "mvp": "MVP", "cy young": "CY", "rookie of the year": "ROY", "roy": "ROY",
+        "all-star": "ALL_STAR", "all star": "ALL_STAR", "allstar": "ALL_STAR",
+        "gold glove": "GG", "silver slugger": "SS",
+        "hall of fame": "HOF", "hof": "HOF",
+    }
+    # Only match if query is ABOUT the award itself, not using award as a filter on stats
+    # e.g., "who won MVP" = award lookup; "most HR by an MVP" = stat leaderboard with award filter
+    _has_stat_keyword = bool(re.search(
+        r'\b(?:home runs?|hr|rbi|hits?|avg|ops|obp|slg|era|whip|strikeouts?|stolen bases?|wins?|saves?|innings)\b',
+        lower))
+    if not _has_stat_keyword:
+        for award_text, award_code in sorted(_AWARD_LOOKUP_PATTERNS.items(), key=lambda x: -len(x[0])):
+            if award_text in lower:
+                plan.query_type = "award_lookup"
+                plan.award_filter = award_code
+                # Extract season
+                year_match = re.search(r'\b(1[89]\d{2}|20[0-3]\d)\b', lower)
+                if year_match:
+                    plan.season = int(year_match.group(1))
+                elif "last year" in lower or "last season" in lower:
+                    plan.season = _current_year() - 1
+                elif "this year" in lower or "this season" in lower:
+                    plan.season = _current_year()
+                # Extract league
+                if re.search(r'\bal\b', lower):
+                    plan.league = "AL"
+                elif re.search(r'\bnl\b', lower):
+                    plan.league = "NL"
+                # Extract player name for "how many X does Judge have"
+                from services import name_matcher as _nm
+                player = _nm.find_player_in_text(lower)
+                if player:
+                    plan.player_name = player
+                plan.is_valid = True
+                return plan
 
     # --- Multi-stat detection ---
     # Split on separators and parse each segment for stat+threshold.
@@ -1705,6 +1746,13 @@ def execute(plan: QueryPlan) -> Optional[str]:
     conn = _get_db()
     try:
         result = None
+        if plan.query_type == "award_lookup":
+            result = _execute_award_lookup(conn, plan)
+            if result:
+                conn.close()
+                return result
+            conn.close()
+            return None
         if plan.query_type == "year_comparison":
             result = _execute_year_comparison(conn, plan)
         elif plan.query_type == "streak_sequence":
@@ -1961,6 +2009,96 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
 # ---------------------------------------------------------------------------
 # Executors — one per query type
 # ---------------------------------------------------------------------------
+
+def _execute_award_lookup(conn, plan: QueryPlan) -> Optional[str]:
+    """Pure award query — 'who won MVP last year', 'Judge All-Star selections'."""
+    award_code = plan.award_filter
+    _AWARD_DISPLAY = {
+        "MVP": "MVP", "CY": "Cy Young", "ROY": "Rookie of the Year",
+        "ALL_STAR": "All-Star", "GG": "Gold Glove", "SS": "Silver Slugger",
+        "HOF": "Hall of Fame", "WS_MVP": "World Series MVP",
+        "ALCS_MVP": "ALCS MVP", "NLCS_MVP": "NLCS MVP",
+    }
+    display = _AWARD_DISPLAY.get(award_code, award_code)
+    cur = conn.cursor()
+
+    # Player-specific: "how many All-Star selections does Judge have"
+    if plan.player_name:
+        sanitized = plan.player_name.replace("'", "''")
+        cur.execute("""
+            SELECT a.season, a.league FROM awards a
+            JOIN players p ON a.player_id = p.player_id
+            WHERE p.name = ? AND a.award = ?
+            ORDER BY a.season
+        """, (plan.player_name, award_code))
+        rows = cur.fetchall()
+        if not rows:
+            return f"{plan.player_name} has no {display} awards on record."
+        if len(rows) == 1:
+            league_str = f" ({rows[0][1]})" if rows[0][1] else ""
+            return f"{plan.player_name} won the {display}{league_str} in {rows[0][0]}."
+        years = [str(r[0]) for r in rows]
+        return f"{plan.player_name} has {len(rows)} {display} selections: {', '.join(years)}."
+
+    # Season-specific: "who won MVP last year", "2024 Cy Young"
+    if plan.season:
+        where = "WHERE a.award = ? AND a.season = ?"
+        params: list = [award_code, plan.season]
+        if plan.league:
+            where += " AND a.league = ?"
+            params.append(plan.league)
+        cur.execute(f"""
+            SELECT p.name, a.league FROM awards a
+            JOIN players p ON a.player_id = p.player_id
+            {where} ORDER BY a.league
+        """, params)
+        rows = cur.fetchall()
+        if not rows:
+            return f"No {display} winner found for {plan.season}."
+        if len(rows) == 1:
+            league_str = f" ({rows[0][1]})" if rows[0][1] else ""
+            return f"The {plan.season} {display}{league_str} was **{rows[0][0]}**."
+        parts = []
+        for name, league in rows:
+            league_str = f" ({league})" if league else ""
+            parts.append(f"**{name}**{league_str}")
+        return f"The {plan.season} {display} winners were {' and '.join(parts)}."
+
+    # General: "MVP winners", "Hall of Fame members"
+    if award_code == "HOF":
+        cur.execute("""
+            SELECT p.name, a.season FROM awards a
+            JOIN players p ON a.player_id = p.player_id
+            WHERE a.award = 'HOF' ORDER BY a.season DESC, p.name LIMIT 50
+        """)
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        parts = []
+        current_year = None
+        for name, year in rows:
+            if year != current_year:
+                current_year = year
+                parts.append(f"\n**{year}**: {name}")
+            else:
+                parts[-1] += f", {name}"
+        return f"Hall of Fame inductees (recent):\n{''.join(parts)}"
+
+    # Default: show recent winners
+    cur.execute("""
+        SELECT p.name, a.season, a.league FROM awards a
+        JOIN players p ON a.player_id = p.player_id
+        WHERE a.award = ? ORDER BY a.season DESC, a.league LIMIT 20
+    """, (award_code,))
+    rows = cur.fetchall()
+    if not rows:
+        return None
+    parts = []
+    for name, season, league in rows:
+        league_str = f" ({league})" if league else ""
+        parts.append(f"{season}{league_str}: **{name}**")
+    return f"Recent {display} winners:\n" + "\n".join(parts)
+
 
 def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     """Standard stat leaderboard."""
