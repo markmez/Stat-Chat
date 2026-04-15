@@ -991,6 +991,9 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             "outperforming", "underperforming",
             "if i were", "if you were",
             "strategy", "should i",
+            "hot right now", "hottest right now", "on fire right now",
+            "coldest right now", "struggling right now",
+            "who should i watch", "most exciting",
         ]
         if any(kw in lower for kw in keyword_signals):
             return True
