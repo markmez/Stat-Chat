@@ -459,6 +459,19 @@ async def redetect_events(
     }
 
 
+@router.post("/rebuild-records")
+async def rebuild_records(authorization: str | None = Header(None)):
+    """Rebuild team_records and mlb_records tables."""
+    verify_admin(authorization)
+    import subprocess
+    result = subprocess.run(
+        ["python3", "data_pipeline/build_records.py", "--db", DB_PATH],
+        capture_output=True, text=True, timeout=300,
+        cwd=os.path.dirname(os.path.dirname(__file__))
+    )
+    return {"status": "ok", "stdout": result.stdout, "stderr": result.stderr}
+
+
 @router.post("/run-metering-sql")
 async def run_metering_sql(
     sql: str = "",

@@ -204,12 +204,16 @@ def _build_season_records(conn, team_code, stats_config, table_name, target_tabl
         order = "ASC" if stat_name in LOWER_IS_BETTER else "DESC"
         where = f"AND ({qualifier})" if qualifier else ""
 
+        # Get each player's best season only (UNIQUE constraint allows one per player)
         rows = conn.execute(f"""
-            SELECT s.player_id, s.{col_expr} as val, s.season
-            FROM {table_name} s
-            WHERE ('/' || s.team || '/') LIKE ?
-              AND s.{col_expr} IS NOT NULL
-              {where}
+            SELECT player_id, val, season FROM (
+                SELECT s.player_id, s.{col_expr} as val, s.season,
+                    ROW_NUMBER() OVER (PARTITION BY s.player_id ORDER BY s.{col_expr} {order}) as rn
+                FROM {table_name} s
+                WHERE ('/' || s.team || '/') LIKE ?
+                  AND s.{col_expr} IS NOT NULL
+                  {where}
+            ) WHERE rn = 1
             ORDER BY val {order}
             LIMIT {TOP_N}
         """, (f"%/{team_code}/%",)).fetchall()
