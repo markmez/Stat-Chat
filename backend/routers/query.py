@@ -1098,7 +1098,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             logger.info("query_planner question=%r", question)
             planner_result = _strip_bold_title(planner_result, original_question)
             planner_result = _add_pre1898_note(planner_result, original_question)
-            planner_result += "\n\n[AIDISCLAIMER]Insight query — stats verified against our database, but analysis is AI-generated.[/AIDISCLAIMER]"
+            planner_result += "\n\n[AIDISCLAIMER]Stats verified against our database. Analysis is AI-generated.[/AIDISCLAIMER]"
             yield event({"type": "text", "text": planner_result})
             done_event = {"type": "done", "planner": True}
             if rewritten_query:
