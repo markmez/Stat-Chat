@@ -436,25 +436,17 @@ def _ordinal(n: int) -> str:
 # ---------------------------------------------------------------------------
 
 def _resolve_player_name(conn: sqlite3.Connection, name: str) -> str:
-    """Resolve ambiguous names to the most prominent player (most career games).
+    """Resolve ambiguous names using the same prominence logic as search.
     Returns the resolved full name, or the original name if no match."""
-    safe = _sanitize(name)
-    # Check for exact full-name match AND last-name matches
-    # Prefer current/recent players, then by career games
-    candidates = conn.execute(
-        "SELECT p.name, COALESCE(p.career_games, 0) as cg, "
-        "  (SELECT MAX(season) FROM season_batting_stats WHERE player_id = p.player_id) as last_bat, "
-        "  (SELECT MAX(season) FROM season_pitching_stats WHERE player_id = p.player_id) as last_pit "
-        "FROM players p "
-        "WHERE p.name = ? OR p.name LIKE ? "
-        "ORDER BY "
-        "  CASE WHEN COALESCE(last_bat, 0) >= 2024 OR COALESCE(last_pit, 0) >= 2024 THEN 0 ELSE 1 END, "
-        "  cg DESC "
-        "LIMIT 1",
-        (safe, f"% {safe}"),
-    ).fetchone()
-    if candidates:
-        return candidates[0]
+    from services.name_matcher import match_player, match_player_with_prominence
+    # Try exact match first
+    exact = match_player(name)
+    if exact:
+        return exact
+    # Try prominence-based matching (handles last names, ambiguous names)
+    result = match_player_with_prominence(name)
+    if result:
+        return result[0]
     return name
 
 
