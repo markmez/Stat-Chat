@@ -2198,7 +2198,8 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             scope_label = "All-Time"
 
         # For counting stats with "since", aggregate across seasons per player
-        if plan.since_year and not is_rate:
+        # Exception: rookie queries — each player only has one rookie season, show per-season
+        if plan.since_year and not is_rate and not plan.rookie:
             if plan.derived_stat:
                 # Derived formula: replace "s.col" with "SUM(s.col)" for aggregation
                 d = _DERIVED_STATS[plan.derived_stat]
@@ -2464,7 +2465,9 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         else:
             filter_label += f" with {ef_val}+ {ef_stat.display_abbrev}"
 
-    has_year = plan.scope in ("all_time",) or plan.scope.startswith("since_")
+    # has_year: True when rows contain a season column (index 2).
+    # Aggregated counting stats (since_YYYY grouped by player) only have name + stat_val.
+    has_year = (plan.scope in ("all_time",) or plan.scope.startswith("since_")) and len(rows[0]) > 2 if rows else False
     title = f"**{scope_label} {title_prefix}{name} Leaders{filter_label}**\n" if not has_year else f"**{title_prefix}{name} Leaders{filter_label} ({scope_label})**\n"
 
     user_has_ip_pa_filter = bool(proration_subtitle)
