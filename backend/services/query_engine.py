@@ -970,7 +970,7 @@ def decompose(question: str) -> QueryPlan:
 
     # Stats that default to pitching when no batting/pitching context is explicit
     _PITCHING_DEFAULT_STATS = {"strikeouts", "walks"}
-    _AMBIGUOUS_STATS = {"strikeouts", "walks", "hit_by_pitch", "hits", "home_runs", "games"}
+    _AMBIGUOUS_STATS = {"strikeouts", "walks"}
     has_batting_context = any(w in lower for w in ["hitter", "hitters", "batter", "batters", "batting", "hitting"])
     has_pitching_context = plan.is_pitching
     if (not plan.is_pitching and not has_batting_context
