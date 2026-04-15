@@ -330,6 +330,16 @@ Current form for each pitcher-season — the tail slice with the lowest ERA (opt
 - season_ip_outs, season_hits, season_earned_runs, season_home_runs, season_walks, season_strikeouts, season_batters_faced (INTEGER) — full season counting stats
 - season_era (REAL) — full season ERA for comparison
 
+### awards
+MLB awards and honors by player and season.
+- player_id (TEXT) — references players table
+- award (TEXT) — award type: "MVP", "CY" (Cy Young), "ROY" (Rookie of the Year), "GG" (Gold Glove), "SS" (Silver Slugger), "ALL_STAR", "HOF" (Hall of Fame), "WS_MVP" (World Series MVP), "ALCS_MVP", "NLCS_MVP"
+- season (INTEGER) — year the award was given
+- league (TEXT) — "AL" or "NL" (empty for HOF)
+- Data covers: MVP 1911-{_THIS_YEAR}, Cy Young 1956-{_THIS_YEAR}, ROY 1947-{_THIS_YEAR}, Gold Glove 1957-2021, Silver Slugger 1980-2021, All-Star 1933-2021, HOF 1936-2018
+- Example: SELECT p.name, a.season FROM awards a JOIN players p ON a.player_id = p.player_id WHERE a.award = 'MVP' AND a.league = 'AL' ORDER BY a.season DESC
+- Can be joined with season stats: "MVPs with fewer than 20 HR" = JOIN awards ON season_batting_stats WHERE award='MVP' AND home_runs < 20
+
 ## Currently Available Data
 - Season batting stats from 1898 to present (aggregated from Retrosheet game logs)
 - Season pitching stats from 1898 to present (aggregated from Retrosheet pitching.csv)
