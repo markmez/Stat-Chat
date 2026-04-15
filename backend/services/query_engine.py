@@ -361,6 +361,7 @@ class QueryPlan:
     original_question: str = ""  # Original query text for post-execution logic
     execution_error: Optional[str] = None  # Set by execute() if an exception occurred
     compare_years: Optional[tuple] = None  # (year1, year2) for year-over-year comparison
+    award_filter: Optional[str] = None  # "MVP", "CY", "ROY", "ALL_STAR", "GG", "SS", "HOF"
     unexplained_words: list = field(default_factory=list)
     consumed_words: set = field(default_factory=set)
 
@@ -934,6 +935,25 @@ def decompose(question: str) -> QueryPlan:
     plan.rookie = _detect_rookie(lower)
     if plan.rookie:
         _add_consumed(plan, "rookie rookies first year first-year")
+
+    # Award filter — "by an MVP", "among MVPs", "MVP seasons", "Cy Young winners"
+    _AWARD_PATTERNS = [
+        (r'\b(?:by an?|among|for)\s+mvps?\b|mvp\s+(?:seasons?|winners?|award)|\bmvps?\b', "MVP"),
+        (r'\b(?:by an?|among|for)\s+(?:cy young|cy)\s+(?:winners?|award)?\b|cy young\s+(?:seasons?|winners?)|\bcy young winners?\b', "CY"),
+        (r'\b(?:by an?|among|for)\s+(?:rookies? of the year|roy)\b|rookie of the year\s+(?:seasons?|winners?)|\brookies? of the year\b', "ROY"),
+        (r'\ball[- ]?stars?\b', "ALL_STAR"),
+        (r'\bgold glove(?:rs?|s|\s+winners?)?\b', "GG"),
+        (r'\bsilver slugger(?:s|\s+winners?)?\b', "SS"),
+        (r'\bhall of fame(?:rs?)?\b|\bhof(?:ers?)?\b', "HOF"),
+    ]
+    for pattern, award_code in _AWARD_PATTERNS:
+        if re.search(pattern, lower):
+            plan.award_filter = award_code
+            # Consume the matched words
+            m = re.search(pattern, lower)
+            if m:
+                _add_consumed(plan, m.group(0))
+            break
 
     plan.pitcher_role = _detect_pitcher_role(lower)
     if plan.pitcher_role:
@@ -1889,6 +1909,23 @@ def _build_filters(plan: QueryPlan, prefix: str, conn=None) -> tuple[str, list]:
     return " AND ".join(clauses), params
 
 
+_AWARD_LABELS = {
+    "MVP": "MVP", "CY": "Cy Young", "ROY": "Rookie of the Year",
+    "ALL_STAR": "All-Star", "GG": "Gold Glove", "SS": "Silver Slugger",
+    "HOF": "Hall of Famer", "WS_MVP": "World Series MVP",
+}
+
+
+def _award_join(plan: QueryPlan, prefix: str) -> tuple[str, str]:
+    """Build JOIN clause and title label for award-filtered queries.
+    Returns (join_sql, label) — join_sql is empty if no award filter."""
+    if not plan.award_filter:
+        return "", ""
+    label = _AWARD_LABELS.get(plan.award_filter, plan.award_filter)
+    join = f" JOIN awards aw ON aw.player_id = {prefix}.player_id AND aw.season = {prefix}.season AND aw.award = '{plan.award_filter}'"
+    return join, label
+
+
 def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None) -> tuple[str, str]:
     """Get PA/IP minimum filter for rate stats, prorated for current season.
     Returns (sql_clause, display_label) tuple."""
@@ -1942,6 +1979,8 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     else:
         order = "DESC"
 
+    award_join, award_label = _award_join(plan, prefix)
+
     direction_label = "Fewest " if plan.sort_asc and not is_rate else "Worst " if plan.sort_asc else ""
     position_label = ""
     if plan.position:
@@ -1976,6 +2015,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             f"SELECT p.name, {stat_expr} AS stat_val{age_select}{extra_select_clause} "
             f"FROM {table} {prefix} "
             f"JOIN players p ON {prefix}.player_id = p.player_id "
+            f"{award_join} "
             f"{where} "
             f"ORDER BY stat_val {order} LIMIT ?",
             tuple(query_params + [plan.limit]),
@@ -2033,6 +2073,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
                 f"SELECT p.name, {agg_expr} AS stat_val "
                 f"FROM {table} {prefix} "
                 f"JOIN players p ON {prefix}.player_id = p.player_id "
+                f"{award_join} "
                 f"{where} "
                 f"GROUP BY p.player_id "
                 f"ORDER BY stat_val {order} LIMIT ?",
@@ -2045,6 +2086,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
                 f"SELECT p.name, {stat_expr} AS stat_val, {prefix}.season "
                 f"FROM {table} {prefix} "
                 f"JOIN players p ON {prefix}.player_id = p.player_id "
+                f"{award_join} "
                 f"{where} "
                 f"ORDER BY stat_val {order} LIMIT ?",
                 tuple(query_params + [plan.limit]),
@@ -2242,7 +2284,8 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         return f"No results found ({scope_label})." + _empty_result_pills(plan)
 
     # Format
-    title_prefix = f"{direction_label}{age_label}{bats_label}{position_label}{rookie_label}{role_label}"
+    award_title = f"{award_label} " if award_label else ""
+    title_prefix = f"{direction_label}{age_label}{bats_label}{position_label}{rookie_label}{role_label}{award_title}"
     # Extra filter label: "with ≤10 HR", "with 30+ SB"
     # Build filter labels — detect prorated IP/PA thresholds early in season
     filter_label = ""
