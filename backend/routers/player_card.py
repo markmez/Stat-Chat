@@ -331,6 +331,90 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
                     type="franchise_rank",
                 ))
 
+    # --- Single-season records held ---
+    _STAT_DISPLAY = {
+        "home_runs": "HR", "hits": "hits", "rbi": "RBI", "runs": "runs",
+        "stolen_bases": "SB", "doubles": "2B", "batting_avg": "AVG",
+        "ops": "OPS", "wins": "wins", "strikeouts": "K", "saves": "saves",
+        "era": "ERA", "whip": "WHIP",
+    }
+
+    # MLB records
+    mlb_records = conn.execute(
+        "SELECT stat, value, season FROM mlb_records "
+        "WHERE player_id = ? AND record_type = 'season'",
+        (player_id,)
+    ).fetchall()
+    for stat, value, season in mlb_records:
+        stat_label = _STAT_DISPLAY.get(stat, stat)
+        if stat in ("batting_avg", "ops", "era", "whip"):
+            val_str = f"{value:.3f}".lstrip("0") if value < 1 else f"{value:.3f}"
+        else:
+            val_str = f"{int(value):,}"
+        achievements.items.append(AchievementItem(
+            text=f"Holds MLB single-season record for {stat_label} ({val_str}, {season})",
+            type="record",
+        ))
+
+    # Franchise records (only #1)
+    if team_row and team_row[0]:
+        # Get all franchise season records where this player holds #1
+        # For counting stats: MAX value is the record
+        # For rate stats (ERA, WHIP): MIN value is the record — but team_records
+        # stores top 5 by the correct sort, so rank 1 = the record holder
+        franchise_records = []
+        fr_rows = conn.execute(
+            "SELECT stat, value, season FROM team_records "
+            "WHERE player_id = ? AND record_type = 'season' AND team_code = ?",
+            (player_id, current_team)
+        ).fetchall()
+        for stat, value, season in fr_rows:
+            # Check if this player is #1 for this stat
+            lower_better = stat in ("era", "whip")
+            best = conn.execute(
+                f"SELECT value FROM team_records WHERE team_code = ? AND stat = ? "
+                f"AND record_type = 'season' ORDER BY value {'ASC' if lower_better else 'DESC'} LIMIT 1",
+                (current_team, stat)
+            ).fetchone()
+            if best and best[0] == value:
+                franchise_records.append((stat, value, season))
+        # Filter out stats where they also hold the MLB record (avoid duplication)
+        mlb_record_stats = {r[0] for r in mlb_records}
+        for stat, value, season in franchise_records:
+            if stat in mlb_record_stats:
+                continue
+            stat_label = _STAT_DISPLAY.get(stat, stat)
+            if stat in ("batting_avg", "ops", "era", "whip"):
+                val_str = f"{value:.3f}".lstrip("0") if value < 1 else f"{value:.3f}"
+            else:
+                val_str = f"{int(value):,}"
+            achievements.items.append(AchievementItem(
+                text=f"Holds {franchise_name} single-season record for {stat_label} ({val_str}, {season})",
+                type="record",
+            ))
+
+    # --- Per-season records for season_awards ---
+    # Check if any of the player's seasons are franchise records
+    for stat, value, season in (franchise_records if team_row and team_row[0] else []):
+        stat_label = _STAT_DISPLAY.get(stat, stat)
+        existing = next((sa for sa in achievements.seasonAwards if sa.season == season), None)
+        record_text = f"Record: {stat_label}"
+        if existing:
+            existing.awards.append(record_text)
+        else:
+            achievements.seasonAwards.append(SeasonAward(season=season, awards=[record_text]))
+    for stat, value, season in mlb_records:
+        stat_label = _STAT_DISPLAY.get(stat, stat)
+        existing = next((sa for sa in achievements.seasonAwards if sa.season == season), None)
+        record_text = f"MLB Record: {stat_label}"
+        if existing:
+            existing.awards.append(record_text)
+        else:
+            achievements.seasonAwards.append(SeasonAward(season=season, awards=[record_text]))
+
+    # Re-sort season awards by year
+    achievements.seasonAwards.sort(key=lambda sa: sa.season)
+
     return achievements
 
 
