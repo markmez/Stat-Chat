@@ -633,10 +633,12 @@ def match_player_with_prominence(text: str) -> Optional[tuple[str, list[str]]]:
         return (matched, [])
     lower = strip_diacritics(text.strip().lower())
     candidates = last_name_index.get(lower, [])
-    # For multi-word names like "de la cruz", also try the last word ("cruz")
+    # For multi-word names like "de la cruz", try the last word ("cruz")
+    # but filter to only players whose name actually contains the full phrase
     if not candidates and " " in lower:
         last_word = lower.split()[-1]
-        candidates = last_name_index.get(last_word, [])
+        all_with_last = last_name_index.get(last_word, [])
+        candidates = [c for c in all_with_last if lower in strip_diacritics(c.lower())]
     if len(candidates) > 1:
         # Check fame list — if exactly one candidate is famous, auto-resolve
         famous = [c for c in candidates if c in fame_list]
