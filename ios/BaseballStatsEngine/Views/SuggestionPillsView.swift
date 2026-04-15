@@ -18,7 +18,7 @@ struct SuggestionPillsView: View {
     private let swapInterval: TimeInterval = 4.0
     private let fadeDuration: TimeInterval = 0.5
 
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let deepBlue = Color.brandDeepBlue
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
     var body: some View {

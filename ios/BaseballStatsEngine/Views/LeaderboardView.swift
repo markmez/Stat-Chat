@@ -11,7 +11,7 @@ struct LeaderboardView: View {
     @State private var sortAscending = false
     @State private var initialized = false
 
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let deepBlue = Color.brandDeepBlue
 
     /// Whether this leaderboard has stat columns (sortable)
     private var isSortable: Bool { grid.headers.count >= 1 }

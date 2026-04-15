@@ -12,7 +12,7 @@ struct ResultsView: View {
     let initialQuestion: String
     @Binding var navigationPath: NavigationPath
 
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let deepBlue = Color.brandDeepBlue
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
     private var visibleMessages: [Message] {
@@ -247,7 +247,7 @@ struct ResultsView: View {
 
                 TextField("", text: $inputText, prompt:
                     Text("Ask a follow-up or a new question")
-                        .foregroundStyle(Color(uiColor: .placeholderText))
+                        .foregroundColor(Color(.label).opacity(0.33))
                 )
                 .font(.system(.body, design: .rounded))
                 .foregroundStyle(.primary)

@@ -51,7 +51,7 @@ struct StatGridView: View {
     /// 0 = 162-Game Pace, 1 = Season Forecast (always visible when form present)
     @State private var formProjectionMode: Int = 0
 
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let deepBlue = Color.brandDeepBlue
 
     /// Max columns per row before splitting into stacked rows
     private let maxPerRow = 7

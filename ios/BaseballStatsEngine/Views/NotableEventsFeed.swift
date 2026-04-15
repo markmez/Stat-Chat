@@ -49,7 +49,7 @@ struct NotableEventsFeed: View {
     @State private var seenHeadlines: [String: Set<String>] = Self.loadSeenHeadlines()
     @State private var dwellTimers: [String: Date] = [:]  // headline -> appeared time
 
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let deepBlue = Color.brandDeepBlue
 
     /// Check if user has visited the feed today (Eastern time, daylight hours)
     private static func hasVisitedToday() -> Bool {

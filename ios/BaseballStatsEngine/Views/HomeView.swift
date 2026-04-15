@@ -27,7 +27,7 @@ struct HomeView: View {
     @State private var feedRefreshTrigger: Bool = false
     private enum DrawerTab: Int, CaseIterable { case notable = 0, leaders = 1, history = 2 }
 
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let deepBlue = Color.brandDeepBlue
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
 
@@ -155,12 +155,13 @@ struct HomeView: View {
                         .padding(.top, 2)
 
                     TextField("", text: $questionText, prompt:
-                        Text("Search by name or ask any question")
-                            .foregroundStyle(Color(.placeholderText)),
+                        Text("Ask any baseball player stat question")
+                            .foregroundColor(Color(.label).opacity(0.33)),
                         axis: .vertical
                     )
                     .font(.system(.body, design: .rounded))
                     .foregroundStyle(.primary)
+                    .padding(.leading, -3)
                     .lineLimit(1...3)
                     .focused($isInputFocused)
                     .autocorrectionDisabled(true)

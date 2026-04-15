@@ -6,7 +6,7 @@ struct GameLogsResultView: View {
     @State private var selectedMonth: String = ""
     @State private var expanded = false
 
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let deepBlue = Color.brandDeepBlue
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
     /// The most recent year in the game logs (current year context)

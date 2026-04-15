@@ -36,6 +36,7 @@ struct PlayerCardView: View {
     @State private var pitchingCareerStartYear: Int? = nil
     @State private var pitchingCareerEndYear: Int? = nil
     @State private var careerRangeExpanded = false
+    @State private var showCareerPace = false
     @State private var pitchingCareerRangeExpanded = false
 
     // Floating search bar state
@@ -44,7 +45,7 @@ struct PlayerCardView: View {
     @State private var searchPlayerName: String? = nil
     @State private var searchQuestion: String? = nil
 
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let deepBlue = Color.brandDeepBlue
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
     enum ProjectionMode: String, CaseIterable {
@@ -373,7 +374,7 @@ struct PlayerCardView: View {
 
                     TextField("", text: $searchText, prompt:
                         Text("Search player stats or ask a question")
-                            .foregroundStyle(Color(uiColor: .placeholderText))
+                            .foregroundColor(Color(.label).opacity(0.33))
                     )
                     .font(.system(.body, design: .rounded))
                     .foregroundStyle(.primary)
@@ -2036,12 +2037,13 @@ struct PlayerCardView: View {
     }
 
     private func achievementRow(text: String, showIcon: Bool) -> some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             if showIcon {
                 Image(systemName: "chart.bar")
                     .font(.system(size: 12))
                     .foregroundStyle(deepBlue.opacity(0.6))
-                    .frame(width: 14, height: 16)
+                    .frame(width: 14)
+                    .padding(.top, 3)
             } else {
                 RoundedRectangle(cornerRadius: 1.5)
                     .fill(LinearGradient(
@@ -2090,6 +2092,24 @@ struct PlayerCardView: View {
                                     .frame(height: 1)
                                     .padding(.horizontal, 14)
 
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        showCareerPace.toggle()
+                                    }
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Text("162-Game Pace")
+                                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                            .foregroundStyle(.primary)
+                                        Image(systemName: showCareerPace ? "chevron.up" : "chevron.down")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.horizontal, 14)
+                                }
+                                .buttonStyle(.plain)
+
+                                if showCareerPace {
                                 paceHeaderWithDropdown(
                                     years: years,
                                     startYear: startYear, endYear: endYear,
@@ -2117,6 +2137,7 @@ struct PlayerCardView: View {
                                 )
 
                                 StatGridView(grid: projected, suppressBackground: true)
+                                } // showCareerPace
                             }
                         }
                     }

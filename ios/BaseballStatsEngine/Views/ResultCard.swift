@@ -12,7 +12,7 @@ struct ResultCard: View {
     var onQueryTap: ((String) -> Void)? = nil
     var onDrilldownTap: ((String) -> Void)? = nil
 
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let deepBlue = Color.brandDeepBlue
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
     var body: some View {

@@ -7,7 +7,7 @@ struct StatLeadersView: View {
     @State private var selectedLeaguePerStat: [String: String] = [:]  // stat → league
     @State private var expandedStats: Set<String> = []
 
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let deepBlue = Color.brandDeepBlue
     private let leagues = ["MLB", "AL", "NL"]
 
     private func dataForStat(_ stat: String, from boards: [BackendService.StatLeaderboard], league: String) -> BackendService.StatLeaderboard? {

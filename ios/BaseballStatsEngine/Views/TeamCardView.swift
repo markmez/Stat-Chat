@@ -20,7 +20,7 @@ struct TeamCardView: View {
     @State private var searchTeamCode: String? = nil
     @State private var searchQuestion: String? = nil
 
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let deepBlue = Color.brandDeepBlue
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
     /// Max prior seasons shown before "Show all" button

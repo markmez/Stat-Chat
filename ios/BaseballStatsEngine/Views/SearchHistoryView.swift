@@ -4,7 +4,7 @@ struct SearchHistoryView: View {
     @Environment(AppState.self) private var appState
     @Binding var navigationPath: NavigationPath
 
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let deepBlue = Color.brandDeepBlue
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
     var body: some View {

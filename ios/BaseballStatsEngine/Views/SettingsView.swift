@@ -4,7 +4,7 @@ struct SettingsView: View {
     @Environment(AppState.self) private var appState
 
     private let store = StoreKitService.shared
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let deepBlue = Color.brandDeepBlue
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
     private let freeLimit = 5
 
@@ -28,9 +28,6 @@ struct SettingsView: View {
                             .foregroundStyle(lightBlue)
                     }
 
-                    Text("Baseball stats, answered instantly")
-                        .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(.secondary)
                 }
                 .padding(.top, 12)
 

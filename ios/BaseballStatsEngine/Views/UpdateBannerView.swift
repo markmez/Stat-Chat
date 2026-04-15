@@ -3,7 +3,7 @@ import SwiftUI
 struct UpdateBannerView: View {
     var onDismiss: () -> Void
 
-    private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+    private let deepBlue = Color.brandDeepBlue
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
     private let iconDark = Color(red: 0.06, green: 0.12, blue: 0.45)
     private let iconLight = Color(red: 0.12, green: 0.28, blue: 0.75)
