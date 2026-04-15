@@ -163,6 +163,19 @@ class PitchingSeasonSplits(BaseModel):
     streaks: Optional[SplitGrid] = None
 
 
+class AchievementItem(BaseModel):
+    text: str  # "4th in Yankees HR history (372)"
+    type: str  # "award", "alltime_rank", "franchise_rank", "record"
+
+class SeasonAward(BaseModel):
+    season: int
+    awards: List[str]  # ["MVP", "ALL_STAR", "SS"]
+
+class Achievements(BaseModel):
+    awards_summary: List[str] = []  # ["2x MVP", "8x All-Star", "ROY"]
+    items: List[AchievementItem] = []  # ranking items
+    season_awards: List[SeasonAward] = []  # per-year awards for career display
+
 class PlayerCardResponse(BaseModel):
     player_info: Optional[PlayerInfo] = None
     batting_seasons: List[BattingSeason] = []
@@ -179,6 +192,136 @@ class PlayerCardResponse(BaseModel):
     pitching_current_form: Optional[dict] = None
     game_logs: List["GameLogEntry"] = []
     pitching_game_logs: List["PitchingGameLogEntry"] = []
+    achievements: Optional[Achievements] = None
+
+
+# ---------------------------------------------------------------------------
+# Achievements
+# ---------------------------------------------------------------------------
+
+_AWARD_DISPLAY = {
+    "MVP": "MVP", "CY": "Cy Young", "ROY": "Rookie of the Year",
+    "ALL_STAR": "All-Star", "GG": "Gold Glove", "SS": "Silver Slugger",
+    "HOF": "Hall of Famer", "WS_MVP": "World Series MVP",
+    "ALCS_MVP": "ALCS MVP", "NLCS_MVP": "NLCS MVP",
+}
+
+_BATTING_RANK_STATS = [
+    ("home_runs", "HR", 100), ("hits", "hits", 150), ("rbi", "RBI", 150),
+    ("stolen_bases", "SB", 100), ("doubles", "2B", 100),
+    ("runs", "runs", 100), ("at_bats", "AB", 100),
+    ("games", "games played", 100), ("walks", "walks", 100),
+]
+_PITCHING_RANK_STATS = [
+    ("wins", "wins", 75), ("strikeouts", "strikeouts", 75),
+    ("saves", "saves", 50), ("games", "games pitched", 75),
+]
+
+
+def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Achievements:
+    from services.franchise import get_franchise_codes, get_franchise_name
+
+    achievements = Achievements()
+
+    # --- Awards summary ---
+    award_rows = conn.execute(
+        "SELECT award, COUNT(*) FROM awards WHERE player_id = ? GROUP BY award ORDER BY COUNT(*) DESC",
+        (player_id,)
+    ).fetchall()
+
+    # Display order for summary
+    _summary_order = ["HOF", "MVP", "CY", "ROY", "WS_MVP", "ALL_STAR", "GG", "SS"]
+    award_counts = {a: c for a, c in award_rows}
+    for award_code in _summary_order:
+        count = award_counts.get(award_code, 0)
+        if count == 0:
+            continue
+        label = _AWARD_DISPLAY.get(award_code, award_code)
+        if count > 1:
+            achievements.awards_summary.append(f"{count}x {label}")
+        else:
+            achievements.awards_summary.append(label)
+
+    # --- Per-season awards ---
+    season_rows = conn.execute(
+        "SELECT season, award FROM awards WHERE player_id = ? ORDER BY season",
+        (player_id,)
+    ).fetchall()
+    by_season = {}
+    for season, award in season_rows:
+        by_season.setdefault(season, []).append(_AWARD_DISPLAY.get(award, award))
+    for season in sorted(by_season.keys()):
+        achievements.season_awards.append(SeasonAward(season=season, awards=by_season[season]))
+
+    # --- All-time career rankings ---
+    stats = _PITCHING_RANK_STATS if is_pitcher else _BATTING_RANK_STATS
+    table = "season_pitching_stats" if is_pitcher else "season_batting_stats"
+
+    for col, label, top_n in stats:
+        # Player's career total
+        career = conn.execute(
+            f"SELECT SUM({col}) FROM {table} WHERE player_id = ?", (player_id,)
+        ).fetchone()
+        if not career or not career[0]:
+            continue
+        career_total = int(career[0])
+
+        # Rank among all players
+        rank = conn.execute(
+            f"SELECT COUNT(*) + 1 FROM ("
+            f"  SELECT player_id, SUM({col}) as total FROM {table}"
+            f"  GROUP BY player_id HAVING total > ?"
+            f")", (career_total,)
+        ).fetchone()[0]
+
+        if rank <= top_n:
+            achievements.items.append(AchievementItem(
+                text=f"{_ordinal(rank)} all-time in {label} ({career_total:,})",
+                type="alltime_rank",
+            ))
+
+    # --- Franchise rankings ---
+    team_row = conn.execute(
+        f"SELECT team FROM {table} WHERE player_id = ? ORDER BY season DESC LIMIT 1",
+        (player_id,)
+    ).fetchone()
+    if team_row and team_row[0]:
+        current_team = team_row[0].split("/")[0].strip()
+        franchise_codes = get_franchise_codes(current_team)
+        franchise_name = get_franchise_name(current_team)
+        ph = ",".join(["?"] * len(franchise_codes))
+
+        for col, label, _ in stats[:5]:  # top 5 stats for franchise
+            franchise_total = conn.execute(
+                f"SELECT SUM({col}) FROM {table} WHERE player_id = ? AND team IN ({ph})",
+                (player_id, *franchise_codes)
+            ).fetchone()
+            if not franchise_total or not franchise_total[0]:
+                continue
+            ft = int(franchise_total[0])
+
+            fran_rank = conn.execute(
+                f"SELECT COUNT(*) + 1 FROM ("
+                f"  SELECT player_id, SUM({col}) as total FROM {table}"
+                f"  WHERE team IN ({ph}) GROUP BY player_id HAVING total > ?"
+                f")", (*franchise_codes, ft)
+            ).fetchone()[0]
+
+            if fran_rank <= 5:
+                achievements.items.append(AchievementItem(
+                    text=f"{_ordinal(fran_rank)} in {franchise_name} history in {label} ({ft:,})",
+                    type="franchise_rank",
+                ))
+
+    return achievements
+
+
+def _ordinal(n: int) -> str:
+    if 11 <= (n % 100) <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
 
 
 # ---------------------------------------------------------------------------
@@ -1238,6 +1381,18 @@ async def player_card(
         game_logs = _fetch_batting_game_logs(conn, name, current_year) if batting else []
         pitching_game_logs = _fetch_pitching_game_logs(conn, name, current_year) if (pitcher or two_way) else []
 
+        # Achievements
+        pid_row = conn.execute(
+            "SELECT player_id FROM players WHERE name = ? LIMIT 1",
+            (_sanitize(name),)
+        ).fetchone()
+        achievements = None
+        if pid_row:
+            try:
+                achievements = _build_achievements(conn, pid_row[0], name, pitcher and not two_way)
+            except Exception:
+                pass
+
         return PlayerCardResponse(
             player_info=info,
             batting_seasons=batting,
@@ -1254,6 +1409,7 @@ async def player_card(
             pitching_current_form=pitching_current_form,
             game_logs=game_logs,
             pitching_game_logs=pitching_game_logs,
+            achievements=achievements,
         )
     finally:
         conn.close()
