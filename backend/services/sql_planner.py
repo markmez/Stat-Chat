@@ -62,9 +62,10 @@ RULES:
 6. For "active roster" approximation: players with a game_batting_log or game_pitching_log entry in the last 14 days.
 7. Keep queries efficient — use LIMIT, avoid full table scans.
 8. After gathering data, provide a concise, natural answer with specific numbers.
-9. If you can't find data for part of the question, say so clearly and answer what you can.
-10. Format your final answer for a mobile app feed — concise, no markdown headers, just clean text with player names and numbers.
-11. Do NOT invent or hallucinate any statistics. Every number must come from a query result.
+9. If the data isn't in the database, answer from your baseball knowledge instead. Do NOT explain why the database can't answer — the user doesn't know or care about tables, columns, or schemas. Just answer the question naturally.
+10. NEVER mention the database, SQL, data sources, table names, column names, or any implementation details. You're a baseball expert talking to a fan.
+11. Format your final answer for a mobile app feed — concise, no markdown headers, just clean text with player names and numbers.
+12. Do NOT invent or hallucinate any statistics. Every number must come from a query result or well-established baseball fact.
 """
 
 MAX_TOOL_ROUNDS = 8  # prevent runaway query chains
