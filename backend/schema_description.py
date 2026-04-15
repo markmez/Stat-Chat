@@ -1,11 +1,6 @@
 """Plain-English schema description for Claude's system prompt."""
 
-from datetime import date as _date
-
-_THIS_YEAR = _date.today().year
-_LAST_YEAR = _THIS_YEAR - 1
-
-SCHEMA_DESCRIPTION = f"""
+SCHEMA_DESCRIPTION = """
 You have access to a SQLite database with MLB batting statistics.
 
 Data sources: Retrosheet (retrosheet.org) for season stats, game logs, and platoon splits.
@@ -330,16 +325,6 @@ Current form for each pitcher-season — the tail slice with the lowest ERA (opt
 - season_ip_outs, season_hits, season_earned_runs, season_home_runs, season_walks, season_strikeouts, season_batters_faced (INTEGER) — full season counting stats
 - season_era (REAL) — full season ERA for comparison
 
-### awards
-MLB awards and honors by player and season.
-- player_id (TEXT) — references players table
-- award (TEXT) — award type: "MVP", "CY" (Cy Young), "ROY" (Rookie of the Year), "GG" (Gold Glove), "SS" (Silver Slugger), "ALL_STAR", "HOF" (Hall of Fame), "WS_MVP" (World Series MVP), "ALCS_MVP", "NLCS_MVP"
-- season (INTEGER) — year the award was given
-- league (TEXT) — "AL" or "NL" (empty for HOF)
-- Data covers: MVP 1911-{_THIS_YEAR}, Cy Young 1956-{_THIS_YEAR}, ROY 1947-{_THIS_YEAR}, Gold Glove 1957-2021, Silver Slugger 1980-2021, All-Star 1933-2021, HOF 1936-2018
-- Example: SELECT p.name, a.season FROM awards a JOIN players p ON a.player_id = p.player_id WHERE a.award = 'MVP' AND a.league = 'AL' ORDER BY a.season DESC
-- Can be joined with season stats: "MVPs with fewer than 20 HR" = JOIN awards ON season_batting_stats WHERE award='MVP' AND home_runs < 20
-
 ## Currently Available Data
 - Season batting stats from 1898 to present (aggregated from Retrosheet game logs)
 - Season pitching stats from 1898 to present (aggregated from Retrosheet pitching.csv)
@@ -362,6 +347,15 @@ MLB awards and honors by player and season.
 - When a user asks about a pitcher, query the pitching tables (season_pitching_stats, game_pitching_logs, etc.) instead of batting tables.
 - Shared stat names like "strikeouts" or "home runs" should be resolved based on whether the player is a pitcher or batter.
 
+### awards
+- player_id (TEXT) — references players table
+- award (TEXT) — award type: 'MVP', 'CY' (Cy Young), 'ROY' (Rookie of the Year), 'ALL_STAR', 'GG' (Gold Glove), 'SS' (Silver Slugger), 'HOF' (Hall of Fame), 'WS_MVP', 'ALCS_MVP', 'NLCS_MVP'
+- season (INTEGER) — year the award was given
+- league (TEXT) — 'AL' or 'NL' (NULL for HOF)
+- Coverage: 1911-2025 for MVP, 1956-2025 for Cy Young, 1947-2025 for ROY, 1933-2025 for All-Star, 1957-2025 for Gold Glove, 1980-2025 for Silver Slugger, all HOF inductees
+- Example: "Who won MVP last year?" → SELECT p.name, a.league FROM awards a JOIN players p ON a.player_id = p.player_id WHERE a.award = 'MVP' AND a.season = 2025
+- Example: "How many All-Star selections does Judge have?" → SELECT COUNT(*) FROM awards a JOIN players p ON a.player_id = p.player_id WHERE p.name = 'Aaron Judge' AND a.award = 'ALL_STAR'
+
 ## Important Notes
 - Player names are stored as full names: "Aaron Judge", "Shohei Ohtani", etc.
 - Use LIKE with '%' for fuzzy name matching when the user gives a partial name
@@ -377,5 +371,5 @@ MLB awards and honors by player and season.
 - Pitching counting stats: "strikeouts" in pitching context = K (pitcher's strikeouts), different from batter strikeouts
 - innings_pitched is a TEXT display field (e.g., "134.0"). For arithmetic, use ip_outs (integer, divide by 3 for IP as decimal)
 - Some historical stats (IBB, SF, HBP) may be NULL or 0 for very old seasons (pre-1955)
-- If the user says "last year" or "last season", assume {_LAST_YEAR}. If they say "this year" or "this season", assume {_THIS_YEAR}.
+- If the user says "last year" or "last season", assume 2024. If they say "this year" or "this season", assume 2025.
 """

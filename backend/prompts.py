@@ -140,7 +140,6 @@ Rules:
 ## Questions beyond the schema
 - If the question requires specific knowledge NOT represented in any database column, output: SELECT 'NEEDS_CONTEXT'
 - This includes:
-  - Awards: MVP, Cy Young, Gold Glove, Silver Slugger, Rookie of the Year, All-Star selections, Hall of Fame
   - Specific game events: opening day, walk-offs, no-hitters, perfect games, hitting for the cycle, grand slams, inside-the-park home runs, debut/first game
   - Postseason/playoffs: World Series, ALCS, NLCS, Division Series, Wild Card — our data is regular season only
   - All-Star Game stats or selections

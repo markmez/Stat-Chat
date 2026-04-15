@@ -347,6 +347,15 @@ Current form for each pitcher-season — the tail slice with the lowest ERA (opt
 - When a user asks about a pitcher, query the pitching tables (season_pitching_stats, game_pitching_logs, etc.) instead of batting tables.
 - Shared stat names like "strikeouts" or "home runs" should be resolved based on whether the player is a pitcher or batter.
 
+### awards
+- player_id (TEXT) — references players table
+- award (TEXT) — award type: 'MVP', 'CY' (Cy Young), 'ROY' (Rookie of the Year), 'ALL_STAR', 'GG' (Gold Glove), 'SS' (Silver Slugger), 'HOF' (Hall of Fame), 'WS_MVP', 'ALCS_MVP', 'NLCS_MVP'
+- season (INTEGER) — year the award was given
+- league (TEXT) — 'AL' or 'NL' (NULL for HOF)
+- Coverage: 1911-2025 for MVP, 1956-2025 for Cy Young, 1947-2025 for ROY, 1933-2025 for All-Star, 1957-2025 for Gold Glove, 1980-2025 for Silver Slugger, all HOF inductees
+- Example: "Who won MVP last year?" → SELECT p.name, a.league FROM awards a JOIN players p ON a.player_id = p.player_id WHERE a.award = 'MVP' AND a.season = 2025
+- Example: "How many All-Star selections does Judge have?" → SELECT COUNT(*) FROM awards a JOIN players p ON a.player_id = p.player_id WHERE p.name = 'Aaron Judge' AND a.award = 'ALL_STAR'
+
 ## Important Notes
 - Player names are stored as full names: "Aaron Judge", "Shohei Ohtani", etc.
 - Use LIKE with '%' for fuzzy name matching when the user gives a partial name
