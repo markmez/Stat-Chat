@@ -33,7 +33,7 @@ _root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
-from routers import health, query, player_card, stats, admin, notable  # noqa: E402
+from routers import health, query, player_card, stats, admin, notable, team_card  # noqa: E402
 from services.metering import init_metering_db  # noqa: E402
 
 
@@ -112,6 +112,7 @@ app.include_router(player_card.router)
 app.include_router(stats.router)
 app.include_router(admin.router)
 app.include_router(notable.router)
+app.include_router(team_card.router)
 from routers import leaders
 app.include_router(leaders.router)
 
