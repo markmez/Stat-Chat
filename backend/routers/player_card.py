@@ -165,7 +165,8 @@ class PitchingSeasonSplits(BaseModel):
 
 class AchievementItem(BaseModel):
     text: str  # "4th in Yankees HR history (372)"
-    type: str  # "award", "alltime_rank", "franchise_rank", "record"
+    type: str  # "mlb_record", "alltime_rank", "franchise_rank", "franchise_record"
+    sort_key: int = 0  # rank number for ordering within type group
 
 class SeasonAward(BaseModel):
     season: int
@@ -290,12 +291,12 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
             if rank == 1:
                 achievements.items.append(AchievementItem(
                     text=f"All-time MLB leader in {label}: {career_total:,}",
-                    type="mlb_record",
+                    type="mlb_record", sort_key=0,
                 ))
             else:
                 achievements.items.append(AchievementItem(
                     text=f"{_ordinal(rank)} all-time in {label}: {career_total:,}",
-                    type="alltime_rank",
+                    type="alltime_rank", sort_key=rank,
                 ))
 
     # --- Franchise rankings ---
@@ -328,7 +329,7 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
             if fran_rank <= 5:
                 achievements.items.append(AchievementItem(
                     text=f"{_ordinal(fran_rank)} in {franchise_name} history in {label}: {ft:,}",
-                    type="franchise_rank",
+                    type="franchise_rank", sort_key=fran_rank,
                 ))
 
     # --- Single-season records held ---
@@ -417,7 +418,7 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
 
     # Sort items: MLB records first, then all-time ranks, then franchise ranks, then franchise records
     _type_order = {"mlb_record": 0, "alltime_rank": 1, "franchise_record": 2, "franchise_rank": 3}
-    achievements.items.sort(key=lambda item: _type_order.get(item.type, 9))
+    achievements.items.sort(key=lambda item: (_type_order.get(item.type, 9), item.sort_key))
 
     return achievements
 
