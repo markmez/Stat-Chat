@@ -4,15 +4,36 @@ struct LoadingIndicator: View {
     @State private var baseball1Opacity: Double = 0.0
     @State private var baseball2Opacity: Double = 0.0
     @State private var baseball3Opacity: Double = 0.0
+    @State private var showPhrase = false
+    @State private var currentPhraseIndex = 0
+    @State private var phraseOpacity: Double = 0
 
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
     private let deepBlue = Color(red: 0.1, green: 0.25, blue: 0.7)
+
+    private static let phrases = [
+        "Digging through the stats...",
+        "Bunting the runner over...",
+        "Getting signs from the 3rd base coach...",
+        "Warming up in the bullpen...",
+        "Adjusting my batting gloves...",
+        "Hitting the cut-off man...",
+        "Relaying the signs...",
+        "Tapping home plate...",
+        "Breaking in a new glove...",
+        "Adjusting my pitch-com...",
+        "Writing out the lineup card...",
+        "Spitting some sunflower seeds...",
+        "Chalking the batter's box...",
+        "Sacrificing...",
+    ]
 
     private enum SparklePhase: CaseIterable {
         case hidden, building, bright, fading
     }
 
     var body: some View {
+        VStack(spacing: 12) {
         ZStack {
             // Sparkle center — builds up, holds, dissolves, repeats
             PhaseAnimator(SparklePhase.allCases) { phase in
@@ -52,6 +73,16 @@ struct LoadingIndicator: View {
                 .offset(x: 10, y: 10)
         }
         .frame(width: 44, height: 44)
+
+        // Baseball phrases — appear after 3s, rotate every 3s
+        if showPhrase {
+            Text(Self.phrases[currentPhraseIndex % Self.phrases.count])
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(.secondary)
+                .opacity(phraseOpacity)
+                .transition(.opacity)
+        }
+        } // VStack
         .onAppear {
             withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true).delay(0.3)) {
                 baseball1Opacity = 1.0
@@ -61,6 +92,25 @@ struct LoadingIndicator: View {
             }
             withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true).delay(1.2)) {
                 baseball3Opacity = 0.9
+            }
+        }
+        .task {
+            // Show first phrase after 3s
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            currentPhraseIndex = Int.random(in: 0..<Self.phrases.count)
+            showPhrase = true
+            withAnimation(.easeIn(duration: 0.4)) { phraseOpacity = 1 }
+
+            // Rotate phrases every 3s
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled else { break }
+                withAnimation(.easeOut(duration: 0.3)) { phraseOpacity = 0 }
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { break }
+                currentPhraseIndex = (currentPhraseIndex + 1) % Self.phrases.count
+                withAnimation(.easeIn(duration: 0.3)) { phraseOpacity = 1 }
             }
         }
     }
