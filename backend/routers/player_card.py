@@ -358,7 +358,7 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
         else:
             val_str = f"{int(value):,}"
         achievements.items.append(AchievementItem(
-            text=f"{season}: Set MLB single-season record with {val_str} {stat_label}",
+            text=f"MLB single-season {stat_label} record: {val_str} ({season})",
             type="mlb_record",
         ))
 
@@ -395,7 +395,7 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
             else:
                 val_str = f"{int(value):,}"
             achievements.items.append(AchievementItem(
-                text=f"{season}: Set {franchise_name} single-season record with {val_str} {stat_label}",
+                text=f"{franchise_name} single-season {stat_label} record: {val_str} ({season})",
                 type="franchise_record",
             ))
 
