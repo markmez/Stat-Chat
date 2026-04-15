@@ -2223,9 +2223,13 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             )
         else:
             # Rate stats or all-time: show individual seasons
+            extra_selects = ", ".join(f"{prefix}.{ef['stat'].db_column}" for ef in plan.extra_filters if ef.get('stat'))
+            extra_select_clause = f", {extra_selects}" if extra_selects else ""
+            has_age_filter = plan.age_max or plan.age_min
+            age_select = f", ({prefix}.season - CAST(SUBSTR(p.birthdate, 1, 4) AS INT)) AS player_age" if has_age_filter else ""
             cur = conn.cursor()
             cur.execute(
-                f"SELECT p.name, {stat_expr} AS stat_val, {prefix}.season "
+                f"SELECT p.name, {stat_expr} AS stat_val, {prefix}.season{age_select}{extra_select_clause} "
                 f"FROM {table} {prefix} "
                 f"JOIN players p ON {prefix}.player_id = p.player_id "
                 f"{award_join} "
