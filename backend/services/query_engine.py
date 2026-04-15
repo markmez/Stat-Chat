@@ -955,6 +955,10 @@ def decompose(question: str) -> QueryPlan:
                 _add_consumed(plan, m.group(0))
             break
 
+    # Award-filtered queries: "fewest HR by an MVP" means per-season, not career total
+    if plan.award_filter and plan.scope == "career":
+        plan.scope = "all_time"
+
     plan.pitcher_role = _detect_pitcher_role(lower)
     if plan.pitcher_role:
         _add_consumed(plan, "starter starters starting reliever relievers relief closer closers bullpen")
