@@ -299,38 +299,45 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
                     type="alltime_rank", sort_key=rank,
                 ))
 
-    # --- Franchise rankings ---
-    team_row = conn.execute(
-        f"SELECT team FROM {table} WHERE player_id = ? ORDER BY season DESC LIMIT 1",
-        (player_id,)
-    ).fetchone()
-    if team_row and team_row[0]:
-        current_team = team_row[0].split("/")[0].strip()
-        franchise_codes = get_franchise_codes(current_team)
-        franchise_name = get_franchise_name(current_team)
-        ph = ",".join(["?"] * len(franchise_codes))
-
-        for col, label, _ in stats[:5]:  # top 5 stats for franchise
-            franchise_total = conn.execute(
-                f"SELECT SUM({col}) FROM {table} WHERE player_id = ? AND team IN ({ph})",
-                (player_id, *franchise_codes)
-            ).fetchone()
-            if not franchise_total or not franchise_total[0]:
+    # --- Franchise rankings (all teams played for) ---
+    all_teams = conn.execute(
+        f"SELECT DISTINCT team FROM {table} WHERE player_id = ?", (player_id,)
+    ).fetchall()
+    # Deduplicate by franchise (NYA and NYA/BOS → same franchise check)
+    seen_franchises = set()
+    for (team_str,) in all_teams:
+        for t in team_str.split("/"):
+            t = t.strip()
+            franchise_key = tuple(sorted(get_franchise_codes(t)))
+            if franchise_key in seen_franchises:
                 continue
-            ft = int(franchise_total[0])
+            seen_franchises.add(franchise_key)
 
-            fran_rank = conn.execute(
-                f"SELECT COUNT(*) + 1 FROM ("
-                f"  SELECT player_id, SUM({col}) as total FROM {table}"
-                f"  WHERE team IN ({ph}) GROUP BY player_id HAVING total > ?"
-                f")", (*franchise_codes, ft)
-            ).fetchone()[0]
+            franchise_codes = get_franchise_codes(t)
+            franchise_name = get_franchise_name(t)
+            ph = ",".join(["?"] * len(franchise_codes))
 
-            if fran_rank <= 5:
-                achievements.items.append(AchievementItem(
-                    text=f"{_ordinal(fran_rank)} in {franchise_name} history in {label}: {ft:,}",
-                    type="franchise_rank", sort_key=fran_rank,
-                ))
+            for col, label, _ in stats[:5]:
+                franchise_total = conn.execute(
+                    f"SELECT SUM({col}) FROM {table} WHERE player_id = ? AND team IN ({ph})",
+                    (player_id, *franchise_codes)
+                ).fetchone()
+                if not franchise_total or not franchise_total[0]:
+                    continue
+                ft = int(franchise_total[0])
+
+                fran_rank = conn.execute(
+                    f"SELECT COUNT(*) + 1 FROM ("
+                    f"  SELECT player_id, SUM({col}) as total FROM {table}"
+                    f"  WHERE team IN ({ph}) GROUP BY player_id HAVING total > ?"
+                    f")", (*franchise_codes, ft)
+                ).fetchone()[0]
+
+                if fran_rank <= 5:
+                    achievements.items.append(AchievementItem(
+                        text=f"{_ordinal(fran_rank)} in {franchise_name} history in {label}: {ft:,}",
+                        type="franchise_rank", sort_key=fran_rank,
+                    ))
 
     # --- Single-season records held ---
     _STAT_DISPLAY = {
@@ -379,31 +386,31 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
     except Exception:
         pass  # Table might not exist yet
 
-    # Franchise records (only #1)
-    if team_row and team_row[0]:
-        # Get all franchise season records where this player holds #1
-        # For counting stats: MAX value is the record
-        # For rate stats (ERA, WHIP): MIN value is the record — but team_records
-        # stores top 5 by the correct sort, so rank 1 = the record holder
-        franchise_records = []
+    # Franchise records (only #1, across all teams played for)
+    franchise_records = []
+    franchise_record_names = []  # track which franchise for per-season display
+    for franchise_key in seen_franchises:
+        fc = list(franchise_key)
+        team_code = fc[0]  # use first code for team_records lookup
+        fn = get_franchise_name(team_code)
         fr_rows = conn.execute(
             "SELECT stat, value, season FROM team_records "
             "WHERE player_id = ? AND record_type = 'season' AND team_code = ?",
-            (player_id, current_team)
+            (player_id, team_code)
         ).fetchall()
         for stat, value, season in fr_rows:
-            # Check if this player is #1 for this stat
             lower_better = stat in ("era", "whip")
             best = conn.execute(
                 f"SELECT value FROM team_records WHERE team_code = ? AND stat = ? "
                 f"AND record_type = 'season' ORDER BY value {'ASC' if lower_better else 'DESC'} LIMIT 1",
-                (current_team, stat)
+                (team_code, stat)
             ).fetchone()
             if best and best[0] == value:
-                franchise_records.append((stat, value, season))
+                franchise_records.append((stat, value, season, fn))
+    if True:  # maintain indentation for the filter below
         # Filter out stats where they also hold the MLB record (avoid duplication)
         mlb_record_stats = {r[0] for r in mlb_records}
-        for stat, value, season in franchise_records:
+        for stat, value, season, fn in franchise_records:
             if stat in mlb_record_stats:
                 continue
             stat_label = _STAT_DISPLAY.get(stat, stat)
@@ -412,13 +419,12 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
             else:
                 val_str = f"{int(value):,}"
             achievements.items.append(AchievementItem(
-                text=f"{franchise_name} single-season {stat_label} record: {val_str} ({season})",
+                text=f"{fn} single-season {stat_label} record: {val_str} ({season})",
                 type="franchise_record",
             ))
 
     # --- Per-season records for season_awards ---
-    # Check if any of the player's seasons are franchise records
-    for stat, value, season in (franchise_records if team_row and team_row[0] else []):
+    for stat, value, season, *rest in franchise_records:
         stat_label = _STAT_DISPLAY.get(stat, stat)
         existing = next((sa for sa in achievements.season_awards if sa.season == season), None)
         record_text = f"Record: {stat_label}"
