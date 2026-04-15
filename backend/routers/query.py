@@ -718,6 +718,17 @@ def _extract_prior_context(history: list[dict]) -> dict:
 
     # Extract player name
     player = _nm.find_player_in_text(q)
+    if not player:
+        # Fallback: try match_player_with_prominence on individual words
+        # Handles cases like "Soto OPS 2025" where find_player_in_text might miss
+        for word in q.split():
+            word_clean = word.strip("?.!,")
+            if len(word_clean) < 2:
+                continue
+            result = _nm.match_player_with_prominence(word_clean)
+            if result:
+                player = result[0]
+                break
     if player:
         ctx["player"] = player
 
@@ -776,12 +787,12 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
         if stat_match and player:
             season_part = f" {season}" if season else ""
             return f"{player} {name_text_clean}{season_part}"
-        # Try as a player name (use prominence for ambiguous last names like "Soto")
-        new_player = _nm.find_player_in_text(name_text) or _nm.match_player(name_text)
-        if not new_player:
-            prominence = _nm.match_player_with_prominence(name_text)
-            if prominence:
-                new_player = prominence[0]
+        # Try as a player name — use prominence first for multi-player names like "De La Cruz"
+        prominence = _nm.match_player_with_prominence(name_text)
+        if prominence:
+            new_player = prominence[0]
+        else:
+            new_player = _nm.find_player_in_text(name_text) or _nm.match_player(name_text)
         if new_player and stat:
             season_part = f" {season}" if season else ""
             return f"{new_player} {stat}{season_part}"
@@ -795,6 +806,17 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
             if stat:
                 return f"{player} career {stat}"
             return f"{player} career stats"
+        # Fallback: strip year from prior query, insert "career"
+        # e.g., "Soto OPS 2025" → "Soto career OPS"
+        if ctx["query"]:
+            prior = _re.sub(r'\b20[012]\d\b', '', ctx["query"]).strip()
+            prior = _re.sub(r'\b(?:this season|this year|last season|last year)\b', '', prior).strip()
+            if prior:
+                # Insert "career" after first word (likely the player name)
+                words = prior.split()
+                if len(words) >= 2:
+                    return f"{words[0]} career {' '.join(words[1:])}"
+                return f"{prior} career stats"
 
     # --- Pattern 3: Splits pivot ---
     # "vs lefties", "vs righties", "at home", "on the road", "away"
@@ -837,7 +859,21 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
         season_part = f" {season}" if season else ""
         return f"most {stat}{season_part}"
 
-    # --- Pattern 6: Time range modifier ---
+    # --- Pattern 6: League filter ---
+    # "in the NL", "in the AL", "NL", "AL", "American League", "National League"
+    league_match = _re.match(
+        r'^(?:in the\s+)?(?:(?:al|american league|a\.l\.)|(?:nl|national league|n\.l\.))[\?\.]?$', clean)
+    if league_match:
+        query = ctx["query"]
+        # Determine which league
+        if _re.search(r'(?:^|\b)(?:al|american league|a\.l\.)(?:\b|$)', clean):
+            league = "AL"
+        else:
+            league = "NL"
+        # Append league to the prior query
+        return f"{query} {league}"
+
+    # --- Pattern 7: Time range modifier ---
     # "since 2010", "in 2023", "last 10 years", "this season", "last season"
     time_match = _re.match(r'^(?:since|after)\s+(20[012]\d)[\?\.]?$', lower)
     if time_match:
