@@ -357,6 +357,28 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
             type="mlb_record",
         ))
 
+    # Former MLB records (from curated record_progression table)
+    try:
+        former_records = conn.execute(
+            "SELECT stat, record_type, value, year_set, year_broken "
+            "FROM record_progression WHERE player_id = ? AND year_broken IS NOT NULL "
+            "ORDER BY year_set",
+            (player_id,)
+        ).fetchall()
+        for stat, rtype, value, year_set, year_broken in former_records:
+            stat_label = _STAT_DISPLAY.get(stat, stat)
+            if stat in ("batting_avg", "ops", "era", "whip"):
+                val_str = f"{value:.3f}".lstrip("0") if value < 1 else f"{value:.3f}"
+            else:
+                val_str = f"{int(value):,}"
+            rtype_label = "single-season" if rtype == "season" else "career"
+            achievements.items.append(AchievementItem(
+                text=f"Former MLB {rtype_label} {stat_label} record: {val_str} ({year_set}-{year_broken})",
+                type="mlb_record", sort_key=1,
+            ))
+    except Exception:
+        pass  # Table might not exist yet
+
     # Franchise records (only #1)
     if team_row and team_row[0]:
         # Get all franchise season records where this player holds #1
