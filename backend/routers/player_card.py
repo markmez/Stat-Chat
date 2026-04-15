@@ -397,23 +397,23 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
     # Check if any of the player's seasons are franchise records
     for stat, value, season in (franchise_records if team_row and team_row[0] else []):
         stat_label = _STAT_DISPLAY.get(stat, stat)
-        existing = next((sa for sa in achievements.seasonAwards if sa.season == season), None)
+        existing = next((sa for sa in achievements.season_awards if sa.season == season), None)
         record_text = f"Record: {stat_label}"
         if existing:
             existing.awards.append(record_text)
         else:
-            achievements.seasonAwards.append(SeasonAward(season=season, awards=[record_text]))
+            achievements.season_awards.append(SeasonAward(season=season, awards=[record_text]))
     for stat, value, season in mlb_records:
         stat_label = _STAT_DISPLAY.get(stat, stat)
-        existing = next((sa for sa in achievements.seasonAwards if sa.season == season), None)
+        existing = next((sa for sa in achievements.season_awards if sa.season == season), None)
         record_text = f"MLB Record: {stat_label}"
         if existing:
             existing.awards.append(record_text)
         else:
-            achievements.seasonAwards.append(SeasonAward(season=season, awards=[record_text]))
+            achievements.season_awards.append(SeasonAward(season=season, awards=[record_text]))
 
     # Re-sort season awards by year
-    achievements.seasonAwards.sort(key=lambda sa: sa.season)
+    achievements.season_awards.sort(key=lambda sa: sa.season)
 
     return achievements
 
@@ -1492,9 +1492,8 @@ async def player_card(
         if pid_row:
             try:
                 achievements = _build_achievements(conn, pid_row[0], name, pitcher and not two_way)
-            except Exception as e:
-                # Temporary: include error in response for debugging
-                achievements = Achievements(awards_summary=[f"ERROR: {type(e).__name__}: {e}"])
+            except Exception:
+                pass
 
         return PlayerCardResponse(
             player_info=info,
