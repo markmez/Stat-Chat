@@ -229,18 +229,36 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
         (player_id,)
     ).fetchall()
 
+    # Get individual years for each award
+    award_years = {}
+    for row in conn.execute(
+        "SELECT award, season FROM awards WHERE player_id = ? ORDER BY season",
+        (player_id,)
+    ).fetchall():
+        award_years.setdefault(row[0], []).append(row[1])
+
     # Display order for summary
+    # MVP/CY/ROY/WS_MVP: list each year individually
+    # ALL_STAR/GG/SS: count + year list in parens
+    _individual_awards = {"MVP", "CY", "ROY", "WS_MVP", "ALCS_MVP", "NLCS_MVP", "HOF"}
     _summary_order = ["HOF", "MVP", "CY", "ROY", "WS_MVP", "ALL_STAR", "GG", "SS"]
-    award_counts = {a: c for a, c in award_rows}
     for award_code in _summary_order:
-        count = award_counts.get(award_code, 0)
-        if count == 0:
+        years = award_years.get(award_code, [])
+        if not years:
             continue
         label = _AWARD_DISPLAY.get(award_code, award_code)
-        if count > 1:
-            achievements.awards_summary.append(f"{count}x {label}")
+        if award_code in _individual_awards:
+            for yr in years:
+                if award_code == "HOF":
+                    achievements.awards_summary.append(f"{label}")
+                else:
+                    achievements.awards_summary.append(f"{yr} {label}")
         else:
-            achievements.awards_summary.append(label)
+            year_strs = ", ".join(f"'{str(y)[2:]}" for y in years)
+            if len(years) > 1:
+                achievements.awards_summary.append(f"{len(years)}x {label} ({year_strs})")
+            else:
+                achievements.awards_summary.append(f"{label} ({year_strs})")
 
     # --- Per-season awards ---
     season_rows = conn.execute(
