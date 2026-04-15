@@ -435,6 +435,29 @@ def _ordinal(n: int) -> str:
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _resolve_player_name(conn: sqlite3.Connection, name: str) -> str:
+    """Resolve ambiguous names to the most prominent player (most career games).
+    Returns the resolved full name, or the original name if no match."""
+    safe = _sanitize(name)
+    # Exact match — check if unique
+    rows = conn.execute(
+        "SELECT name FROM players WHERE name = ?", (safe,)
+    ).fetchall()
+    if len(rows) == 1:
+        return rows[0][0]
+    # Multiple exact matches or no exact match — try last name with prominence
+    # Find by last name, rank by career games
+    best = conn.execute(
+        "SELECT p.name, COALESCE(p.career_games, 0) as cg FROM players p "
+        "WHERE p.name LIKE ? OR p.name = ? "
+        "ORDER BY cg DESC LIMIT 1",
+        (f"% {safe}", safe),
+    ).fetchone()
+    if best:
+        return best[0]
+    return name
+
+
 def _fetch_player_info(conn: sqlite3.Connection, name: str) -> Optional[PlayerInfo]:
     cur = conn.cursor()
     cur.execute(
@@ -1431,6 +1454,8 @@ async def player_card(
 
     conn = _get_conn()
     try:
+        # Resolve ambiguous names to most prominent player
+        name = _resolve_player_name(conn, name)
         info = _fetch_player_info(conn, name)
         batting = _fetch_batting_seasons(conn, name)
         pitcher = _is_pitcher(conn, name)
