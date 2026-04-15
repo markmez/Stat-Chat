@@ -293,10 +293,16 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
         ).fetchone()[0]
 
         if rank <= top_n:
-            achievements.items.append(AchievementItem(
-                text=f"{_ordinal(rank)} all-time in {label} ({career_total:,})",
-                type="alltime_rank",
-            ))
+            if rank == 1:
+                achievements.items.append(AchievementItem(
+                    text=f"All-time MLB leader in {label} ({career_total:,})",
+                    type="mlb_record",
+                ))
+            else:
+                achievements.items.append(AchievementItem(
+                    text=f"{_ordinal(rank)} all-time in {label} ({career_total:,})",
+                    type="alltime_rank",
+                ))
 
     # --- Franchise rankings ---
     team_row = conn.execute(
@@ -352,8 +358,8 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
         else:
             val_str = f"{int(value):,}"
         achievements.items.append(AchievementItem(
-            text=f"Holds MLB single-season record for {stat_label} ({val_str}, {season})",
-            type="record",
+            text=f"{season}: Set MLB single-season record with {val_str} {stat_label}",
+            type="mlb_record",
         ))
 
     # Franchise records (only #1)
@@ -389,8 +395,8 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
             else:
                 val_str = f"{int(value):,}"
             achievements.items.append(AchievementItem(
-                text=f"Holds {franchise_name} single-season record for {stat_label} ({val_str}, {season})",
-                type="record",
+                text=f"{season}: Set {franchise_name} single-season record with {val_str} {stat_label}",
+                type="franchise_record",
             ))
 
     # --- Per-season records for season_awards ---
@@ -414,6 +420,10 @@ def _build_achievements(conn, player_id: str, name: str, is_pitcher: bool) -> Ac
 
     # Re-sort season awards by year
     achievements.season_awards.sort(key=lambda sa: sa.season)
+
+    # Sort items: MLB records first, then all-time ranks, then franchise ranks, then franchise records
+    _type_order = {"mlb_record": 0, "alltime_rank": 1, "franchise_rank": 2, "franchise_record": 3}
+    achievements.items.sort(key=lambda item: _type_order.get(item.type, 9))
 
     return achievements
 
