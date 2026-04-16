@@ -1255,6 +1255,14 @@ async def dashboard(
     """, date_params).fetchall()
 
     total = sum(r[1] for r in breakdown)
+
+    # Client-side issues in the last 24h (partial responses, decode errors, etc.
+    # logged via /client-event). Surface as a dedicated stat card.
+    client_events_24h = conn.execute(
+        "SELECT COUNT(*) FROM query_log WHERE response_type = 'client_event' "
+        "AND timestamp >= datetime('now', '-1 day')"
+    ).fetchone()[0]
+
     conn.close()
 
     # Build breakdown rows
@@ -1375,6 +1383,7 @@ async def dashboard(
   }}
   .badge.intercepted, .badge.query-engine {{ background: #dcfce7; color: #166534; }}
   .badge.query-engine-error {{ background: #fee2e2; color: #991b1b; }}
+  .badge.client_event {{ background: #fef3c7; color: #b45309; }}
   .badge.evt-ai-insight {{ background: #fef3c7; color: #92400e; }}
   .badge.evt-historical {{ background: #e0e7ff; color: #3730a3; }}
   .badge.evt-streak {{ background: #fce7f3; color: #9d174d; }}
@@ -1450,6 +1459,10 @@ async def dashboard(
   <div class="stat-card">
     <div class="label">Unique Queries</div>
     <div class="value">{len(queries):,}</div>
+  </div>
+  <div class="stat-card" style="background: linear-gradient(135deg, #b45309, #f59e0b); cursor: pointer;" onclick="filterBy('client_event')">
+    <div class="label">Client Issues (24h)</div>
+    <div class="value">{client_events_24h:,}</div>
   </div>
 </div>
 

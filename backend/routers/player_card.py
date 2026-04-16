@@ -6,13 +6,17 @@ pitching data (if applicable), and platoon splits — all from the
 full historical database.
 """
 
+import logging
 import os
 import sqlite3
+import uuid
 from typing import Optional, List
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from services.metering import log_query, check_quota, increment_count
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -178,6 +182,7 @@ class Achievements(BaseModel):
     season_awards: List[SeasonAward] = []  # per-year awards for career display
 
 class PlayerCardResponse(BaseModel):
+    request_id: Optional[str] = None
     player_info: Optional[PlayerInfo] = None
     batting_seasons: List[BattingSeason] = []
     pitching_seasons: List[PitchingSeason] = []
@@ -1467,6 +1472,11 @@ async def player_card(
     source: str = Query("link", description="'search' if user typed it, 'link' if tapped a name"),
     device_id: str = Query("", description="Device ID for metering (required when source=search)"),
 ):
+    # Short per-request ID so client events (partial_player_card) can be correlated
+    # back to this specific request in gunicorn logs. 12 hex chars is unique enough
+    # to grep for without taking up space in log lines.
+    rid = uuid.uuid4().hex[:12]
+
     # Log and meter player card searches (not link navigations)
     if source == "search" and device_id:
         log_query(name, device_id, "query engine")
@@ -1545,7 +1555,22 @@ async def player_card(
             except Exception:
                 pass
 
+        # Breadcrumb: one line per request, correlatable by rid with client events.
+        # Counts are the key shape signals — if a client_event reports missing
+        # season_splits for year Y but this log shows ss=N>0, we know the backend
+        # returned the data and the client lost it (or vice versa).
+        current_yr_bs = sum(1 for bs in batting if bs.year == current_year)
+        current_yr_ss = sum(1 for s in season_splits if s.year == current_year)
+        log.info(
+            "PLAYERCARD rid=%s name=%s yr=%s bs_total=%d bs_curr=%d ss_total=%d ss_curr=%d gl=%d pit=%d",
+            rid, name, current_year,
+            len(batting), current_yr_bs,
+            len(season_splits), current_yr_ss,
+            len(game_logs), len(pitching),
+        )
+
         return PlayerCardResponse(
+            request_id=rid,
             player_info=info,
             batting_seasons=batting,
             pitching_seasons=pitching,

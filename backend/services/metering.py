@@ -114,6 +114,58 @@ def log_event_tap(headline: str, tap_type: str, device_id: str) -> None:
     conn.close()
 
 
+def log_client_event(event_type: str, context: dict, device_id: str,
+                     app_version: str | None = None,
+                     platform_version: str | None = None) -> bool:
+    """Log a client-side event (partial response, decode error, etc.) to query_log.
+
+    Writes with response_type='client_event'. Dedupes within the current minute for
+    (device_id, query_text) to prevent flooding. Returns True if inserted, False if deduped.
+    """
+    import json
+
+    conn = sqlite3.connect(METERING_DB_PATH)
+    # Add client_context column if it doesn't exist (same ALTER pattern as is_followup)
+    try:
+        conn.execute("ALTER TABLE query_log ADD COLUMN client_context TEXT")
+    except Exception:
+        pass
+
+    # Human-readable headline that groups similar events in the dashboard
+    player = None
+    if isinstance(context, dict):
+        player = context.get("player")
+    query_text = f"[client] {event_type}"
+    if player:
+        query_text = f"{query_text}: {player}"
+
+    now = _now_iso()
+    minute_prefix = now[:16]  # "2026-04-16T13:42"
+    existing = conn.execute(
+        "SELECT 1 FROM query_log WHERE device_id = ? AND response_type = 'client_event' "
+        "AND query_text = ? AND timestamp LIKE ? LIMIT 1",
+        (device_id, query_text, minute_prefix + "%"),
+    ).fetchone()
+    if existing:
+        conn.close()
+        return False
+
+    full_context: dict = dict(context) if isinstance(context, dict) else {"raw": context}
+    if app_version:
+        full_context["app_version"] = app_version
+    if platform_version:
+        full_context["platform_version"] = platform_version
+
+    conn.execute(
+        "INSERT INTO query_log (query_text, device_id, response_type, timestamp, client_context) "
+        "VALUES (?, ?, 'client_event', ?, ?)",
+        (query_text, device_id, now, json.dumps(full_context)),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
 def _now_iso() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
