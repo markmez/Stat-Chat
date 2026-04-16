@@ -4746,231 +4746,51 @@ enum PlayerCardService {
         return nil
     }
 
-    // MARK: - Team card fetch
+    // MARK: - Team card fetch (backend)
 
-    static func fetchTeamCard(teamCode: String) -> TeamCard? {
-        let fullName = teamFullName(teamCode)
+    static func fetchTeamCard(teamCode: String) async -> TeamCard? {
+        do {
+            let response = try await backendService.fetchTeamCard(code: teamCode)
 
-        // Find all seasons this team has data for
-        let seasonsSql = """
-            SELECT DISTINCT s.season
-            FROM season_batting_stats s
-            WHERE s.team = '\(sanitize(teamCode))' OR s.team LIKE '\(sanitize(teamCode))/%' OR s.team LIKE '%/\(sanitize(teamCode))'
-            ORDER BY s.season DESC
-            """
-        guard let seasonsResult = try? db.execute(sql: seasonsSql),
-              !seasonsResult.rows.isEmpty else { return nil }
+            let seasons: [TeamSeasonData] = response.seasons.compactMap { season in
+                // Build batting stats grid
+                guard let batting = season.batting_stats else { return nil }
+                let statsGrid = StatGridParser.StatGrid(
+                    headers: batting.headers,
+                    rows: [StatGridParser.StatGrid.Row(label: "", values: batting.values)]
+                )
 
-        let years = seasonsResult.rows.compactMap { Int($0[0]) }
-        guard !years.isEmpty else { return nil }
+                // Build pitching stats grid
+                var pitchingStatsGrid: StatGridParser.StatGrid? = nil
+                if let pitching = season.pitching_stats {
+                    pitchingStatsGrid = StatGridParser.StatGrid(
+                        headers: pitching.headers,
+                        rows: [StatGridParser.StatGrid.Row(label: "", values: pitching.values)]
+                    )
+                }
 
-        var teamSeasons: [TeamSeasonData] = []
-        for year in years {
-            let teamFilter = "(s.team = '\(sanitize(teamCode))' OR s.team LIKE '\(sanitize(teamCode))/%' OR s.team LIKE '%/\(sanitize(teamCode))')"
+                // Map leaders
+                let leaders = season.leaders.map {
+                    StatLeader(category: $0.category, name: $0.name, value: $0.value)
+                }
 
-            // 2a. Team aggregate stats
-            let aggSql = """
-                SELECT SUM(s.games), SUM(s.at_bats), SUM(s.runs), SUM(s.hits),
-                       SUM(s.doubles), SUM(s.triples), SUM(s.home_runs), SUM(s.rbi),
-                       SUM(s.stolen_bases), SUM(s.walks), SUM(s.strikeouts)
-                FROM season_batting_stats s
-                WHERE \(teamFilter) AND s.season = \(year)
-                """
-            guard let aggResult = try? db.execute(sql: aggSql),
-                  let aggRow = aggResult.rows.first,
-                  aggRow.count >= 11 else { continue }
+                // Map roster
+                let roster = season.roster.map {
+                    RosterEntry(name: $0.name, position: $0.position)
+                }
 
-            let _ = aggRow[0], ab = aggRow[1], r = aggRow[2], h = aggRow[3]
-            let d = aggRow[4], t = aggRow[5], hr = aggRow[6], rbi = aggRow[7]
-            let sb = aggRow[8], bb = aggRow[9], so = aggRow[10]
-
-            let abVal = Double(ab) ?? 0
-            let hVal = Double(h) ?? 0
-            let bbVal = Double(bb) ?? 0
-            let dVal = Double(d) ?? 0
-            let tVal = Double(t) ?? 0
-            let hrVal = Double(hr) ?? 0
-
-            let avg = abVal > 0 ? hVal / abVal : 0
-            // Approximate PA for team OBP (no HBP/SF aggregation readily available at team level)
-            let pa = abVal + bbVal
-            let obp = pa > 0 ? (hVal + bbVal) / pa : 0
-            let tbVal = hVal + dVal + 2 * tVal + 3 * hrVal
-            let slg = abVal > 0 ? tbVal / abVal : 0
-            let ops = obp + slg
-
-            let teamHeaders = ["R", "H", "2B", "3B", "HR", "RBI", "SB", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
-            let teamValues = [r, h, d, t, hr, rbi, sb, bb, so,
-                              formatRate(String(avg)), formatRate(String(obp)),
-                              formatRate(String(slg)), formatRate(String(ops))]
-            let statsGrid = StatGridParser.StatGrid(
-                headers: teamHeaders,
-                rows: [StatGridParser.StatGrid.Row(label: "", values: teamValues)]
-            )
-
-            // 2a-2. Team pitching aggregate stats
-            let pitchingTeamFilterAgg = "(sp.team = '\(sanitize(teamCode))' OR sp.team LIKE '\(sanitize(teamCode))/%' OR sp.team LIKE '%/\(sanitize(teamCode))')"
-            let pitchAggSql = """
-                SELECT SUM(sp.wins), SUM(sp.losses), SUM(sp.saves),
-                       SUM(sp.ip_outs), SUM(sp.hits), SUM(sp.earned_runs),
-                       SUM(sp.walks), SUM(sp.strikeouts), SUM(sp.home_runs)
-                FROM season_pitching_stats sp
-                WHERE \(pitchingTeamFilterAgg) AND sp.season = \(year)
-                """
-            var pitchingStatsGrid: StatGridParser.StatGrid? = nil
-            if let pitchAggResult = try? db.execute(sql: pitchAggSql),
-               let pitchAggRow = pitchAggResult.rows.first,
-               pitchAggRow.count >= 9,
-               let ipOutsVal = Double(pitchAggRow[3]), ipOutsVal > 0 {
-                let pSV = pitchAggRow[2]
-                let pH = pitchAggRow[4], pER = pitchAggRow[5]
-                let pBB = pitchAggRow[6], pSO = pitchAggRow[7], pHR = pitchAggRow[8]
-
-                // Compute ERA: (ER * 9) / (ip_outs / 3)
-                let erVal = Double(pER) ?? 0
-                let era = (erVal * 9.0) / (ipOutsVal / 3.0)
-
-                // Compute WHIP: (H + BB) / (ip_outs / 3)
-                let hitsVal = Double(pH) ?? 0
-                let walksVal = Double(pBB) ?? 0
-                let whip = (hitsVal + walksVal) / (ipOutsVal / 3.0)
-
-                let pitchHeaders = ["SV", "H", "ER", "HR", "BB", "SO", "ERA", "WHIP"]
-                let pitchValues = [pSV, pH, pER, pHR, pBB, pSO,
-                                   formatPitchingRate(String(era), decimals: 2),
-                                   formatPitchingRate(String(whip), decimals: 2)]
-                pitchingStatsGrid = StatGridParser.StatGrid(
-                    headers: pitchHeaders,
-                    rows: [StatGridParser.StatGrid.Row(label: "", values: pitchValues)]
+                return TeamSeasonData(
+                    year: season.year, stats: statsGrid, pitchingStats: pitchingStatsGrid,
+                    leaders: leaders, roster: roster
                 )
             }
 
-            // 2b. Leaders (top 3 per category)
-            let leaderCategories: [(label: String, col: String, isRate: Bool)] = [
-                ("HR", "home_runs", false),
-                ("SB", "stolen_bases", false),
-                ("H", "hits", false),
-                ("AVG", "batting_avg", true),
-                ("OBP", "obp", true),
-                ("OPS", "ops", true),
-            ]
-            var leaders: [StatLeader] = []
-            for cat in leaderCategories {
-                let leaderSql = """
-                    SELECT p.name, s.\(cat.col)
-                    FROM season_batting_stats s
-                    JOIN players p ON s.player_id = p.player_id
-                    WHERE \(teamFilter) AND s.season = \(year) AND s.plate_appearances >= 50
-                    ORDER BY s.\(cat.col) DESC
-                    LIMIT 20
-                    """
-                if let leaderResult = try? db.execute(sql: leaderSql) {
-                    for lRow in leaderResult.rows {
-                        let value = cat.isRate ? formatRate(lRow[1]) : lRow[1]
-                        leaders.append(StatLeader(category: cat.label, name: lRow[0], value: value))
-                    }
-                }
-            }
-
-            // 2b-2. Pitching leaders
-            let pitchingTeamFilter = "(sp.team = '\(sanitize(teamCode))' OR sp.team LIKE '\(sanitize(teamCode))/%' OR sp.team LIKE '%/\(sanitize(teamCode))')"
-            let pitchingLeaderCategories: [(label: String, col: String, asc: Bool, minIP: Bool)] = [
-                ("W", "wins", false, false),
-                ("SV", "saves", false, false),
-                ("SO", "strikeouts", false, false),
-                ("ERA", "era", true, true),
-            ]
-            for cat in pitchingLeaderCategories {
-                let ipFilter = cat.minIP ? "AND sp.ip_outs >= 54" : ""
-                let sortDir = cat.asc ? "ASC" : "DESC"
-                let pitchLeaderSql = """
-                    SELECT p.name, sp.\(cat.col)
-                    FROM season_pitching_stats sp
-                    JOIN players p ON sp.player_id = p.player_id
-                    WHERE \(pitchingTeamFilter) AND sp.season = \(year) \(ipFilter)
-                    ORDER BY sp.\(cat.col) \(sortDir)
-                    LIMIT 20
-                    """
-                if let leaderResult = try? db.execute(sql: pitchLeaderSql) {
-                    for lRow in leaderResult.rows {
-                        let value = cat.asc ? formatPitchingRate(lRow[1], decimals: 2) : lRow[1]
-                        leaders.append(StatLeader(category: cat.label, name: lRow[0], value: value))
-                    }
-                }
-            }
-
-            // 2c. Roster (name + position only)
-            let rosterSql = """
-                SELECT p.name, p.positions, s.plate_appearances
-                FROM season_batting_stats s
-                JOIN players p ON s.player_id = p.player_id
-                WHERE \(teamFilter) AND s.season = \(year)
-                ORDER BY s.plate_appearances DESC
-                """
-            var positionPlayers: [(name: String, position: String)] = []
-            var pitchers: [(name: String, position: String)] = []
-            if let rosterResult = try? db.execute(sql: rosterSql) {
-                for rRow in rosterResult.rows {
-                    let playerName = rRow[0]
-                    var pos = rRow[1]
-                    let pa = Int(rRow[2]) ?? 0
-                    if pos.isEmpty {
-                        let posSql = """
-                            SELECT sfs.position FROM season_fielding_stats sfs
-                            JOIN players p ON sfs.player_id = p.player_id
-                            WHERE p.name = '\(sanitize(playerName))' AND sfs.season = \(year)
-                            ORDER BY sfs.games DESC LIMIT 1
-                            """
-                        if let posResult = try? db.execute(sql: posSql),
-                           let posRow = posResult.rows.first {
-                            pos = posRow[0]
-                        }
-                    }
-                    if pa == 0 && pos.hasPrefix("P") {
-                        pitchers.append((name: playerName, position: pos))
-                    } else {
-                        positionPlayers.append((name: playerName, position: pos))
-                    }
-                }
-            }
-
-            // Sort pitchers by GS DESC, then G DESC
-            if !pitchers.isEmpty {
-                // Build lookup of GS and G from pitching stats
-                let pitcherNameList = pitchers.map { "'\(sanitize($0.name))'" }.joined(separator: ",")
-                let pitchSortSql = """
-                    SELECT p.name, sp.games_started, sp.games
-                    FROM season_pitching_stats sp
-                    JOIN players p ON sp.player_id = p.player_id
-                    WHERE \(pitchingTeamFilter) AND sp.season = \(year)
-                          AND p.name IN (\(pitcherNameList))
-                    """
-                var pitcherSort: [String: (gs: Int, g: Int)] = [:]
-                if let pitchResult = try? db.execute(sql: pitchSortSql) {
-                    for pRow in pitchResult.rows {
-                        let gs = Int(pRow[1]) ?? 0
-                        let g = Int(pRow[2]) ?? 0
-                        pitcherSort[pRow[0]] = (gs: gs, g: g)
-                    }
-                }
-                pitchers.sort { a, b in
-                    let aStats = pitcherSort[a.name] ?? (gs: 0, g: 0)
-                    let bStats = pitcherSort[b.name] ?? (gs: 0, g: 0)
-                    if aStats.gs != bStats.gs { return aStats.gs > bStats.gs }
-                    return aStats.g > bStats.g
-                }
-            }
-
-            let rosterEntries = positionPlayers + pitchers
-            let roster = rosterEntries.map { RosterEntry(name: $0.name, position: $0.position) }
-            teamSeasons.append(TeamSeasonData(
-                year: year, stats: statsGrid, pitchingStats: pitchingStatsGrid,
-                leaders: leaders, roster: roster
-            ))
+            guard !seasons.isEmpty else { return nil }
+            return TeamCard(teamCode: response.team_code, fullName: response.full_name, seasons: seasons)
+        } catch {
+            print("Team card fetch failed: \(error)")
+            return nil
         }
-
-        guard !teamSeasons.isEmpty else { return nil }
-        return TeamCard(teamCode: teamCode, fullName: fullName, seasons: teamSeasons)
     }
 
     // MARK: - Pitching Season Resolution

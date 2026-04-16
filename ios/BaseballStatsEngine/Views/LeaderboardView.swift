@@ -293,11 +293,13 @@ struct LeaderboardView: View {
                 .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
         )
         .onAppear {
-            // Show chevron on first column — data arrives pre-sorted descending by it.
-            // This makes the sort affordance visible without changing the order.
+            // Show chevron on first column — preserves the backend's sort order.
+            // For "lower is better" stats (ERA, WHIP, etc.), data arrives ascending.
             if !initialized && isSortable {
                 sortColumn = 0
-                sortAscending = false
+                let lowerIsBetter: Set<String> = ["ERA", "WHIP", "BB/9", "H/9", "HR/9", "BAA"]
+                let firstHeader = grid.headers.first ?? ""
+                sortAscending = lowerIsBetter.contains(firstHeader)
             }
             initialized = true
         }

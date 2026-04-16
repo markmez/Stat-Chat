@@ -194,7 +194,7 @@ struct TeamCardView: View {
         }
         .task {
             AnalyticsService.trackTeamCardView(code: teamCode)
-            teamCard = PlayerCardService.fetchTeamCard(teamCode: teamCode)
+            teamCard = await PlayerCardService.fetchTeamCard(teamCode: teamCode)
             isLoading = false
         }
     }
@@ -409,10 +409,15 @@ struct TeamCardView: View {
 
     private func rosterSection(roster: [RosterEntry]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Roster (\(roster.count) players)")
-                .font(.system(.headline, design: .rounded, weight: .semibold))
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Roster (\(roster.count) players)")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text("Includes any player who played on the team this year.")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 20)
 
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(roster.enumerated()), id: \.offset) { index, entry in

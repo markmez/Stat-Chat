@@ -282,6 +282,21 @@ struct ResultsView: View {
         guard !trimmed.isEmpty, !appState.isLoading else { return }
         inputText = ""
 
+        // Follow-ups should go to the backend for rewriting, not through resolveSearch
+        // which can incorrectly match player names (e.g., "career?" → Carter, "De La Cruz" → Bryan).
+        // Only route through resolveSearch if the input looks like a standalone search,
+        // not a conversational follow-up.
+        let lower = trimmed.lowercased()
+        let followUpPrefixes = ["what about", "how about", "and ", "compare", "vs ",
+                                "how did", "what did", "how is", "what is", "who led",
+                                "who leads", "in the ", "since ", "last ", "this "]
+        let isFollowUpPhrase = followUpPrefixes.contains(where: { lower.hasPrefix($0) })
+        let wordCount = trimmed.split(separator: " ").count
+        if wordCount <= 2 || isFollowUpPhrase {
+            appState.sendQuestion(trimmed, isFollowUp: true)
+            return
+        }
+
         // Don't pass history — follow-up queries shouldn't add the raw text
         // to search history. The rewritten standalone query gets added later.
         switch PlayerNameMatcher.resolveSearch(trimmed, history: nil) {

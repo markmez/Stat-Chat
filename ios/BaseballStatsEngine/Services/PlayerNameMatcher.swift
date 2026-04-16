@@ -1800,10 +1800,22 @@ enum PlayerNameMatcher {
 
     /// Find closest player names within edit distance threshold (for "did you mean?" suggestions).
     /// Returns multiple names when a last-name fuzzy match is ambiguous.
+    /// Common query words that should never fuzzy-match to player names.
+    private static let fuzzyBlocklist: Set<String> = [
+        "career", "stats", "season", "leaders", "compare", "versus",
+        "average", "record", "roster", "trades", "scores", "tonight",
+        "pitcher", "hitter", "batter", "catcher", "infield", "outfield",
+    ]
+
     static func fuzzyMatch(_ input: String) -> [String] {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 3 else { return [] }
-        let lower = trimmed.lowercased()
+        // Strip trailing punctuation before matching (prevents "career?" → "carter")
+        let cleaned = trimmed.trimmingCharacters(in: .punctuationCharacters)
+        guard cleaned.count >= 3 else { return [] }
+        // Skip common query words that are close to player names
+        if fuzzyBlocklist.contains(cleaned.lowercased()) { return [] }
+        let lower = cleaned.lowercased()
         let ascii = stripDiacritics(lower)
         let threshold = ascii.count >= 4 ? 2 : 1
 
@@ -1959,53 +1971,49 @@ enum PlayerNameMatcher {
         return nil
     }
 
-    /// Sort player names by prominence: recent players first, then by career games descending.
-    /// Returns (sortedNames, dominantIndex?) — dominantIndex is set when one player is clearly
-    /// more relevant (e.g., only current player, or vastly more career games).
-    /// Uses career_games and last_season columns from the players table (no stats tables needed).
+    /// Sort player names by pre-computed prominence_score from the players table.
+    /// Same score is used on the backend — one ranking, one source of truth.
+    /// Score includes career games + pitching weight + awards (All-Star, MVP, etc.).
     static func sortByProminence(_ names: [String]) -> (sorted: [String], dominantIndex: Int?) {
         guard names.count > 1 else { return (names, names.count == 1 ? 0 : nil) }
 
         let db = DatabaseService()
         let currentYear = Calendar.current.component(.year, from: Date())
 
-        var infos: [(name: String, lastSeason: Int, totalGames: Int)] = []
+        var infos: [(name: String, lastSeason: Int, score: Int)] = []
         for name in names {
             let sanitized = name.replacingOccurrences(of: "'", with: "''")
             var lastSeason = 0
-            var totalGames = 0
+            var score = 0
             if let result = try? db.execute(sql: """
-                SELECT COALESCE(last_season, 0), COALESCE(career_games, 0)
+                SELECT COALESCE(last_season, 0), COALESCE(prominence_score, career_games, 0)
                 FROM players WHERE name = '\(sanitized)'
                 """), let row = result.rows.first {
                 lastSeason = Int(row[0]) ?? 0
-                totalGames = Int(row[1]) ?? 0
+                score = Int(row[1]) ?? 0
             }
-            infos.append((name, lastSeason, totalGames))
+            infos.append((name, lastSeason, score))
         }
 
         // "Recent" = played within last 2 years (handles injury-missed seasons like Cole 2025)
         let recentThreshold = currentYear - 2
 
-        // Sort: recent players first, then by total games descending
+        // Sort: recent players first, then by prominence score descending
         let sorted = infos.sorted { a, b in
             let aRecent = a.lastSeason >= recentThreshold
             let bRecent = b.lastSeason >= recentThreshold
             if aRecent != bRecent { return aRecent }
-            return a.totalGames > b.totalGames
+            return a.score > b.score
         }
 
         // Determine if one player is clearly dominant
         var dominantIndex: Int? = nil
         let recentPlayers = sorted.filter { $0.lastSeason >= recentThreshold }
-        if recentPlayers.count == 1 && recentPlayers[0].totalGames >= 100 {
-            // Only one recent player with meaningful career → auto-select
+        if recentPlayers.count == 1 && recentPlayers[0].score >= 100 {
             dominantIndex = 0
-        } else if recentPlayers.count >= 2 && recentPlayers[0].totalGames >= recentPlayers[1].totalGames * 3 {
-            // Among recent players, top one has 3x+ more games → auto-select
+        } else if recentPlayers.count >= 2 && recentPlayers[0].score >= recentPlayers[1].score * 2 {
             dominantIndex = 0
-        } else if sorted.count >= 2 && sorted[0].totalGames >= sorted[1].totalGames * 5 {
-            // Top player has 5x+ more games than the runner-up → auto-select
+        } else if sorted.count >= 2 && sorted[0].score >= sorted[1].score * 3 {
             dominantIndex = 0
         }
 

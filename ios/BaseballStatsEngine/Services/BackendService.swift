@@ -417,6 +417,53 @@ final class BackendService: Sendable {
         return try JSONDecoder().decode(MilestoneResponse.self, from: data)
     }
 
+    // MARK: - Team Card
+
+    struct TeamCardStatData: Decodable, Sendable {
+        let headers: [String]
+        let values: [String]
+    }
+
+    struct TeamCardLeaderData: Decodable, Sendable {
+        let category: String
+        let name: String
+        let value: String
+    }
+
+    struct TeamCardRosterData: Decodable, Sendable {
+        let name: String
+        let position: String
+    }
+
+    struct TeamCardSeasonData: Decodable, Sendable {
+        let year: Int
+        let batting_stats: TeamCardStatData?
+        let pitching_stats: TeamCardStatData?
+        let leaders: [TeamCardLeaderData]
+        let roster: [TeamCardRosterData]
+    }
+
+    struct TeamCardResponse: Decodable, Sendable {
+        let team_code: String
+        let full_name: String
+        let seasons: [TeamCardSeasonData]
+    }
+
+    func fetchTeamCard(code: String) async throws -> TeamCardResponse {
+        var components = URLComponents(url: baseURL.appendingPathComponent("team-card"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "code", value: code)]
+        let url = components.url!
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            let body = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw ServiceError.httpError(http.statusCode, body)
+        }
+        return try JSONDecoder().decode(TeamCardResponse.self, from: data)
+    }
+
     // MARK: - Notable Events
 
     struct NotableEventData: Decodable {

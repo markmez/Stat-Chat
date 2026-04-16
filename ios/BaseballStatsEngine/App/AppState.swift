@@ -122,8 +122,12 @@ final class AppState: SearchHistoryTracking {
             return
         }
 
+        // Follow-ups skip disambiguation/fuzzy matching — go straight to backend.
+        // Without this, "career?" fuzzy-matches to "Carter" and auto-navigates.
+        let skipLocalMatching = isFollowUp
+
         // Ambiguous last name — show disambiguation with tappable player links
-        if let candidates = PlayerNameMatcher.findAmbiguousPlayers(trimmed) {
+        if !skipLocalMatching, let candidates = PlayerNameMatcher.findAmbiguousPlayers(trimmed) {
             let (sorted, dominant) = PlayerNameMatcher.sortByProminence(candidates)
 
             // If one player is clearly dominant, resolve directly
@@ -172,7 +176,7 @@ final class AppState: SearchHistoryTracking {
         }
 
         // Fuzzy match — "Did you mean?" with tappable player links
-        let fuzzyMatches = PlayerNameMatcher.fuzzyMatch(trimmed)
+        let fuzzyMatches = skipLocalMatching ? [] : PlayerNameMatcher.fuzzyMatch(trimmed)
         if !fuzzyMatches.isEmpty {
             let (sorted, dominant) = PlayerNameMatcher.sortByProminence(fuzzyMatches)
 
