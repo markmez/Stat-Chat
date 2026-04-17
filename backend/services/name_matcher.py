@@ -1748,7 +1748,7 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
     if league_result:
         lower = league_result[1]
 
-    leaderboard_triggers = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest",
+    leaderboard_triggers = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "greatest ", "highest",
                             "lowest", "worst", "fewest",
                             "who led", "who leads", "who hit the most", "who had the most",
                             "who walked the most", "who struck out the most", "who stole the most",
