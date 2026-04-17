@@ -53,14 +53,22 @@ with open(_CONFIG_PATH) as _f:
 # ---------------------------------------------------------------------------
 
 stat_alias_map: dict[str, StatInfo] = {}
+# Fallback aliases: generic phrases like "best hitter" / "top batter" that should
+# only resolve to a stat when no specific stat alias matched elsewhere in the query.
+# Keeps "top batters by strikeouts" routing to strikeouts (specific) rather than
+# OPS (generic), while still letting "best hitter 2025" default to OPS.
+stat_fallback_alias_map: dict[str, StatInfo] = {}
 for _db_col, _entry in _config["stat_aliases"].items():
     _info = StatInfo(db_column=_db_col, display_abbrev=_entry["abbrev"],
                      display_name=_entry["name"], is_rate=_entry["is_rate"])
     for _alias in _entry["aliases"]:
         stat_alias_map[_alias] = _info
+    for _alias in _entry.get("fallback_aliases", []):
+        stat_fallback_alias_map[_alias] = _info
 
 # Pre-sorted longest first for greedy matching
 _sorted_stat_aliases: list[str] = sorted(stat_alias_map.keys(), key=len, reverse=True)
+_sorted_fallback_aliases: list[str] = sorted(stat_fallback_alias_map.keys(), key=len, reverse=True)
 
 # Stats that are ONLY pitching (not shared with batting)
 pitching_only_stats: set[str] = set(_config["pitching_only_stats"])
@@ -673,6 +681,12 @@ def match_stat(input_str: str) -> Optional[StatInfo]:
         for alias in _sorted_stat_aliases:
             if contains_word(alias, without_numbers):
                 return stat_alias_map[alias]
+    # Fallback — generic "best hitter" / "top batter" phrasings default to OPS
+    # only if no specific stat was matched above. This keeps "top batters by
+    # strikeouts" from getting hijacked into OPS by the longer generic phrase.
+    for alias in _sorted_fallback_aliases:
+        if contains_word(alias, lower):
+            return stat_fallback_alias_map[alias]
     return None
 
 

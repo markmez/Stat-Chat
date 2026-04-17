@@ -15,7 +15,8 @@
       "abbrev": "RBI", "name": "RBI", "is_rate": false
     },
     "ops": {
-      "aliases": ["on base plus slugging", "ops", "best hitter", "best hitters", "best batter", "best batters", "top hitter", "top hitters", "top batter", "top batters", "greatest hitter", "greatest hitters", "greatest batter", "greatest batters", "best overall hitter", "best overall batter"],
+      "aliases": ["on base plus slugging", "ops"],
+      "fallback_aliases": ["best hitter", "best hitters", "best batter", "best batters", "top hitter", "top hitters", "top batter", "top batters", "greatest hitter", "greatest hitters", "greatest batter", "greatest batters", "best overall hitter", "best overall batter"],
       "abbrev": "OPS", "name": "OPS", "is_rate": true
     },
     "ops_plus": {
