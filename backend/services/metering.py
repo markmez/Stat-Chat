@@ -114,6 +114,40 @@ def log_event_tap(headline: str, tap_type: str, device_id: str) -> None:
     conn.close()
 
 
+def log_server_error(source: str, error_type: str, error_message: str,
+                     context: dict | None = None,
+                     device_id: str | None = None) -> None:
+    """Log a server-side error to query_log so it surfaces on /admin/dashboard.
+
+    Unlike log_client_event, no dedup and no whitelist — every server error
+    captured verbatim. Used to replace silently-swallowed exceptions (e.g. the
+    knowledge-mode fallback at routers/query.py) so we can diagnose from here
+    without shelling into the Lightsail host.
+    """
+    import json
+
+    conn = sqlite3.connect(METERING_DB_PATH)
+    # Add client_context column if it doesn't exist yet (shared with client events)
+    try:
+        conn.execute("ALTER TABLE query_log ADD COLUMN client_context TEXT")
+    except Exception:
+        pass
+
+    query_text = f"[server] {source}: {error_type}"
+    full_context: dict = {"source": source, "error_type": error_type,
+                          "error_message": (error_message or "")[:2000]}
+    if isinstance(context, dict):
+        full_context.update(context)
+
+    conn.execute(
+        "INSERT INTO query_log (query_text, device_id, response_type, timestamp, client_context) "
+        "VALUES (?, ?, 'server_error', ?, ?)",
+        (query_text, device_id or "server", _now_iso(), json.dumps(full_context)),
+    )
+    conn.commit()
+    conn.close()
+
+
 def log_client_event(event_type: str, context: dict, device_id: str,
                      app_version: str | None = None,
                      platform_version: str | None = None) -> bool:

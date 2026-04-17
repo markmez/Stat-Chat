@@ -18,8 +18,21 @@ from datetime import date
 import requests
 
 from schema_description import SCHEMA_DESCRIPTION
+from services.metering import log_server_error
 
 logger = logging.getLogger("statchat.insight_engine")
+
+
+def _log_err(source: str, error_type: str, msg: str, question: str, extra: dict | None = None):
+    """Mirror insight engine failures to the dashboard so we can diagnose from here."""
+    try:
+        ctx = {"question": question[:200]}
+        if extra:
+            ctx.update(extra)
+        log_server_error(source=source, error_type=error_type,
+                         error_message=msg, context=ctx)
+    except Exception:
+        pass
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
@@ -78,6 +91,8 @@ def plan_and_execute(question: str) -> str | None:
     """
     if not ANTHROPIC_API_KEY:
         logger.warning("insight_engine: no API key")
+        _log_err("insight_engine", "no_api_key",
+                 "ANTHROPIC_API_KEY env var not set on server", question)
         return None
 
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -107,6 +122,9 @@ def plan_and_execute(question: str) -> str | None:
 
             if resp.status_code != 200:
                 logger.error("insight_engine: API error %s: %s", resp.status_code, resp.text[:200])
+                _log_err("insight_engine", f"api_status_{resp.status_code}",
+                         resp.text[:500], question,
+                         {"round": round_num + 1, "model": "claude-sonnet-4-6"})
                 return None
 
             result = resp.json()
@@ -120,6 +138,9 @@ def plan_and_execute(question: str) -> str | None:
                 if answer:
                     logger.info("insight_engine: answered in %d rounds", round_num + 1)
                     return answer
+                _log_err("insight_engine", "empty_answer",
+                         "end_turn with no text content", question,
+                         {"round": round_num + 1})
                 return None
 
             if stop_reason == "tool_use":
@@ -167,13 +188,21 @@ def plan_and_execute(question: str) -> str | None:
                 messages.append({"role": "user", "content": tool_results})
             else:
                 logger.warning("insight_engine: unexpected stop_reason=%s", stop_reason)
+                _log_err("insight_engine", "unexpected_stop_reason",
+                         str(stop_reason), question, {"round": round_num + 1})
                 return None
 
         logger.warning("insight_engine: hit max rounds (%d)", MAX_TOOL_ROUNDS)
+        _log_err("insight_engine", "max_rounds",
+                 f"hit {MAX_TOOL_ROUNDS} tool rounds without end_turn", question)
         return None
 
     except Exception as e:
-        logger.error("insight_engine: error %s", e)
+        import traceback as _tb
+        tb_str = _tb.format_exc()
+        logger.error("insight_engine: error %s\n%s", e, tb_str)
+        _log_err("insight_engine", type(e).__name__, str(e), question,
+                 {"traceback": tb_str[-1500:]})
         return None
     finally:
         conn.close()

@@ -1263,6 +1263,14 @@ async def dashboard(
         "AND timestamp >= datetime('now', '-1 day')"
     ).fetchone()[0]
 
+    # Server-side errors in the last 24h (knowledge_mode exceptions, insight
+    # engine failures, etc. — captured via log_server_error so we can diagnose
+    # without shelling into Lightsail).
+    server_errors_24h = conn.execute(
+        "SELECT COUNT(*) FROM query_log WHERE response_type = 'server_error' "
+        "AND timestamp >= datetime('now', '-1 day')"
+    ).fetchone()[0]
+
     conn.close()
 
     # Build breakdown rows
@@ -1384,6 +1392,7 @@ async def dashboard(
   .badge.intercepted, .badge.query-engine {{ background: #dcfce7; color: #166534; }}
   .badge.query-engine-error {{ background: #fee2e2; color: #991b1b; }}
   .badge.client_event {{ background: #fef3c7; color: #b45309; }}
+  .badge.server_error {{ background: #fee2e2; color: #991b1b; }}
   .badge.evt-ai-insight {{ background: #fef3c7; color: #92400e; }}
   .badge.evt-historical {{ background: #e0e7ff; color: #3730a3; }}
   .badge.evt-streak {{ background: #fce7f3; color: #9d174d; }}
@@ -1463,6 +1472,10 @@ async def dashboard(
   <div class="stat-card" style="background: linear-gradient(135deg, #b45309, #f59e0b); cursor: pointer;" onclick="filterBy('client_event')">
     <div class="label">Client Issues (24h)</div>
     <div class="value">{client_events_24h:,}</div>
+  </div>
+  <div class="stat-card" style="background: linear-gradient(135deg, #991b1b, #ef4444); cursor: pointer;" onclick="filterBy('server_error')">
+    <div class="label">Server Errors (24h)</div>
+    <div class="value">{server_errors_24h:,}</div>
   </div>
 </div>
 

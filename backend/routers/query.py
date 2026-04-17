@@ -22,7 +22,7 @@ from pydantic import BaseModel
 
 from services.llm import LLMService
 from services.sql_runner import SqlRunner
-from services.metering import check_quota, increment_count, log_query
+from services.metering import check_quota, increment_count, log_query, log_server_error
 from services.interceptor import try_intercept
 
 logger = logging.getLogger("statchat.query")
@@ -1161,7 +1161,19 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                       is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None)
             return
     except Exception as e:
-        logger.warning("insight_engine_error error=%s", e)
+        import traceback as _tb
+        tb_str = _tb.format_exc()
+        logger.warning("insight_engine_error error=%s\n%s", e, tb_str)
+        try:
+            log_server_error(
+                source="insight_engine_wrapper",
+                error_type=type(e).__name__,
+                error_message=str(e),
+                context={"question": question[:200], "traceback": tb_str[-1500:]},
+                device_id=device_id,
+            )
+        except Exception:
+            pass
 
     # 5. Knowledge mode — answer from Claude's baseball knowledge
     # If we got here, nothing else could answer.
@@ -1170,6 +1182,23 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         async for chunk in llm.stream_knowledge(question, history):
             yield event({"type": "text", "text": chunk})
     except Exception as e:
+        # Surface the exception: log to dashboard metering DB + gunicorn logger.
+        # Previously swallowed silently, masking real Sonnet failures behind the
+        # generic "I'm not sure about that" text.
+        import traceback as _tb
+        tb_str = _tb.format_exc()
+        logger.error("knowledge_mode_error question=%r type=%s error=%s\n%s",
+                     question, type(e).__name__, e, tb_str)
+        try:
+            log_server_error(
+                source="knowledge_mode",
+                error_type=type(e).__name__,
+                error_message=str(e),
+                context={"question": question[:200], "traceback": tb_str[-1500:]},
+                device_id=device_id,
+            )
+        except Exception:
+            pass
         yield event({"type": "text", "text": "I'm not sure about that. Try asking about player stats, leaders, or comparisons."})
 
     # Disclaimer for knowledge-mode responses — these come from AI, not our verified DB
