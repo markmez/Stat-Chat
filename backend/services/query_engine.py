@@ -23,7 +23,7 @@ from .name_matcher import (
     _detect_since_year, _detect_rookie, _detect_position,
     _detect_split_context, _detect_pitcher_role,
     is_pitching_stat, find_player_in_text, match_player,
-    stat_alias_map, _extract_threshold,
+    stat_alias_map, stat_fallback_alias_map, _extract_threshold,
     _POSITION_MAP, team_alias_map, _sorted_team_aliases,
 )
 from .qualification import min_pa as _qual_min_pa, min_ip_outs as _qual_min_ip_outs
@@ -810,7 +810,14 @@ def decompose(question: str) -> QueryPlan:
                 plan.stat = match_stat(lower)
                 if plan.stat:
                     plan.is_pitching = is_pitching_stat(plan.stat)
-                    for alias in sorted(stat_alias_map.keys(), key=len, reverse=True):
+                    # Consume the actual alias text that matched so the words don't
+                    # show up as unexplained. Must check both the regular alias map
+                    # AND the fallback alias map ("best hitter", "top batter", etc.).
+                    _consume_candidates = sorted(
+                        list(stat_alias_map.keys()) + list(stat_fallback_alias_map.keys()),
+                        key=len, reverse=True,
+                    )
+                    for alias in _consume_candidates:
                         if alias in lower:
                             _add_consumed(plan, alias)
                             break
