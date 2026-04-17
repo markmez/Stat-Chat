@@ -1207,6 +1207,14 @@ def _to_eastern(iso_ts: str) -> str:
         return iso_ts[:16].replace("T", " ")
 
 
+def _alert_ts_json(timestamps: list) -> str:
+    """JSON-encode a timestamp list for embedding inside a single-quoted HTML
+    attribute. Escapes single quotes so the attribute can't break out, even
+    though our ISO-8601 timestamps never contain them in practice."""
+    import json as _json
+    return _json.dumps(timestamps).replace("'", "&#39;")
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(
     key: str | None = None,
@@ -1262,45 +1270,22 @@ async def dashboard(
 
     total = sum(r[1] for r in breakdown)
 
-    # Client-side issues in the last 24h (partial responses, decode errors, etc.
-    # logged via /client-event). Surface as a dedicated stat card.
-    # NOTE: stored timestamps use ISO-with-T-separator + "+00:00" offset, while
-    # datetime('now', ...) returns space-separated with no offset. Wrap both in
-    # datetime() so SQLite parses consistently — naive lex compare would have
-    # over-counted rows earlier in the same day.
-    client_events_24h = conn.execute(
-        "SELECT COUNT(*) FROM query_log WHERE response_type = 'client_event' "
-        "AND datetime(timestamp) >= datetime('now', '-1 day')"
-    ).fetchone()[0]
+    # Alert-card timestamps per category. No 24h window — we ship the actual
+    # timestamp list (capped at 1000) and the browser filters against its
+    # localStorage ack. The "count" on each card is however many errors are
+    # newer than the ack, nothing falls off silently. "1000+" if the cap is
+    # exceeded (not realistic at current volumes).
+    def _alert_timestamps(rtype: str) -> list:
+        rows = conn.execute(
+            "SELECT timestamp FROM query_log WHERE response_type = ? "
+            "ORDER BY timestamp DESC LIMIT 1000",
+            (rtype,),
+        ).fetchall()
+        return [r[0] for r in rows]
 
-    # Server-side errors in the last 24h (knowledge_mode exceptions, insight
-    # engine failures, haiku_sql gen/retry failures — captured via
-    # log_server_error so we can diagnose without shelling into Lightsail).
-    server_errors_24h = conn.execute(
-        "SELECT COUNT(*) FROM query_log WHERE response_type = 'server_error' "
-        "AND datetime(timestamp) >= datetime('now', '-1 day')"
-    ).fetchone()[0]
-
-    # Query engine errors in the last 24h (structural query engine bails —
-    # decompose/execute exceptions that fall through to Claude). These indicate
-    # interceptor gaps or row-shape mismatches that are fixable locally.
-    query_engine_errors_24h = conn.execute(
-        "SELECT COUNT(*) FROM query_log WHERE response_type = 'query_engine_error' "
-        "AND datetime(timestamp) >= datetime('now', '-1 day')"
-    ).fetchone()[0]
-
-    # Latest timestamp per alert category — used for persistent ack via
-    # localStorage. Card reappears on page load only when a newer error than
-    # the last-acked timestamp has arrived.
-    latest_client_event_ts = conn.execute(
-        "SELECT MAX(timestamp) FROM query_log WHERE response_type = 'client_event'"
-    ).fetchone()[0] or ''
-    latest_server_error_ts = conn.execute(
-        "SELECT MAX(timestamp) FROM query_log WHERE response_type = 'server_error'"
-    ).fetchone()[0] or ''
-    latest_query_engine_error_ts = conn.execute(
-        "SELECT MAX(timestamp) FROM query_log WHERE response_type = 'query_engine_error'"
-    ).fetchone()[0] or ''
+    client_event_ts = _alert_timestamps("client_event")
+    server_error_ts = _alert_timestamps("server_error")
+    query_engine_error_ts = _alert_timestamps("query_engine_error")
 
     conn.close()
 
@@ -1545,32 +1530,42 @@ async def dashboard(
     <div class="label">Unique Queries</div>
     <div class="value">{len(queries):,}</div>
   </div>
-  <div class="stat-card alert-card" data-filter="client_event" data-latest-ts="{latest_client_event_ts}" data-count="{client_events_24h}" style="display: none; background: linear-gradient(135deg, #b45309, #f59e0b); cursor: pointer;" onclick="filterBy('client_event')">
-    <div class="label">Client Issues (24h)</div>
-    <div class="value">{client_events_24h:,}</div>
+  <div class="stat-card alert-card" data-filter="client_event" data-timestamps='{_alert_ts_json(client_event_ts)}' style="display: none; background: linear-gradient(135deg, #b45309, #f59e0b); cursor: pointer;" onclick="filterBy('client_event')">
+    <div class="label">Client Issues</div>
+    <div class="value">0</div>
   </div>
-  <div class="stat-card alert-card" data-filter="server_error" data-latest-ts="{latest_server_error_ts}" data-count="{server_errors_24h}" style="display: none; background: linear-gradient(135deg, #991b1b, #ef4444); cursor: pointer;" onclick="filterBy('server_error')">
-    <div class="label">Server Errors (24h)</div>
-    <div class="value">{server_errors_24h:,}</div>
+  <div class="stat-card alert-card" data-filter="server_error" data-timestamps='{_alert_ts_json(server_error_ts)}' style="display: none; background: linear-gradient(135deg, #991b1b, #ef4444); cursor: pointer;" onclick="filterBy('server_error')">
+    <div class="label">Server Errors</div>
+    <div class="value">0</div>
   </div>
-  <div class="stat-card alert-card" data-filter="query_engine_error" data-latest-ts="{latest_query_engine_error_ts}" data-count="{query_engine_errors_24h}" style="display: none; background: linear-gradient(135deg, #7f1d1d, #dc2626); cursor: pointer;" onclick="filterBy('query_engine_error')">
-    <div class="label">Query Engine Errors (24h)</div>
-    <div class="value">{query_engine_errors_24h:,}</div>
+  <div class="stat-card alert-card" data-filter="query_engine_error" data-timestamps='{_alert_ts_json(query_engine_error_ts)}' style="display: none; background: linear-gradient(135deg, #7f1d1d, #dc2626); cursor: pointer;" onclick="filterBy('query_engine_error')">
+    <div class="label">Query Engine Errors</div>
+    <div class="value">0</div>
   </div>
 </div>
 <script>
-// Synchronous: decide which alert cards to reveal BEFORE they get painted.
-// Runs during parsing, before any visible rendering of the cards themselves,
-// which keeps us from flashing the cards on every reload. Cards stay hidden
-// (initial display:none above) unless (a) there's a recent error AND (b) the
-// user hasn't acked something at least as new. Clicking a card writes the
-// latest_ts to localStorage; that ack persists until a newer error arrives.
+// Synchronous: decide card visibility AND count BEFORE anything paints.
+// Each card ships a JSON array of recent error timestamps (newest first,
+// capped at 1000). We filter to "newer than localStorage ack" — that
+// filtered length becomes the card's count, and the card hides entirely
+// if it's 0. Ack persists across reloads; card only reappears when a
+// newer error arrives. No 24h window — nothing falls off silently.
+// Force-reset with localStorage.clear() in the console.
 (function () {{
   document.querySelectorAll('.alert-card').forEach(function (card) {{
-    var latest = card.dataset.latestTs || '';
-    if (!latest) return;  // no recent errors → stay hidden
-    var acked = localStorage.getItem('ack_' + card.dataset.filter);
-    if (!acked || acked < latest) {{
+    var timestamps;
+    try {{ timestamps = JSON.parse(card.dataset.timestamps || '[]'); }}
+    catch (e) {{ timestamps = []; }}
+    var acked = localStorage.getItem('ack_' + card.dataset.filter) || '';
+    // timestamps are desc-sorted → count how many are newer than ack
+    var unacked = 0;
+    for (var i = 0; i < timestamps.length; i++) {{
+      if (acked && timestamps[i] <= acked) break;
+      unacked++;
+    }}
+    if (unacked > 0) {{
+      var valueEl = card.querySelector('.value');
+      valueEl.textContent = unacked >= 1000 ? '1000+' : String(unacked);
       card.style.display = '';
     }}
   }});
@@ -1700,16 +1695,21 @@ function filterBy(type) {{
   const css = type.replace(' ', '-');
   label.innerHTML = '<span class="badge ' + css + '">' + type + '</span>';
   bar.classList.add('active');
-  // Hide the matching alert card AND persist the ack in localStorage keyed to
-  // the latest-error timestamp at click time. The card stays hidden across
-  // page reloads until a NEWER error arrives, at which point the server will
-  // send a fresher latest_ts and the page-load logic brings the card back.
+  // Hide the matching alert card AND persist the ack in localStorage using
+  // the newest timestamp from the card's array. On the next page load, the
+  // card's count (derived from "timestamps newer than ack") will be 0 and
+  // the card will stay hidden — until a brand-new error arrives with an even
+  // newer timestamp, at which point the count becomes > 0 and the card
+  // reappears automatically.
   document.querySelectorAll('.alert-card').forEach(card => {{
     if (card.dataset.filter === type) {{
       card.style.display = 'none';
-      if (card.dataset.latestTs) {{
-        localStorage.setItem('ack_' + type, card.dataset.latestTs);
-      }}
+      try {{
+        const ts = JSON.parse(card.dataset.timestamps || '[]');
+        if (ts.length > 0) {{
+          localStorage.setItem('ack_' + type, ts[0]);  // desc-sorted; [0] is newest
+        }}
+      }} catch (e) {{ /* bad JSON, skip ack */ }}
     }}
   }});
   renderPage();
