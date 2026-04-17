@@ -1659,12 +1659,13 @@ function filterBy(type) {{
 }}
 
 function clearFilter() {{
+  // Clearing the filter removes the table filter only. Alert cards that were
+  // hidden when the user clicked stay hidden — viewing them already counted
+  // as acknowledgment. A page reload re-evaluates fresh counts and will bring
+  // them back if there are still unacknowledged errors in the window.
   currentFilter = null;
   currentPage = 0;
   document.getElementById('filter-bar').classList.remove('active');
-  document.querySelectorAll('.alert-card').forEach(card => {{
-    card.style.display = '';
-  }});
   renderPage();
 }}
 
