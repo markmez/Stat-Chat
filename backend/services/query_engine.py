@@ -531,10 +531,21 @@ def _parse_stat_condition(text: str) -> Optional[StatCondition]:
                     return StatCondition(avg_stat, None, val, ">=", text)
         return None
 
-    # Build consumed text from just the matched stat alias + threshold
+    # Build consumed text from just the matched stat alias + threshold.
+    # Only consider aliases that resolve to the SAME stat match_stat returned —
+    # otherwise "top batters by strikeouts" would consume "top batters" (an OPS
+    # fallback) when SO was actually the matched stat. Use word boundaries so
+    # "hit" inside "hitter" doesn't falsely consume.
+    same_stat_aliases = [
+        a for a, info in stat_alias_map.items()
+        if info.db_column == stat.db_column
+    ] + [
+        a for a, info in stat_fallback_alias_map.items()
+        if info.db_column == stat.db_column
+    ]
     consumed_parts = []
-    for alias in sorted(stat_alias_map.keys(), key=len, reverse=True):
-        if alias in lower:
+    for alias in sorted(same_stat_aliases, key=len, reverse=True):
+        if re.search(rf'\b{re.escape(alias)}\b', lower):
             consumed_parts.append(alias)
             break
 
