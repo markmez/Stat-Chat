@@ -1283,16 +1283,20 @@ async def dashboard(
 
     conn.close()
 
-    # Build breakdown rows
+    # Build breakdown rows. Badge is clickable — same filterBy() as the inline
+    # badges on each query row, so you can jump from the cost summary straight
+    # into a filtered view of that type (e.g. find a recent haiku response when
+    # none appear near the top of the table).
     breakdown_html = ""
     total_cost = 0.0
     for rtype, cnt in breakdown:
         pct = (cnt / total * 100) if total else 0
         cost = cnt * _COST_PER_QUERY.get(rtype, 0)
         total_cost += cost
+        css = rtype.replace(' ', '-')
         breakdown_html += f"""
         <tr>
-            <td><span class="badge {rtype.replace(' ', '-')}">{rtype}</span></td>
+            <td><span class="badge {css}" style="cursor: pointer;" onclick="filterBy('{rtype}'); document.getElementById('qtable').scrollIntoView({{behavior: 'smooth', block: 'start'}});">{rtype}</span></td>
             <td>{cnt:,}</td>
             <td>{pct:.1f}%</td>
             <td>${cost:.3f}</td>
