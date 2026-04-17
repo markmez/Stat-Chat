@@ -1258,17 +1258,21 @@ async def dashboard(
 
     # Client-side issues in the last 24h (partial responses, decode errors, etc.
     # logged via /client-event). Surface as a dedicated stat card.
+    # NOTE: stored timestamps use ISO-with-T-separator + "+00:00" offset, while
+    # datetime('now', ...) returns space-separated with no offset. Wrap both in
+    # datetime() so SQLite parses consistently — naive lex compare would have
+    # over-counted rows earlier in the same day.
     client_events_24h = conn.execute(
         "SELECT COUNT(*) FROM query_log WHERE response_type = 'client_event' "
-        "AND timestamp >= datetime('now', '-1 day')"
+        "AND datetime(timestamp) >= datetime('now', '-1 day')"
     ).fetchone()[0]
 
     # Server-side errors in the last 24h (knowledge_mode exceptions, insight
-    # engine failures, etc. — captured via log_server_error so we can diagnose
-    # without shelling into Lightsail).
+    # engine failures, haiku_sql gen/retry failures — captured via
+    # log_server_error so we can diagnose without shelling into Lightsail).
     server_errors_24h = conn.execute(
         "SELECT COUNT(*) FROM query_log WHERE response_type = 'server_error' "
-        "AND timestamp >= datetime('now', '-1 day')"
+        "AND datetime(timestamp) >= datetime('now', '-1 day')"
     ).fetchone()[0]
 
     conn.close()

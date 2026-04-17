@@ -481,7 +481,18 @@ async def _try_haiku_sql(question: str):
     try:
         sql = await llm.generate_sql_haiku(question)
     except Exception as e:
+        import traceback as _tb
+        tb_str = _tb.format_exc()
         logger.warning("haiku_sql_gen_error error=%s", e)
+        try:
+            log_server_error(
+                source="haiku_sql_gen",
+                error_type=type(e).__name__,
+                error_message=str(e),
+                context={"question": question[:200], "traceback": tb_str[-1500:]},
+            )
+        except Exception:
+            pass
         return None
 
     if not sql or "OFF_TOPIC" in sql or "NO_DATA" in sql or "NEEDS_CONTEXT" in sql:
@@ -504,7 +515,23 @@ async def _try_haiku_sql(question: str):
             result_text, is_streak = await loop.run_in_executor(
                 None, runner.execute_and_format, sql
             )
-        except Exception:
+        except Exception as retry_e:
+            # Both attempts failed — log the retry failure (first SQL error is
+            # expected and retry-worthy, but retry failure is a real signal).
+            import traceback as _tb
+            tb_str = _tb.format_exc()
+            try:
+                log_server_error(
+                    source="haiku_sql_retry",
+                    error_type=type(retry_e).__name__,
+                    error_message=str(retry_e),
+                    context={"question": question[:200],
+                             "first_error": str(e)[:300],
+                             "sql": (sql or "")[:500],
+                             "traceback": tb_str[-1500:]},
+                )
+            except Exception:
+                pass
             return None  # Both attempts failed, fall through to Sonnet
 
     if result_text == "No results found.":
