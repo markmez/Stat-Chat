@@ -1950,8 +1950,15 @@ def _build_filters(plan: QueryPlan, prefix: str, conn=None) -> tuple[str, list]:
         clauses.append(_rookie_filter(prefix, plan.is_pitching)[5:])  # strip " AND "
 
     if plan.position and not plan.is_pitching:
-        from .response_builder import _position_filter
-        clauses.append(_position_filter(plan.position, prefix, f"{prefix}.season")[5:])
+        # Career rollup (e.g. "best OPS by a catcher all time") uses a
+        # player-level filter on primary career position. Season / all-time-
+        # single-season / since-year queries keep the per-season filter.
+        if plan.scope == "career":
+            from .response_builder import _position_filter_career
+            clauses.append(_position_filter_career(plan.position, prefix)[5:])
+        else:
+            from .response_builder import _position_filter
+            clauses.append(_position_filter(plan.position, prefix, f"{prefix}.season")[5:])
 
     if plan.pitcher_role == "starter":
         clauses.append(f"{prefix}.games_started > {prefix}.games / 2")

@@ -177,6 +177,32 @@ def _rookie_filter(prefix: str, is_pitching: bool = False) -> str:
     )
 
 
+def _position_filter_career(positions: list[str], stats_prefix: str) -> str:
+    """Player-level position filter for CAREER / all-time rollup queries.
+
+    A player is included if their single most-played career position (by total
+    games across all seasons in season_fielding_stats) is in the filter set.
+    This matches Baseball Reference's "career leaders among catchers" semantic:
+    Piazza's full career OPS (.922), not a catcher-only-seasons rollup (.947)
+    that silently drops his late-career 1B/DH years.
+
+    Why not use players.positions: that column is unreliable for primary-career
+    position — Piazza is stored as "DH", Bench as "3B/1B/C/LF", etc. The order
+    does not reflect career games played. We have to recompute from the fielding
+    stats table to get the truth.
+
+    Use with career/all-time scope. For per-season scope, _position_filter is
+    still correct (seasons where the player was primarily at that position).
+    """
+    pos_list = ", ".join(f"'{p}'" for p in positions)
+    return (
+        f" AND (SELECT sf.position FROM season_fielding_stats sf "
+        f"WHERE sf.player_id = {stats_prefix}.player_id "
+        f"GROUP BY sf.position "
+        f"ORDER BY SUM(sf.games) DESC LIMIT 1) IN ({pos_list})"
+    )
+
+
 def _position_filter(positions: list[str], stats_prefix: str, season_expr: str) -> str:
     """Return SQL filter clause for position-based queries.
 
@@ -2903,7 +2929,14 @@ def build_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
                 select_expr = f"SUM(s.{stat_info.db_column}) as career_val"
 
             pa_having = "\n            HAVING SUM(s.plate_appearances) >= 400" if stat_info.is_rate else ""
-            where_clause = f" WHERE {league_filter[5:]}" if league_filter else ""
+            # Career-scope position filter: BR-style primary-career-position match.
+            # Without this, "career HR leaders among catchers" silently ignored
+            # the position filter here (though query_engine's career path does
+            # apply one; this closes that gap for any direct build_leaderboard
+            # caller that hits the career branch).
+            career_pos_clause = _position_filter_career(position, "s") if position else ""
+            pieces = [p for p in (league_filter, career_pos_clause) if p]
+            where_clause = f" WHERE {' AND '.join(p[5:] for p in pieces)}" if pieces else ""
 
             cur = conn.cursor()
             cur.execute(
