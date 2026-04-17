@@ -2000,9 +2000,17 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
     Returns (sql_clause, display_label) tuple."""
     stat_col = plan.stat.db_column if plan.stat else ""
     is_rate = (plan.stat and plan.stat.is_rate) or (plan.derived_stat and _DERIVED_STATS[plan.derived_stat]["is_rate"])
-    # Apply PA/IP minimums for rate stats AND for "fewest"/"worst" counting stat queries
-    # (otherwise "fewest walks" returns players with 1 PA and 0 BB)
-    needs_minimum = is_rate or plan.sort_asc
+    # A counting-stat threshold filter (e.g. "30+ HR", "500+ PA") already gates
+    # playing time — stacking a PA floor on top is redundant and wrongly excludes
+    # legit high-HR seasons in sub-500 PA. Rate-stat filters (e.g. ".300+ AVG")
+    # are meaningless without a PA floor, so they still need one.
+    has_counting_threshold = any(
+        ef.get("stat") and not ef["stat"].is_rate
+        for ef in plan.extra_filters
+    )
+    # Apply PA/IP minimums for rate stats, or for pure "fewest X" sorts with no
+    # threshold filter (otherwise "fewest walks" returns players with 1 PA and 0 BB).
+    needs_minimum = is_rate or (plan.sort_asc and not has_counting_threshold)
     if not needs_minimum:
         return "", ""
 
