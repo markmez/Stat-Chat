@@ -1517,11 +1517,11 @@ async def dashboard(
     <div class="label">Unique Queries</div>
     <div class="value">{len(queries):,}</div>
   </div>
-  <div class="stat-card" style="background: linear-gradient(135deg, #b45309, #f59e0b); cursor: pointer;" onclick="filterBy('client_event')">
+  <div class="stat-card alert-card" data-filter="client_event" style="background: linear-gradient(135deg, #b45309, #f59e0b); cursor: pointer;" onclick="filterBy('client_event')">
     <div class="label">Client Issues (24h)</div>
     <div class="value">{client_events_24h:,}</div>
   </div>
-  <div class="stat-card" style="background: linear-gradient(135deg, #991b1b, #ef4444); cursor: pointer;" onclick="filterBy('server_error')">
+  <div class="stat-card alert-card" data-filter="server_error" style="background: linear-gradient(135deg, #991b1b, #ef4444); cursor: pointer;" onclick="filterBy('server_error')">
     <div class="label">Server Errors (24h)</div>
     <div class="value">{server_errors_24h:,}</div>
   </div>
@@ -1650,6 +1650,11 @@ function filterBy(type) {{
   const css = type.replace(' ', '-');
   label.innerHTML = '<span class="badge ' + css + '">' + type + '</span>';
   bar.classList.add('active');
+  // Hide the alert card for this category — once you're viewing it, the
+  // count at the top is redundant. Clearing the filter brings it back.
+  document.querySelectorAll('.alert-card').forEach(card => {{
+    if (card.dataset.filter === type) card.style.display = 'none';
+  }});
   renderPage();
 }}
 
@@ -1657,6 +1662,9 @@ function clearFilter() {{
   currentFilter = null;
   currentPage = 0;
   document.getElementById('filter-bar').classList.remove('active');
+  document.querySelectorAll('.alert-card').forEach(card => {{
+    card.style.display = '';
+  }});
   renderPage();
 }}
 
