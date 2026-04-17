@@ -1819,6 +1819,44 @@ def execute(plan: QueryPlan) -> Optional[str]:
         # Collect all "see also" alternatives, output as single combined DIDYOUMEAN
         see_also = []
 
+        # Auto-fallback: a leaderboard/threshold with INFERRED current-year scope
+        # that returned zero rows almost always means the filter itself is niche
+        # (e.g. "most HR by a player over 40") rather than "this hasn't happened
+        # in 2026 yet." Re-run the same query against all-time single-season
+        # records, annotate with a subtitle explaining the switch, and offer the
+        # original current-year query as a see-also so the user can pop back.
+        _explicit_season = any(p in plan.original_question.lower() for p in [
+            "this season", "this year", str(date.today().year)])
+        if (result and "No results found" in result
+                and plan.query_type in ("leaderboard", "threshold")
+                and plan.season and plan.season == date.today().year
+                and not _explicit_season):
+            original_year = plan.season
+            plan.scope = "all_time"
+            plan.season = None
+            if plan.query_type == "leaderboard":
+                fallback = _execute_leaderboard(conn, plan)
+            else:
+                fallback = _execute_threshold(conn, plan)
+            if fallback and "No results found" not in fallback:
+                subtitle_tag = (
+                    f"[SUBTITLE]0 results for {original_year} — showing "
+                    f"all-time single-season records instead[/SUBTITLE]"
+                )
+                lines = fallback.split("\n")
+                inserted = False
+                for i, line in enumerate(lines):
+                    if line.strip().startswith("**") and line.strip().endswith("**"):
+                        lines.insert(i + 1, subtitle_tag)
+                        inserted = True
+                        break
+                if not inserted:
+                    lines.insert(0, subtitle_tag)
+                result = "\n".join(lines)
+                # Offer the original current-year query as a see-also
+                oq = plan.original_question.strip().rstrip("?.!,;:")
+                see_also.append(f"{oq} {original_year}")
+
         # Alternate interpretation for ambiguous stats
         if result and plan.ambiguous_stat:
             alt = _ambiguous_suggest(plan)
