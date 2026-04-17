@@ -114,10 +114,17 @@ def log_event_tap(headline: str, tap_type: str, device_id: str) -> None:
     conn.close()
 
 
+_SERVER_ERROR_HC_UUID = os.getenv("SERVER_ERROR_HC_UUID", "")
+
+
 def log_server_error(source: str, error_type: str, error_message: str,
                      context: dict | None = None,
                      device_id: str | None = None) -> None:
     """Log a server-side error to query_log so it surfaces on /admin/dashboard.
+
+    Also pings Healthchecks.io /fail (if SERVER_ERROR_HC_UUID env var set) so
+    real alerts go out-of-band — otherwise we're relying on manually checking
+    the dashboard.
 
     Unlike log_client_event, no dedup and no whitelist — every server error
     captured verbatim. Used to replace silently-swallowed exceptions (e.g. the
@@ -146,6 +153,18 @@ def log_server_error(source: str, error_type: str, error_message: str,
     )
     conn.commit()
     conn.close()
+
+    # Fire Healthchecks.io /fail ping so we get an actual alert, not just a
+    # dashboard row that only surfaces when someone looks. Swallow network
+    # errors — alerting is best-effort and must not cascade into a new error.
+    if _SERVER_ERROR_HC_UUID:
+        try:
+            import requests
+            url = f"https://hc-ping.com/{_SERVER_ERROR_HC_UUID}/fail"
+            body = f"source: {source}\nerror_type: {error_type}\nmessage: {(error_message or '')[:500]}"
+            requests.post(url, data=body, timeout=3)
+        except Exception:
+            pass
 
 
 def log_client_event(event_type: str, context: dict, device_id: str,

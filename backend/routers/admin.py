@@ -1233,14 +1233,20 @@ async def dashboard(
         date_filter += " AND timestamp <= ?"
         date_params.append(date_to + "T23:59:59")
 
-    # All queries ranked by count, tiebroken by recency
+    # All queries ranked by count, tiebroken by recency.
+    # latest_context: the client_context JSON from the most recent row with this
+    # query_text (NULL if the column doesn't exist yet or nothing was logged).
+    # Used by click-to-expand to show error details inline without a follow-up query.
     queries = conn.execute(f"""
-        SELECT query_text, COUNT(*) as cnt,
-               MAX(timestamp) as last_seen,
-               GROUP_CONCAT(DISTINCT response_type) as types
-        FROM query_log
-        WHERE 1=1{date_filter}
-        GROUP BY query_text
+        SELECT q1.query_text, COUNT(*) as cnt,
+               MAX(q1.timestamp) as last_seen,
+               GROUP_CONCAT(DISTINCT q1.response_type) as types,
+               (SELECT q2.client_context FROM query_log AS q2
+                WHERE q2.query_text = q1.query_text AND q2.client_context IS NOT NULL
+                ORDER BY q2.timestamp DESC LIMIT 1) AS latest_context
+        FROM query_log AS q1
+        WHERE 1=1{date_filter.replace('timestamp', 'q1.timestamp')}
+        GROUP BY q1.query_text
         ORDER BY cnt DESC, last_seen DESC
         LIMIT 1000
     """, date_params).fetchall()
@@ -1302,21 +1308,42 @@ async def dashboard(
 
     # Build query rows
     query_rows = ""
-    for text, cnt, last_seen, types in queries:
+    for text, cnt, last_seen, types, latest_context in queries:
         # Convert UTC timestamp to Eastern
         ts_display = _to_eastern(last_seen) if last_seen else ""
-        # Build type badges
+        # Build type badges (intercepting clicks so the row doesn't also expand)
         type_list = [t.strip() for t in (types or "").split(",")]
         type_badges = " ".join(
-            f'<span class="badge {t.replace(" ", "-")}" onclick="filterBy(\'{t}\')">{t}</span>'
+            f'<span class="badge {t.replace(" ", "-")}" onclick="event.stopPropagation(); filterBy(\'{t}\')">{t}</span>'
             for t in type_list
         )
         escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         raw_ts = last_seen or ""
         types_attr = ",".join(type_list)
+
+        # Pretty-print latest_context for the detail row (if any). Attr-escape
+        # so it survives round-trip through data-context.
+        if latest_context:
+            try:
+                import json as _json
+                parsed = _json.loads(latest_context)
+                context_pretty = _json.dumps(parsed, indent=2, ensure_ascii=False)
+            except Exception:
+                context_pretty = str(latest_context)
+            # HTML-escape then put into a data attribute; JS will inject as textContent.
+            context_attr = (context_pretty
+                            .replace("&", "&amp;").replace('"', "&quot;")
+                            .replace("<", "&lt;").replace(">", "&gt;"))
+            row_class = "expandable"
+            chevron = '<span class="chev">\u203A</span>'
+        else:
+            context_attr = ""
+            row_class = ""
+            chevron = ""
+
         query_rows += f"""
-        <tr data-count="{cnt}" data-ts="{raw_ts}" data-types="{types_attr}">
-            <td class="query-text">{escaped}</td>
+        <tr class="{row_class}" data-count="{cnt}" data-ts="{raw_ts}" data-types="{types_attr}" data-context="{context_attr}">
+            <td class="query-text">{chevron}{escaped}</td>
             <td class="count">{cnt}</td>
             <td class="types">{type_badges}</td>
             <td class="timestamp">{ts_display}</td>
@@ -1397,6 +1424,23 @@ async def dashboard(
   .badge.query-engine-error {{ background: #fee2e2; color: #991b1b; }}
   .badge.client_event {{ background: #fef3c7; color: #b45309; }}
   .badge.server_error {{ background: #fee2e2; color: #991b1b; }}
+  tr.expandable {{ cursor: pointer; }}
+  tr.expandable:active {{ background: #f5f7fa; }}
+  tr.expandable .chev {{
+    display: inline-block; margin-right: 6px; color: #1A40B3;
+    font-size: 13px; transition: transform 0.15s;
+  }}
+  tr.expandable.open .chev {{ transform: rotate(90deg); }}
+  tr.detail-row td {{
+    background: #fafbff; padding: 10px 14px; border-bottom: 1px solid #e0e8f5;
+  }}
+  tr.detail-row pre {{
+    font-family: -apple-system, ui-monospace, Menlo, monospace;
+    font-size: 11px; color: #1d1d1f;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 400px; overflow: auto;
+    margin: 0;
+  }}
   .badge.evt-ai-insight {{ background: #fef3c7; color: #92400e; }}
   .badge.evt-historical {{ background: #e0e7ff; color: #3730a3; }}
   .badge.evt-streak {{ background: #fce7f3; color: #9d174d; }}
@@ -1631,6 +1675,40 @@ function resetDateRange() {{
   url.searchParams.delete('date_to');
   window.location = url;
 }}
+
+// Click-to-expand on rows with client_context (server_error, client_event).
+// Toggles a detail row beneath showing the pretty-printed JSON.
+document.querySelectorAll('#qtable tr.expandable').forEach(row => {{
+  row.addEventListener('click', () => {{
+    const ctx = row.dataset.context;
+    if (!ctx) return;
+    // If a detail row already exists right below, toggle it off
+    const next = row.nextElementSibling;
+    if (next && next.classList.contains('detail-row') && next.dataset.for === row.dataset.ts) {{
+      next.remove();
+      row.classList.remove('open');
+      return;
+    }}
+    // Collapse any other open detail rows first (one at a time)
+    document.querySelectorAll('#qtable tr.detail-row').forEach(d => d.remove());
+    document.querySelectorAll('#qtable tr.expandable.open').forEach(r => r.classList.remove('open'));
+    // Decode HTML entities that slipped into the data attribute
+    const decoded = ctx
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+    const detail = document.createElement('tr');
+    detail.className = 'detail-row';
+    detail.dataset.for = row.dataset.ts;
+    const cell = document.createElement('td');
+    cell.colSpan = 4;
+    const pre = document.createElement('pre');
+    pre.textContent = decoded;
+    cell.appendChild(pre);
+    detail.appendChild(cell);
+    row.classList.add('open');
+    row.parentNode.insertBefore(detail, row.nextSibling);
+  }});
+}});
 
 // Initial render
 renderPage();
