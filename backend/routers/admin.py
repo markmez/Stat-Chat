@@ -1545,19 +1545,37 @@ async def dashboard(
     <div class="label">Unique Queries</div>
     <div class="value">{len(queries):,}</div>
   </div>
-  <div class="stat-card alert-card" data-filter="client_event" data-latest-ts="{latest_client_event_ts}" data-count="{client_events_24h}" style="background: linear-gradient(135deg, #b45309, #f59e0b); cursor: pointer;" onclick="filterBy('client_event')">
+  <div class="stat-card alert-card" data-filter="client_event" data-latest-ts="{latest_client_event_ts}" data-count="{client_events_24h}" style="display: none; background: linear-gradient(135deg, #b45309, #f59e0b); cursor: pointer;" onclick="filterBy('client_event')">
     <div class="label">Client Issues (24h)</div>
     <div class="value">{client_events_24h:,}</div>
   </div>
-  <div class="stat-card alert-card" data-filter="server_error" data-latest-ts="{latest_server_error_ts}" data-count="{server_errors_24h}" style="background: linear-gradient(135deg, #991b1b, #ef4444); cursor: pointer;" onclick="filterBy('server_error')">
+  <div class="stat-card alert-card" data-filter="server_error" data-latest-ts="{latest_server_error_ts}" data-count="{server_errors_24h}" style="display: none; background: linear-gradient(135deg, #991b1b, #ef4444); cursor: pointer;" onclick="filterBy('server_error')">
     <div class="label">Server Errors (24h)</div>
     <div class="value">{server_errors_24h:,}</div>
   </div>
-  <div class="stat-card alert-card" data-filter="query_engine_error" data-latest-ts="{latest_query_engine_error_ts}" data-count="{query_engine_errors_24h}" style="background: linear-gradient(135deg, #7f1d1d, #dc2626); cursor: pointer;" onclick="filterBy('query_engine_error')">
+  <div class="stat-card alert-card" data-filter="query_engine_error" data-latest-ts="{latest_query_engine_error_ts}" data-count="{query_engine_errors_24h}" style="display: none; background: linear-gradient(135deg, #7f1d1d, #dc2626); cursor: pointer;" onclick="filterBy('query_engine_error')">
     <div class="label">Query Engine Errors (24h)</div>
     <div class="value">{query_engine_errors_24h:,}</div>
   </div>
 </div>
+<script>
+// Synchronous: decide which alert cards to reveal BEFORE they get painted.
+// Runs during parsing, before any visible rendering of the cards themselves,
+// which keeps us from flashing the cards on every reload. Cards stay hidden
+// (initial display:none above) unless (a) there's a recent error AND (b) the
+// user hasn't acked something at least as new. Clicking a card writes the
+// latest_ts to localStorage; that ack persists until a newer error arrives.
+(function () {{
+  document.querySelectorAll('.alert-card').forEach(function (card) {{
+    var latest = card.dataset.latestTs || '';
+    if (!latest) return;  // no recent errors → stay hidden
+    var acked = localStorage.getItem('ack_' + card.dataset.filter);
+    if (!acked || acked < latest) {{
+      card.style.display = '';
+    }}
+  }});
+}})();
+</script>
 
 <h2>Cost Breakdown by Response Type</h2>
 <div class="breakdown">
@@ -1724,22 +1742,9 @@ function resetDateRange() {{
   window.location = url;
 }}
 
-// Hide already-acknowledged alert cards on page load. Card reappears only
-// when a new error arrives (latest_ts > last-acked ts). If the category has
-// no recent rows at all (latest_ts empty), hide the card too — nothing to
-// alert on. To force-reset, run: localStorage.clear() in the console.
-document.querySelectorAll('.alert-card').forEach(card => {{
-  const type = card.dataset.filter;
-  const latest = card.dataset.latestTs || '';
-  if (!latest) {{
-    card.style.display = 'none';
-    return;
-  }}
-  const acked = localStorage.getItem('ack_' + type);
-  if (acked && acked >= latest) {{
-    card.style.display = 'none';
-  }}
-}});
+// (Alert-card visibility is decided synchronously by the inline script
+// immediately after the .stat-cards block — see above. No deferred logic
+// here or cards would flash in before being hidden.)
 
 // Click-to-expand on rows with client_context (server_error, client_event).
 // Toggles a detail row beneath showing the pretty-printed JSON.
