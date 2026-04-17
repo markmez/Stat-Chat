@@ -1281,6 +1281,27 @@ async def dashboard(
         "AND datetime(timestamp) >= datetime('now', '-1 day')"
     ).fetchone()[0]
 
+    # Query engine errors in the last 24h (structural query engine bails —
+    # decompose/execute exceptions that fall through to Claude). These indicate
+    # interceptor gaps or row-shape mismatches that are fixable locally.
+    query_engine_errors_24h = conn.execute(
+        "SELECT COUNT(*) FROM query_log WHERE response_type = 'query_engine_error' "
+        "AND datetime(timestamp) >= datetime('now', '-1 day')"
+    ).fetchone()[0]
+
+    # Latest timestamp per alert category — used for persistent ack via
+    # localStorage. Card reappears on page load only when a newer error than
+    # the last-acked timestamp has arrived.
+    latest_client_event_ts = conn.execute(
+        "SELECT MAX(timestamp) FROM query_log WHERE response_type = 'client_event'"
+    ).fetchone()[0] or ''
+    latest_server_error_ts = conn.execute(
+        "SELECT MAX(timestamp) FROM query_log WHERE response_type = 'server_error'"
+    ).fetchone()[0] or ''
+    latest_query_engine_error_ts = conn.execute(
+        "SELECT MAX(timestamp) FROM query_log WHERE response_type = 'query_engine_error'"
+    ).fetchone()[0] or ''
+
     conn.close()
 
     # Build breakdown rows. Badge is clickable — same filterBy() as the inline
@@ -1428,6 +1449,9 @@ async def dashboard(
   .badge.query-engine-error {{ background: #fee2e2; color: #991b1b; }}
   .badge.client_event {{ background: #fef3c7; color: #b45309; }}
   .badge.server_error {{ background: #fee2e2; color: #991b1b; }}
+  /* query_engine_error stored with underscores — previous .query-engine-error
+     rule never matched because .replace(' ', '-') only touches spaces */
+  .badge.query_engine_error {{ background: #fee2e2; color: #7f1d1d; }}
   tr.expandable {{ cursor: pointer; }}
   tr.expandable:active {{ background: #f5f7fa; }}
   tr.expandable .chev {{
@@ -1521,13 +1545,17 @@ async def dashboard(
     <div class="label">Unique Queries</div>
     <div class="value">{len(queries):,}</div>
   </div>
-  <div class="stat-card alert-card" data-filter="client_event" style="background: linear-gradient(135deg, #b45309, #f59e0b); cursor: pointer;" onclick="filterBy('client_event')">
+  <div class="stat-card alert-card" data-filter="client_event" data-latest-ts="{latest_client_event_ts}" data-count="{client_events_24h}" style="background: linear-gradient(135deg, #b45309, #f59e0b); cursor: pointer;" onclick="filterBy('client_event')">
     <div class="label">Client Issues (24h)</div>
     <div class="value">{client_events_24h:,}</div>
   </div>
-  <div class="stat-card alert-card" data-filter="server_error" style="background: linear-gradient(135deg, #991b1b, #ef4444); cursor: pointer;" onclick="filterBy('server_error')">
+  <div class="stat-card alert-card" data-filter="server_error" data-latest-ts="{latest_server_error_ts}" data-count="{server_errors_24h}" style="background: linear-gradient(135deg, #991b1b, #ef4444); cursor: pointer;" onclick="filterBy('server_error')">
     <div class="label">Server Errors (24h)</div>
     <div class="value">{server_errors_24h:,}</div>
+  </div>
+  <div class="stat-card alert-card" data-filter="query_engine_error" data-latest-ts="{latest_query_engine_error_ts}" data-count="{query_engine_errors_24h}" style="background: linear-gradient(135deg, #7f1d1d, #dc2626); cursor: pointer;" onclick="filterBy('query_engine_error')">
+    <div class="label">Query Engine Errors (24h)</div>
+    <div class="value">{query_engine_errors_24h:,}</div>
   </div>
 </div>
 
@@ -1654,10 +1682,17 @@ function filterBy(type) {{
   const css = type.replace(' ', '-');
   label.innerHTML = '<span class="badge ' + css + '">' + type + '</span>';
   bar.classList.add('active');
-  // Hide the alert card for this category — once you're viewing it, the
-  // count at the top is redundant. Clearing the filter brings it back.
+  // Hide the matching alert card AND persist the ack in localStorage keyed to
+  // the latest-error timestamp at click time. The card stays hidden across
+  // page reloads until a NEWER error arrives, at which point the server will
+  // send a fresher latest_ts and the page-load logic brings the card back.
   document.querySelectorAll('.alert-card').forEach(card => {{
-    if (card.dataset.filter === type) card.style.display = 'none';
+    if (card.dataset.filter === type) {{
+      card.style.display = 'none';
+      if (card.dataset.latestTs) {{
+        localStorage.setItem('ack_' + type, card.dataset.latestTs);
+      }}
+    }}
   }});
   renderPage();
 }}
@@ -1688,6 +1723,23 @@ function resetDateRange() {{
   url.searchParams.delete('date_to');
   window.location = url;
 }}
+
+// Hide already-acknowledged alert cards on page load. Card reappears only
+// when a new error arrives (latest_ts > last-acked ts). If the category has
+// no recent rows at all (latest_ts empty), hide the card too — nothing to
+// alert on. To force-reset, run: localStorage.clear() in the console.
+document.querySelectorAll('.alert-card').forEach(card => {{
+  const type = card.dataset.filter;
+  const latest = card.dataset.latestTs || '';
+  if (!latest) {{
+    card.style.display = 'none';
+    return;
+  }}
+  const acked = localStorage.getItem('ack_' + type);
+  if (acked && acked >= latest) {{
+    card.style.display = 'none';
+  }}
+}});
 
 // Click-to-expand on rows with client_context (server_error, client_event).
 // Toggles a detail row beneath showing the pretty-printed JSON.
