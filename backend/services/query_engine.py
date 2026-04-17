@@ -1846,34 +1846,23 @@ def execute(plan: QueryPlan) -> Optional[str]:
             season = plan.season or date.today().year
             see_also.append(f"{abbrev} leader on each team {season}")
 
-        # Unqualified season: suggest the same query with a different time scope
-        # Skip if user explicitly said "this season", "this year", or the year number
+        # Unqualified season: user didn't specify a year, we defaulted to the
+        # current in-progress season. Offer the same query at alternate scopes
+        # (last year, all time) so the user can pivot without retyping filters.
+        # Uses plan.original_question as the base so age/position/rookie/bats/
+        # etc. filters carry over verbatim — previously we rebuilt a minimal
+        # "{abbrev} leaders" string and silently dropped the user's filters.
         _explicit_season = any(p in plan.original_question.lower() for p in [
             "this season", "this year", str(date.today().year)])
         if (result and plan.season and plan.season == date.today().year
                 and plan.stat and plan.query_type in ("leaderboard", "threshold")
                 and not _explicit_season):
-            abbrev = plan.stat.display_abbrev
-            league_prefix = f"{plan.league} " if plan.league else ""
+            oq = plan.original_question.strip().rstrip("?.!,;:")
             last_year = plan.season - 1
 
-            # Format threshold for display (handle rate stats like .300)
-            def _fmt_thresh(stat, thresh):
-                if stat and stat.is_rate and thresh < 1:
-                    return f".{int(thresh * 1000):03d}+"
-                return f"{int(thresh)}+"
-
-            # Reconstruct the query with extra filters for multi-threshold
-            if plan.extra_filters:
-                parts = [f"{_fmt_thresh(plan.stat, plan.threshold)} {abbrev}"]
-                for ef in plan.extra_filters:
-                    parts.append(f"{_fmt_thresh(ef['stat'], ef['threshold'])} {ef['stat'].display_abbrev}")
-                query_desc = " and ".join(parts)
-            elif plan.query_type == "leaderboard":
-                query_desc = f"{league_prefix}{abbrev} leaders"
-            else:
-                query_desc = f"{_fmt_thresh(plan.stat, plan.threshold)} {abbrev}"
-
+            # Early-season alt: offer last year. Later in season (> 40 team
+            # games in), the current-season numbers are meaningful enough to
+            # not crowd the see-also with last year.
             try:
                 gp = conn.execute(
                     "SELECT MAX(games) FROM season_batting_stats WHERE season = ?",
@@ -1881,17 +1870,12 @@ def execute(plan: QueryPlan) -> Optional[str]:
                 ).fetchone()
                 games_played = gp[0] if gp and gp[0] else 0
                 if games_played < 40:
-                    if plan.query_type == "leaderboard":
-                        see_also.append(f"{last_year} {query_desc}")
-                    else:
-                        see_also.append(f"{query_desc} in {last_year}")
+                    see_also.append(f"{oq} last year")
             except Exception:
                 pass
 
-            if plan.query_type == "leaderboard":
-                see_also.append(f"career {query_desc}")
-            else:
-                see_also.append(f"{query_desc} all time")
+            # All-time is always a useful alt for a current-season query.
+            see_also.append(f"{oq} all time")
 
         # Combine all see-alsos into one DIDYOUMEAN — insert after title, before container
         if see_also and result:
@@ -1984,14 +1968,20 @@ def _build_filters(plan: QueryPlan, prefix: str, conn=None) -> tuple[str, list]:
         clauses.append("p.birthdate IS NOT NULL")
 
     # Extra stat filters: "with under 10 HR", "with 30+ SB"
+    # Prorate IP/PA thresholds ONLY when the query is about the current
+    # in-progress season. For all_time / since_YYYY / past season_YYYY /
+    # career, the user's threshold is meant literally — "200+ IP" in an
+    # all-time single-season query means 200 IP, not 25.
+    _current_year = date.today().year
+    _is_current_season_scope = plan.scope == f"season_{_current_year}"
     for ef in plan.extra_filters:
         threshold = ef['threshold']
-        # Prorate IP/PA thresholds early in season
-        if conn and ef['stat'].db_column in ("innings_pitched", "plate_appearances", "ip_outs"):
+        if (conn and _is_current_season_scope
+                and ef['stat'].db_column in ("innings_pitched", "plate_appearances", "ip_outs")):
             try:
                 tbl = "season_pitching_stats" if "ip" in ef['stat'].db_column or "inn" in ef['stat'].db_column else "season_batting_stats"
                 _tg = conn.execute(f"SELECT MAX(games) FROM {tbl} WHERE season = ?",
-                                   (date.today().year,)).fetchone()
+                                   (_current_year,)).fetchone()
                 _mg = int(_tg[0]) if _tg and _tg[0] else 162
                 if _mg < 140:
                     threshold = max(1, int(threshold * _mg / 162))
@@ -2039,17 +2029,35 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
     if not needs_minimum:
         return "", ""
 
+    # For current in-progress season, prorate against team_games to allow
+    # "on pace" semantics. For everything else (all_time, since_YYYY, past
+    # season_YYYY, career), use the full-season qualifier literally —
+    # historical seasons are complete, their rate stats don't need proration.
+    _current_year = datetime.now().year
+    _is_current_season_scope = plan.scope == f"season_{_current_year}"
+    if _is_current_season_scope:
+        qual_season = season or _current_year
+    else:
+        # Full-season qualifier (3.1 × 162 = 502 PA, 1.0 × 162 = 162 IP = 486 outs)
+        qual_season = None  # signal: use 162-game baseline below
+
     if plan.is_pitching:
-        ip_min = _qual_min_ip_outs(conn, season or datetime.now().year)
+        if qual_season is None:
+            ip_min = 486  # 162 IP for a standard 162-game season
+        else:
+            ip_min = _qual_min_ip_outs(conn, qual_season)
         ip_display = f"{ip_min // 3}.{ip_min % 3}"
-        if season and ip_min < 486:
+        if _is_current_season_scope and season and ip_min < 486:
             label = f"Showing pitchers on pace for 162+ IP ({ip_display} IP minimum)"
         else:
             label = f"Min. {ip_display} IP."
         return f" AND {prefix}.ip_outs >= {ip_min}", label
     else:
-        pa_min = _qual_min_pa(conn, season or datetime.now().year)
-        if season and pa_min < 502:
+        if qual_season is None:
+            pa_min = 502  # 3.1 PA × 162 scheduled games
+        else:
+            pa_min = _qual_min_pa(conn, qual_season)
+        if _is_current_season_scope and season and pa_min < 502:
             label = f"Showing hitters on pace for 502+ PA ({pa_min} PA minimum)"
         else:
             label = f"Min. {pa_min} PA."
