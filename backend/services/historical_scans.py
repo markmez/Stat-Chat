@@ -132,8 +132,53 @@ def scan_start_of_season_streaks(conn, season, latest_date):
 # Scan: cross-season active streaks
 # ---------------------------------------------------------------------------
 
+def _compute_active_streak(conn, pid, season, check):
+    """Walk a player's game logs backwards to find their current active streak.
+
+    Streak length is measured in games played (not calendar days) — a streak can
+    legitimately span off-days and games the player sat. Returns (length, spans_seasons).
+    """
+    current = conn.execute(f"""
+        SELECT ({check['condition_sql']}) as met
+        FROM game_batting_logs
+        WHERE player_id = ? AND season = ? AND {check['filter']}
+        ORDER BY date DESC
+    """, (pid, season)).fetchall()
+
+    streak = 0
+    for (met,) in current:
+        if met:
+            streak += 1
+        else:
+            break
+
+    spans = False
+    if streak == len(current) and streak > 0:
+        prev = conn.execute(f"""
+            SELECT ({check['condition_sql']}) as met
+            FROM game_batting_logs
+            WHERE player_id = ? AND season = ? AND {check['filter']}
+            ORDER BY date DESC
+        """, (pid, season - 1)).fetchall()
+        for (met,) in prev:
+            if met:
+                streak += 1
+                spans = True
+            else:
+                break
+
+    return streak, spans
+
+
 def scan_cross_season_streaks(conn, season, latest_date):
-    """Find active streaks carrying over from last season."""
+    """Find active streaks carrying over from last season.
+
+    Headline claims "longest active in MLB," so we must verify the claim against
+    ALL active batters, not just those who played today. Without this guard, on
+    days the true #1 holder sits out, a shorter streak from a player who DID play
+    would get falsely labeled as longest. Streaks are measured in games played,
+    so a player's streak remains active even on days they don't appear.
+    """
     facts = []
 
     checks = [
@@ -154,58 +199,52 @@ def scan_cross_season_streaks(conn, season, latest_date):
     ]
 
     for check in checks:
+        # Global max across every active batter this season — this is the true
+        # "longest active" bar. We check every player regardless of whether they
+        # played on latest_date so a sitting #1 holder (e.g., Ohtani resting)
+        # doesn't get overlooked, letting a shorter streak masquerade as longest.
+        all_pids = conn.execute(f"""
+            SELECT DISTINCT player_id FROM game_batting_logs
+            WHERE season = ? AND {check['filter']}
+        """, (season,)).fetchall()
+
+        global_max = 0
+        for (pid,) in all_pids:
+            length, _ = _compute_active_streak(conn, pid, season, check)
+            if length > global_max:
+                global_max = length
+
+        # Only today's players are eligible to fire an event — the feed is
+        # about what happened on latest_date. But we gate the "longest active"
+        # claim on matching/exceeding the true global max above.
         players = conn.execute(f"""
             SELECT DISTINCT player_id FROM game_batting_logs
             WHERE season = ? AND date = ? AND {check['filter']}
         """, (season, latest_date)).fetchall()
 
         for (pid,) in players:
-            # Current season (reverse)
-            current = conn.execute(f"""
-                SELECT ({check['condition_sql']}) as met
-                FROM game_batting_logs
-                WHERE player_id = ? AND season = ? AND {check['filter']}
-                ORDER BY date DESC
-            """, (pid, season)).fetchall()
+            streak, spans = _compute_active_streak(conn, pid, season, check)
 
-            streak = 0
-            for (met,) in current:
-                if met:
-                    streak += 1
-                else:
-                    break
+            if streak < check["min_games"]:
+                continue
+            # Suppress false "longest" claims: if someone who sat today has a
+            # longer streak, don't fire this event for today's player.
+            if streak < global_max:
+                continue
 
-            # Extend into last season if streak covers all current games
-            spans = False
-            if streak == len(current) and streak > 0:
-                prev = conn.execute(f"""
-                    SELECT ({check['condition_sql']}) as met
-                    FROM game_batting_logs
-                    WHERE player_id = ? AND season = ? AND {check['filter']}
-                    ORDER BY date DESC
-                """, (pid, season - 1)).fetchall()
+            name = _player_name(conn, pid)
+            team = _team_display(conn, pid, season)
+            facts.append({
+                "type": f"cross_season_{check['name']}",
+                "player": name,
+                "player_id": pid,
+                "team": team,
+                "streak": streak,
+                "spans_seasons": spans,
+                "label": check["label"],
+            })
 
-                for (met,) in prev:
-                    if met:
-                        streak += 1
-                        spans = True
-                    else:
-                        break
-
-            if streak >= check["min_games"]:
-                name = _player_name(conn, pid)
-                team = _team_display(conn, pid, season)
-                facts.append({
-                    "type": f"cross_season_{check['name']}",
-                    "player": name,
-                    "player_id": pid,
-                    "team": team,
-                    "streak": streak,
-                    "spans_seasons": spans,
-                    "label": check["label"],
-                })
-
-    # Keep top per type
+    # Keep top per type (now guaranteed to match the true global max if emitted)
     by_type = {}
     for f in facts:
         t = f["type"]
