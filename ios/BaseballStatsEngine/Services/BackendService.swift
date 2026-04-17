@@ -202,6 +202,7 @@ final class BackendService: Sendable {
     }
 
     struct PlayerCardData: Decodable, Sendable {
+        let request_id: String?
         let player_info: PlayerInfoData?
         let batting_seasons: [BattingSeasonData]
         let pitching_seasons: [PitchingSeasonData]
@@ -267,6 +268,37 @@ final class BackendService: Sendable {
             throw ServiceError.httpError(http.statusCode, body)
         }
         return try JSONDecoder().decode(PlayerCardData.self, from: data)
+    }
+
+    // MARK: - Client event telemetry
+
+    /// Fire-and-forget log of a client-side event to the dashboard's metering DB.
+    /// Backend dedupes within the same minute per (device_id, event_type, player).
+    /// Errors are swallowed — telemetry must never surface to the user.
+    func logClientEvent(eventType: String, context: [String: Any], deviceId: String) async {
+        let url = baseURL.appendingPathComponent("client-event")
+        let osv = ProcessInfo.processInfo.operatingSystemVersion
+        let platformVersion = "\(osv.majorVersion).\(osv.minorVersion).\(osv.patchVersion)"
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+
+        var body: [String: Any] = [
+            "device_id": deviceId,
+            "event_type": eventType,
+            "context": context,
+            "platform_version": platformVersion,
+        ]
+        if let v = appVersion {
+            body["app_version"] = v
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 5
+        guard let payload = try? JSONSerialization.data(withJSONObject: body) else { return }
+        request.httpBody = payload
+
+        _ = try? await URLSession.shared.data(for: request)
     }
 
     // MARK: - Game logs (for current form slider)

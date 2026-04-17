@@ -293,14 +293,12 @@ struct LeaderboardView: View {
                 .shadow(color: .black.opacity(0.03), radius: 2, y: 1)
         )
         .onAppear {
-            // Show chevron on first column — preserves the backend's sort order.
-            // For "lower is better" stats (ERA, WHIP, etc.), data arrives ascending.
-            if !initialized && isSortable {
-                sortColumn = 0
-                let lowerIsBetter: Set<String> = ["ERA", "WHIP", "BB/9", "H/9", "HR/9", "BAA"]
-                let firstHeader = grid.headers.first ?? ""
-                sortAscending = lowerIsBetter.contains(firstHeader)
-            }
+            // Leave sortColumn unset so sortedRows returns the backend's order
+            // verbatim — the query builder already sorts per intent (e.g. "fewest
+            // K" → ASC, "most HR" → DESC, "lowest ERA" → ASC). Previously we set
+            // sortColumn = 0 and guessed direction from a pitching-rate whitelist,
+            // which silently flipped counting-stat ASC leaderboards to DESC.
+            // Users can still tap a column header to opt in to explicit sorting.
             initialized = true
         }
     }

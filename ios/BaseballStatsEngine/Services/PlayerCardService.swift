@@ -558,6 +558,39 @@ enum PlayerCardService {
             return nil
         }
 
+        // Partial-response detection: if the player has current-season batting activity
+        // but splits or game logs for that year are missing, the card will render as
+        // "career only" — the failure mode a user just hit. Log it to the dashboard so
+        // we can tell transient hiccups from a real bug.
+        let currentYear = Calendar.current.component(.year, from: Date())
+        if let currentSeason = data.batting_seasons.first(where: { $0.year == currentYear }),
+           currentSeason.G > 0 {
+            var missing: [String] = []
+            let hasSplits = (data.season_splits ?? []).contains(where: { $0.year == currentYear })
+            if !hasSplits { missing.append("season_splits") }
+            if (data.game_logs ?? []).isEmpty { missing.append("game_logs") }
+            if !missing.isEmpty && !deviceId.isEmpty {
+                let capturedName = name
+                let capturedMissing = missing
+                let capturedDevice = deviceId
+                let capturedRid = data.request_id ?? ""
+                Task.detached {
+                    var ctx: [String: Any] = [
+                        "player": capturedName,
+                        "missing": capturedMissing,
+                    ]
+                    if !capturedRid.isEmpty {
+                        ctx["request_id"] = capturedRid
+                    }
+                    await backendService.logClientEvent(
+                        eventType: "partial_player_card",
+                        context: ctx,
+                        deviceId: capturedDevice
+                    )
+                }
+            }
+        }
+
         let info = data.player_info
         let displayName = info?.name ?? name
         let infoTeam = info?.team ?? ""
