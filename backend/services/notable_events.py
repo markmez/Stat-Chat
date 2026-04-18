@@ -1170,10 +1170,21 @@ def detect_hot_streaks_pelt(conn, season, latest_date=None):
             WHERE p.name = ? AND g.date = ?
         """, (name, latest_date)).fetchone()
 
+        # "On a tear" needs to match today's line. PELT windows are rolling, so
+        # a 0-for-4 (or a sit-out) still "qualifies" statistically — but putting
+        # that headline next to "on a tear" reads as wrong. Require 2+ H OR a HR
+        # today. Silently skip otherwise; we DON'T want to burn the player's
+        # 5-day cooldown on an event that never actually rendered, so no row is
+        # written to notable_events and no visible signal is emitted.
+        gh = (game_row[0] or 0) if game_row else 0
+        gab = (game_row[1] or 0) if game_row else 0
+        ghr = (game_row[2] or 0) if game_row else 0
+        grbi = (game_row[3] or 0) if game_row else 0
+        if gh < 2 and ghr < 1:
+            continue
+
         game_intro = ""
         if game_row:
-            gh, gab, ghr, grbi, gbb = game_row
-            gh, gab, ghr, grbi = gh or 0, gab or 0, ghr or 0, grbi or 0
             parts = [f"{gh}-for-{gab}"]
             if ghr:
                 parts.append(f"{'a homer' if ghr == 1 else f'{ghr} homers'}")
