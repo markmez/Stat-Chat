@@ -2023,9 +2023,12 @@ def execute(plan: QueryPlan) -> Optional[str]:
             else:
                 fallback = _execute_threshold(conn, plan)
             if fallback and not _is_zero_result(fallback):
+                # Silent fallback — don't surface the zero current-year attempt.
+                # The 0 count was just our signal that the inference was wrong;
+                # the subtitle only needs to make the chosen scope explicit so
+                # the user isn't wondering "which records am I looking at?"
                 subtitle_tag = (
-                    f"[SUBTITLE]0 results for {original_year} — showing "
-                    f"all-time single-season records instead[/SUBTITLE]"
+                    "[SUBTITLE]Showing all-time single-season records[/SUBTITLE]"
                 )
                 lines = fallback.split("\n")
                 inserted = False
