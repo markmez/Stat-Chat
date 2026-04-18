@@ -1657,6 +1657,183 @@ def _format_val(stat_col: str, value, is_rate: bool = False) -> str:
     return str(value)
 
 
+# Natural-language verb phrases per stat for the zero-result sentence.
+# IMPORTANT: when a new stat is added to stat_config.json / the DB, add entries
+# here too. Missing entries fall back to a generic sentence (still correct, just
+# less natural). See CLAUDE.md "Adding a new stat" checklist.
+
+# Singular form: "hit a home run" — used for leaderboards ("most HR") with no
+# explicit threshold. Subject/scope are added around this phrase.
+_ZERO_BATTING_SINGULAR = {
+    "HR": "hit a home run",
+    "H": "recorded a hit",
+    "RBI": "drove in a run",
+    "SB": "stole a base",
+    "R": "scored a run",
+    "2B": "hit a double",
+    "3B": "hit a triple",
+    "BB": "drew a walk",
+    "IBB": "drew an intentional walk",
+    "SO": "struck out",
+    "HBP": "were hit by a pitch",
+    "CS": "were caught stealing",
+    "G": "played a game",
+    "AB": "had an at-bat",
+    "PA": "had a plate appearance",
+    "TB": "had a total base",
+    "XBH": "had an extra-base hit",
+}
+_ZERO_PITCHING_SINGULAR = {
+    "W": "won a game",
+    "L": "lost a game",
+    "SV": "recorded a save",
+    "SO": "struck out a batter",
+    "K": "struck out a batter",
+    "BB": "walked a batter",
+    "IP": "pitched an inning",
+    "ER": "allowed an earned run",
+    "H": "allowed a hit",
+    "HR": "allowed a home run",
+    "G": "pitched in a game",
+    "GS": "made a start",
+    "CG": "pitched a complete game",
+    "SHO": "pitched a shutout",
+}
+
+# Threshold form: "hit 30+ home runs" — used for threshold queries.
+# {n} is the threshold value.
+_ZERO_BATTING_THRESHOLD = {
+    "HR": "hit {n}+ home runs",
+    "H": "recorded {n}+ hits",
+    "RBI": "drove in {n}+ runs",
+    "SB": "stole {n}+ bases",
+    "R": "scored {n}+ runs",
+    "2B": "hit {n}+ doubles",
+    "3B": "hit {n}+ triples",
+    "BB": "drew {n}+ walks",
+    "SO": "struck out {n}+ times",
+    "HBP": "were hit by a pitch {n}+ times",
+    "G": "played {n}+ games",
+    "AB": "had {n}+ at-bats",
+    "PA": "had {n}+ plate appearances",
+}
+_ZERO_PITCHING_THRESHOLD = {
+    "W": "won {n}+ games",
+    "L": "lost {n}+ games",
+    "SV": "recorded {n}+ saves",
+    "SO": "struck out {n}+ batters",
+    "K": "struck out {n}+ batters",
+    "BB": "walked {n}+ batters",
+    "IP": "pitched {n}+ innings",
+    "ER": "allowed {n}+ earned runs",
+    "H": "allowed {n}+ hits",
+    "HR": "allowed {n}+ home runs",
+    "G": "pitched in {n}+ games",
+    "GS": "made {n}+ starts",
+}
+
+
+def _zero_result_subject(plan: QueryPlan) -> str:
+    """Build the subject noun phrase for the zero-result sentence.
+    'players', 'pitchers', 'catchers', 'players over 40', 'AL rookies', etc."""
+    from .response_builder import _position_label
+    # Position overrides the base noun: 'catchers', 'shortstops', etc.
+    if plan.position:
+        base = _position_label(plan.position).lower()
+    else:
+        base = "pitchers" if plan.is_pitching else "players"
+
+    prefix_bits = []
+    if plan.league:
+        prefix_bits.append(plan.league)
+    if plan.rookie:
+        prefix_bits.append("rookie")
+    if plan.bats == "L":
+        prefix_bits.append("left-handed")
+    elif plan.bats == "R":
+        prefix_bits.append("right-handed")
+    elif plan.bats == "B":
+        prefix_bits.append("switch-hitting")
+    if plan.throws == "L" and plan.is_pitching:
+        prefix_bits.append("left-handed")
+    elif plan.throws == "R" and plan.is_pitching:
+        prefix_bits.append("right-handed")
+    if plan.pitcher_role:
+        prefix_bits.append(plan.pitcher_role)
+
+    subject = " ".join(prefix_bits + [base]) if prefix_bits else base
+
+    suffix_bits = []
+    if plan.age_min:
+        suffix_bits.append(f"over {plan.age_min}")
+    if plan.age_max:
+        suffix_bits.append(f"under {plan.age_max}")
+
+    if suffix_bits:
+        return f"{subject} {' '.join(suffix_bits)}"
+    return subject
+
+
+def _zero_result_scope(plan: QueryPlan) -> str:
+    """Scope phrase for the zero-result sentence. 'in 2024', 'in a single
+    season', 'over their career', 'since 2000', or empty."""
+    if plan.scope == "all_time":
+        return "in a single season"
+    if plan.scope == "career":
+        return "over their career"
+    if plan.scope and plan.scope.startswith("season_"):
+        try:
+            return f"in {plan.scope.split('_', 1)[1]}"
+        except Exception:
+            return ""
+    if plan.scope and plan.scope.startswith("since_"):
+        try:
+            return f"since {plan.scope.split('_', 1)[1]}"
+        except Exception:
+            return ""
+    return ""
+
+
+def _zero_result_sentence(plan: QueryPlan) -> str:
+    """Natural zero-result sentence: '0 players over 40 hit a home run in 2024.'
+
+    Falls back to a generic structured sentence for stats not in the verb maps
+    (maintain them when new stats are added — see module top)."""
+    subject = _zero_result_subject(plan)
+    scope = _zero_result_scope(plan)
+    scope_suffix = f" {scope}" if scope else ""
+
+    # Pure rate-stat queries don't fit verb templating cleanly. "0 players
+    # with a qualifying {stat} in {scope}." is honest and doesn't strain.
+    if plan.stat and plan.stat.is_rate:
+        return f"0 {subject} had a qualifying {plan.stat.display_name}{scope_suffix}."
+
+    if not plan.stat:
+        return f"0 {subject} matched{scope_suffix}."
+
+    abbrev = plan.stat.display_abbrev
+    is_pitching = plan.is_pitching
+
+    # Threshold form when user said "X+ HR" or similar
+    if plan.threshold is not None:
+        threshold_map = _ZERO_PITCHING_THRESHOLD if is_pitching else _ZERO_BATTING_THRESHOLD
+        phrase_template = threshold_map.get(abbrev)
+        n = int(plan.threshold) if plan.threshold == int(plan.threshold) else plan.threshold
+        if phrase_template:
+            return f"0 {subject} {phrase_template.format(n=n)}{scope_suffix}."
+        # Unknown stat → graceful fallback
+        return f"0 {subject} reached {n}+ {plan.stat.display_name}{scope_suffix}."
+
+    # Pure leaderboard — singular form ("hit a home run") reads naturally when
+    # filters are restrictive enough that nobody qualifies.
+    singular_map = _ZERO_PITCHING_SINGULAR if is_pitching else _ZERO_BATTING_SINGULAR
+    phrase = singular_map.get(abbrev)
+    if phrase:
+        return f"0 {subject} {phrase}{scope_suffix}."
+    # Unknown stat
+    return f"0 {subject} recorded {plan.stat.display_name}{scope_suffix}."
+
+
 def _empty_result_pills(plan: QueryPlan) -> str:
     """Generate suggestion pills for empty results — don't leave users at a dead end."""
     pills = []
@@ -1827,7 +2004,14 @@ def execute(plan: QueryPlan) -> Optional[str]:
         # original current-year query as a see-also so the user can pop back.
         _explicit_season = any(p in plan.original_question.lower() for p in [
             "this season", "this year", str(date.today().year)])
-        if (result and "No results found" in result
+        # Zero-result detection: the new _zero_result_sentence always leads with
+        # "0 " (e.g. "0 players over 40 hit a home run in 2026."). Older non-
+        # leaderboard/threshold executors may still emit "No results found" —
+        # match both for safety.
+        def _is_zero_result(s: str) -> bool:
+            return bool(s) and (s.startswith("0 ") or "No results found" in s)
+
+        if (result and _is_zero_result(result)
                 and plan.query_type in ("leaderboard", "threshold")
                 and plan.season and plan.season == date.today().year
                 and not _explicit_season):
@@ -1838,7 +2022,7 @@ def execute(plan: QueryPlan) -> Optional[str]:
                 fallback = _execute_leaderboard(conn, plan)
             else:
                 fallback = _execute_threshold(conn, plan)
-            if fallback and "No results found" not in fallback:
+            if fallback and not _is_zero_result(fallback):
                 subtitle_tag = (
                     f"[SUBTITLE]0 results for {original_year} — showing "
                     f"all-time single-season records instead[/SUBTITLE]"
@@ -2524,7 +2708,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         return None
 
     if not rows:
-        return f"No results found ({scope_label})." + _empty_result_pills(plan)
+        return _zero_result_sentence(plan) + _empty_result_pills(plan)
 
     # Format
     award_title = f"{award_label} " if award_label else ""
@@ -3316,7 +3500,7 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
                         return "\n".join(parts)
             except Exception as e:
                 logger.warning("pace_fallback_error error=%s", e)
-        return f"No {rookie_label.lower()} {op} {threshold_display} {abbrev} found ({scope_label})." + _empty_result_pills(plan)
+        return _zero_result_sentence(plan) + _empty_result_pills(plan)
 
     # Build title with extra filters
     filter_parts = [f"{threshold_display}+ {abbrev}"]

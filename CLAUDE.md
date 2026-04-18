@@ -221,6 +221,15 @@ We download Retrosheet season ZIPs that contain 7 CSV files. We now use **battin
 - **Ronald Acuña**: `acunr001` = "Ronald Acuna" (Retrosheet, 2018-2024), `acuñar001` = "Ronald Acuña Jr." (MSF, 2025-2026). Same player, accent mismatch. Fix: merge into one ID.
 - **Workaround**: `PlayerNameMatcher` has `nicknameAliases` and `disambigSrJrMap` to handle these at the search layer. Proper fix is merging player IDs in the DB so career stats are unified.
 
+### Adding a new stat — maintenance checklist
+When adding a new stat to `stat_config.json` / the DB schema, also update these places or the UX degrades gracefully but noticeably:
+
+1. **Zero-result verb maps** in `backend/services/query_engine.py` — `_ZERO_BATTING_SINGULAR`, `_ZERO_PITCHING_SINGULAR`, `_ZERO_BATTING_THRESHOLD`, `_ZERO_PITCHING_THRESHOLD`. Used for the "0 players ..." natural-language empty-result sentence. Missing entries fall back to `"0 {subject} recorded {stat}"` — readable but stilted.
+2. **Career rate formulas** in `_career_rate_formulas` (same file) if the new stat is a rate with a career aggregation.
+3. **Lower-is-better set** in `_LOWER_IS_BETTER_PITCHING` (response_builder.py) if it's a rate where smaller = better (ERA, WHIP style).
+4. **Schema description** (`schema_description.py`) — the prompt Haiku/Sonnet see. Add a line describing the new column so Haiku SQL fallback can use it.
+5. **Ambiguous stat set** (`_AMBIGUOUS_STATS`) in query_engine.py if the same name exists as both batting and pitching (like SO / BB).
+
 ### User-facing error messages
 Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The mapping:
 | User sees | Underlying cause |
