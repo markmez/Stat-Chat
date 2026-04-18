@@ -3778,11 +3778,11 @@ def build_consecutive_streak(streak_type: str, player_name: Optional[str] = None
     Consecutive game streak: hitting streak or on-base streak.
 
     streak_type: "hit" or "onbase".
-    """
-    # Default to current season — prevents unbounded 661K row scan
-    if season is None:
-        season = date.today().year
+    season: explicit year to filter, or None for all-time (scans full history).
 
+    Caller is responsible for the default-to-current-year safety net — passing
+    None here means "user asked for all-time" and we honor it.
+    """
     conn = _get_db()
     try:
         if streak_type == "hit":
@@ -3846,7 +3846,7 @@ def build_consecutive_streak(streak_type: str, player_name: Optional[str] = None
             if season:
                 scope_label = str(season)
             else:
-                scope_label = "Since 2016"
+                scope_label = "All-Time"
 
         parts = [f"**Longest {streak_label} Streaks \u2014 {scope_label}**\n"]
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")

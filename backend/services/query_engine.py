@@ -3917,19 +3917,6 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
     if not plan.streak_conditions:
         return None
 
-    # Temporary instrumentation: trace scope/season state so we can verify
-    # which branch of the season-filter cascade fires on prod.
-    try:
-        from .metering import log_server_error as _lse
-        _lse(
-            source="streak_debug",
-            error_type="trace",
-            error_message=f"scope={plan.scope} season={plan.season} direction={plan.streak_direction} len={plan.streak_length}",
-            context={"question": plan.original_question[:200]},
-        )
-    except Exception:
-        pass
-
     # Combine all conditions with AND
     condition = " AND ".join(plan.streak_conditions)
 

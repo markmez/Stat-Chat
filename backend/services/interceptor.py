@@ -367,10 +367,19 @@ def try_intercept(question: str):
     # Consecutive streak — "longest hitting streak"
     consec = nm.parse_consecutive_streak(trimmed)
     if consec:
-        # Default to current season if none specified — prevents unbounded 661K row scan
         season = consec.get("season")
-        if not season:
+        # "all time" / "career" / "ever" / "in history" → scan full history
+        # (build_consecutive_streak treats season=None as all-time). Without
+        # this check the default-to-current-year fallback silently ignored the
+        # user's explicit all-time request.
+        _all_time_signals = ["all time", "all-time", "in history", "career", " ever"]
+        is_all_time = any(sig in lower for sig in _all_time_signals)
+        if not season and not is_all_time:
+            # No year AND not all-time → default to current season
+            # (prevents unbounded 661K row scan for vague queries)
             season = date.today().year
+        elif is_all_time:
+            season = None
         response = rb.build_consecutive_streak(
             consec["type"], consec.get("player_name"), season)
         if response:
