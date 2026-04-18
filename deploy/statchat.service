@@ -1,5 +1,5 @@
 [Unit]
-Description=StatChat Backend API
+Description=StatChat Backend API (worker timeout 90s — all-time streak queries)
 After=network.target
 
 [Service]

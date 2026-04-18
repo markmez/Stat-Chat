@@ -27,19 +27,25 @@
               # Ensure QE error healthcheck UUID is in env
               grep -q QE_ERROR_HC_UUID /opt/statchat/.env 2>/dev/null || \
                 echo 'QE_ERROR_HC_UUID=d3f0c82b-235a-477f-8ed5-3f6ac4c6daa7' | sudo tee -a /opt/statchat/.env > /dev/null
-              # Update service file if changed
+              # Update service file. If ExecStart changed (e.g. new gunicorn flags),
+              # we need a full restart — gunicorn HUP re-reads code but keeps the
+              # ORIGINAL ExecStart from when the master was launched. Diff the file
+              # to decide between graceful HUP (code-only change) and full restart
+              # (service definition changed).
+              SERVICE_CHANGED=0
+              if ! sudo cmp -s deploy/statchat.service /etc/systemd/system/statchat.service; then
+                SERVICE_CHANGED=1
+              fi
               sudo cp deploy/statchat.service /etc/systemd/system/statchat.service
               sudo systemctl daemon-reload
-              # Graceful reload: HUP tells gunicorn to spawn new workers before killing old
-              # Falls back to hard restart if not running or first deploy with gunicorn
-              if [ -f /data/statchat.pid ] && sudo kill -0 $(cat /data/statchat.pid) 2>/dev/null; then
+              if [ $SERVICE_CHANGED -eq 1 ] || [ ! -f /data/statchat.pid ] || ! sudo kill -0 $(cat /data/statchat.pid) 2>/dev/null; then
+                # Service file changed OR no running process → full restart
+                sudo systemctl restart statchat
+                sleep 8
+              else
+                # Code-only change → graceful HUP, reuses existing ExecStart
                 sudo kill -HUP $(cat /data/statchat.pid)
                 sleep 5
-              else
-                sudo systemctl stop statchat 2>/dev/null || true
-                sleep 1
-                sudo systemctl start statchat
-                sleep 8
               fi
               curl -sf --max-time 15 http://127.0.0.1:8000/health || {
                 echo "Health check failed, checking logs..."
