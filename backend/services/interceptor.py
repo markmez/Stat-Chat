@@ -368,31 +368,19 @@ def try_intercept(question: str):
     consec = nm.parse_consecutive_streak(trimmed)
     if consec:
         season = consec.get("season")
-        # "all time" / "career" / "ever" / "in history" — user is asking for
-        # an all-time streak record. The underlying SQL (window functions
-        # over 4.8M game logs back to 1920) can't finish in nginx's timeout
-        # window, so we can't serve it live. Rather than silently default to
-        # the current year (which hides the problem) or 502 (which looks
-        # broken), surface that this specific shape needs infra we haven't
-        # built yet and point the user at a working alternative.
+        # "all time" / "career" / "ever" / "in history" → scan full game-log
+        # history (build_consecutive_streak treats season=None as all-time).
+        # The optimized SQL (window functions partitioned by player+season,
+        # JOIN deferred to the final 15-row SELECT) runs in ~25s; gunicorn
+        # worker timeout was bumped to 90s to give it room.
         _all_time_signals = ["all time", "all-time", "in history", "career", " ever"]
         is_all_time = any(sig in lower for sig in _all_time_signals)
-        if is_all_time and not consec.get("player_name"):
-            streak_kind = "hitting" if consec["type"] == "hit" else "on-base"
-            msg = (
-                f"All-time {streak_kind} streak records need a precomputed "
-                f"index we haven't built yet. Try a specific year like "
-                f"**{date.today().year - 1}** or **since 2020** for now."
-            )
-            pills = [
-                f"[SUGGEST]longest {streak_kind} streak {date.today().year - 1}[/SUGGEST]",
-                f"[SUGGEST]longest {streak_kind} streak since 2020[/SUGGEST]",
-            ]
-            return msg + "\n\n" + "\n".join(pills)
-        if not season:
+        if not season and not is_all_time:
             # No year AND not all-time → default to current season
-            # (prevents unbounded 661K row scan for vague queries)
+            # (prevents unbounded scan for vague queries)
             season = date.today().year
+        elif is_all_time:
+            season = None
         response = rb.build_consecutive_streak(
             consec["type"], consec.get("player_name"), season)
         if response:

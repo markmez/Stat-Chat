@@ -3792,42 +3792,55 @@ def build_consecutive_streak(streak_type: str, player_name: Optional[str] = None
             hit_condition = "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0"
             streak_label = "On-Base"
 
-        player_filter = ""
+        # Player-specific path can use a name pre-filter; for all-player
+        # leaderboards we drop the players JOIN inside the CTE entirely
+        # (was hauling player name into every row of a 4.8M-row scan for
+        # no reason — JOIN now happens once on the final 15 rows).
+        # Window functions partition by (player_id, season) so each window
+        # spans at most one season's worth of games — keeps the all-time
+        # historical scan inside the gunicorn worker timeout (~25s instead
+        # of OOM-territory).
+        season_filter = f"AND g.season = {season}" if season else ""
+        params: list = []
         if player_name:
-            player_filter = f"AND p.name = ?"
-        season_filter = ""
-        if season:
-            season_filter = f"AND g.season = {season}"
-
-        params = [_sanitize(player_name)] if player_name else []
+            # Pre-resolve player_id so we can avoid the JOIN inside the CTE
+            row = conn.execute(
+                "SELECT player_id FROM players WHERE name = ? LIMIT 1",
+                (_sanitize(player_name),),
+            ).fetchone()
+            if not row:
+                return f"No {streak_label.lower()} streak data found for {player_name}."
+            player_filter = "AND g.player_id = ?"
+            params.append(row[0])
+        else:
+            player_filter = ""
 
         cur = conn.cursor()
         cur.execute(
             f"WITH numbered AS ("
-            f"  SELECT g.player_id, p.name, g.date, g.hits, g.walks, "
+            f"  SELECT g.player_id, g.date, g.hits, g.walks, "
             f"    COALESCE(g.hit_by_pitch, 0) as hbp, g.season, "
-            f"    ROW_NUMBER() OVER (PARTITION BY g.player_id ORDER BY g.date) as game_num "
+            f"    ROW_NUMBER() OVER (PARTITION BY g.player_id, g.season ORDER BY g.date) as game_num "
             f"  FROM game_batting_logs g "
-            f"  JOIN players p ON g.player_id = p.player_id "
             f"  WHERE 1=1 {player_filter} {season_filter}"
             f"), "
             f"qualifying AS ("
-            f"  SELECT *, ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY date) as qual_num "
+            f"  SELECT *, ROW_NUMBER() OVER (PARTITION BY player_id, season ORDER BY date) as qual_num "
             f"  FROM numbered "
             f"  WHERE {hit_condition}"
             f"), "
             f"streaks AS ("
-            f"  SELECT player_id, name, "
+            f"  SELECT player_id, season, "
             f"    COUNT(*) as streak_len, "
             f"    MIN(date) as start_date, "
-            f"    MAX(date) as end_date, "
-            f"    MIN(season) as season "
+            f"    MAX(date) as end_date "
             f"  FROM qualifying "
-            f"  GROUP BY player_id, game_num - qual_num"
+            f"  GROUP BY player_id, season, game_num - qual_num"
             f") "
-            f"SELECT name, streak_len, season, start_date, end_date "
-            f"FROM streaks "
-            f"ORDER BY streak_len DESC LIMIT 15",
+            f"SELECT p.name, s.streak_len, s.season, s.start_date, s.end_date "
+            f"FROM streaks s "
+            f"JOIN players p ON s.player_id = p.player_id "
+            f"ORDER BY s.streak_len DESC LIMIT 15",
             tuple(params),
         )
         rows = cur.fetchall()
