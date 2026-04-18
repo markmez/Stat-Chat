@@ -63,6 +63,11 @@ async def refresh_live_data(
 
     # Let the pipeline auto-detect season if not explicitly provided.
     # The pipeline has smart Opening Day detection (probes MSF for regular season data).
+    # Normalize bare-year input ("2026" → "2026-regular") — MSF URLs need the
+    # qualified format. Without this the pipeline passes "2026" through and
+    # MSF returns 404 on every call. Pre/playoff must be passed explicitly.
+    if season and season.isdigit() and len(season) == 4:
+        season = f"{season}-regular"
     cmd = [sys.executable, PIPELINE_SCRIPT, "--db", DB_PATH]
     if season is not None:
         cmd.extend(["--season", season])
