@@ -1147,7 +1147,9 @@ def detect_hot_streaks_pelt(conn, season, latest_date=None):
     """, (season,)).fetchall()
 
     _streak_phrases = ["is on a tear", "is on a hot streak", "has been red hot", "is locked in"]
+    _refire_phrases = ["is still rolling", "is still locked in", "is still red hot", "keeps it going"]
     STREAK_COOLDOWN_DAYS = 5
+    REFIRE_LOOKBACK_DAYS = 14  # Within this window, treat a re-surface as "still"
 
     for idx, (name, ops, avg, num_games, hr, h, ab, obp, slg, season_ops) in enumerate(rows):
         # Cooldown: skip if this player had a hot_streak_pelt event within the last N days
@@ -1161,6 +1163,22 @@ def detect_hot_streaks_pelt(conn, season, latest_date=None):
         """, (f"%{name}%", latest_date, STREAK_COOLDOWN_DAYS, latest_date)).fetchone()
         if recent:
             continue
+
+        # Refire detection: is this a "still going" event? Past cooldown but
+        # still within the lookback window means the player was surfaced
+        # recently and is being re-reported. Use different phrasing that
+        # acknowledges continuity instead of pretending it's fresh.
+        prior = conn.execute("""
+            SELECT game_date FROM notable_events
+            WHERE detection_type = 'hot_streak_pelt'
+              AND headline LIKE ?
+              AND game_date > date(?, '-' || ? || ' days')
+              AND game_date < ?
+            ORDER BY game_date DESC
+            LIMIT 1
+        """, (f"%{name}%", latest_date, REFIRE_LOOKBACK_DAYS, latest_date)).fetchone()
+        is_refire = prior is not None
+        prior_date = prior[0] if prior else None
 
         # Get last game line for context
         game_row = conn.execute("""
@@ -1202,8 +1220,15 @@ def detect_hot_streaks_pelt(conn, season, latest_date=None):
             slash = f"{_fmt_ops(ops)} OPS"
         hr_part = f" with {hr} HR" if hr else ""
 
-        # Vary the language
-        phrase = _streak_phrases[idx % len(_streak_phrases)]
+        # Vary the language. Refires get "still rolling"-style phrasing so
+        # the feed doesn't read as "he was hot, now fresh news: he's hot"
+        # when the player has been continuously hot. Current_form's own
+        # variance-resistant algorithm tends to pick a longer window for
+        # refires, so the stats themselves already reflect the longer arc.
+        if is_refire:
+            phrase = _refire_phrases[idx % len(_refire_phrases)]
+        else:
+            phrase = _streak_phrases[idx % len(_streak_phrases)]
 
         if game_intro:
             headline = f"{game_intro}{phrase} — {slash}{hr_part} over the last {num_games} games."

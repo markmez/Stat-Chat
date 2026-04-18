@@ -555,9 +555,17 @@ def detect_sliding_streaks(conn, season_filter=None):
 
 CURRENT_FORM_MIN_GAMES = 1    # Minimum games for a player-season to be eligible
 CURRENT_FORM_MIN_SLICE = 1    # Minimum games in the form slice (early season)
-CURRENT_FORM_FULL_SLICE = 10  # Minimum slice once past early season threshold
+CURRENT_FORM_FULL_SLICE = 6   # Min slice once past early season (2 series — shortest
+                              # window that still reads as "he's been on fire")
 CURRENT_FORM_EARLY_THRESHOLD = 14  # Below this, use MIN_SLICE; at or above, use FULL_SLICE
-CURRENT_FORM_MAX_SLICE = 60   # Maximum games to scan back
+CURRENT_FORM_MAX_SLICE = 21   # Max slice cap — past 3 weeks drifts into "hot month"
+                              # territory which will be its own detector
+# Variance-resistance: the naïve "pick max OPS" was biased toward the floor
+# (everyone landed at 10 games because variance peaks there). Instead, find
+# the peak OPS across all slices, then pick the LONGEST slice whose OPS is
+# within this margin of the peak. Genuinely electric 6-gamers still win;
+# merely-close shorter windows yield to longer, more-stable ones.
+CURRENT_FORM_VARIANCE_MARGIN = 0.050
 
 
 def create_current_form_table(conn, drop=True):
@@ -643,15 +651,18 @@ def detect_current_form(conn, season_filter=None):
             form_start_idx = 0
             best_start_idx = 0
         else:
-            # Full season: find the tail slice with the highest OPS.
+            # Full season: two-pass variance-resistant selection.
+            # First pass: compute OPS for every candidate slice length.
+            # Second pass: take the LONGEST slice whose OPS is within
+            # CURRENT_FORM_VARIANCE_MARGIN of the peak. This prevents the
+            # naïve max-OPS picker from clustering everyone at the floor
+            # (shorter slices have higher variance → more likely to peak).
             min_slice = CURRENT_FORM_FULL_SLICE
-            best_start_idx = None
-            best_ops = -1.0
             max_slice = min(CURRENT_FORM_MAX_SLICE, len(games))
 
+            slice_ops = {}  # slice_len → OPS
             for slice_len in range(min_slice, max_slice + 1):
                 start_idx = len(games) - slice_len
-                # Compute OPS for this tail slice
                 total_ab = 0
                 total_h = 0
                 total_2b = 0
@@ -677,12 +688,20 @@ def detect_current_form(conn, season_filter=None):
                     ops = obp + slg
                 else:
                     ops = 0.0
+                slice_ops[slice_len] = ops
 
-                if ops > best_ops:
-                    best_ops = ops
-                    best_start_idx = start_idx
-
-            form_start_idx = best_start_idx if best_start_idx is not None else max(0, len(games) - min_slice)
+            if slice_ops:
+                peak_ops = max(slice_ops.values())
+                threshold = peak_ops - CURRENT_FORM_VARIANCE_MARGIN
+                # Walk from longest to shortest; first slice within margin wins.
+                best_slice_len = min_slice
+                for slice_len in range(max_slice, min_slice - 1, -1):
+                    if slice_ops[slice_len] >= threshold:
+                        best_slice_len = slice_len
+                        break
+                form_start_idx = len(games) - best_slice_len
+            else:
+                form_start_idx = max(0, len(games) - min_slice)
 
         # Compute form stats
         form_stats = compute_segment_stats_extended(games, form_start_idx, len(games))
