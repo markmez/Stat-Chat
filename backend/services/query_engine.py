@@ -3925,10 +3925,21 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
     is_pitching = plan.is_pitching or any(pc in c for c in plan.streak_conditions for pc in pitching_cols)
     table = "game_pitching_logs" if is_pitching else "game_batting_logs"
 
-    # Build season filter
+    # Build season filter. Scope precedence:
+    #   1. career / all_time → no season filter (full historical scan, ~4.8M rows)
+    #   2. explicit plan.season → single-season filter
+    #   3. plan.since_year → since-year filter
+    #   4. trailing (active) streaks → current + prior season
+    #   5. fallback → current season only (to keep accidental scans off hot path)
+    # The career/all_time branch must come FIRST so that "longest hitting
+    # streak all time" (decompose correctly sets scope=career) doesn't get
+    # silently narrowed to the current year by the fallback.
     season_filter = ""
     season_params = []
-    if plan.season:
+    if plan.scope in ("career", "all_time"):
+        # Full historical scan — needed for records like DiMaggio's 56
+        pass
+    elif plan.season:
         season_filter = " AND g.season = ?"
         season_params = [plan.season]
     elif plan.since_year:
