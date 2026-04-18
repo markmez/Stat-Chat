@@ -3937,8 +3937,11 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
     season_filter = ""
     season_params = []
     if plan.scope in ("career", "all_time"):
-        # Full historical scan — needed for records like DiMaggio's 56
-        pass
+        # Full historical scan — needed for records like DiMaggio's 56.
+        # Also defensively clear plan.season in case some upstream path set it
+        # alongside a career/all_time scope (would otherwise be picked up by
+        # downstream title/header logic that keys off plan.season).
+        plan.season = None
     elif plan.season:
         season_filter = " AND g.season = ?"
         season_params = [plan.season]
