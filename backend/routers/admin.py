@@ -14,6 +14,7 @@ from datetime import date
 
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
 
 async def _run_subprocess(cmd: list[str], timeout: int = 1800) -> subprocess.CompletedProcess:
@@ -483,6 +484,59 @@ async def rebuild_prominence(authorization: str | None = Header(None)):
         cwd=os.path.dirname(os.path.dirname(__file__))
     )
     return {"status": "ok", "stdout": result.stdout, "stderr": result.stderr}
+
+
+class GradeInsightPayload(BaseModel):
+    id: int
+    grade: int | None = None  # None = clear the grade
+    reason: str | None = None  # None = don't touch reason
+
+
+@router.post("/grade-insight")
+async def grade_insight(
+    payload: GradeInsightPayload,
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Update ai_grade and/or grade_reason on an event_archive row.
+
+    - Grade is any integer 1-10, or None/null to clear.
+    - Reason is a free-text field (can be empty string to clear).
+    - Skipping an insight = never calling this endpoint = row stays NULL.
+      No implicit signal is derived from skips.
+    """
+    verify_admin(authorization, key)
+    if payload.grade is not None and not (1 <= payload.grade <= 10):
+        raise HTTPException(400, "grade must be between 1 and 10 (or null)")
+    from services.metering import METERING_DB_PATH
+    conn = sqlite3.connect(METERING_DB_PATH)
+    try:
+        # Idempotent column adds — cheap if they already exist
+        for stmt in ("ALTER TABLE event_archive ADD COLUMN ai_grade INTEGER",
+                     "ALTER TABLE event_archive ADD COLUMN grade_reason TEXT"):
+            try:
+                conn.execute(stmt)
+            except Exception:
+                pass
+        # Build the update dynamically — only touch fields the caller sent.
+        sets = []
+        args: list = []
+        data = payload.model_dump(exclude_unset=True)
+        if "grade" in data:
+            sets.append("ai_grade = ?")
+            args.append(payload.grade)
+        if "reason" in data:
+            sets.append("grade_reason = ?")
+            args.append(payload.reason)
+        if not sets:
+            return {"status": "ok", "changed": 0}
+        args.append(payload.id)
+        conn.execute(f"UPDATE event_archive SET {', '.join(sets)} WHERE id = ?",
+                     tuple(args))
+        conn.commit()
+        return {"status": "ok", "changed": conn.total_changes}
+    finally:
+        conn.close()
 
 
 @router.post("/run-metering-sql")
@@ -1359,11 +1413,24 @@ async def dashboard(
             <td class="timestamp">{ts_display}</td>
         </tr>"""
 
-    # Build events table from archive + tap counts
+    # Build events table from archive + tap counts. Also carry ai_grade and
+    # grade_reason (idempotently added below) for the inline AI-insight
+    # grading UI. NULL grade = ungraded (no implicit signal — a skip is just
+    # a skip, not "low quality").
     conn2 = sqlite3.connect(METERING_DB_PATH)
+    try:
+        conn2.execute("ALTER TABLE event_archive ADD COLUMN ai_grade INTEGER")
+    except Exception:
+        pass
+    try:
+        conn2.execute("ALTER TABLE event_archive ADD COLUMN grade_reason TEXT")
+    except Exception:
+        pass
+    conn2.commit()
     event_rows_data = conn2.execute("""
-        SELECT e.headline, e.detection_type, e.game_date,
-               COALESCE(t.taps, 0) as taps
+        SELECT e.id, e.headline, e.detection_type, e.game_date,
+               COALESCE(t.taps, 0) as taps,
+               e.ai_grade, e.grade_reason
         FROM event_archive e
         LEFT JOIN (
             SELECT headline, COUNT(*) as taps FROM event_taps GROUP BY headline
@@ -1393,16 +1460,43 @@ async def dashboard(
         return _map.get(dtype, dtype.replace("_", " ").title())
 
     event_rows = ""
-    for headline, dtype, gdate, taps in event_rows_data:
+    for eid, headline, dtype, gdate, taps, ai_grade, grade_reason in event_rows_data:
         escaped_h = headline.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         cat = _event_category(dtype)
         css_cat = cat.lower().replace(" ", "-")
+
+        # Grade + reason cells — interactive only for AI Insight rows, grayed
+        # out but visible for everything else so the columns stay aligned.
+        if dtype == "ai_insight":
+            grade_val = str(ai_grade) if ai_grade is not None else ""
+            reason_val = (grade_reason or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+            grade_options = ['<option value="">—</option>'] + [
+                f'<option value="{n}"{" selected" if str(n) == grade_val else ""}>{n}</option>'
+                for n in range(1, 11)
+            ]
+            graded_attr = "1" if ai_grade is not None else "0"
+            grade_cell = (
+                f'<select class="grade-select" data-id="{eid}" '
+                f'onchange="saveGrade(this)">' + "".join(grade_options) + '</select>'
+            )
+            reason_cell = (
+                f'<input class="grade-reason" type="text" data-id="{eid}" '
+                f'value="{reason_val}" placeholder="why?" '
+                f'onblur="saveReason(this)" />'
+            )
+        else:
+            graded_attr = ""
+            grade_cell = '<span class="grade-na">—</span>'
+            reason_cell = ""
+
         event_rows += f"""
-        <tr data-taps="{taps}" data-date="{gdate}" data-etype="{cat}">
+        <tr data-taps="{taps}" data-date="{gdate}" data-etype="{cat}" data-graded="{graded_attr}">
             <td class="query-text">{escaped_h}</td>
             <td><span class="badge evt-{css_cat}" onclick="filterEvents('{cat}')">{cat}</span></td>
             <td class="count">{taps}</td>
             <td class="timestamp">{gdate}</td>
+            <td class="grade-cell">{grade_cell}</td>
+            <td class="reason-cell">{reason_cell}</td>
         </tr>"""
 
     html = f"""<!DOCTYPE html>
@@ -1453,6 +1547,23 @@ async def dashboard(
     white-space: pre-wrap; word-break: break-word;
     max-height: 400px; overflow: auto;
     margin: 0;
+  }}
+  .grade-select {{
+    font-size: 12px; padding: 2px 4px; border: 1px solid #ddd;
+    border-radius: 4px; background: #fff; font-family: inherit;
+    min-width: 48px;
+  }}
+  .grade-reason {{
+    font-size: 12px; padding: 3px 6px; border: 1px solid #ddd;
+    border-radius: 4px; width: 180px; font-family: inherit;
+  }}
+  .grade-reason::placeholder {{ color: #bbb; }}
+  .grade-na {{ color: #ccc; font-size: 12px; }}
+  .grade-cell, .reason-cell {{ white-space: nowrap; }}
+  .grade-saved {{ background: #dcfce7; transition: background 0.6s; }}
+  .grade-filter-row {{
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-left: 12px; font-size: 13px; color: #555;
   }}
   .badge.evt-ai-insight {{ background: #fef3c7; color: #92400e; }}
   .badge.evt-historical {{ background: #e0e7ff; color: #3730a3; }}
@@ -1616,6 +1727,10 @@ async def dashboard(
   <input type="date" id="evt-date-to">
   <button onclick="applyEvtDateRange()">Apply</button>
   <button class="reset" onclick="clearEvtDateRange()">Reset</button>
+  <label class="grade-filter-row">
+    <input type="checkbox" id="ungraded-only" onchange="applyUngradedFilter()">
+    Ungraded AI insights only
+  </label>
 </div>
 <div class="filter-bar" id="evt-filter-bar">
   Showing: <span id="evt-filter-label"></span>
@@ -1627,6 +1742,8 @@ async def dashboard(
     <th>Type</th>
     <th class="sortable" onclick="sortEvents('taps')" id="eth-taps">Taps</th>
     <th class="sortable" onclick="sortEvents('date')" id="eth-date">Game Date<span class="arrow"> &#x25BE;</span></th>
+    <th>Grade</th>
+    <th>Reason</th>
   </tr>
   {event_rows}
 </table>
@@ -1637,6 +1754,9 @@ async def dashboard(
 </div>
 <script>
 const PAGE_SIZE = 30;
+// Admin key for authenticated AJAX endpoints (grading). Read from the
+// current URL so the same `?key=...` we arrived with is reused.
+const ADMIN_KEY = new URLSearchParams(location.search).get('key') || '';
 let currentSort = 'count';
 let currentFilter = null;
 let currentPage = 0;
@@ -1794,7 +1914,54 @@ function getVisibleEvents() {{
   if (evtFilter) all = all.filter(r => r.dataset.etype === evtFilter);
   if (evtDateFrom) all = all.filter(r => r.dataset.date >= evtDateFrom);
   if (evtDateTo) all = all.filter(r => r.dataset.date <= evtDateTo);
+  const ungradedOnly = document.getElementById('ungraded-only');
+  if (ungradedOnly && ungradedOnly.checked) {{
+    // Only AI insight rows that haven't been graded yet (data-graded=0)
+    all = all.filter(r => r.dataset.etype === 'AI Insight' && r.dataset.graded === '0');
+  }}
   return all;
+}}
+
+function applyUngradedFilter() {{
+  evtPage = 0;
+  renderEvents();
+}}
+
+// Autosave grade on dropdown change. Empty → clears the grade (back to
+// NULL, ungraded). Any 1-10 sets the grade and marks the row graded.
+function saveGrade(sel) {{
+  const id = sel.dataset.id;
+  const val = sel.value;
+  const body = {{ id: Number(id) }};
+  if (val !== '') body.grade = Number(val);
+  else body.grade = null;
+  fetch('/admin/grade-insight?key=' + encodeURIComponent(ADMIN_KEY), {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify(body)
+  }}).then(r => {{
+    if (!r.ok) return;
+    const row = sel.closest('tr');
+    row.dataset.graded = val === '' ? '0' : '1';
+    row.classList.add('grade-saved');
+    setTimeout(() => row.classList.remove('grade-saved'), 600);
+  }});
+}}
+
+// Autosave reason on blur. Blank string clears.
+function saveReason(input) {{
+  const id = input.dataset.id;
+  const reason = input.value;
+  fetch('/admin/grade-insight?key=' + encodeURIComponent(ADMIN_KEY), {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify({{ id: Number(id), reason: reason }})
+  }}).then(r => {{
+    if (!r.ok) return;
+    const row = input.closest('tr');
+    row.classList.add('grade-saved');
+    setTimeout(() => row.classList.remove('grade-saved'), 600);
+  }});
 }}
 
 function renderEvents() {{
