@@ -262,15 +262,21 @@ Every event must carry at least ONE of these two things:
    season", "continuing his dominance", "a rare combination", or a
    small-sample pace projection.
 
-2. A GENUINELY OUTLIER SINGLE-GAME PERFORMANCE — noteworthy on its own
-   merits, even without an anchor:
+2. A GENUINELY OUTLIER SINGLE-GAME PERFORMANCE — must clear one of
+   these specific bars to qualify on its own:
    - A no-hit bid carried into the 8th inning or later (surface this
      regardless of how the game ended afterward — if the no-hitter was
      still alive entering the 8th, that's the story).
+   - A no-hitter or perfect game.
    - 10+ strikeouts in a start.
-   - A 4+ hit game.
-   - A multi-HR game with 5+ RBI.
-   - A single-game threshold that is genuinely rare for THIS player.
+   - 4+ hits in a game.
+   - 2+ HR in a game.
+   - 5+ RBI in a game.
+
+   These are HARD floors. 3 hits, 1 HR, 4 RBI, 8 K — these do NOT
+   qualify under criterion 2. They need an anchor (criterion 1) to
+   be noteworthy. If the only thing about a game is "4 RBI" or "3
+   hits", skip it.
 
 3. A BREAKOUT TRAJECTORY — a player in their 3rd+ MLB season is on
    pace to substantially EXCEED (not just match) their career high in
@@ -337,8 +343,13 @@ WHAT WEAK INSIGHTS LOOK LIKE — avoid these shapes:
   rule-based system fires Personal Best events at 4+ hits, 5+ RBI,
   3+ HR — anything lower is not a notable career first. Skip.
 - Qualitative language without a backing number. "Sneaky power
-  start" / "on a torrid pace" / "continuing his dominance" with no
-  specific figure in the same clause.
+  start" / "on a torrid pace" / "continuing his dominance" /
+  "his sharpest start" / "best outing of the year" / "cleanest
+  performance" with no specific figure in the same clause.
+  Comparative adjectives ("sharpest", "finest", "cleanest", "most
+  dominant", "best since") are forbidden unless the specific stat
+  proving the claim AND the prior bar being compared against both
+  appear in the same sentence.
 - Restating the same fact twice in one insight. If the lead is "his
   first MLB homer," don't also say "entered the day 0-for-career
   in long balls."
