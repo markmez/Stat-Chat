@@ -220,6 +220,52 @@ def get_active_streak(conn: sqlite3.Connection, player_id: str, condition: str) 
     }
 
 
+def get_career_threshold_count(conn: sqlite3.Connection, player_id: str,
+                                stat: str, threshold: int) -> dict:
+    """Count of career games (or starts) where stat >= threshold, plus total games.
+
+    Use this to verify any 'Nth career X' anchor and to compute the rate
+    so you can choose the right framing (rare vs dominance).
+    """
+    BAT_GAME_STATS = {"hits", "home_runs", "rbi", "runs", "stolen_bases",
+                      "doubles", "triples", "walks"}
+    PITCH_START_STATS = {"strikeouts", "ip_outs", "earned_runs"}
+    PITCH_GAME_STATS = {"strikeouts", "ip_outs", "earned_runs", "walks"}
+
+    if stat in BAT_GAME_STATS:
+        table, start_filter = "game_batting_logs", ""
+    elif stat in PITCH_START_STATS:
+        # Default to starts-only for pitcher counting stats — that's what
+        # "Nth double-digit K start" framing means.
+        table, start_filter = "game_pitching_logs", " AND is_start = 1"
+    elif stat in PITCH_GAME_STATS:
+        table, start_filter = "game_pitching_logs", ""
+    else:
+        return {"error": f"Unknown stat: {stat}"}
+
+    row = conn.execute(f"""
+        SELECT
+          SUM(CASE WHEN {stat} >= ? THEN 1 ELSE 0 END) AS at_threshold,
+          COUNT(*) AS total
+        FROM {table}
+        WHERE player_id = ?{start_filter}
+    """, (threshold, player_id)).fetchone()
+
+    at = row[0] or 0
+    total = row[1] or 0
+    rate = round(at / total * 100, 1) if total else 0.0
+
+    return {
+        "player_id": player_id,
+        "stat": stat,
+        "threshold": threshold,
+        "games_at_threshold": at,
+        "total_career_games": total,
+        "rate_pct": rate,
+        "scope": "starts" if start_filter else "games",
+    }
+
+
 def get_first_since(conn: sqlite3.Connection, stat: str, threshold: int,
                     scope: str = "mlb", team_code: str = None,
                     before_season: int = None) -> dict:
@@ -344,6 +390,28 @@ TOOLS = [
         },
     },
     {
+        "name": "get_career_threshold_count",
+        "description": (
+            "Count of career games (or starts, for pitcher counting stats) "
+            "where the stat met or exceeded the threshold, plus total career "
+            "games. Returns rate_pct so you can choose the right framing. "
+            "REQUIRED before writing any 'Nth career X-stat-game' anchor — "
+            "use the rate to decide rare-vs-dominance framing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "player_id": {"type": "string"},
+                "stat": {"type": "string", "description": (
+                    "Game/start stat: hits, home_runs, rbi, runs, stolen_bases, "
+                    "doubles, triples, walks, strikeouts, ip_outs, earned_runs."
+                )},
+                "threshold": {"type": "integer"},
+            },
+            "required": ["player_id", "stat", "threshold"],
+        },
+    },
+    {
         "name": "get_first_since",
         "description": (
             "Find the most recent prior season-total occurrence of a stat at or "
@@ -377,6 +445,8 @@ _DISPATCH = {
         conn, args["player_id"], args["season"]),
     "get_active_streak": lambda conn, args: get_active_streak(
         conn, args["player_id"], args["condition"]),
+    "get_career_threshold_count": lambda conn, args: get_career_threshold_count(
+        conn, args["player_id"], args["stat"], args["threshold"]),
     "get_first_since": lambda conn, args: get_first_since(
         conn, args["stat"], args["threshold"],
         args.get("scope", "mlb"), args.get("team_code"),

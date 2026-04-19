@@ -401,12 +401,33 @@ career-high match). Any one of the three alone can work. None of the
 three means don't write it — better to skip than to surface an event
 whose narrative is only "he played fine today."
 
-IMPORTANT — RARITY CHECK on count anchors: A "count over career"
-anchor (like "his Nth 4-RBI game") is only an anchor if N implies
-RARITY. Buxton's 16 four-hit games over 12 years averages roughly
-once per season — that's noteworthy. A 14-year veteran's 35th 4-RBI
-game averages 2-3 per season — that's routine, not an anchor. If the
-player does it most years, the count is anti-signal. Skip.
+COUNT ANCHORS — RARITY VS DOMINANCE FRAMING. Before writing any
+"Nth career X" anchor, you MUST call get_career_threshold_count to
+get the count + total games + rate. Never invent counts. Then
+choose framing based on the rate:
+
+(a) RATE < 5% — RARE event, use Nth framing.
+    Example: Buxton's 16 four-hit games / 1500 career games = ~1%.
+    Write: "his 16th game with 4+ hits in his 12-year career."
+
+(b) RATE >= 25% — DOMINANCE, re-frame as a percentage.
+    Example: Skubal hits 10+ K in 18 of 138 starts (13% — actually
+    in the judgment-call zone), but if it were 42%, write:
+    "Skubal has reached 10+ K in 42% of his career starts." This
+    frames frequent occurrence as elite-level dominance, not
+    routineness. The percentage frame turns a "common-for-him"
+    stat into a moat-of-skill insight.
+
+(c) RATE 5-25% — judgment call. If the threshold itself is elite
+    (10+ K in a start, 4+ hits in a game), Nth framing works. If
+    the threshold is routine (3 hits, 2 RBI), skip — neither rare
+    nor dominant.
+
+NEVER write "his 58th career double-digit K start" without a tool
+result confirming the 58. NEVER invent counts. If
+get_career_threshold_count gives you 18 in 138 starts (13%), do
+NOT round up or guess — write the actual number, or skip the
+anchor entirely.
 
 WHAT GREAT LOOKS LIKE — study these, don't paraphrase them:
 
