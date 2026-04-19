@@ -1060,6 +1060,56 @@ async def ai_notable(
         raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
 
 
+@router.api_route("/ai-backtest", methods=["GET", "POST"])
+async def ai_backtest(
+    days: int = 3,
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Run the current AI insight prompt against the last N game dates without inserting.
+
+    Returns side-by-side: shipped headlines (from notable_events) vs preview headlines
+    (what the current prompt produces now). Costs ~$0.02-0.04 per date.
+    """
+    verify_admin(authorization, key)
+    days = max(1, min(days, 7))
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        from services.ai_notable_events import generate_ai_insights
+
+        season = date.today().year
+        date_rows = conn.execute("""
+            SELECT DISTINCT date FROM game_batting_logs
+            WHERE season = ? ORDER BY date DESC LIMIT ?
+        """, (season, days)).fetchall()
+        target_dates = [r[0] for r in date_rows]
+
+        results = []
+        for d in target_dates:
+            shipped = conn.execute("""
+                SELECT headline FROM notable_events
+                WHERE detection_type = 'ai_insight' AND game_date = ?
+                ORDER BY id ASC
+            """, (d,)).fetchall()
+            shipped_headlines = [r[0] for r in shipped]
+
+            preview = generate_ai_insights(conn, season, d, preview=True)
+            preview_headlines = [e.get("headline", "") for e in preview.get("events", [])]
+
+            results.append({
+                "game_date": d,
+                "shipped": shipped_headlines,
+                "preview": preview_headlines,
+                "error": preview.get("error"),
+            })
+
+        conn.close()
+        return {"status": "ok", "season": season, "days": days, "results": results}
+    except Exception as e:
+        import traceback
+        raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
+
+
 @router.post("/poll")
 async def poll_new_games(
     key: str | None = None,

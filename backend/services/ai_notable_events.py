@@ -29,12 +29,12 @@ def _compile_snapshot(conn, season, latest_date):
     if team_games and team_games[0]:
         sections.append(f"Teams have played approximately {team_games[0]} games each.")
 
-    # Already-detected rule-based events
+    # Already-detected rule-based events (only on/before target date — for backtests)
     existing = conn.execute("""
         SELECT headline, category FROM notable_events
-        WHERE detection_type != 'ai_insight'
+        WHERE detection_type != 'ai_insight' AND game_date <= ?
         ORDER BY game_date DESC, priority ASC
-    """).fetchall()
+    """, (latest_date,)).fetchall()
     if existing:
         sections.append("\n=== ALREADY-DETECTED EVENTS (do NOT duplicate) ===")
         for headline, category in existing:
@@ -188,16 +188,21 @@ def _compile_snapshot(conn, season, latest_date):
     return "\n".join(sections)
 
 
-def generate_ai_insights(conn, season, latest_date, dry_run=False):
-    """Generate AI-powered notable events using Sonnet."""
-    # Skip if we already have AI insights for this game date
-    existing = conn.execute("""
-        SELECT COUNT(*) FROM notable_events
-        WHERE detection_type = 'ai_insight' AND game_date = ?
-    """, (latest_date,)).fetchone()[0]
-    if existing > 0 and not dry_run:
-        print(f"  AI insights already exist for {latest_date} ({existing} events), skipping")
-        return {"events": [], "skipped": True}
+def generate_ai_insights(conn, season, latest_date, dry_run=False, preview=False):
+    """Generate AI-powered notable events using Sonnet.
+
+    preview=True calls Sonnet but skips dedup and DB insert — used for backtesting
+    prompt changes against historical dates without polluting notable_events.
+    """
+    if not preview:
+        # Skip if we already have AI insights for this game date
+        existing = conn.execute("""
+            SELECT COUNT(*) FROM notable_events
+            WHERE detection_type = 'ai_insight' AND game_date = ?
+        """, (latest_date,)).fetchone()[0]
+        if existing > 0 and not dry_run:
+            print(f"  AI insights already exist for {latest_date} ({existing} events), skipping")
+            return {"events": [], "skipped": True}
 
     snapshot = _compile_snapshot(conn, season, latest_date)
 
@@ -240,6 +245,72 @@ CRITICAL RULES:
 9. Output ONLY a JSON array: [{{"headline": "...", "player_names": ["..."], "team_names": ["..."], "opponent": "OPP"}}]
    The "opponent" field must be the team abbreviation the primary player played against
    (from the box score data). This is required for every event.
+
+WHAT MATTERS MOST — this is the single bar every event must clear:
+
+Every event must carry at least ONE of these two things:
+
+1. AN ANCHORED COMPARISON — a specific, previously-held statistical
+   marker that today's performance matched or broke. A real anchor is:
+   - A specific NUMBER (career high of 11 K; 5 career 4-RBI games).
+   - Tied to a specific TIME (set Aug 7, 2024; across his 12-year
+     career; in 13 games this season vs a full 2025).
+   - Using the SAME STAT TYPE as today's performance (HR matched to
+     HR, AVG matched to AVG — never a counting stat compared to a
+     rate stat across years).
+   Vague phrases are NOT anchors: "sneaky", "torrid", "in his Nth
+   season", "continuing his dominance", "a rare combination", or a
+   small-sample pace projection.
+
+2. A GENUINELY OUTLIER SINGLE-GAME PERFORMANCE — noteworthy on its own
+   merits, even without an anchor:
+   - A no-hit bid carried into the 8th inning or later (surface this
+     regardless of how the game ended afterward — if the no-hitter was
+     still alive entering the 8th, that's the story).
+   - 10+ strikeouts in a start.
+   - A 4+ hit game.
+   - A multi-HR game with 5+ RBI.
+   - A single-game threshold that is genuinely rare for THIS player.
+
+The best events have BOTH (e.g., 11 K AND career-high match). Either
+alone can work. Neither means don't write it — better to skip than
+to surface an event whose narrative is only "he played fine today."
+
+WHAT GREAT LOOKS LIKE — study these, don't paraphrase them:
+
+- "Corbin Carroll drove in 4 runs on a homer — matches his career high
+  for RBI in a game, first set in his rookie year on May 24, 2023."
+  (Anchor: specific dated prior-best.)
+
+- "Will Warren went 7.0 IP, 11 K, 0 BB and 2 ER — the 11 strikeouts
+  match his career high set last August, his first double-digit
+  strikeout game since." (Outlier event + anchor.)
+
+- "Byron Buxton went 4-for-5 with 2 homers and 2 RBI — the veteran's
+  first 4-hit game of 2026 and his 16th game with 4+ hits in his
+  12-year career." (Outlier + concrete count-over-career anchor.)
+
+The shared shape in every one: today's specific event → a concrete
+personal-history anchor (career high, first since dated event, or
+count-over-defined-career-span).
+
+WHAT WEAK INSIGHTS LOOK LIKE — avoid these shapes:
+
+- Career stage without a tied feat. "in his fifth season" isn't an
+  anchor; "first time he's gotten off to a hot start in 5 seasons"
+  IS an anchor, but only if you can back it with numbers.
+- Small-sample pacing or matches. "Matching 2025 HR total (3)" when
+  the prior total is so low the match isn't meaningful.
+- Qualitative language without a backing number. "Sneaky power
+  start" / "on a torrid pace" / "continuing his dominance" with no
+  specific figure in the same clause.
+- Restating the same fact twice in one insight. If the lead is "his
+  first MLB homer," don't also say "entered the day 0-for-career
+  in long balls."
+- Stat-type mismatches. Don't compare last year's AVG (.205) to this
+  year's HR count (3) — the comparison doesn't mean anything.
+- Unexplained other-player references. "Matching Riley" is noise
+  unless you also say who Riley is and why the comparison matters.
 
 QUALITY THRESHOLD — READ CAREFULLY:
 10. Your job is to find things that RULES CAN'T FIND. Standard good
@@ -291,6 +362,14 @@ STYLE RULES:
     what you're comparing. "Matches his second-half pace" is ambiguous —
     does it mean equal totals or similar rate? Say "on a similar pace to"
     or "already has X, which took him until August last year."
+20. Over short spans (under ~20 games), convey hot performance with
+    batting average, OPS, or another rate stat (".417 over 12 games"),
+    not cumulative hit counts ("25 hits through 12 games"). Counting
+    stats over small samples sound impressive without being meaningful.
+21. Never reference another player by name unless you also explain who
+    they are and why the comparison matters in the same sentence. "Tied
+    with Riley" is noise; "tied with Atlanta's Austin Riley for the NL
+    HR lead" is signal.
 
 DATA SNAPSHOT:
 {snapshot}"""
@@ -312,6 +391,9 @@ DATA SNAPSHOT:
         events = json.loads(text)
     except Exception as e:
         return {"snapshot": snapshot, "events": [], "error": str(e)}
+
+    if preview:
+        return {"events": events, "preview": True}
 
     # Insert into notable_events table with game context
     cursor = conn.cursor()
