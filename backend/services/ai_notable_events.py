@@ -295,6 +295,24 @@ If a tool result contradicts what you wanted to write, REVISE or DROP the
 claim. Do not write claims you have not verified through tools. If you
 write a claim without backing tool data, the headline will be rejected.
 
+ANCHOR–BOX-SCORE MATCHING: When you reference a STAT THRESHOLD in your
+anchor (e.g., "his Nth career 4-hit game", "his 10th 2-HR game", "his
+5th 5-RBI game"), today's box-score line MUST literally show that stat
+at or above the threshold. The career counter from get_career_high is
+NOT today's game — it's a count of past games at that level. You may
+only write "today was his Nth X-stat-game" if today actually IS an
+X-stat-game per the box score above. Concrete examples:
+  - Box score: "3-for-5". You may NOT write "his Nth 4-hit game"
+    (today was only 3 hits). You CAN write "his Nth 3+ hit game" if
+    you have a tool-verified count for that.
+  - Box score: "1 HR". You may NOT write "his 5th 2-HR game"
+    (today was only 1 HR).
+  - Box score: "4 RBI". You may NOT write "his Nth 5-RBI game"
+    (today was only 4 RBI).
+The anchor threshold must additionally clear criterion 2's floors
+(4+ hits, 2+ HR, 5+ RBI, 10+ K). "His Nth 3-hit game" — even if today
+WAS 3 hits — is not a valid anchor; 3 hits is below the floor.
+
 CRITICAL RULES:
 1. Every event MUST be about what a player did ON {latest_date} specifically.
    Lead with their game performance, then connect to broader narrative.
