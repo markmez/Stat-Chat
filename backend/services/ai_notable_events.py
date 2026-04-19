@@ -188,14 +188,79 @@ def _compile_snapshot(conn, season, latest_date):
     return "\n".join(sections)
 
 
-def generate_ai_insights(conn, season, latest_date, dry_run=False, preview=False):
-    """Generate AI-powered notable events using Sonnet.
+def _compile_candidates(conn, season, latest_date):
+    """Slim snapshot for tool-use mode: today's standout games + player_ids only.
 
-    preview=True calls Sonnet but skips dedup and DB insert — used for backtesting
-    prompt changes against historical dates without polluting notable_events.
+    Sonnet must call tools to verify any other fact (career totals, history, etc).
+    """
+    sections = []
+    sections.append(f"DATE: {date.today().isoformat()}. Current year: {date.today().year}.")
+    sections.append(f"MLB season started late March {season}. Latest game date: {latest_date}.")
+
+    team_games = conn.execute(
+        "SELECT MAX(games) FROM season_batting_stats WHERE season = ?", (season,)
+    ).fetchone()
+    if team_games and team_games[0]:
+        sections.append(f"Teams have played approximately {team_games[0]} games each.")
+
+    existing = conn.execute("""
+        SELECT headline, category FROM notable_events
+        WHERE detection_type != 'ai_insight' AND game_date <= ?
+        ORDER BY game_date DESC, priority ASC
+    """, (latest_date,)).fetchall()
+    if existing:
+        sections.append("\n=== ALREADY-DETECTED EVENTS (do NOT duplicate) ===")
+        for headline, category in existing:
+            sections.append(f"- [{category}] {headline}")
+
+    sections.append(f"\n=== CANDIDATE BATTING GAMES ({latest_date}) ===")
+    sections.append("Format: player_id | name (team): box-score line vs opponent")
+    bat_rows = conn.execute("""
+        SELECT g.player_id, p.name, p.team, g.hits, g.at_bats, g.home_runs,
+               g.rbi, g.doubles, g.triples, g.walks, g.opponent
+        FROM game_batting_logs g JOIN players p ON g.player_id = p.player_id
+        WHERE g.date = ? AND g.season = ?
+        AND (g.home_runs >= 1 OR g.hits >= 3 OR g.rbi >= 3)
+        ORDER BY g.home_runs DESC, g.rbi DESC, g.hits DESC
+        LIMIT 25
+    """, (latest_date, season)).fetchall()
+    for pid, name, team, h, ab, hr, rbi, d, t, bb, opp in bat_rows:
+        parts = []
+        if hr: parts.append(f"{hr} HR")
+        if rbi: parts.append(f"{rbi} RBI")
+        if d: parts.append(f"{d} 2B")
+        if t: parts.append(f"{t} 3B")
+        if bb: parts.append(f"{bb} BB")
+        extra = (", " + ", ".join(parts)) if parts else ""
+        sections.append(f"- {pid} | {name} ({team}): {h}-for-{ab}{extra} vs {opp}")
+
+    sections.append(f"\n=== CANDIDATE PITCHING STARTS ({latest_date}) ===")
+    sections.append("Format: player_id | name (team): IP/H/ER/K/BB result vs opponent")
+    pitch_rows = conn.execute("""
+        SELECT g.player_id, p.name, p.team, g.innings_pitched, g.ip_outs,
+               g.hits, g.earned_runs, g.strikeouts, g.walks, g.win, g.loss, g.opponent
+        FROM game_pitching_logs g JOIN players p ON g.player_id = p.player_id
+        WHERE g.date = ? AND g.season = ? AND g.is_start = 1
+        ORDER BY g.ip_outs DESC, g.strikeouts DESC
+        LIMIT 15
+    """, (latest_date, season)).fetchall()
+    for pid, name, team, ip, ip_outs, h, er, so, bb, w, l, opp in pitch_rows:
+        ip_display = ip or f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
+        result = " (W)" if w else (" (L)" if l else "")
+        sections.append(f"- {pid} | {name} ({team}): {ip_display} IP, {h} H, {er} ER, {so} K, {bb} BB{result} vs {opp}")
+
+    return "\n".join(sections)
+
+
+def generate_ai_insights(conn, season, latest_date, dry_run=False, preview=False):
+    """Generate AI-powered notable events using Sonnet with DB tool access.
+
+    Sonnet receives a slim candidate-games snapshot and must call tools
+    (services/insight_tools.py) to verify any factual claim before writing it.
+
+    preview=True calls Sonnet but skips dedup and DB insert.
     """
     if not preview:
-        # Skip if we already have AI insights for this game date
         existing = conn.execute("""
             SELECT COUNT(*) FROM notable_events
             WHERE detection_type = 'ai_insight' AND game_date = ?
@@ -204,13 +269,31 @@ def generate_ai_insights(conn, season, latest_date, dry_run=False, preview=False
             print(f"  AI insights already exist for {latest_date} ({existing} events), skipping")
             return {"events": [], "skipped": True}
 
-    snapshot = _compile_snapshot(conn, season, latest_date)
+    snapshot = _compile_candidates(conn, season, latest_date)
 
     prompt = f"""You are a baseball analyst writing for a notable events feed in a stats app.
 The current date is {date.today().isoformat()}. The current year is {date.today().year}.
 
 Write notable events from the latest games. Think like the best stat-nerd
 baseball Twitter account — insightful, punchy, data-driven.
+
+TOOLS — USE THEM. The candidates list below shows player_ids. For EVERY
+factual claim you intend to make beyond what's literally in the box-score
+line, you MUST call a tool to verify it FIRST. Examples:
+- Want to write "his first MLB homer"? Call get_player_career_summary first.
+  If career_batting.home_runs > 0, you cannot write that — he has prior HRs.
+- Want to write "matches his career high in RBI"? Call get_career_high
+  with stat='rbi', scope='game' first. Only assert if today's RBI equals
+  career_high.
+- Want to write "0.00 ERA through 3 starts" or "X consecutive scoreless
+  starts"? Call get_season_aggregates and get_active_streak with
+  condition='scoreless_start' first. Only assert what the tools confirm.
+- Want to write "first since 2019" or "first Yankee to..."? Call
+  get_first_since first. Only assert what the tool returns.
+
+If a tool result contradicts what you wanted to write, REVISE or DROP the
+claim. Do not write claims you have not verified through tools. If you
+write a claim without backing tool data, the headline will be rejected.
 
 CRITICAL RULES:
 1. Every event MUST be about what a player did ON {latest_date} specifically.
@@ -426,21 +509,62 @@ DATA SNAPSHOT:
 
     try:
         import anthropic
+        from services.insight_tools import TOOLS, execute_tool
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        response = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
-            max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        text = response.content[0].text
+
+        messages = [{"role": "user", "content": prompt}]
+        max_iterations = 30
+        tool_call_count = 0
+        final_text = None
+
+        for _ in range(max_iterations):
+            response = client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=4000,
+                tools=TOOLS,
+                messages=messages,
+            )
+
+            if response.stop_reason == "end_turn":
+                final_text = next(
+                    (b.text for b in response.content if getattr(b, "type", None) == "text"),
+                    None,
+                )
+                break
+
+            if response.stop_reason == "tool_use":
+                tool_results = []
+                for block in response.content:
+                    if getattr(block, "type", None) == "tool_use":
+                        tool_call_count += 1
+                        result = execute_tool(conn, block.name, dict(block.input))
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": json.dumps(result),
+                        })
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "user", "content": tool_results})
+                continue
+
+            # Unexpected stop reason — bail
+            return {"snapshot": snapshot, "events": [],
+                    "error": f"Unexpected stop_reason: {response.stop_reason}"}
+
+        if final_text is None:
+            return {"snapshot": snapshot, "events": [],
+                    "error": f"Hit {max_iterations} iterations without end_turn"}
+
+        text = final_text
         if "```" in text:
             text = text.split("```json")[-1].split("```")[0].strip()
         events = json.loads(text)
+        print(f"  AI insights: {len(events)} events, {tool_call_count} tool calls")
     except Exception as e:
         return {"snapshot": snapshot, "events": [], "error": str(e)}
 
     if preview:
-        return {"events": events, "preview": True}
+        return {"events": events, "preview": True, "tool_calls": tool_call_count}
 
     # Insert into notable_events table with game context
     cursor = conn.cursor()
