@@ -10,8 +10,74 @@ Cost: ~$0.02-0.04/day (~$1/month). Runs once for ALL users.
 
 import json
 import os
+import re
 import sqlite3
 from datetime import date
+
+
+# Below-floor stat-threshold anchor patterns. Sonnet has repeatedly tried to
+# anchor on "Nth career 4-RBI game", "matches his career high in RBI" etc.
+# even when the threshold falls below the structural detector's floor. We
+# filter them out post-generation as a deterministic backstop.
+#
+# Floors mirror the structural detector's career-high checks:
+#   hits: 4+, RBI: 5+, HR: 2+ (multi-HR), K: 10+
+_FLOORS = {"hits": 4, "rbi": 5, "hr": 2, "k": 10}
+
+# Each pattern captures the threshold value as group 1.
+_FLOOR_PATTERNS = [
+    (re.compile(r'(\d+)\+?\s*-?\s*hit(?:s)?(?:\s+(?:game|performance|day|night))', re.I), "hits"),
+    (re.compile(r'(\d+)\+?\s*-?\s*RBI(?:\s+(?:game|performance|day|night))?', re.I), "rbi"),
+    (re.compile(r'(\d+)\+?\s*-?\s*(?:HR|homer|home\s+run)s?(?:\s+(?:game|performance))?', re.I), "hr"),
+    (re.compile(r'(\d+)\+?\s*-?\s*K(?:\s+(?:start|outing|performance))', re.I), "k"),
+    (re.compile(r'(\d+)\+?\s*-?\s*strikeout(?:s)?(?:\s+(?:start|outing|performance))', re.I), "k"),
+]
+
+# Phrases that signal an anchor framing (not a casual mention of today's stat).
+_ANCHOR_CONTEXT = re.compile(
+    r"\b(career|matches|ties|matching|tying|his\s+\d+(?:st|nd|rd|th)|across\s+\d+\s+(?:career\s+)?(?:games|starts))\b",
+    re.I,
+)
+
+
+def _strip_below_floor_anchors(events):
+    """Drop events whose headline anchors on a stat threshold below floor.
+
+    Examples filtered:
+      - "his 4th game with 4+ RBI in 328 career games" (4 < 5)
+      - "matches his career high in RBI (4)" (4 < 5)
+      - "his 3rd career 4-hit game" (this passes — 4 >= 4)
+      - "1-hit shutout effort" (this passes — not in anchor context)
+
+    Only filters when the threshold appears in an anchor context (career,
+    matches, ties, his Nth, etc.) to avoid catching casual box-score mentions.
+    """
+    cleaned = []
+    for e in events:
+        h = e.get("headline", "")
+        if not _ANCHOR_CONTEXT.search(h):
+            cleaned.append(e)
+            continue
+        below = False
+        for pat, stat in _FLOOR_PATTERNS:
+            for m in pat.finditer(h):
+                try:
+                    val = int(m.group(1))
+                except (ValueError, IndexError):
+                    continue
+                # Only consider this number an anchor threshold if it sits
+                # near anchor language. Keep simple: presence of anchor
+                # context anywhere in the headline is enough — Sonnet
+                # typically anchors and references the threshold close
+                # together.
+                if val < _FLOORS[stat]:
+                    below = True
+                    break
+            if below:
+                break
+        if not below:
+            cleaned.append(e)
+    return cleaned
 
 DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
@@ -374,10 +440,21 @@ Every event must carry at least ONE of these two things:
    - 2+ HR in a game.
    - 5+ RBI in a game.
 
-   These are HARD floors. 3 hits, 1 HR, 4 RBI, 8 K — these do NOT
-   qualify under criterion 2. They need an anchor (criterion 1) to
-   be noteworthy. If the only thing about a game is "4 RBI" or "3
-   hits", skip it.
+   THESE FLOORS ALSO APPLY TO ANCHORS. You may NOT anchor on a
+   below-floor stat threshold even via criterion 1. Specifically:
+   - Never anchor on "Nth career 4-RBI game" or "matches his career
+     high in RBI" when today is 4 RBI. The 5+ RBI floor applies.
+   - Never anchor on "Nth career 3-hit game" or "matches his career
+     high in hits" when today is 3 hits. The 4+ hits floor applies.
+   - Never anchor on "Nth career 1-HR game" — 2+ HR is the floor.
+   The structural detector handles below-floor career milestones
+   (100 RBI seasons, career first HR, etc.) — those don't need
+   AI-insight coverage. Headlines that anchor below floor are
+   programmatically filtered out before insertion.
+
+   3 hits, 1 HR, 4 RBI, 8 K — these do NOT qualify on their own
+   AND do not qualify as anchors. If the only thing about a game
+   is "4 RBI" or "3 hits", skip it entirely.
 
 3. A BREAKOUT TRAJECTORY — a player in their 3rd+ MLB season is on
    pace to substantially EXCEED (not just match) their career high in
@@ -598,12 +675,16 @@ DATA SNAPSHOT:
         if "```" in text:
             text = text.split("```json")[-1].split("```")[0].strip()
         events = json.loads(text)
-        print(f"  AI insights: {len(events)} events, {tool_call_count} tool calls")
+        before_filter = len(events)
+        events = _strip_below_floor_anchors(events)
+        filtered = before_filter - len(events)
+        print(f"  AI insights: {len(events)} events ({filtered} filtered for below-floor anchors), {tool_call_count} tool calls")
     except Exception as e:
         return {"snapshot": snapshot, "events": [], "error": str(e)}
 
     if preview:
-        return {"events": events, "preview": True, "tool_calls": tool_call_count}
+        return {"events": events, "preview": True,
+                "tool_calls": tool_call_count, "filtered_count": filtered}
 
     # Insert into notable_events table with game context
     cursor = conn.cursor()

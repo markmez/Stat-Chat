@@ -1167,8 +1167,9 @@ function render(rows) {{
       : '<div class="empty">No events generated.</div>';
     const err = r.error ? `<div class="err">Error: ${{esc(r.error)}}</div>` : '';
     const tools = r.tool_calls != null ? ` · ${{r.tool_calls}} tool calls` : '';
+    const filt = r.filtered_count ? ` · ${{r.filtered_count}} filtered` : '';
     return `<div class="date-panel">
-      <div class="date-header">${{esc(r.game_date)}}${{tools}}</div>
+      <div class="date-header">${{esc(r.game_date)}}${{tools}}${{filt}}</div>
       <div class="cols">
         <div class="col shipped"><h3>Shipped (${{(r.shipped||[]).length}})</h3>${{shipped}}</div>
         <div class="col preview"><h3>Preview — new prompt (${{(r.preview||[]).length}})</h3>${{preview}}</div>
@@ -1231,6 +1232,7 @@ async def ai_backtest_run(
                 "preview": preview_headlines,
                 "error": preview.get("error"),
                 "tool_calls": preview.get("tool_calls"),
+                "filtered_count": preview.get("filtered_count"),
             })
 
         conn.close()
