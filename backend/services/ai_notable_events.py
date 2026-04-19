@@ -272,9 +272,26 @@ Every event must carry at least ONE of these two things:
    - A multi-HR game with 5+ RBI.
    - A single-game threshold that is genuinely rare for THIS player.
 
-The best events have BOTH (e.g., 11 K AND career-high match). Either
-alone can work. Neither means don't write it — better to skip than
-to surface an event whose narrative is only "he played fine today."
+3. A BREAKOUT TRAJECTORY — a player in their 3rd+ MLB season is on
+   pace to substantially EXCEED (not just match) their career high in
+   a counting stat, with enough sample to be meaningful. The anchor
+   is the prior career best itself. Example: "Peraza already has 5
+   homers in 13 games — his career high is 8, set across a full 2024
+   season." This is the only valid small-sample pace insight: prior
+   career best must be visibly low AND today's pace must dwarf it.
+   "Matching" a low total doesn't qualify; "blowing past" it does.
+
+The best events have BOTH a comparison and an outlier (e.g., 11 K AND
+career-high match). Any one of the three alone can work. None of the
+three means don't write it — better to skip than to surface an event
+whose narrative is only "he played fine today."
+
+IMPORTANT — RARITY CHECK on count anchors: A "count over career"
+anchor (like "his Nth 4-RBI game") is only an anchor if N implies
+RARITY. Buxton's 16 four-hit games over 12 years averages roughly
+once per season — that's noteworthy. A 14-year veteran's 35th 4-RBI
+game averages 2-3 per season — that's routine, not an anchor. If the
+player does it most years, the count is anti-signal. Skip.
 
 WHAT GREAT LOOKS LIKE — study these, don't paraphrase them:
 
@@ -299,8 +316,13 @@ WHAT WEAK INSIGHTS LOOK LIKE — avoid these shapes:
 - Career stage without a tied feat. "in his fifth season" isn't an
   anchor; "first time he's gotten off to a hot start in 5 seasons"
   IS an anchor, but only if you can back it with numbers.
-- Small-sample pacing or matches. "Matching 2025 HR total (3)" when
-  the prior total is so low the match isn't meaningful.
+- Small-sample MATCHES of low totals. "Matching 2025 HR total (3)"
+  when the prior total is so low the match isn't meaningful. (The
+  EXCEPTION is the breakout trajectory case in criterion 3 above —
+  meaningfully EXCEEDING a low career best is signal, not noise.)
+- Routine count anchors. "His 35th career 4-RBI game" is not an
+  anchor if the player has done it most seasons of his career — that
+  count is evidence of routineness, not rarity.
 - Qualitative language without a backing number. "Sneaky power
   start" / "on a torrid pace" / "continuing his dominance" with no
   specific figure in the same clause.
