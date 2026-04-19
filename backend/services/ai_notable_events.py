@@ -252,7 +252,7 @@ Every event must carry at least ONE of these two things:
 
 1. AN ANCHORED COMPARISON — a specific, previously-held statistical
    marker that today's performance matched or broke. A real anchor is:
-   - A specific NUMBER (career high of 11 K; 5 career 4-RBI games).
+   - A specific NUMBER (career high of 11 K; 5 career 6-RBI games).
    - Tied to a specific TIME (set Aug 7, 2024; across his 12-year
      career; in 13 games this season vs a full 2025).
    - Using the SAME STAT TYPE as today's performance (HR matched to
@@ -309,9 +309,10 @@ player does it most years, the count is anti-signal. Skip.
 
 WHAT GREAT LOOKS LIKE — study these, don't paraphrase them:
 
-- "Corbin Carroll drove in 4 runs on a homer — matches his career high
-  for RBI in a game, first set in his rookie year on May 24, 2023."
-  (Anchor: specific dated prior-best.)
+- "Corbin Carroll went 4-for-5 with 2 home runs and 6 RBI — matches
+  his career high in RBI (last reached May 24, 2023) and his first
+  multi-homer game since June 2024." (Outlier event clearing 4+ hit,
+  2+ HR, 5+ RBI floors + dated anchor.)
 
 - "Will Warren went 7.0 IP, 11 K, 0 BB and 2 ER — the 11 strikeouts
   match his career high set last August, his first double-digit
