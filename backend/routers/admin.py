@@ -1484,18 +1484,26 @@ async def dashboard(
                 f'<select class="grade-select" data-id="{eid}" '
                 f'onchange="saveGrade(this)">' + "".join(grade_options) + '</select>'
             )
+            # Reason cell: read-only display. Click anywhere on it to open an
+            # overlay where the user gets real writing space (and can also
+            # adjust the grade). Keeps the inline dropdown for quick tweaks
+            # while giving room for substantive notes.
+            reason_display = reason_val or '<span class="reason-placeholder">click to add note…</span>'
             reason_cell = (
-                f'<input class="grade-reason" type="text" data-id="{eid}" '
-                f'value="{reason_val}" placeholder="why?" '
-                f'onblur="saveReason(this)" />'
+                f'<div class="grade-reason-display" data-id="{eid}" '
+                f'onclick="openGradeOverlay(this)" title="Click to edit">{reason_display}</div>'
             )
         else:
             graded_attr = ""
             grade_cell = '<span class="grade-na">—</span>'
             reason_cell = ""
 
+        # Headline attr for overlay display. Attr-escape since it can contain
+        # any character the news of the day threw at us.
+        headline_attr = (headline.replace("&", "&amp;").replace('"', "&quot;")
+                         .replace("<", "&lt;").replace(">", "&gt;"))
         event_rows += f"""
-        <tr data-taps="{taps}" data-date="{gdate}" data-etype="{cat}" data-graded="{graded_attr}">
+        <tr data-taps="{taps}" data-date="{gdate}" data-etype="{cat}" data-graded="{graded_attr}" data-id="{eid}" data-headline="{headline_attr}">
             <td class="query-text">{escaped_h}</td>
             <td><span class="badge evt-{css_cat}" onclick="filterEvents('{cat}')">{cat}</span></td>
             <td class="count">{taps}</td>
@@ -1558,18 +1566,69 @@ async def dashboard(
     border-radius: 4px; background: #fff; font-family: inherit;
     min-width: 48px;
   }}
-  .grade-reason {{
-    font-size: 12px; padding: 3px 6px; border: 1px solid #ddd;
-    border-radius: 4px; width: 180px; font-family: inherit;
+  .grade-reason-display {{
+    font-size: 12px; padding: 4px 8px; border: 1px solid transparent;
+    border-radius: 4px; width: 220px; font-family: inherit;
+    cursor: text; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; background: #fafafa;
+    min-height: 22px; line-height: 1.4;
   }}
-  .grade-reason::placeholder {{ color: #bbb; }}
+  .grade-reason-display:hover {{ border-color: #ddd; background: #fff; }}
+  .reason-placeholder {{ color: #bbb; }}
   .grade-na {{ color: #ccc; font-size: 12px; }}
-  .grade-cell, .reason-cell {{ white-space: nowrap; }}
+  .grade-cell {{ white-space: nowrap; }}
+  .reason-cell {{ white-space: nowrap; }}
   .grade-saved {{ background: #dcfce7; transition: background 0.6s; }}
   .grade-filter-row {{
     display: inline-flex; align-items: center; gap: 6px;
     margin-left: 12px; font-size: 13px; color: #555;
   }}
+  /* Grading overlay */
+  .overlay-backdrop {{
+    display: none; position: fixed; inset: 0;
+    background: rgba(20, 20, 30, 0.4); z-index: 1000;
+    align-items: center; justify-content: center;
+  }}
+  .overlay-backdrop.open {{ display: flex; }}
+  .overlay-box {{
+    background: #fff; border-radius: 12px; padding: 18px 22px;
+    width: min(580px, calc(100vw - 32px));
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+    font-family: -apple-system, system-ui, sans-serif;
+  }}
+  .overlay-headline {{
+    color: #999; font-size: 13px; line-height: 1.4;
+    padding: 10px 12px; background: #f5f5f7; border-radius: 8px;
+    margin-bottom: 14px; white-space: normal; word-break: break-word;
+  }}
+  .overlay-row {{
+    display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+  }}
+  .overlay-row label {{
+    font-size: 12px; color: #555; min-width: 60px; text-transform: uppercase;
+    letter-spacing: 0.4px; font-weight: 600;
+  }}
+  .overlay-grade {{
+    font-size: 14px; padding: 6px 10px; border: 1px solid #ddd;
+    border-radius: 6px; background: #fff; font-family: inherit;
+  }}
+  .overlay-reason {{
+    width: 100%; padding: 10px 12px; border: 1px solid #ddd;
+    border-radius: 8px; font-family: inherit; font-size: 14px;
+    line-height: 1.5; resize: vertical; min-height: 110px; box-sizing: border-box;
+  }}
+  .overlay-buttons {{
+    display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px;
+  }}
+  .overlay-buttons button {{
+    padding: 7px 16px; border-radius: 6px; font-size: 13px;
+    font-family: inherit; cursor: pointer; border: 1px solid #ddd;
+    background: #fff;
+  }}
+  .overlay-buttons .save {{
+    background: #1A40B3; color: #fff; border-color: #1A40B3;
+  }}
+  .overlay-buttons button:active {{ opacity: 0.85; }}
   .badge.evt-ai-insight {{ background: #fef3c7; color: #92400e; }}
   .badge.evt-historical {{ background: #e0e7ff; color: #3730a3; }}
   .badge.evt-streak {{ background: #fce7f3; color: #9d174d; }}
@@ -1757,6 +1816,32 @@ async def dashboard(
   <span class="page-info" id="evt-page-info"></span>
   <button id="evt-next" onclick="changeEvtPage(1)">Next &rarr;</button>
 </div>
+<!-- Grading overlay: shown when a reason cell is clicked. Fields get populated
+     by openGradeOverlay(); Save button calls saveGradeOverlay() which mirrors
+     back to the row without a reload. ESC or backdrop click closes. -->
+<div id="overlay-backdrop" class="overlay-backdrop">
+  <div class="overlay-box" onclick="event.stopPropagation()">
+    <div id="overlay-headline" class="overlay-headline"></div>
+    <div class="overlay-row">
+      <label for="overlay-grade">Grade</label>
+      <select id="overlay-grade" class="overlay-grade">
+        <option value="">—</option>
+        <option value="1">1</option><option value="2">2</option>
+        <option value="3">3</option><option value="4">4</option>
+        <option value="5">5</option><option value="6">6</option>
+        <option value="7">7</option><option value="8">8</option>
+        <option value="9">9</option><option value="10">10</option>
+      </select>
+    </div>
+    <textarea id="overlay-reason" class="overlay-reason"
+              placeholder="Why this grade? What would make it a 10? Which part was weak (pick vs. write)?"></textarea>
+    <div class="overlay-buttons">
+      <button onclick="closeGradeOverlay()">Cancel</button>
+      <button class="save" onclick="saveGradeOverlay()">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const PAGE_SIZE = 30;
 // Admin key for authenticated AJAX endpoints (grading). Read from the
@@ -1953,21 +2038,8 @@ function saveGrade(sel) {{
   }});
 }}
 
-// Autosave reason on blur. Blank string clears.
-function saveReason(input) {{
-  const id = input.dataset.id;
-  const reason = input.value;
-  fetch('/admin/grade-insight?key=' + encodeURIComponent(ADMIN_KEY), {{
-    method: 'POST',
-    headers: {{ 'Content-Type': 'application/json' }},
-    body: JSON.stringify({{ id: Number(id), reason: reason }})
-  }}).then(r => {{
-    if (!r.ok) return;
-    const row = input.closest('tr');
-    row.classList.add('grade-saved');
-    setTimeout(() => row.classList.remove('grade-saved'), 600);
-  }});
-}}
+// Reason editing now happens in the overlay (openGradeOverlay); the
+// inline reason cell is read-only display. saveReason() removed.
 
 function renderEvents() {{
   const visible = getVisibleEvents();
@@ -2044,6 +2116,87 @@ function clearEvtDateRange() {{
 }}
 
 renderEvents();
+
+// Grading overlay — populated on open, cleared on close. Save pushes the
+// same /admin/grade-insight endpoint the inline dropdown uses, then
+// mirrors the result back into the row so the page stays consistent
+// without a full reload.
+let overlayCurrentId = null;
+
+function openGradeOverlay(el) {{
+  const row = el.closest('tr');
+  const id = row.dataset.id;
+  const headline = (row.dataset.headline || '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+  const gradeSel = row.querySelector('.grade-select');
+  const currentGrade = gradeSel ? gradeSel.value : '';
+  // Pull current reason from the display div's textContent (handles HTML
+  // entities decoded by the browser already). If the display is just the
+  // placeholder span, treat as empty.
+  const displayEl = row.querySelector('.grade-reason-display');
+  const placeholderEl = displayEl ? displayEl.querySelector('.reason-placeholder') : null;
+  const currentReason = placeholderEl ? '' : (displayEl ? displayEl.textContent.trim() : '');
+
+  overlayCurrentId = id;
+  document.getElementById('overlay-headline').textContent = headline;
+  const overlayGrade = document.getElementById('overlay-grade');
+  overlayGrade.value = currentGrade;
+  document.getElementById('overlay-reason').value = currentReason;
+  document.getElementById('overlay-backdrop').classList.add('open');
+  // Focus the textarea after the DOM has time to settle
+  setTimeout(() => document.getElementById('overlay-reason').focus(), 50);
+}}
+
+function closeGradeOverlay() {{
+  document.getElementById('overlay-backdrop').classList.remove('open');
+  overlayCurrentId = null;
+}}
+
+function saveGradeOverlay() {{
+  if (overlayCurrentId === null) return;
+  const id = overlayCurrentId;
+  const gradeRaw = document.getElementById('overlay-grade').value;
+  const reason = document.getElementById('overlay-reason').value;
+  const body = {{ id: Number(id), reason: reason }};
+  body.grade = gradeRaw === '' ? null : Number(gradeRaw);
+
+  fetch('/admin/grade-insight?key=' + encodeURIComponent(ADMIN_KEY), {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify(body)
+  }}).then(r => {{
+    if (!r.ok) {{ alert('Save failed (HTTP ' + r.status + ')'); return; }}
+    // Mirror back into the row without reloading
+    const row = document.querySelector(`#etable tr[data-id="${{id}}"]`);
+    if (row) {{
+      const sel = row.querySelector('.grade-select');
+      if (sel) sel.value = gradeRaw;
+      row.dataset.graded = gradeRaw === '' ? '0' : '1';
+      const displayEl = row.querySelector('.grade-reason-display');
+      if (displayEl) {{
+        if (reason) {{
+          const escaped = reason
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          displayEl.innerHTML = escaped;
+        }} else {{
+          displayEl.innerHTML = '<span class="reason-placeholder">click to add note…</span>';
+        }}
+      }}
+      row.classList.add('grade-saved');
+      setTimeout(() => row.classList.remove('grade-saved'), 600);
+    }}
+    closeGradeOverlay();
+  }}).catch(e => alert('Save failed: ' + e));
+}}
+
+// Close on backdrop click (not content click) + Escape key
+document.getElementById('overlay-backdrop').addEventListener('click', e => {{
+  if (e.target.id === 'overlay-backdrop') closeGradeOverlay();
+}});
+document.addEventListener('keydown', e => {{
+  if (e.key === 'Escape' && overlayCurrentId !== null) closeGradeOverlay();
+}});
 </script>
 </body>
 </html>"""
