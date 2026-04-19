@@ -1147,8 +1147,9 @@ function render(rows) {{
       ? '<ul>' + r.preview.map(h => `<li>${{esc(h)}}</li>`).join('') + '</ul>'
       : '<div class="empty">No events generated.</div>';
     const err = r.error ? `<div class="err">Error: ${{esc(r.error)}}</div>` : '';
+    const tools = r.tool_calls != null ? ` · ${{r.tool_calls}} tool calls` : '';
     return `<div class="date-panel">
-      <div class="date-header">${{esc(r.game_date)}}</div>
+      <div class="date-header">${{esc(r.game_date)}}${{tools}}</div>
       <div class="cols">
         <div class="col shipped"><h3>Shipped (${{(r.shipped||[]).length}})</h3>${{shipped}}</div>
         <div class="col preview"><h3>Preview — new prompt (${{(r.preview||[]).length}})</h3>${{preview}}</div>
@@ -1204,6 +1205,7 @@ async def ai_backtest_run(
                 "shipped": shipped_headlines,
                 "preview": preview_headlines,
                 "error": preview.get("error"),
+                "tool_calls": preview.get("tool_calls"),
             })
 
         conn.close()
