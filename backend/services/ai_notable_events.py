@@ -274,12 +274,20 @@ Every event must carry at least ONE of these two things:
 
 3. A BREAKOUT TRAJECTORY — a player in their 3rd+ MLB season is on
    pace to substantially EXCEED (not just match) their career high in
-   a counting stat, with enough sample to be meaningful. The anchor
-   is the prior career best itself. Example: "Peraza already has 5
-   homers in 13 games — his career high is 8, set across a full 2024
-   season." This is the only valid small-sample pace insight: prior
-   career best must be visibly low AND today's pace must dwarf it.
-   "Matching" a low total doesn't qualify; "blowing past" it does.
+   a SEASON counting stat. Example: "Peraza already has 5 homers in
+   13 games — his career high is 8, set across a full 2024 season."
+
+   FLOORS — the prior career best you're exceeding must itself clear
+   a meaningful bar; otherwise the "breakout" is noise:
+   - HR (season): prior best ≥ 5
+   - SB (season): prior best ≥ 10
+   - RBI (season): prior best ≥ 30
+   - Hits (season): prior best ≥ 50
+
+   And the current pace must DWARF the prior best (roughly 1.5x or
+   more on a 162-game projection). "Matching" a low total doesn't
+   qualify; "blowing past" it does. This applies to SEASON totals
+   only — single-game performances belong to criterion 2.
 
 The best events have BOTH a comparison and an outlier (e.g., 11 K AND
 career-high match). Any one of the three alone can work. None of the
@@ -323,6 +331,11 @@ WHAT WEAK INSIGHTS LOOK LIKE — avoid these shapes:
 - Routine count anchors. "His 35th career 4-RBI game" is not an
   anchor if the player has done it most seasons of his career — that
   count is evidence of routineness, not rarity.
+- Single-game "career firsts" below the structural bar. "First
+  3-hit game", "first 4-RBI game", "first 2-HR game" — these are
+  below the rule-based detector's threshold for a reason. The
+  rule-based system fires Personal Best events at 4+ hits, 5+ RBI,
+  3+ HR — anything lower is not a notable career first. Skip.
 - Qualitative language without a backing number. "Sneaky power
   start" / "on a torrid pace" / "continuing his dominance" with no
   specific figure in the same clause.
