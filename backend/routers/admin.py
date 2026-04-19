@@ -1121,18 +1121,37 @@ async function runBacktest() {{
   const status = document.getElementById('status');
   const results = document.getElementById('results');
   btn.disabled = true;
-  status.textContent = 'Running… (~30-60s for 3 dates)';
+  status.textContent = 'Fetching date list…';
   results.innerHTML = '';
   try {{
-    const r = await fetch(`/admin/ai-backtest/run?days=${{days}}&key=${{encodeURIComponent(KEY)}}`, {{method: 'POST'}});
-    const data = await r.json();
-    if (data.status !== 'ok') {{
-      status.textContent = 'Error: ' + (data.detail || JSON.stringify(data));
+    const dr = await fetch(`/admin/ai-backtest/dates?days=${{days}}&key=${{encodeURIComponent(KEY)}}`);
+    const dd = await dr.json();
+    const dates = dd.dates || [];
+    if (!dates.length) {{
+      status.textContent = 'No game dates found.';
       btn.disabled = false;
       return;
     }}
-    render(data.results);
-    status.textContent = `Done. ${{data.results.length}} dates.`;
+    const all = [];
+    for (let i = 0; i < dates.length; i++) {{
+      const d = dates[i];
+      status.textContent = `Running ${{d}} (${{i+1}} of ${{dates.length}})… ~35-60s per date.`;
+      try {{
+        const r = await fetch(`/admin/ai-backtest/run?single_date=${{d}}&key=${{encodeURIComponent(KEY)}}`, {{method: 'POST'}});
+        const data = await r.json();
+        if (data.status === 'ok' && data.results.length) {{
+          all.push(data.results[0]);
+          render(all);
+        }} else {{
+          all.push({{game_date: d, shipped: [], preview: [], error: 'Empty response'}});
+          render(all);
+        }}
+      }} catch (e) {{
+        all.push({{game_date: d, shipped: [], preview: [], error: e.message}});
+        render(all);
+      }}
+    }}
+    status.textContent = `Done. ${{all.length}} dates.`;
   }} catch (e) {{
     status.textContent = 'Error: ' + e.message;
   }}
@@ -1167,26 +1186,32 @@ function esc(s) {{ return String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':
 @router.api_route("/ai-backtest/run", methods=["GET", "POST"])
 async def ai_backtest_run(
     days: int = 3,
+    single_date: str | None = None,
     key: str | None = None,
     authorization: str | None = Header(None),
 ):
-    """Run the current AI insight prompt against the last N game dates without inserting.
+    """Run the current AI insight prompt against historical game dates without inserting.
 
-    Returns side-by-side: shipped headlines (from notable_events) vs preview headlines
-    (what the current prompt produces now). Costs ~$0.02-0.04 per date.
+    If single_date is provided (YYYY-MM-DD), runs only that date.
+    Otherwise runs the last `days` distinct game dates.
+    Returns side-by-side: shipped vs preview headlines.
+    Costs ~$0.02-0.04 per date.
     """
     verify_admin(authorization, key)
-    days = max(1, min(days, 7))
     try:
         conn = sqlite3.connect(DB_PATH)
         from services.ai_notable_events import generate_ai_insights
 
         season = date.today().year
-        date_rows = conn.execute("""
-            SELECT DISTINCT date FROM game_batting_logs
-            WHERE season = ? ORDER BY date DESC LIMIT ?
-        """, (season, days)).fetchall()
-        target_dates = [r[0] for r in date_rows]
+        if single_date:
+            target_dates = [single_date]
+        else:
+            days = max(1, min(days, 7))
+            date_rows = conn.execute("""
+                SELECT DISTINCT date FROM game_batting_logs
+                WHERE season = ? ORDER BY date DESC LIMIT ?
+            """, (season, days)).fetchall()
+            target_dates = [r[0] for r in date_rows]
 
         results = []
         for d in target_dates:
@@ -1209,10 +1234,30 @@ async def ai_backtest_run(
             })
 
         conn.close()
-        return {"status": "ok", "season": season, "days": days, "results": results}
+        return {"status": "ok", "season": season, "days": len(target_dates), "results": results}
     except Exception as e:
         import traceback
         raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
+
+
+@router.get("/ai-backtest/dates")
+async def ai_backtest_dates(
+    days: int = 3,
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Return the last N distinct game dates (no Sonnet calls). Used by the
+    backtest page to drive sequential per-date fetches."""
+    verify_admin(authorization, key)
+    days = max(1, min(days, 7))
+    conn = sqlite3.connect(DB_PATH)
+    season = date.today().year
+    rows = conn.execute("""
+        SELECT DISTINCT date FROM game_batting_logs
+        WHERE season = ? ORDER BY date DESC LIMIT ?
+    """, (season, days)).fetchall()
+    conn.close()
+    return {"dates": [r[0] for r in rows]}
 
 
 @router.post("/poll")
