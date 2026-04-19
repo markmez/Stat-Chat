@@ -3182,16 +3182,21 @@ def _simulate_records_for_date(conn, target_date):
 
         # ===== SEASON MILESTONE THRESHOLDS =====
         season_bat = conn.execute("""
-            SELECT SUM(home_runs), SUM(stolen_bases) FROM game_batting_logs
+            SELECT SUM(home_runs), SUM(stolen_bases), SUM(rbi), SUM(hits), SUM(runs)
+            FROM game_batting_logs
             WHERE player_id = ? AND season = ? AND date <= ?
         """, (pid, season, target_date)).fetchone()
         if season_bat and season_bat[0] is not None:
-            hr, sb = season_bat[0] or 0, season_bat[1] or 0
+            hr = season_bat[0] or 0
+            sb = season_bat[1] or 0
+            rbi_total = season_bat[2] or 0
+            hits_total = season_bat[3] or 0
+            runs_total = season_bat[4] or 0
 
-            def _career_threshold_count(stat_col, threshold):
+            def _career_threshold_count(stat_col, threshold, table="season_batting_stats"):
                 """How many career seasons has this player reached this threshold?"""
                 return conn.execute(f"""
-                    SELECT COUNT(*) FROM season_batting_stats
+                    SELECT COUNT(*) FROM {table}
                     WHERE player_id = ? AND {stat_col} >= ? AND season < ?
                 """, (pid, threshold, season)).fetchone()[0]
 
@@ -3200,6 +3205,37 @@ def _simulate_records_for_date(conn, target_date):
                 if n == 2: return "2nd"
                 if n == 3: return "3rd"
                 return f"{n}th"
+
+            def _emit_season_milestone(stat_col, season_total, today_val, thresholds,
+                                       approach_proximity, action_verb, label_short,
+                                       label_full, table="season_batting_stats"):
+                """Generic crosses-or-approaches check for a season counting stat."""
+                if today_val <= 0:
+                    return
+                for threshold in sorted(thresholds, reverse=True):
+                    diff = threshold - season_total
+                    if diff == 0:
+                        yesterday = season_total - today_val
+                        if yesterday < threshold:
+                            prior = _career_threshold_count(stat_col, threshold, table)
+                            ctx = (f"the first {threshold}-{label_short} season of his career"
+                                   if prior == 0
+                                   else f"the {_ordinal(prior + 1)} {threshold}-{label_short} season of his career")
+                            events.append({
+                                "type": "milestone_crossing",
+                                "player": pname, "team": team_name,
+                                "detail": f"{pname} {action_verb} his {threshold}th {label_full} of the season — {ctx}.",
+                            })
+                            return
+                    elif threshold in approach_proximity:
+                        proximity = approach_proximity[threshold]
+                        if 1 <= diff <= proximity:
+                            events.append({
+                                "type": "milestone_approach",
+                                "player": pname, "team": team_name,
+                                "detail": f"{pname} has {season_total} {label_short} — {diff} away from {threshold} this season.",
+                            })
+                            return
 
             # HR milestones: cross at 20/30/40/50/60/70/80, approach only 50+ (within 3) and 40 (within 2)
             _hr_approach_proximity = {40: 2, 50: 3, 60: 3, 70: 3, 80: 3}
@@ -3259,6 +3295,30 @@ def _simulate_records_for_date(conn, target_date):
                             })
                             break
 
+            # RBI season milestones: 100, 125, 150
+            _emit_season_milestone(
+                "rbi", rbi_total, bat.get("rbi", 0),
+                thresholds=[150, 125, 100],
+                approach_proximity={100: 3, 150: 3},
+                action_verb="drove in", label_short="RBI", label_full="RBI",
+            )
+
+            # Hits season milestones: 150, 175, 200
+            _emit_season_milestone(
+                "hits", hits_total, bat.get("hits", 0),
+                thresholds=[200, 175, 150],
+                approach_proximity={200: 3, 175: 3},
+                action_verb="collected", label_short="hits", label_full="hit",
+            )
+
+            # Runs scored season milestones: 100, 125
+            _emit_season_milestone(
+                "runs", runs_total, bat.get("runs", 0),
+                thresholds=[125, 100],
+                approach_proximity={100: 3},
+                action_verb="scored", label_short="runs", label_full="run",
+            )
+
             # X/X combos (20/20, 30/30, 40/40) — check if today's game contributed
             if bat.get("home_runs", 0) > 0 or bat.get("stolen_bases", 0) > 0:
                 for threshold in [40, 30, 20]:
@@ -3286,6 +3346,44 @@ def _simulate_records_for_date(conn, target_date):
                             "detail": f"{pname} has {hr} HR and {sb} SB — {threshold - sb} SB from {threshold}/{threshold}.",
                         })
                         break
+
+            # ===== PITCHING SEASON MILESTONES =====
+            season_pitch = conn.execute("""
+                SELECT SUM(win), SUM(strikeouts), SUM(save)
+                FROM game_pitching_logs
+                WHERE player_id = ? AND season = ? AND date <= ?
+            """, (pid, season, target_date)).fetchone()
+            if season_pitch and season_pitch[0] is not None:
+                wins_total = season_pitch[0] or 0
+                k_total = season_pitch[1] or 0
+                saves_total = season_pitch[2] or 0
+
+                # Wins season milestones: 10, 15, 20
+                _emit_season_milestone(
+                    "wins", wins_total, pitch.get("win", 0),
+                    thresholds=[20, 15, 10],
+                    approach_proximity={20: 2},
+                    action_verb="picked up", label_short="wins", label_full="win",
+                    table="season_pitching_stats",
+                )
+
+                # Strikeouts season milestones: 200, 250, 300
+                _emit_season_milestone(
+                    "strikeouts", k_total, pitch.get("strikeouts", 0),
+                    thresholds=[300, 250, 200],
+                    approach_proximity={200: 5, 250: 5, 300: 5},
+                    action_verb="recorded", label_short="K", label_full="strikeout",
+                    table="season_pitching_stats",
+                )
+
+                # Saves season milestones: 20, 30, 40
+                _emit_season_milestone(
+                    "saves", saves_total, pitch.get("save", 0),
+                    thresholds=[40, 30, 20],
+                    approach_proximity={40: 2},
+                    action_verb="notched", label_short="saves", label_full="save",
+                    table="season_pitching_stats",
+                )
 
     # No dedup for now — show both career_high and first_threshold when they overlap
     # so we can evaluate the distinction before deciding how to merge them
