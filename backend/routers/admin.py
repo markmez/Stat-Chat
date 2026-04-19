@@ -6,6 +6,7 @@ GET  /admin/freshness — returns when data was last updated.
 """
 
 import asyncio
+import json
 import os
 import sqlite3
 import subprocess
@@ -1060,8 +1061,110 @@ async def ai_notable(
         raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
 
 
-@router.api_route("/ai-backtest", methods=["GET", "POST"])
-async def ai_backtest(
+@router.get("/ai-backtest", response_class=HTMLResponse)
+async def ai_backtest_page(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """HTML page for running AI insight prompt backtests. Doesn't call Sonnet on load."""
+    verify_admin(authorization, key)
+    key_param = key or ""
+    html = f"""<!DOCTYPE html>
+<html><head><title>AI Insight Backtest</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: #f5f7fa; color: #1f2937; margin: 0; padding: 24px; }}
+  h1 {{ background: linear-gradient(to right, #73B3FF, #1A40B3); -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent; margin: 0 0 8px; font-size: 28px; }}
+  .sub {{ color: #6b7280; margin-bottom: 20px; font-size: 14px; }}
+  .controls {{ display: flex; gap: 12px; align-items: center; margin-bottom: 24px;
+              padding: 16px; background: white; border-radius: 12px;
+              box-shadow: 0 1px 3px rgba(0,0,0,0.06); }}
+  label {{ font-weight: 600; }}
+  input[type=number] {{ width: 60px; padding: 6px 10px; border: 1px solid #d1d5db;
+                       border-radius: 6px; font-size: 14px; }}
+  button {{ background: linear-gradient(135deg, #1A40B3, #73B3FF); color: white;
+           border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600;
+           cursor: pointer; font-size: 14px; }}
+  button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+  .status {{ color: #6b7280; font-size: 13px; margin-left: 8px; }}
+  .date-panel {{ background: white; border-radius: 12px; padding: 20px;
+                margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }}
+  .date-header {{ font-weight: 700; font-size: 18px; margin-bottom: 12px;
+                 color: #1A40B3; }}
+  .cols {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
+  .col h3 {{ margin: 0 0 10px; font-size: 13px; text-transform: uppercase;
+            letter-spacing: 0.5px; color: #6b7280; }}
+  .col.shipped h3 {{ color: #6b7280; }}
+  .col.preview h3 {{ color: #1A40B3; }}
+  ul {{ margin: 0; padding-left: 20px; }}
+  li {{ margin-bottom: 8px; line-height: 1.45; }}
+  .empty {{ color: #9ca3af; font-style: italic; }}
+  .err {{ color: #dc2626; font-size: 13px; margin-top: 8px; }}
+</style></head>
+<body>
+  <h1>AI Insight Backtest</h1>
+  <div class="sub">Compare shipped headlines (what went out) vs preview headlines (what the current prompt would produce now).</div>
+  <div class="controls">
+    <label for="days">Days back:</label>
+    <input id="days" type="number" min="1" max="7" value="3">
+    <button id="run" onclick="runBacktest()">Run backtest</button>
+    <span class="status" id="status">Costs ~$0.02-0.04 per date.</span>
+  </div>
+  <div id="results"></div>
+
+<script>
+const KEY = {json.dumps(key_param)};
+async function runBacktest() {{
+  const days = document.getElementById('days').value;
+  const btn = document.getElementById('run');
+  const status = document.getElementById('status');
+  const results = document.getElementById('results');
+  btn.disabled = true;
+  status.textContent = 'Running… (~30-60s for 3 dates)';
+  results.innerHTML = '';
+  try {{
+    const r = await fetch(`/admin/ai-backtest/run?days=${{days}}&key=${{encodeURIComponent(KEY)}}`, {{method: 'POST'}});
+    const data = await r.json();
+    if (data.status !== 'ok') {{
+      status.textContent = 'Error: ' + (data.detail || JSON.stringify(data));
+      btn.disabled = false;
+      return;
+    }}
+    render(data.results);
+    status.textContent = `Done. ${{data.results.length}} dates.`;
+  }} catch (e) {{
+    status.textContent = 'Error: ' + e.message;
+  }}
+  btn.disabled = false;
+}}
+function render(rows) {{
+  const html = rows.map(r => {{
+    const shipped = (r.shipped || []).length
+      ? '<ul>' + r.shipped.map(h => `<li>${{esc(h)}}</li>`).join('') + '</ul>'
+      : '<div class="empty">None shipped on this date.</div>';
+    const preview = (r.preview || []).length
+      ? '<ul>' + r.preview.map(h => `<li>${{esc(h)}}</li>`).join('') + '</ul>'
+      : '<div class="empty">No events generated.</div>';
+    const err = r.error ? `<div class="err">Error: ${{esc(r.error)}}</div>` : '';
+    return `<div class="date-panel">
+      <div class="date-header">${{esc(r.game_date)}}</div>
+      <div class="cols">
+        <div class="col shipped"><h3>Shipped (${{(r.shipped||[]).length}})</h3>${{shipped}}</div>
+        <div class="col preview"><h3>Preview — new prompt (${{(r.preview||[]).length}})</h3>${{preview}}</div>
+      </div>${{err}}
+    </div>`;
+  }}).join('');
+  document.getElementById('results').innerHTML = html;
+}}
+function esc(s) {{ return String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}})[c]); }}
+</script>
+</body></html>"""
+    return HTMLResponse(content=html)
+
+
+@router.api_route("/ai-backtest/run", methods=["GET", "POST"])
+async def ai_backtest_run(
     days: int = 3,
     key: str | None = None,
     authorization: str | None = Header(None),
