@@ -1245,6 +1245,7 @@ async def ai_backtest_run(
 @router.api_route("/ai-backtest/multi", methods=["GET", "POST"])
 async def ai_backtest_multi(
     days: int = 3,
+    verify: bool = False,
     key: str | None = None,
     authorization: str | None = Header(None),
 ):
@@ -1274,11 +1275,13 @@ async def ai_backtest_multi(
         for d in target_dates:
             results[d] = {}
             for name, prompt in PROMPT_VERSIONS:
-                r = generate_ai_insights_with_prompt(conn, season, d, prompt)
+                r = generate_ai_insights_with_prompt(conn, season, d, prompt, verify=verify)
                 results[d][name] = {
                     "headlines": [e.get("headline", "") for e in r.get("events", [])],
                     "error": r.get("error"),
                     "count": len(r.get("events", [])),
+                    "verifier_dropped": r.get("verifier_dropped", []),
+                    "verifier_dropped_count": r.get("verifier_dropped_count", 0),
                 }
 
         # Also include shipped (production) headlines per date

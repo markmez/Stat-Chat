@@ -443,7 +443,78 @@ STYLE RULES:
 - Never name another player without explaining who they are and why the comparison matters."""
 
 
-def generate_ai_insights_with_prompt(conn, season, latest_date, prompt_template):
+_VERIFIER_SYSTEM = """You verify baseball headlines against a data snapshot.
+
+For each headline, check whether EVERY factual claim is consistent with the snapshot data. Pay special attention to:
+- "first" / "first MLB" / "first career" claims (verify by checking the player's career data in the snapshot)
+- "first since [date]" claims
+- "Nth career" counts
+- Specific stat counts ("X strikeouts", "Y consecutive games")
+- "matches his career high" claims (verify both the matching value and the prior best)
+- ERA / batting average through N games claims
+
+Reply with ONLY a JSON object: {"verified": true|false, "reason": "brief explanation"}
+- verified=true: every claim is supported by the snapshot, OR it's a reasonable use of common knowledge (current team, current season scope)
+- verified=false: at least one claim contradicts the snapshot, or makes a specific factual assertion that the snapshot doesn't support
+
+Do NOT speculate beyond the snapshot. If the snapshot does not contain the data needed to verify a "first MLB homer" claim, treat it as verified=false (unverifiable)."""
+
+
+def _verify_with_haiku(events, snapshot):
+    """Use Haiku to verify each event's claims against the snapshot.
+
+    Returns (verified_events, dropped_events_with_reasons).
+    On verifier error, keeps the event (fail-open — don't lose good events
+    to verifier flakiness).
+    """
+    if not events:
+        return events, []
+    try:
+        import anthropic
+    except ImportError:
+        return events, []
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    verified = []
+    dropped = []
+
+    # Cache the snapshot (system prompt) so each event verification reuses it
+    system_blocks = [
+        {"type": "text", "text": _VERIFIER_SYSTEM},
+        {"type": "text", "text": f"SNAPSHOT:\n{snapshot}",
+         "cache_control": {"type": "ephemeral"}},
+    ]
+
+    for event in events:
+        headline = event.get("headline", "")
+        if not headline:
+            continue
+        try:
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=200,
+                system=system_blocks,
+                messages=[{"role": "user", "content": f"HEADLINE: {headline}"}],
+            )
+            text = response.content[0].text.strip()
+            if "{" in text and "}" in text:
+                text = text[text.index("{"):text.rindex("}") + 1]
+            result = json.loads(text)
+            if result.get("verified") is True:
+                verified.append(event)
+            else:
+                dropped.append({"headline": headline,
+                                "reason": result.get("reason", "no reason given")})
+        except Exception as e:
+            # Fail open — keep event if verifier errors
+            verified.append(event)
+            dropped.append({"headline": headline,
+                            "reason": f"verifier error (kept anyway): {e}"})
+    return verified, dropped
+
+
+def generate_ai_insights_with_prompt(conn, season, latest_date, prompt_template,
+                                     verify=False):
     """Sandbox-only: run a historical prompt template against snapshot architecture.
 
     Uses the original _compile_snapshot + a single Sonnet call (no tools, no caching).
@@ -474,7 +545,13 @@ def generate_ai_insights_with_prompt(conn, season, latest_date, prompt_template)
             events = json.loads(text)
         except json.JSONDecodeError:
             events = []
-        return {"events": events, "raw_text": raw_text[:500]}
+        result = {"events": events, "raw_text": raw_text[:500]}
+        if verify and events:
+            verified_events, dropped = _verify_with_haiku(events, snapshot)
+            result["events"] = verified_events
+            result["verifier_dropped"] = dropped
+            result["verifier_dropped_count"] = len(dropped)
+        return result
     except Exception as e:
         return {"events": [], "error": str(e)}
 
