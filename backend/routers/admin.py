@@ -1109,7 +1109,7 @@ async def ai_backtest_page(
     <label for="days">Days back:</label>
     <input id="days" type="number" min="1" max="7" value="3">
     <button id="run" onclick="runBacktest()">Run backtest</button>
-    <span class="status" id="status">Costs ~$0.02-0.04 per date.</span>
+    <span class="status" id="status">Cost: ~$0.15-0.25 per date with prompt caching (first run ~$0.50 to warm cache).</span>
   </div>
   <div id="results"></div>
 
