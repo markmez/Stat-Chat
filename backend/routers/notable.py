@@ -128,6 +128,10 @@ _REDUNDANT_PREFIX_PATTERNS = [
     re.compile(r"^He went \d+-for-\d+(?:\s+with\s+[^,]+(?:\s+and\s+[^,]+)?)?(?:,\s+\d+\s+\w+(?:\s+\w+)*)*,\s+", re.I),
     # Generic pitching stat-line strip (no pivot required)
     re.compile(r"^He threw [\d.]+ (?:scoreless\s+)?(?:IP|innings)(?:\s+with[^,.]+)?,\s+", re.I),
+    # scoreless_streak: "He threw X.X scoreless IP with N K and " — keep "now has N consecutive..."
+    re.compile(r"^He threw [\d.]+ scoreless (?:IP|innings) with \d+ K and (?=now has)", re.I),
+    # qs_streak: "He went X.X IP, N ER, N K and " — keep "now has N consecutive..."
+    re.compile(r"^He went [\d.]+ IP,\s*\d+\s*ER,\s*\d+\s*K and (?=now has)", re.I),
 ]
 
 
@@ -237,7 +241,9 @@ def _strip_redundant_prefix(s):
     return s
 
 
-# Keywords in headline → stat key (used for historical_scan / generic events)
+# Keywords in headline → stat key (used for historical_scan / generic events).
+# Order matters — longer / more specific keywords first to avoid premature
+# matches (e.g. "stolen base" before "base").
 _HEADLINE_STAT_KEYWORDS = [
     ("stolen base", "stolen_bases"),
     ("strikeouts", "strikeouts"),
@@ -256,10 +262,22 @@ _HEADLINE_STAT_KEYWORDS = [
     ("win", "wins"),
 ]
 
+# Bare-abbrev keywords (require word boundaries so " K " doesn't match "Kim")
+_HEADLINE_ABBREV_PATTERNS = [
+    (re.compile(r"\b\d+\s+K\b"), "strikeouts"),
+    (re.compile(r"\b\d+\s+HR\b"), "home_runs"),
+    (re.compile(r"\b\d+\s+RBI\b"), "rbi"),
+    (re.compile(r"\b\d+\s+SB\b"), "stolen_bases"),
+]
+
 
 def _detect_stat_from_headline(headline):
     """Best-effort: figure out which stat an event is anchored on by scanning
     its headline. Used when detection_type doesn't map directly."""
+    # Check abbrev patterns first (more specific)
+    for pat, stat in _HEADLINE_ABBREV_PATTERNS:
+        if pat.search(headline):
+            return stat
     h_low = headline.lower()
     for kw, stat in _HEADLINE_STAT_KEYWORDS:
         if kw.lower() in h_low:
