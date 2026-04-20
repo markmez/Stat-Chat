@@ -460,35 +460,75 @@ Reply with ONLY a JSON object: {"verified": true|false, "reason": "brief explana
 Do NOT speculate beyond the snapshot. If the snapshot does not contain the data needed to verify a "first MLB homer" claim, treat it as verified=false (unverifiable)."""
 
 
-def _verify_with_haiku(events, snapshot):
-    """Use Haiku to verify each event's claims against the snapshot.
+_SONNET_FIX_SYSTEM = """You are fixing a single baseball headline that failed fact-checking.
 
-    Returns (verified_events, dropped_events_with_reasons).
-    On verifier error, keeps the event (fail-open — don't lose good events
-    to verifier flakiness).
-    """
-    if not events:
-        return events, []
+You'll receive: the original headline, the verifier's reason for failure, and the data snapshot the headline should be consistent with.
+
+Rewrite the headline to keep the spirit (same player, same game, same general angle) but with ONLY claims supported by the snapshot. If you cannot produce a valid version supported by the snapshot, return an empty string — better to drop than to fabricate.
+
+Reply with ONLY a JSON object: {"fixed_headline": "..."} (empty string if no valid rewrite is possible).
+
+Constraints:
+- Single flowing sentence, conversational and punchy
+- No claims beyond the snapshot
+- Preserve the same player(s) and game(s) as the original"""
+
+
+def _attempt_sonnet_fix(event, snapshot, failure_reason):
+    """Ask Sonnet to rewrite a single failed headline. Returns new headline or ''."""
     try:
         import anthropic
     except ImportError:
-        return events, []
+        return ""
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    user_msg = (
+        f"ORIGINAL HEADLINE: {event.get('headline', '')}\n\n"
+        f"VERIFIER FAILURE REASON: {failure_reason}\n\n"
+        f"SNAPSHOT:\n{snapshot}"
+    )
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=300,
+            system=_SONNET_FIX_SYSTEM,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        text = response.content[0].text.strip()
+        if "{" in text and "}" in text:
+            text = text[text.index("{"):text.rindex("}") + 1]
+        result = json.loads(text)
+        return result.get("fixed_headline", "")
+    except Exception:
+        return ""
+
+
+def _verify_with_haiku(events, snapshot, fix_with_sonnet=True, max_retries=1):
+    """Use Haiku to verify each event's claims against the snapshot.
+
+    fix_with_sonnet: if True, give Sonnet one chance to rewrite a failed event.
+    max_retries: hard cap on Sonnet fix attempts per event (default 1).
+
+    Returns (final_events, dropped_with_reasons, fixed_log).
+    On verifier API error, keeps the event (fail-open — don't lose good events
+    to verifier flakiness).
+    """
+    if not events:
+        return events, [], []
+    try:
+        import anthropic
+    except ImportError:
+        return events, [], []
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    verified = []
-    dropped = []
 
-    # Cache the snapshot (system prompt) so each event verification reuses it
+    # Cache the snapshot so each Haiku verification call reuses it
     system_blocks = [
         {"type": "text", "text": _VERIFIER_SYSTEM},
         {"type": "text", "text": f"SNAPSHOT:\n{snapshot}",
          "cache_control": {"type": "ephemeral"}},
     ]
 
-    for event in events:
-        headline = event.get("headline", "")
-        if not headline:
-            continue
+    def haiku_check(headline):
         try:
             response = client.messages.create(
                 model="claude-haiku-4-5-20251001",
@@ -499,18 +539,57 @@ def _verify_with_haiku(events, snapshot):
             text = response.content[0].text.strip()
             if "{" in text and "}" in text:
                 text = text[text.index("{"):text.rindex("}") + 1]
-            result = json.loads(text)
-            if result.get("verified") is True:
-                verified.append(event)
-            else:
-                dropped.append({"headline": headline,
-                                "reason": result.get("reason", "no reason given")})
+            return json.loads(text)
         except Exception as e:
-            # Fail open — keep event if verifier errors
-            verified.append(event)
+            # Fail-open marker
+            return {"verified": True, "_verifier_error": str(e)}
+
+    final = []
+    dropped = []
+    fixed_log = []
+
+    for event in events:
+        headline = event.get("headline", "")
+        if not headline:
+            continue
+
+        result = haiku_check(headline)
+        if result.get("verified") is True:
+            final.append(event)
+            continue
+
+        original_reason = result.get("reason", "no reason given")
+
+        if not fix_with_sonnet:
+            dropped.append({"headline": headline, "reason": original_reason})
+            continue
+
+        # One Sonnet retry attempt
+        success = False
+        for attempt in range(max_retries):
+            fixed = _attempt_sonnet_fix(event, snapshot, original_reason)
+            if not fixed:
+                dropped.append({"headline": headline,
+                                "reason": original_reason,
+                                "sonnet_skipped": True})
+                break
+            recheck = haiku_check(fixed)
+            if recheck.get("verified") is True:
+                fixed_event = {**event, "headline": fixed}
+                final.append(fixed_event)
+                fixed_log.append({"original": headline, "fixed": fixed,
+                                  "reason": original_reason})
+                success = True
+                break
+            else:
+                # Failed re-verification; will loop if attempts remain
+                original_reason = recheck.get("reason", original_reason)
+        if not success and not any(d["headline"] == headline for d in dropped):
             dropped.append({"headline": headline,
-                            "reason": f"verifier error (kept anyway): {e}"})
-    return verified, dropped
+                            "reason": original_reason,
+                            "retries_exhausted": True})
+
+    return final, dropped, fixed_log
 
 
 def generate_ai_insights_with_prompt(conn, season, latest_date, prompt_template,
@@ -547,23 +626,36 @@ def generate_ai_insights_with_prompt(conn, season, latest_date, prompt_template,
             events = []
         result = {"events": events, "raw_text": raw_text[:500]}
         if verify and events:
-            verified_events, dropped = _verify_with_haiku(events, snapshot)
+            verified_events, dropped, fixed_log = _verify_with_haiku(events, snapshot)
             result["events"] = verified_events
             result["verifier_dropped"] = dropped
             result["verifier_dropped_count"] = len(dropped)
+            result["verifier_fixed"] = fixed_log
+            result["verifier_fixed_count"] = len(fixed_log)
         return result
     except Exception as e:
         return {"events": [], "error": str(e)}
 
 
 def generate_ai_insights(conn, season, latest_date, dry_run=False, preview=False):
-    """Generate AI-powered notable events using Sonnet with DB tool access.
+    """Generate AI-powered notable events using Sonnet with snapshot architecture.
 
-    Sonnet receives a slim candidate-games snapshot and must call tools
-    (services/insight_tools.py) to verify any factual claim before writing it.
+    Rolled back to commit 211cb20's prompt + snapshot approach 2026-04-19 after
+    the tool-use experiment proved ~50x more expensive than the snapshot path
+    (~$3-5/day vs $0.02-0.04/day). See project-ai-insight-architecture-decisions
+    memory for full context.
+
+    Quality safeguards:
+    1. _strip_below_floor_anchors post-filter catches "Nth career K-stat game"
+       anchors below structural floors (4 RBI, 3 hits, 1 HR).
+    2. Haiku verifier with one Sonnet retry attempt per failed event
+       (_verify_with_haiku) catches arbitrary hallucinations the post-filter
+       can't pattern-match. ~$0.04-0.08/day.
 
     preview=True calls Sonnet but skips dedup and DB insert.
     """
+    from services.historical_prompts import PROMPT_211cb20
+
     if not preview:
         existing = conn.execute("""
             SELECT COUNT(*) FROM notable_events
@@ -573,99 +665,54 @@ def generate_ai_insights(conn, season, latest_date, dry_run=False, preview=False
             print(f"  AI insights already exist for {latest_date} ({existing} events), skipping")
             return {"events": [], "skipped": True}
 
-    snapshot = _compile_candidates(conn, season, latest_date)
-
-    user_message = (
-        f"Target game date: {latest_date}. Today is {date.today().isoformat()}.\n\n"
-        f"DATA SNAPSHOT:\n{snapshot}"
-    )
+    snapshot = _compile_snapshot(conn, season, latest_date)
+    prompt = PROMPT_211cb20.replace("{snapshot}", snapshot)
 
     if dry_run:
-        return {"snapshot": snapshot, "prompt_length": len(_SYSTEM_PROMPT) + len(user_message), "events": []}
+        return {"snapshot": snapshot, "prompt_length": len(prompt), "events": []}
 
     try:
         import anthropic
-        from services.insight_tools import TOOLS, execute_tool
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-        # Cache the system prompt + tools (stable across calls; saves ~70-80%
-        # input cost on the message-replay loop). Cache hits within 5 min.
-        system_blocks = [{
-            "type": "text",
-            "text": _SYSTEM_PROMPT,
-            "cache_control": {"type": "ephemeral"},
-        }]
-        tools_cached = [dict(t) for t in TOOLS]
-        tools_cached[-1] = {**tools_cached[-1], "cache_control": {"type": "ephemeral"}}
-
-        messages = [{"role": "user", "content": user_message}]
-        max_iterations = 25
-        tool_call_count = 0
-        final_text = None
-
-        for _ in range(max_iterations):
-            response = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
-                max_tokens=4000,
-                system=system_blocks,
-                tools=tools_cached,
-                messages=messages,
-            )
-
-            if response.stop_reason == "end_turn":
-                final_text = next(
-                    (b.text for b in response.content if getattr(b, "type", None) == "text"),
-                    None,
-                )
-                break
-
-            if response.stop_reason == "tool_use":
-                tool_results = []
-                for block in response.content:
-                    if getattr(block, "type", None) == "tool_use":
-                        tool_call_count += 1
-                        result = execute_tool(conn, block.name, dict(block.input))
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": json.dumps(result),
-                        })
-                messages.append({"role": "assistant", "content": response.content})
-                messages.append({"role": "user", "content": tool_results})
-                continue
-
-            # Unexpected stop reason — bail
-            return {"snapshot": snapshot, "events": [],
-                    "tool_calls": tool_call_count,
-                    "error": f"Unexpected stop_reason: {response.stop_reason}"}
-
-        if final_text is None:
-            return {"snapshot": snapshot, "events": [],
-                    "tool_calls": tool_call_count,
-                    "error": f"Hit {max_iterations} iterations without end_turn (made {tool_call_count} tool calls)"}
-
-        text = (final_text or "").strip()
+        response = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text
         if "```" in text:
             text = text.split("```json")[-1].split("```")[0].strip()
-        # Try to extract a JSON array even if Sonnet wrapped it in prose
+        text = text.strip()
         if not text.startswith("["):
             m = re.search(r"\[.*\]", text, re.DOTALL)
             text = m.group(0) if m else "[]"
         try:
             events = json.loads(text)
         except json.JSONDecodeError:
-            print(f"  AI insights: JSON parse failed, treating as empty. Raw response: {(final_text or '')[:200]!r}")
+            print(f"  AI insights: JSON parse failed, treating as empty. Raw: {text[:200]!r}")
             events = []
+
+        # Post-filter: drop events anchoring on below-floor stat thresholds
         before_filter = len(events)
         events = _strip_below_floor_anchors(events)
         filtered = before_filter - len(events)
-        print(f"  AI insights: {len(events)} events ({filtered} filtered for below-floor anchors), {tool_call_count} tool calls")
+
+        # Haiku verifier with one Sonnet retry per failed event
+        verifier_dropped = []
+        verifier_fixed = []
+        if events:
+            events, verifier_dropped, verifier_fixed = _verify_with_haiku(events, snapshot)
+
+        print(f"  AI insights: {len(events)} events ({filtered} below-floor filtered, "
+              f"{len(verifier_dropped)} verifier-dropped, {len(verifier_fixed)} sonnet-fixed)")
     except Exception as e:
         return {"snapshot": snapshot, "events": [], "error": str(e)}
 
     if preview:
         return {"events": events, "preview": True,
-                "tool_calls": tool_call_count, "filtered_count": filtered}
+                "filtered_count": filtered,
+                "verifier_dropped_count": len(verifier_dropped),
+                "verifier_fixed_count": len(verifier_fixed)}
 
     # Insert into notable_events table with game context
     cursor = conn.cursor()
