@@ -1545,6 +1545,82 @@ function renderByVersion(data) {{
     return HTMLResponse(content=html)
 
 
+@router.get("/test-haiku-merge")
+async def test_haiku_merge(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """One-off: take the 7 known multi-event groups and have Haiku merge each.
+    Returns originals + Haiku output for human evaluation."""
+    verify_admin(authorization, key)
+
+    HAIKU_MERGE_SYSTEM = """You combine 2+ notable-events headlines about the same baseball player on the same day into ONE flowing card.
+
+Format:
+- Sentence 1: the player's full stat line for that game (collect all the stats mentioned across the events into one clean line).
+- Sentences 2+: each impact, with a "By [stat-action], [past-tense result]" lead-in tying it back to the relevant stat in the line.
+
+Examples of good lead-ins:
+- "By striking out 7, he passed Tom Glavine for 29th on the all-time list."
+- "By picking up the win, he is now 1 away from 150 career wins."
+- "By stealing his 10th base, he took the AL stolen base lead, passing Jose Caballero."
+- "By going 2-for-3, he reached 1,000 career hits."
+- "By driving in 4 runs, he is now 4 away from 500 career RBI."
+
+Rules:
+- Use ONLY facts from the input headlines. Do not invent.
+- Past tense throughout (no "-ing" verbs in main clauses).
+- Don't restate the stat line beyond the first sentence.
+- Output ONLY the merged card text — no JSON, no commentary, no quotes."""
+
+    groups = [
+        ("Chris Sale", "2026-04-18"),
+        ("José Ramírez", "2026-04-18"),
+        ("Yandy Díaz", "2026-04-18"),
+        ("Yordan Alvarez", "2026-04-18"),
+        ("Ranger Suarez", "2026-04-17"),
+        ("Austin Riley", "2026-04-17"),
+        ("Jose Soriano", "2026-04-17"),
+    ]
+
+    import anthropic
+    from services.ai_notable_events import ANTHROPIC_API_KEY
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    results = []
+    try:
+        for player, game_date in groups:
+            rows = conn.execute("""
+                SELECT headline FROM notable_events
+                WHERE game_date = ? AND player_names LIKE ?
+                ORDER BY id ASC
+            """, (game_date, f'%"{player}"%')).fetchall()
+            originals = [r[0] for r in rows]
+            if len(originals) < 2:
+                results.append({"player": player, "date": game_date,
+                                "originals": originals, "merged": "(< 2 events found)"})
+                continue
+            user_msg = f"Player: {player}\nDate: {game_date}\n\nOriginal event headlines:\n"
+            for i, h in enumerate(originals, 1):
+                user_msg += f"{i}. {h}\n"
+            try:
+                response = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=400,
+                    system=HAIKU_MERGE_SYSTEM,
+                    messages=[{"role": "user", "content": user_msg}],
+                )
+                merged = response.content[0].text.strip()
+            except Exception as e:
+                merged = f"ERROR: {e}"
+            results.append({"player": player, "date": game_date,
+                            "originals": originals, "merged": merged})
+    finally:
+        conn.close()
+    return {"results": results}
+
+
 @router.get("/ai-backtest/dates")
 async def ai_backtest_dates(
     days: int = 3,
