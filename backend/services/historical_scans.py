@@ -170,6 +170,72 @@ def _compute_active_streak(conn, pid, season, check):
     return streak, spans
 
 
+# Rebuild thresholds — if a streak at or above these lengths completes today,
+# trigger a refresh of the historical_streaks leaderboard. Chosen so the table
+# stays fresh for ranking without rebuilding on trivial streaks.
+_REBUILD_TRIGGER_THRESHOLDS = {
+    "hitting": 20,   # hitting streak of 20+ ended today
+    "on_base": 30,   # on-base streak of 30+ ended today
+}
+
+
+def check_if_historical_streaks_rebuild_needed(conn, season, latest_date):
+    """Returns True if any player broke a streak today that's long enough
+    to warrant refreshing the historical_streaks leaderboard."""
+    checks = [
+        ("hitting", "hits > 0",
+         "plate_appearances > 0",
+         _REBUILD_TRIGGER_THRESHOLDS["hitting"]),
+        ("on_base", "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
+         "(plate_appearances > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)",
+         _REBUILD_TRIGGER_THRESHOLDS["on_base"]),
+    ]
+
+    today_players = conn.execute("""
+        SELECT DISTINCT player_id FROM game_batting_logs
+        WHERE date = ? AND season = ?
+    """, (latest_date, season)).fetchall()
+
+    for (pid,) in today_players:
+        for _kind, cond_sql, filter_sql, threshold in checks:
+            # Did today break the condition?
+            today_met = conn.execute(f"""
+                SELECT ({cond_sql}) FROM game_batting_logs
+                WHERE player_id = ? AND date = ? AND {filter_sql}
+            """, (pid, latest_date)).fetchone()
+            if not today_met or today_met[0]:
+                continue  # didn't play today, or met the condition (streak continues)
+
+            # Count streak length ending yesterday
+            rows = conn.execute(f"""
+                SELECT ({cond_sql}) FROM game_batting_logs
+                WHERE player_id = ? AND date < ? AND season = ? AND {filter_sql}
+                ORDER BY date DESC
+            """, (pid, latest_date, season)).fetchall()
+            streak = 0
+            for (met,) in rows:
+                if met:
+                    streak += 1
+                else:
+                    break
+            # Walk into previous season if exhausted
+            if streak == len(rows) and streak > 0:
+                prev = conn.execute(f"""
+                    SELECT ({cond_sql}) FROM game_batting_logs
+                    WHERE player_id = ? AND season = ? AND {filter_sql}
+                    ORDER BY date DESC
+                """, (pid, season - 1)).fetchall()
+                for (met,) in prev:
+                    if met:
+                        streak += 1
+                    else:
+                        break
+
+            if streak >= threshold:
+                return True
+    return False
+
+
 def _format_ordinal(n):
     """Convert 1 → '1st', 2 → '2nd', 3 → '3rd', 4+ → 'Nth'."""
     if 10 <= n % 100 <= 20:

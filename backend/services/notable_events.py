@@ -2741,6 +2741,20 @@ def detect_all(db_path=None, season=None, from_poll=False):
         pruned += cursor.rowcount
 
     conn.commit()
+
+    # Refresh historical_streaks leaderboard if any player broke a
+    # ranking-worthy streak today (20+ hitting or 30+ on-base)
+    try:
+        from services.historical_scans import check_if_historical_streaks_rebuild_needed
+        if check_if_historical_streaks_rebuild_needed(conn, season, latest_date):
+            print("  Historical streaks leaderboard: rebuild triggered")
+            from data_pipeline.build_historical_streaks import build
+            conn.close()  # build() opens its own connection
+            build(db_path or DB_PATH)
+            conn = sqlite3.connect(db_path or DB_PATH)
+    except Exception as e:
+        print(f"  Historical streaks rebuild check failed (non-fatal): {e}")
+
     conn.close()
 
     print(f"  Notable events: {inserted} new, {pruned} pruned, {len(events)} total detected")
