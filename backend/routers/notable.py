@@ -196,7 +196,11 @@ async def get_notable_events(limit: int = QueryParam(50, le=200)):
         for idx, e in enumerate(filtered):
             pn = e.get("player_names", [])
             t = e.get("_type")
-            if len(pn) == 1 and t not in _NON_MERGEABLE_TYPES:
+            # Use first player name as the merge key (primary subject).
+            # Events with secondary players ("Sale passed Glavine") still merge
+            # under "Sale". Events with no player_names (some matchup
+            # previews, team events) are skipped.
+            if pn and t not in _NON_MERGEABLE_TYPES:
                 key = (pn[0], e["game_date"])
                 if key not in merge_groups:
                     merge_keys_in_order.append((key, idx))
