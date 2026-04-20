@@ -181,10 +181,11 @@ def _format_ordinal(n):
 def get_streak_historical_context(conn, streak_type, current_length, current_start_date):
     """Rank a currently-active streak against the historical_streaks table.
 
-    Returns a list of context phrases like:
-      ["the longest by any player since Chase Utley's 52 in 2006"
-       "#8 in the last 100 years"]
+    Returns a list of context phrases. Fires when a streak is:
+      (a) Longer than anything in the last year, AND/OR
+      (b) Top 100 in the last 100+ years.
 
+    Both phrases can appear together when both apply.
     Empty list if the table doesn't exist or no useful ranking exists.
     """
     try:
@@ -195,14 +196,22 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
     phrases = []
 
     # (1) "Longest since X's Y in YEAR" — most recent prior streak of equal
-    # or greater length, ENDING before current streak started.
+    # or greater length, ENDING before current streak started, AND with at
+    # least a year's gap (so routine recent matches don't add noise).
+    # current_start_date is YYYY-MM-DD; compute cutoff by simple string swap
+    # (works across year boundaries since SQLite compares dates as strings).
+    try:
+        start_year = int(current_start_date[:4])
+        one_year_before = f"{start_year - 1}" + current_start_date[4:]
+    except (ValueError, IndexError):
+        one_year_before = current_start_date
     prior = conn.execute("""
         SELECT player_name, length, end_date, end_season
         FROM historical_streaks
         WHERE streak_type = ? AND length >= ? AND end_date < ?
         ORDER BY end_date DESC
         LIMIT 1
-    """, (streak_type, current_length, current_start_date)).fetchone()
+    """, (streak_type, current_length, one_year_before)).fetchone()
     if prior:
         pname, plen, pend, pseason = prior
         if plen == current_length:
@@ -211,13 +220,13 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
             phrases.append(f"the longest by any player since {pname}'s {plen} in {pseason}")
 
     # (2) "Nth-longest in the last 100 years" — count of streaks STRICTLY
-    # LONGER, excluding any row that IS this active streak.
+    # LONGER, ending before this one started. Top 100 cutoff.
     longer_count = conn.execute("""
         SELECT COUNT(*) FROM historical_streaks
         WHERE streak_type = ? AND length > ? AND end_date < ?
     """, (streak_type, current_length, current_start_date)).fetchone()[0]
     rank = longer_count + 1
-    if rank <= 25:
+    if rank <= 100:
         phrases.append(f"{_format_ordinal(rank)}-longest in the last 100+ years")
 
     return phrases
