@@ -486,7 +486,7 @@ def generate_ai_insights(conn, season, latest_date, dry_run=False, preview=False
         tools_cached[-1] = {**tools_cached[-1], "cache_control": {"type": "ephemeral"}}
 
         messages = [{"role": "user", "content": user_message}]
-        max_iterations = 15
+        max_iterations = 25
         tool_call_count = 0
         final_text = None
 
@@ -523,11 +523,13 @@ def generate_ai_insights(conn, season, latest_date, dry_run=False, preview=False
 
             # Unexpected stop reason — bail
             return {"snapshot": snapshot, "events": [],
+                    "tool_calls": tool_call_count,
                     "error": f"Unexpected stop_reason: {response.stop_reason}"}
 
         if final_text is None:
             return {"snapshot": snapshot, "events": [],
-                    "error": f"Hit {max_iterations} iterations without end_turn"}
+                    "tool_calls": tool_call_count,
+                    "error": f"Hit {max_iterations} iterations without end_turn (made {tool_call_count} tool calls)"}
 
         text = (final_text or "").strip()
         if "```" in text:
