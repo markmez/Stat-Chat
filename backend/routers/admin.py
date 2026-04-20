@@ -1545,6 +1545,24 @@ function renderByVersion(data) {{
     return HTMLResponse(content=html)
 
 
+@router.post("/build-historical-streaks")
+async def build_historical_streaks(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """One-time compute of all historical hitting + on-base streaks
+    >= threshold across the full game-log history. Populates the
+    historical_streaks table for feed ranking context."""
+    verify_admin(authorization, key)
+    try:
+        from data_pipeline.build_historical_streaks import build
+        counts = build(DB_PATH)
+        return {"status": "ok", **counts}
+    except Exception as e:
+        import traceback
+        raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
+
+
 @router.get("/test-haiku-merge")
 async def test_haiku_merge(
     key: str | None = None,

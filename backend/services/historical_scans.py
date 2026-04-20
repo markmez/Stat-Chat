@@ -170,6 +170,59 @@ def _compute_active_streak(conn, pid, season, check):
     return streak, spans
 
 
+def _format_ordinal(n):
+    """Convert 1 → '1st', 2 → '2nd', 3 → '3rd', 4+ → 'Nth'."""
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def get_streak_historical_context(conn, streak_type, current_length, current_start_date):
+    """Rank a currently-active streak against the historical_streaks table.
+
+    Returns a list of context phrases like:
+      ["the longest by any player since Chase Utley's 52 in 2006"
+       "#8 in the last 100 years"]
+
+    Empty list if the table doesn't exist or no useful ranking exists.
+    """
+    try:
+        conn.execute("SELECT 1 FROM historical_streaks LIMIT 1").fetchone()
+    except Exception:
+        return []
+
+    phrases = []
+
+    # (1) "Longest since X's Y in YEAR" — most recent prior streak of equal
+    # or greater length, ENDING before current streak started.
+    prior = conn.execute("""
+        SELECT player_name, length, end_date, end_season
+        FROM historical_streaks
+        WHERE streak_type = ? AND length >= ? AND end_date < ?
+        ORDER BY end_date DESC
+        LIMIT 1
+    """, (streak_type, current_length, current_start_date)).fetchone()
+    if prior:
+        pname, plen, pend, pseason = prior
+        if plen == current_length:
+            phrases.append(f"matching {pname}'s {plen}-game run from {pseason}")
+        else:
+            phrases.append(f"the longest by any player since {pname}'s {plen} in {pseason}")
+
+    # (2) "Nth-longest in the last 100 years" — count of streaks STRICTLY
+    # LONGER, excluding any row that IS this active streak.
+    longer_count = conn.execute("""
+        SELECT COUNT(*) FROM historical_streaks
+        WHERE streak_type = ? AND length > ? AND end_date < ?
+    """, (streak_type, current_length, current_start_date)).fetchone()[0]
+    rank = longer_count + 1
+    if rank <= 25:
+        phrases.append(f"{_format_ordinal(rank)}-longest in the last 100+ years")
+
+    return phrases
+
+
 def scan_cross_season_streaks(conn, season, latest_date):
     """Find active streaks carrying over from last season.
 
@@ -234,6 +287,24 @@ def scan_cross_season_streaks(conn, season, latest_date):
 
             name = _player_name(conn, pid)
             team = _team_display(conn, pid, season)
+
+            # Find the actual start date of the active streak for ranking
+            streak_type_key = "hitting" if check["name"] == "hitting_streak" else "on_base"
+            start_row = conn.execute(f"""
+                SELECT MIN(date) FROM (
+                    SELECT date,
+                           SUM(CASE WHEN NOT ({check['condition_sql']}) THEN 1 ELSE 0 END)
+                               OVER (PARTITION BY player_id ORDER BY date DESC) AS break_group
+                    FROM game_batting_logs
+                    WHERE player_id = ? AND {check['filter']} AND date <= ?
+                ) WHERE break_group = 0
+            """, (pid, latest_date)).fetchone()
+            streak_start = start_row[0] if start_row and start_row[0] else latest_date
+
+            historical_context = get_streak_historical_context(
+                conn, streak_type_key, streak, streak_start
+            )
+
             facts.append({
                 "type": f"cross_season_{check['name']}",
                 "player": name,
@@ -242,6 +313,8 @@ def scan_cross_season_streaks(conn, season, latest_date):
                 "streak": streak,
                 "spans_seasons": spans,
                 "label": check["label"],
+                "streak_type_key": streak_type_key,
+                "historical_context": historical_context,
             })
 
     # Keep top per type (now guaranteed to match the true global max if emitted)
@@ -1155,10 +1228,14 @@ def template_facts(conn, facts, season, latest_date):
             label = f["label"]
             ctx = "dating back to last season" if f["spans_seasons"] else "this season"
 
+            # Historical ranking context, if the precomputed table is populated
+            hist_phrases = f.get("historical_context") or []
+            hist_suffix = (" — " + "; ".join(hist_phrases)) if hist_phrases else ""
+
             if game_line:
-                headline = f"{player} went {game_line}, extending the longest active {label} in MLB to {streak} games, {ctx}."
+                headline = f"{player} went {game_line}, extending the longest active {label} in MLB to {streak} games, {ctx}{hist_suffix}."
             else:
-                headline = f"{player} extended the longest active {label} in MLB to {streak} games, {ctx}."
+                headline = f"{player} extended the longest active {label} in MLB to {streak} games, {ctx}{hist_suffix}."
 
         elif f["type"] == "10k_0bb_first_2_starts":
             k = f["k"]
