@@ -1242,6 +1242,179 @@ async def ai_backtest_run(
         raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
 
 
+@router.api_route("/ai-backtest/multi", methods=["GET", "POST"])
+async def ai_backtest_multi(
+    days: int = 3,
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Run all 5 historical prompt versions against the last N game dates.
+
+    Uses the cheap pre-tool-use snapshot architecture for all variants.
+    Cost: ~$0.04 per (date × prompt). 3 days × 5 prompts = ~$0.60.
+
+    Returns a grid: {dates: [...], versions: [...], results: {date: {version: [headlines]}}}.
+    """
+    verify_admin(authorization, key)
+    days = max(1, min(days, 7))
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        from services.ai_notable_events import generate_ai_insights_with_prompt
+        from services.historical_prompts import PROMPT_VERSIONS
+
+        season = date.today().year
+        date_rows = conn.execute("""
+            SELECT DISTINCT date FROM game_batting_logs
+            WHERE season = ? ORDER BY date DESC LIMIT ?
+        """, (season, days)).fetchall()
+        target_dates = [r[0] for r in date_rows]
+
+        version_names = [name for name, _ in PROMPT_VERSIONS]
+        results = {}
+        for d in target_dates:
+            results[d] = {}
+            for name, prompt in PROMPT_VERSIONS:
+                r = generate_ai_insights_with_prompt(conn, season, d, prompt)
+                results[d][name] = {
+                    "headlines": [e.get("headline", "") for e in r.get("events", [])],
+                    "error": r.get("error"),
+                    "count": len(r.get("events", [])),
+                }
+
+        # Also include shipped (production) headlines per date
+        shipped = {}
+        for d in target_dates:
+            rows = conn.execute("""
+                SELECT headline FROM notable_events
+                WHERE detection_type = 'ai_insight' AND game_date = ?
+                ORDER BY id ASC
+            """, (d,)).fetchall()
+            shipped[d] = [r[0] for r in rows]
+
+        conn.close()
+        return {
+            "status": "ok",
+            "season": season,
+            "dates": target_dates,
+            "versions": version_names,
+            "shipped": shipped,
+            "results": results,
+        }
+    except Exception as e:
+        import traceback
+        raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
+
+
+@router.get("/ai-backtest/multi/page", response_class=HTMLResponse)
+async def ai_backtest_multi_page(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """HTML page for multi-prompt comparison."""
+    verify_admin(authorization, key)
+    key_param = key or ""
+    html = f"""<!DOCTYPE html>
+<html><head><title>AI Insight Multi-Prompt Comparison</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: #f5f7fa; color: #1f2937; margin: 0; padding: 24px; }}
+  h1 {{ background: linear-gradient(to right, #73B3FF, #1A40B3); -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent; margin: 0 0 8px; font-size: 28px; }}
+  .sub {{ color: #6b7280; margin-bottom: 20px; font-size: 14px; }}
+  .controls {{ display: flex; gap: 12px; align-items: center; margin-bottom: 24px;
+              padding: 16px; background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }}
+  label {{ font-weight: 600; }}
+  input[type=number] {{ width: 60px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; }}
+  button {{ background: linear-gradient(135deg, #1A40B3, #73B3FF); color: white;
+           border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; }}
+  button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+  .status {{ color: #6b7280; font-size: 13px; margin-left: 8px; }}
+  .date-section {{ background: white; border-radius: 12px; padding: 20px;
+                  margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }}
+  .date-header {{ font-weight: 700; font-size: 18px; margin-bottom: 12px; color: #1A40B3; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+  th {{ text-align: left; padding: 8px; background: #f3f4f6; border-bottom: 2px solid #d1d5db;
+       font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; }}
+  td {{ padding: 10px 8px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }}
+  td.version {{ font-family: ui-monospace, monospace; font-weight: 600; color: #1A40B3; white-space: nowrap; }}
+  td.count {{ text-align: center; font-weight: 600; color: #6b7280; }}
+  td.headlines {{ line-height: 1.5; }}
+  .headline {{ margin-bottom: 6px; }}
+  .empty {{ color: #9ca3af; font-style: italic; }}
+  .err {{ color: #dc2626; font-size: 12px; }}
+  .shipped-row {{ background: #fff7ed; }}
+  .shipped-row td.version {{ color: #b45309; }}
+</style></head>
+<body>
+  <h1>AI Insight Multi-Prompt Comparison</h1>
+  <div class="sub">Compares 5 historical prompt versions side-by-side. Uses cheap snapshot architecture (~$0.60 total for 3 dates).</div>
+  <div class="controls">
+    <label for="days">Days back:</label>
+    <input id="days" type="number" min="1" max="7" value="3">
+    <button id="run" onclick="runComparison()">Run comparison</button>
+    <span class="status" id="status">Cost: ~$0.04 per date per prompt. 3 days × 5 prompts ≈ $0.60.</span>
+  </div>
+  <div id="results"></div>
+<script>
+const KEY = {json.dumps(key_param)};
+async function runComparison() {{
+  const days = document.getElementById('days').value;
+  const btn = document.getElementById('run');
+  const status = document.getElementById('status');
+  const results = document.getElementById('results');
+  btn.disabled = true;
+  status.textContent = 'Running… 5 prompts × ' + days + ' dates. Sequential, ~5-10s per call. Total ~' + (days * 5 * 8) + 's.';
+  results.innerHTML = '';
+  try {{
+    const r = await fetch(`/admin/ai-backtest/multi?days=${{days}}&key=${{encodeURIComponent(KEY)}}`, {{method: 'POST'}});
+    const data = await r.json();
+    if (data.status !== 'ok') {{
+      status.textContent = 'Error: ' + (data.detail || JSON.stringify(data));
+      btn.disabled = false;
+      return;
+    }}
+    render(data);
+    status.textContent = 'Done.';
+  }} catch (e) {{
+    status.textContent = 'Error: ' + e.message;
+  }}
+  btn.disabled = false;
+}}
+function esc(s) {{ return String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}})[c]); }}
+function render(data) {{
+  const html = data.dates.map(d => {{
+    const sh = data.shipped[d] || [];
+    const shippedRow = `<tr class="shipped-row">
+      <td class="version">SHIPPED</td>
+      <td class="count">${{sh.length}}</td>
+      <td class="headlines">${{sh.length ? sh.map(h => `<div class="headline">${{esc(h)}}</div>`).join('') : '<div class="empty">none</div>'}}</td>
+    </tr>`;
+    const rows = data.versions.map(v => {{
+      const r = data.results[d][v];
+      const hs = (r.headlines || []);
+      const cell = hs.length ? hs.map(h => `<div class="headline">${{esc(h)}}</div>`).join('') : '<div class="empty">no events</div>';
+      const err = r.error ? `<div class="err">${{esc(r.error)}}</div>` : '';
+      return `<tr>
+        <td class="version">${{esc(v)}}</td>
+        <td class="count">${{r.count}}</td>
+        <td class="headlines">${{cell}}${{err}}</td>
+      </tr>`;
+    }}).join('');
+    return `<div class="date-section">
+      <div class="date-header">${{esc(d)}}</div>
+      <table>
+        <thead><tr><th>Prompt version</th><th>#</th><th>Headlines</th></tr></thead>
+        <tbody>${{shippedRow}}${{rows}}</tbody>
+      </table>
+    </div>`;
+  }}).join('');
+  document.getElementById('results').innerHTML = html;
+}}
+</script>
+</body></html>"""
+    return HTMLResponse(content=html)
+
+
 @router.get("/ai-backtest/dates")
 async def ai_backtest_dates(
     days: int = 3,

@@ -443,6 +443,42 @@ STYLE RULES:
 - Never name another player without explaining who they are and why the comparison matters."""
 
 
+def generate_ai_insights_with_prompt(conn, season, latest_date, prompt_template):
+    """Sandbox-only: run a historical prompt template against snapshot architecture.
+
+    Uses the original _compile_snapshot + a single Sonnet call (no tools, no caching).
+    Same architecture all pre-tool-use commits used. Cost: ~$0.04 per call.
+
+    prompt_template: str containing "{snapshot}" placeholder.
+    Returns: {"events": [...], "error": ..., "raw_text": str}
+    """
+    snapshot = _compile_snapshot(conn, season, latest_date)
+    prompt = prompt_template.replace("{snapshot}", snapshot)
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text
+        raw_text = text
+        if "```" in text:
+            text = text.split("```json")[-1].split("```")[0].strip()
+        text = text.strip()
+        if not text.startswith("["):
+            m = re.search(r"\[.*\]", text, re.DOTALL)
+            text = m.group(0) if m else "[]"
+        try:
+            events = json.loads(text)
+        except json.JSONDecodeError:
+            events = []
+        return {"events": events, "raw_text": raw_text[:500]}
+    except Exception as e:
+        return {"events": [], "error": str(e)}
+
+
 def generate_ai_insights(conn, season, latest_date, dry_run=False, preview=False):
     """Generate AI-powered notable events using Sonnet with DB tool access.
 
