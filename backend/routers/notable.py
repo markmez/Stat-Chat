@@ -53,8 +53,9 @@ _DETECTION_TYPE_STAT = {
     "pace_stolen_bases_60": "stolen_bases",
     "pace_stolen_bases_70": "stolen_bases",
     "hitting_streak": "hits",
-    "scoreless_streak": None,  # pitcher streak; uses generic lead-in
-    "qs_streak": None,
+    "scoreless_streak": "strikeouts",
+    "qs_streak": "strikeouts",
+    "career_high": None,  # depends on stat in headline; falls through to keyword scan
 }
 
 
@@ -138,6 +139,11 @@ _PAST_VERB_STARTERS = {
     "stole", "struck", "threw", "gave", "left",
 }
 _HAS_BE_STARTERS = {"is", "was", "has", "had"}
+
+# Sentence-boundary regex: period + whitespace + uppercase letter. Avoids
+# splitting on abbreviations like "Jr." / "Sr." / "St." since the next word
+# typically starts lowercase ("Jr. for the AL lead").
+_SENTENCE_SPLIT = re.compile(r"\.\s+(?=[A-Z])")
 
 
 def _build_stat_line(conn, player_name, game_date):
@@ -274,6 +280,14 @@ def _ensure_subject(text):
     if first in _PAST_VERB_STARTERS or first in _HAS_BE_STARTERS:
         return "he " + text[0].lower() + text[1:]
     if first in ("the", "his", "her", "a", "an"):
+        # If the noun-phrase is itself a sentence ("The 6 RBI ... is a new
+        # career high"), don't prepend "that was" — that produces broken
+        # "that was the 6 RBI ... is a new career high". Instead just
+        # capitalize and let it stand alone.
+        # Detect by checking if there's an "is/was/has" in the first ~10 words
+        first_clause = " ".join(text.split()[:10]).lower()
+        if any(f" {v} " in f" {first_clause} " for v in ("is", "was", "has", "had", "are", "were")):
+            return text[0].upper() + text[1:]
         return "that was " + text[0].lower() + text[1:]
     return text
 
@@ -295,7 +309,7 @@ def _format_impact(headline, player_name, detection_type, today_stats):
         if h.startswith(player_name + " "):
             h = h[len(player_name) + 1:].strip()
         # If multi-sentence, drop the first (stat line lead) and use the rest
-        sentences = [s.strip() for s in h.split(". ") if s.strip()]
+        sentences = [s.strip() for s in _SENTENCE_SPLIT.split(h) if s.strip()]
         if len(sentences) >= 2:
             impact_text = ". ".join(sentences[1:])
         elif sentences:
@@ -347,7 +361,7 @@ def _extract_raw_impact(headline, player_name):
     else:
         if h.startswith(player_name + " "):
             h = h[len(player_name) + 1:].strip()
-        sentences = [s.strip() for s in h.split(". ") if s.strip()]
+        sentences = [s.strip() for s in _SENTENCE_SPLIT.split(h) if s.strip()]
         if len(sentences) >= 2:
             impact_text = ". ".join(sentences[1:])
         elif sentences:
