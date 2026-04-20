@@ -1766,8 +1766,8 @@ async def inspect_retrosheet_columns(
     import urllib.request
     import zipfile
     try:
-        # Retrosheet publishes per-season ZIPs at this URL pattern
-        url = f"https://www.retrosheet.org/downloads/othercsv/{season}/{season}.zip"
+        # Retrosheet publishes per-season CSV ZIPs at this URL pattern
+        url = f"https://www.retrosheet.org/downloads/{season}/{season}csvs.zip"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = resp.read()
