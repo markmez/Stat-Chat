@@ -1345,10 +1345,21 @@ async def ai_backtest_multi_page(
   td.count {{ text-align: center; font-weight: 600; color: #6b7280; }}
   td.headlines {{ line-height: 1.5; }}
   .headline {{ margin-bottom: 6px; }}
-  .empty {{ color: #9ca3af; font-style: italic; }}
+  .empty {{ color: #9ca3af; font-style: italic; font-size: 12px; }}
   .err {{ color: #dc2626; font-size: 12px; }}
   .shipped-row {{ background: #fff7ed; }}
   .shipped-row td.version {{ color: #b45309; }}
+  .scroll-wrap {{ overflow-x: auto; }}
+  table.player-grid {{ table-layout: fixed; min-width: 1400px; }}
+  table.player-grid th {{ position: sticky; top: 0; z-index: 1; }}
+  table.player-grid th.player-col, table.player-grid td.player-col {{ width: 140px; }}
+  table.player-grid th.shipped-col, table.player-grid td.shipped-col {{ width: 280px; background: #fff7ed; }}
+  table.player-grid th.version-col, table.player-grid td.version-col {{ width: 280px; }}
+  table.player-grid td {{ vertical-align: top; font-size: 12.5px; }}
+  table.player-grid td.player-col {{ font-weight: 600; color: #1f2937; }}
+  .layout-toggle {{ margin-left: auto; }}
+  .layout-toggle button {{ background: #e5e7eb; color: #1f2937; padding: 6px 12px; font-size: 12px; }}
+  .layout-toggle button.active {{ background: linear-gradient(135deg, #1A40B3, #73B3FF); color: white; }}
 </style></head>
 <body>
   <h1>AI Insight Multi-Prompt Comparison</h1>
@@ -1358,6 +1369,10 @@ async def ai_backtest_multi_page(
     <input id="days" type="number" min="1" max="7" value="3">
     <button id="run" onclick="runComparison()">Re-run (~$0.60)</button>
     <span class="status" id="status">Loading cached result…</span>
+    <span class="layout-toggle">
+      <button id="layout-player" class="active" onclick="setLayout('player')">By player</button>
+      <button id="layout-version" onclick="setLayout('version')">By version</button>
+    </span>
   </div>
   <div id="results"></div>
 <script>
@@ -1396,7 +1411,98 @@ async function runComparison() {{
   btn.disabled = false;
 }}
 function esc(s) {{ return String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}})[c]); }}
+
+let CURRENT_LAYOUT = 'player';
+let LAST_DATA = null;
+
+function setLayout(mode) {{
+  CURRENT_LAYOUT = mode;
+  document.getElementById('layout-player').classList.toggle('active', mode === 'player');
+  document.getElementById('layout-version').classList.toggle('active', mode === 'version');
+  if (LAST_DATA) render(LAST_DATA);
+}}
+
+// Extract first 2-3 capitalized words at start of a headline as the player name
+function extractPlayer(headline) {{
+  if (!headline) return '???';
+  // Match up to 3 capitalized words (allows accents, hyphens, periods like "Jr.")
+  const m = headline.match(/^([A-ZÁÉÍÓÚÑ][a-záéíóúñ.'\-]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ.'\-]+){{0,2}})/);
+  return m ? m[1] : '???';
+}}
+
 function render(data) {{
+  LAST_DATA = data;
+  if (CURRENT_LAYOUT === 'player') {{
+    renderByPlayer(data);
+  }} else {{
+    renderByVersion(data);
+  }}
+}}
+
+function renderByPlayer(data) {{
+  const html = data.dates.map(d => {{
+    const sh = data.shipped[d] || [];
+
+    // Build a player → {{shipped: [], v1: [], v2: [], ...}} map
+    const playerMap = new Map();
+    const ensure = p => {{
+      if (!playerMap.has(p)) {{
+        const o = {{shipped: []}};
+        for (const v of data.versions) o[v] = [];
+        playerMap.set(p, o);
+      }}
+      return playerMap.get(p);
+    }};
+
+    sh.forEach(h => ensure(extractPlayer(h)).shipped.push(h));
+    for (const v of data.versions) {{
+      const hs = (data.results[d][v] || {{}}).headlines || [];
+      hs.forEach(h => ensure(extractPlayer(h))[v].push(h));
+    }}
+
+    // Sort: players covered by shipped first, then by total mention count descending
+    const players = Array.from(playerMap.keys()).sort((a, b) => {{
+      const aShipped = playerMap.get(a).shipped.length > 0;
+      const bShipped = playerMap.get(b).shipped.length > 0;
+      if (aShipped !== bShipped) return aShipped ? -1 : 1;
+      const aCount = data.versions.reduce((s, v) => s + playerMap.get(a)[v].length, 0) + playerMap.get(a).shipped.length;
+      const bCount = data.versions.reduce((s, v) => s + playerMap.get(b)[v].length, 0) + playerMap.get(b).shipped.length;
+      return bCount - aCount;
+    }});
+
+    const headerCells = `<th class="player-col">Player</th><th class="shipped-col">SHIPPED</th>` +
+      data.versions.map(v => `<th class="version-col">${{esc(v)}}</th>`).join('');
+
+    const rows = players.map(p => {{
+      const o = playerMap.get(p);
+      const shipCell = o.shipped.length
+        ? o.shipped.map(h => `<div class="headline">${{esc(h)}}</div>`).join('')
+        : '<div class="empty">—</div>';
+      const versionCells = data.versions.map(v => {{
+        const hs = o[v];
+        return `<td class="version-col">${{hs.length ? hs.map(h => `<div class="headline">${{esc(h)}}</div>`).join('') : '<div class="empty">—</div>'}}</td>`;
+      }}).join('');
+      return `<tr>
+        <td class="player-col">${{esc(p)}}</td>
+        <td class="shipped-col">${{shipCell}}</td>
+        ${{versionCells}}
+      </tr>`;
+    }}).join('');
+
+    return `<div class="date-section">
+      <div class="date-header">${{esc(d)}}</div>
+      <div class="scroll-wrap">
+        <table class="player-grid">
+          <thead><tr>${{headerCells}}</tr></thead>
+          <tbody>${{rows}}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }}).join('');
+  document.getElementById('results').innerHTML = html;
+}}
+
+function renderByVersion(data) {{
   const html = data.dates.map(d => {{
     const sh = data.shipped[d] || [];
     const shippedRow = `<tr class="shipped-row">
