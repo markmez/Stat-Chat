@@ -142,7 +142,7 @@ _PAST_VERB_STARTERS = {
     "set", "marked", "moved", "earned", "picked", "hit", "scored", "drove",
     "stole", "struck", "threw", "gave", "left",
 }
-_HAS_BE_STARTERS = {"is", "was", "has", "had"}
+_HAS_BE_STARTERS = {"is", "was", "has", "had", "now"}
 
 # Sentence-boundary regex: period + whitespace + uppercase letter. Avoids
 # splitting on abbreviations like "Jr." / "Sr." / "St." since the next word
@@ -396,11 +396,16 @@ def _extract_raw_impact(headline, player_name):
 
 
 def _strip_subject_pronoun(text):
-    """Remove leading 'he '/'that was '/'that ' so an impact can join a list."""
+    """Remove leading 'he '/'that was '/'that ' so an impact can join a list.
+    Also lowercases the leading word if it's currently capitalized so the
+    joined list reads naturally ('and the 10 K' not 'and The 10 K')."""
     text = text.strip()
     for prefix in ("he ", "He ", "that was ", "That was ", "that ", "That ", "it ", "It "):
         if text.startswith(prefix):
-            return text[len(prefix):]
+            text = text[len(prefix):]
+            break
+    if text and text[0].isupper():
+        text = text[0].lower() + text[1:]
     return text
 
 
@@ -420,7 +425,12 @@ def _merge_player_events(conn, group, player_name, game_date):
     stat_order = []  # preserve discovery order
     for e in group:
         dt = e.get("_type", "")
-        stat = _DETECTION_TYPE_STAT.get(dt) or _detect_stat_from_headline(e["headline"])
+        stat = _DETECTION_TYPE_STAT.get(dt)
+        if not stat:
+            # Scan the IMPACT portion (after stripping stat-line prefix) so
+            # we detect the event's anchor stat, not the box-score line.
+            raw = _extract_raw_impact(e["headline"], player_name)
+            stat = _detect_stat_from_headline(raw)
         key = stat or "_other"
         if key not in by_stat:
             stat_order.append(key)
