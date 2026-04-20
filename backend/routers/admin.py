@@ -1246,6 +1246,7 @@ async def ai_backtest_run(
 async def ai_backtest_multi(
     days: int = 3,
     verify: bool = False,
+    versions: str | None = None,
     key: str | None = None,
     authorization: str | None = Header(None),
 ):
@@ -1270,11 +1271,16 @@ async def ai_backtest_multi(
         """, (season, days)).fetchall()
         target_dates = [r[0] for r in date_rows]
 
-        version_names = [name for name, _ in PROMPT_VERSIONS]
+        if versions:
+            wanted = set(v.strip() for v in versions.split(","))
+            active = [(n, p) for n, p in PROMPT_VERSIONS if n in wanted]
+        else:
+            active = list(PROMPT_VERSIONS)
+        version_names = [name for name, _ in active]
         results = {}
         for d in target_dates:
             results[d] = {}
-            for name, prompt in PROMPT_VERSIONS:
+            for name, prompt in active:
                 r = generate_ai_insights_with_prompt(conn, season, d, prompt, verify=verify)
                 results[d][name] = {
                     "headlines": [e.get("headline", "") for e in r.get("events", [])],
