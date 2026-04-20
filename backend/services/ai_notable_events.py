@@ -15,62 +15,87 @@ import sqlite3
 from datetime import date
 
 
-# Below-floor stat-threshold anchor patterns. Sonnet has repeatedly tried to
-# anchor on "Nth career 4-RBI game", "matches his career high in RBI" etc.
-# even when the threshold falls below the structural detector's floor. We
-# filter them out post-generation as a deterministic backstop.
+# Below-floor stat-threshold anchor filter. Sonnet has tried to anchor on
+# "Nth career 4-RBI game", "matches his career high in RBI" etc. even when
+# the threshold is below the structural detector's floor. We catch only the
+# specific anchor-shaped phrases — NOT box-score mentions of the same number
+# elsewhere in the headline.
 #
 # Floors mirror the structural detector's career-high checks:
 #   hits: 4+, RBI: 5+, HR: 2+ (multi-HR), K: 10+
 _FLOORS = {"hits": 4, "rbi": 5, "hr": 2, "k": 10}
 
-# Each pattern captures the threshold value as group 1.
-_FLOOR_PATTERNS = [
-    (re.compile(r'(\d+)\+?\s*-?\s*hit(?:s)?(?:\s+(?:game|performance|day|night))', re.I), "hits"),
-    (re.compile(r'(\d+)\+?\s*-?\s*RBI(?:\s+(?:game|performance|day|night))?', re.I), "rbi"),
-    (re.compile(r'(\d+)\+?\s*-?\s*(?:HR|homer|home\s+run)s?(?:\s+(?:game|performance))?', re.I), "hr"),
-    (re.compile(r'(\d+)\+?\s*-?\s*K(?:\s+(?:start|outing|performance))', re.I), "k"),
-    (re.compile(r'(\d+)\+?\s*-?\s*strikeout(?:s)?(?:\s+(?:start|outing|performance))', re.I), "k"),
-]
 
-# Phrases that signal an anchor framing (not a casual mention of today's stat).
-_ANCHOR_CONTEXT = re.compile(
-    r"\b(career|matches|ties|matching|tying|his\s+\d+(?:st|nd|rd|th)|across\s+\d+\s+(?:career\s+)?(?:games|starts))\b",
-    re.I,
-)
+def _stat_key(s):
+    """Normalize a stat phrase ('homers', 'home runs', 'RBI', 'hit') to floor key."""
+    s = s.lower().rstrip("s")
+    if s in ("hit",): return "hits"
+    if s == "rbi": return "rbi"
+    if s in ("hr", "homer", "home run"): return "hr"
+    if s in ("k", "strikeout"): return "k"
+    return None
+
+
+# Each entry: (compiled regex, threshold-group-index, stat-group-index).
+# All three patterns require the threshold to appear INSIDE the anchor
+# construct itself — not just anywhere in the headline.
+_STAT_ALT = r"(hits?|RBI|HRs?|homers?|home\s+runs?|Ks?|strikeouts?)"
+_ANCHOR_FLOOR_PATTERNS = [
+    # A. "his Nth (career) K-stat game/start/outing"
+    #    Matches: "his 4th career 4-RBI game", "his 2nd 11-K start"
+    #    Skips:   "his 20th career multi-homer game" (no numeric threshold)
+    (re.compile(
+        rf"\b\d+(?:st|nd|rd|th)\s+(?:career\s+)?(\d+)\+?\s*-?\s*{_STAT_ALT}\s+(?:game|start|outing|performance)",
+        re.I,
+    ), 1, 2),
+
+    # B. "his Nth (career) game/start/outing with K+ stat"
+    #    Matches: "his 16th game with 4+ hits", "his 18th career start with 10+ K"
+    (re.compile(
+        rf"\b\d+(?:st|nd|rd|th)\s+(?:career\s+)?(?:games?|starts?|outings?)\s+with\s+(\d+)\+?\s+{_STAT_ALT}",
+        re.I,
+    ), 1, 2),
+
+    # C. "matches/ties his career high in stat (K)"
+    #    Matches: "matches his career high in RBI (4)"
+    #    Note: stat is group 1, threshold is group 2
+    (re.compile(
+        rf"(?:matches?|ties?|tying|matching)\s+his\s+career\s+high\s+in\s+{_STAT_ALT}\s*\((\d+)\)",
+        re.I,
+    ), 2, 1),
+]
 
 
 def _strip_below_floor_anchors(events):
-    """Drop events whose headline anchors on a stat threshold below floor.
+    """Drop events whose headline anchors on a stat threshold below the
+    structural detector's floor. Only catches threshold values appearing
+    INSIDE an anchor-shaped phrase — box-score mentions of the same number
+    elsewhere in the headline pass through.
 
-    Examples filtered:
-      - "his 4th game with 4+ RBI in 328 career games" (4 < 5)
+    Drops:
+      - "his 4th career 4-RBI game" (4 < 5)
       - "matches his career high in RBI (4)" (4 < 5)
-      - "his 3rd career 4-hit game" (this passes — 4 >= 4)
-      - "1-hit shutout effort" (this passes — not in anchor context)
+      - "his 16th game with 3+ hits" (3 < 4)
 
-    Only filters when the threshold appears in an anchor context (career,
-    matches, ties, his Nth, etc.) to avoid catching casual box-score mentions.
+    Keeps:
+      - "Bellinger went 3-for-4 with 4 RBI — his 20th career multi-HR game"
+        (4 RBI is box-score, not anchor; "20th multi-HR" anchor has no
+        numeric threshold)
+      - "his 16th game with 4+ hits in his 12-year career" (4 == floor)
+      - "his 18th career start with 10+ K" (10 == floor)
     """
     cleaned = []
     for e in events:
         h = e.get("headline", "")
-        if not _ANCHOR_CONTEXT.search(h):
-            cleaned.append(e)
-            continue
         below = False
-        for pat, stat in _FLOOR_PATTERNS:
+        for pat, t_group, s_group in _ANCHOR_FLOOR_PATTERNS:
             for m in pat.finditer(h):
                 try:
-                    val = int(m.group(1))
+                    val = int(m.group(t_group))
                 except (ValueError, IndexError):
                     continue
-                # Only consider this number an anchor threshold if it sits
-                # near anchor language. Keep simple: presence of anchor
-                # context anywhere in the headline is enough — Sonnet
-                # typically anchors and references the threshold close
-                # together.
-                if val < _FLOORS[stat]:
+                stat_key = _stat_key(m.group(s_group))
+                if stat_key and val < _FLOORS[stat_key]:
                     below = True
                     break
             if below:
