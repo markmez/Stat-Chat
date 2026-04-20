@@ -60,17 +60,18 @@ _DETECTION_TYPE_STAT = {
 
 
 # Stat key → lead-in builder. Takes today's count, returns "By [verb-ing] ...".
+# Singular forms read more naturally: "By picking up a hit" beats "By collecting 1 hit".
 def _lead_in_for_stat(stat, count):
     if not count or count <= 0:
         return None
     if stat == "home_runs":
-        return f"By going deep" if count == 1 else f"By hitting {count} home runs"
+        return "By going deep" if count == 1 else f"By hitting {count} home runs"
     if stat == "stolen_bases":
-        return f"By swiping a bag" if count == 1 else f"By swiping {count} bags"
+        return "By swiping a bag" if count == 1 else f"By swiping {count} bags"
     if stat == "rbi":
-        return f"By driving in {count} run" + ("" if count == 1 else "s")
+        return "By driving in a run" if count == 1 else f"By driving in {count} runs"
     if stat == "hits":
-        return f"By collecting {count} hit" + ("" if count == 1 else "s")
+        return "By picking up a hit" if count == 1 else f"By collecting {count} hits"
     if stat == "strikeouts":
         return f"By striking out {count}"
     if stat == "wins":
@@ -78,7 +79,11 @@ def _lead_in_for_stat(stat, count):
     if stat == "saves":
         return "By converting the save"
     if stat == "doubles":
-        return f"By hitting {count} double" + ("" if count == 1 else "s")
+        return "By hitting a double" if count == 1 else f"By hitting {count} doubles"
+    if stat == "triples":
+        return "By legging out a triple" if count == 1 else f"By hitting {count} triples"
+    if stat == "walks":
+        return "By drawing a walk" if count == 1 else f"By drawing {count} walks"
     return None
 
 
@@ -253,6 +258,8 @@ _HEADLINE_STAT_KEYWORDS = [
     ("homer", "home_runs"),
     ("multi-HR", "home_runs"),
     ("multi-homer", "home_runs"),
+    ("batting average", "hits"),
+    ("average", "hits"),
     ("hits", "hits"),
     ("hit", "hits"),
     ("RBI", "rbi"),
@@ -262,6 +269,12 @@ _HEADLINE_STAT_KEYWORDS = [
     ("win", "wins"),
 ]
 
+# Rate-stat keywords. These don't get a "By X" lead-in — instead, their
+# impact is embedded as a comma continuation of the stat line itself
+# ("Sal Stewart went 1-for-3 with 1 HR, 1 RBI, taking the NL lead in
+# slugging (.725), passing CJ Abrams (.716).")
+_RATE_STAT_KEYWORDS = ("slugging", "OPS", "OBP", "on-base percentage")
+
 # Bare-abbrev keywords (require word boundaries so " K " doesn't match "Kim")
 _HEADLINE_ABBREV_PATTERNS = [
     (re.compile(r"\b\d+\s+K\b"), "strikeouts"),
@@ -269,6 +282,34 @@ _HEADLINE_ABBREV_PATTERNS = [
     (re.compile(r"\b\d+\s+RBI\b"), "rbi"),
     (re.compile(r"\b\d+\s+SB\b"), "stolen_bases"),
 ]
+
+
+def _is_rate_stat_event(headline):
+    """Detect headlines anchored on a rate stat (slugging/OPS/OBP)."""
+    h_low = headline.lower()
+    return any(kw.lower() in h_low for kw in _RATE_STAT_KEYWORDS)
+
+
+def _extract_rate_stat_continuation(headline, player_name):
+    """For rate-stat events, extract the participle-form impact suitable for
+    appending to the stat line as a continuation.
+
+    Input:  "Sal Stewart went 1-for-3 with 1 HR, 1 RBI, taking the NL lead
+             in slugging (.725), passing CJ Abrams (.716)."
+    Output: "taking the NL lead in slugging (.725), passing CJ Abrams (.716)"
+    """
+    h = headline.strip().rstrip(".!?")
+    # Strip player name from front
+    if h.startswith(player_name + " "):
+        h = h[len(player_name) + 1:].strip()
+    # Find the participle pivot and take everything after the comma before it
+    pivot_match = re.search(r",\s+(taking|passing|reaching|tying|matching|joining|extending)", h, re.I)
+    if pivot_match:
+        return h[pivot_match.start() + 1:].strip()  # +1 to skip the comma
+    # Fallback: split on first comma, return the rest
+    if "," in h:
+        return h.split(",", 1)[1].strip()
+    return h
 
 
 def _detect_stat_from_headline(headline):
@@ -420,10 +461,26 @@ def _merge_player_events(conn, group, player_name, game_date):
     stat_line = _build_stat_line(conn, player_name, game_date)
     today_stats = _today_stats_for_player(conn, player_name, game_date)
 
-    # Group events by their relevant stat key (or "_other" if undetectable)
+    # Pull rate-stat events out separately — they get embedded into the stat
+    # line as a continuation rather than getting their own "By X" sentence.
+    rate_continuations = []
+    non_rate_events = []
+    for e in group:
+        if _is_rate_stat_event(e["headline"]):
+            cont = _extract_rate_stat_continuation(e["headline"], player_name)
+            if cont:
+                rate_continuations.append(cont)
+        else:
+            non_rate_events.append(e)
+
+    # Append rate continuations to the stat line directly
+    if stat_line and rate_continuations:
+        stat_line = stat_line + ", " + ", ".join(rate_continuations)
+
+    # Group remaining events by their relevant stat key (or "_other" if undetectable)
     by_stat = defaultdict(list)
     stat_order = []  # preserve discovery order
-    for e in group:
+    for e in non_rate_events:
         dt = e.get("_type", "")
         stat = _DETECTION_TYPE_STAT.get(dt)
         if not stat:
