@@ -649,6 +649,11 @@ def load_game_logs(conn, start_season, end_season):
         if "stattype" in batting.columns:
             batting = batting[batting["stattype"] == "value"]
 
+        # Clear existing rows for this season — otherwise stale rows with
+        # game_number=0 (from the old buggy ingest) would stay alongside new
+        # rows with game_number=1/2, producing duplicates.
+        cursor.execute("DELETE FROM game_batting_logs WHERE season = ?", (season,))
+
         season_rows = 0
         for _, row in batting.iterrows():
             pid = str(row.get("id", ""))
@@ -669,9 +674,13 @@ def load_game_logs(conn, start_season, end_season):
             sf = safe_int(row.get("b_sf"))
 
             date = format_date(row.get("date", ""))
-            game_number = safe_int(row.get("number", 0))
             opp = str(row.get("opp", "")) if pd.notna(row.get("opp")) else None
             vishome = str(row.get("vishome", "")).upper() if pd.notna(row.get("vishome")) else None
+            # Retrosheet's batting.csv has a `number` column: 0 for single games,
+            # 1 for first game of doubleheader, 2 for second. Without this, the
+            # UNIQUE(player_id, season, date, game_number) constraint collapses
+            # doubleheaders (INSERT OR REPLACE keeps only the last row).
+            game_num = safe_int(row.get("number", 0))
 
             rates = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so)
 
@@ -683,7 +692,7 @@ def load_game_logs(conn, start_season, end_season):
                     batting_avg, obp, slg, ops
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                pid, season, date, game_number, opp, vishome,
+                pid, season, date, game_num, opp, vishome,
                 pa, ab, h, doubles, triples, hr, r, rbi, bb, so,
                 rates["avg"], rates["obp"], rates["slg"], rates["ops"],
             ))
@@ -1075,6 +1084,10 @@ def load_pitching_game_logs(conn, start_season, end_season):
         if "stattype" in pitching.columns:
             pitching = pitching[pitching["stattype"] == "value"]
 
+        # Clear existing rows for this season so stale game_number=0 rows
+        # don't remain alongside the new properly-numbered rows.
+        cursor.execute("DELETE FROM game_pitching_logs WHERE season = ?", (season,))
+
         season_rows = 0
         for _, row in pitching.iterrows():
             pid = str(row.get("id", ""))
@@ -1098,6 +1111,7 @@ def load_pitching_game_logs(conn, start_season, end_season):
             date = format_date(row.get("date", ""))
             opp = str(row.get("opp", "")) if pd.notna(row.get("opp")) else None
             vishome = str(row.get("vishome", "")).upper() if pd.notna(row.get("vishome")) else None
+            game_num = safe_int(row.get("number", 0))
 
             # Per-game ERA
             ip = ip_outs / 3.0
@@ -1105,13 +1119,13 @@ def load_pitching_game_logs(conn, start_season, end_season):
 
             cursor.execute("""
                 INSERT OR REPLACE INTO game_pitching_logs (
-                    player_id, season, date, opponent, vishome, is_start,
+                    player_id, season, date, game_number, opponent, vishome, is_start,
                     ip_outs, innings_pitched, hits, runs, earned_runs,
                     home_runs, walks, strikeouts, hit_by_pitch, batters_faced,
                     win, loss, save, era
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                pid, season, date, opp, vishome, is_start,
+                pid, season, date, game_num, opp, vishome, is_start,
                 ip_outs, format_ip(ip_outs), h, r, er,
                 hr, bb, so, hbp, bf,
                 win, loss, sv, game_era,
