@@ -272,15 +272,18 @@ _HEADLINE_ABBREV_PATTERNS = [
 
 
 def _detect_stat_from_headline(headline):
-    """Best-effort: figure out which stat an event is anchored on by scanning
-    its headline. Used when detection_type doesn't map directly."""
-    # Check abbrev patterns first (more specific)
-    for pat, stat in _HEADLINE_ABBREV_PATTERNS:
-        if pat.search(headline):
-            return stat
+    """Best-effort: figure out which stat an event is anchored on. Long-form
+    keywords ('home runs', 'stolen bases') usually appear in the IMPACT
+    clause ('took the lead in stolen bases'); abbreviations ('1 SB', '2 HR')
+    usually appear in the BOX SCORE STAT LINE. Check long-form first so we
+    detect the event's actual stat, not the player's box-score line."""
     h_low = headline.lower()
     for kw, stat in _HEADLINE_STAT_KEYWORDS:
         if kw.lower() in h_low:
+            return stat
+    # Fallback: abbrev patterns
+    for pat, stat in _HEADLINE_ABBREV_PATTERNS:
+        if pat.search(headline):
             return stat
     return None
 
