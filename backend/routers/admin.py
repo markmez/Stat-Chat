@@ -1752,6 +1752,36 @@ window.addEventListener('DOMContentLoaded', runSandbox);
     return HTMLResponse(content=html)
 
 
+@router.get("/inspect-retrosheet-columns")
+async def inspect_retrosheet_columns(
+    season: int = 1987,
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """One-off: download a Retrosheet season zip and list columns in batting.csv.
+    Used to find the correct field name for doubleheader game number."""
+    verify_admin(authorization, key)
+    try:
+        from data_pipeline.pull_stats import download_retrosheet_zip, read_csv_from_zip
+        zf = download_retrosheet_zip(season)
+        batting = read_csv_from_zip(zf, "batting")
+        cols = list(batting.columns)
+        # Sample a doubleheader if present — same player appearing twice on same date
+        sample = None
+        if "gid" in cols:
+            sample_row = batting.head(5).to_dict(orient="records")
+        else:
+            sample_row = batting.head(3).to_dict(orient="records")
+        return {
+            "season": season,
+            "columns": cols,
+            "sample_rows": sample_row[:3],
+        }
+    except Exception as e:
+        import traceback
+        raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
+
+
 @router.post("/build-historic-moments")
 async def build_historic_moments(
     key: str | None = None,
