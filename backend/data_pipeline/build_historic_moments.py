@@ -54,10 +54,20 @@ _NEGRO_LEAGUE_TEAMS = frozenset({
 # shift 218 days into 1970). Apply corrections when computing cumulative
 # totals. Extend as new discrepancies are discovered.
 _SEASON_CORRECTIONS = {
+    # Mays
+    ("maysw101", 1951, "hits"):      127,  # real 127, our 126
     ("maysw101", 1962, "home_runs"): 49,   # real 49, our 47
-    ("maysw101", 1962, "rbi"):       141,  # real 141, verify our count
-    # Rickey Henderson 1999 hits: real 138 vs our 136
-    ("hendr001", 1999, "hits"):      138,
+    ("maysw101", 1962, "hits"):      189,  # real 189, our 184
+    ("maysw101", 1962, "rbi"):       141,  # real 141
+    # Yaz
+    ("yastc101", 1978, "hits"):      145,  # real 145, our 143
+    # Reggie Jackson
+    ("jackr001", 1978, "home_runs"): 27,   # real 27, our 26
+    # Randy Johnson (Big Unit, johnr005)
+    ("johnr005", 1995, "strikeouts"): 294, # real 294, our 282
+    ("johnr005", 1995, "wins"):       18,  # real 18, our 17
+    # Rickey Henderson
+    ("hendr001", 1999, "hits"):      138,  # real 138, our 136
 }
 
 
