@@ -1545,6 +1545,213 @@ function renderByVersion(data) {{
     return HTMLResponse(content=html)
 
 
+def _simulate_detect_for_date(conn, season, latest_date):
+    """Run the structural detectors (not AI insights) against a specific date
+    and return the event list WITHOUT inserting. Used by the events sandbox
+    to preview what new rules would produce.
+
+    Returns list of event dicts matching the shape of notable_events rows.
+    """
+    from services import notable_events as NE
+    from services import historical_scans as HS
+
+    events = []
+
+    # Dynamic thresholds (same as detect_all)
+    gp_row = conn.execute(
+        "SELECT MAX(games) FROM season_batting_stats WHERE season = ?", (season,)
+    ).fetchone()
+    gp = gp_row[0] if gp_row and gp_row[0] else 10
+    hit_min = max(8, min(15, int(gp * 0.75)))
+    ob_min = max(12, min(25, int(gp * 1.0)))
+    hr_min = max(3, min(5, int(gp * 0.3)))
+
+    # Tier 1
+    events += NE.detect_hitting_streaks(conn, season, latest_date, min_games=hit_min)
+    events += NE.detect_onbase_streaks(conn, season, latest_date, min_games=ob_min)
+    events += NE.detect_hr_streaks(conn, season, latest_date, min_games=hr_min)
+    events += NE.detect_pitching_streaks(conn, season, latest_date)
+    events += NE.detect_season_pace(conn, season, latest_date)
+
+    # Tier 2
+    events += NE.detect_career_milestones(conn, season, latest_date)
+    events += NE.detect_rarities(conn, season, latest_date)
+    try:
+        events += NE.detect_hot_streaks_pelt(conn, season, latest_date)
+    except Exception as e:
+        events.append({"headline": f"[detect_hot_streaks_pelt error: {e}]",
+                       "detection_type": "error", "game_date": latest_date,
+                       "player_names": [], "team_names": []})
+
+    # Records (_simulate_records_for_date is in this module)
+    try:
+        records = _simulate_records_for_date(conn, latest_date)
+        for r in records:
+            events.append({
+                "headline": r.get("detail", ""),
+                "detail": "",
+                "category": r.get("type", "").replace("_", " ").title(),
+                "game_date": latest_date,
+                "player_names": [r.get("player")] if r.get("player") else [],
+                "team_names": [r.get("team")] if r.get("team") else [],
+                "detection_type": r.get("type", "record"),
+                "priority": 2,
+            })
+    except Exception as e:
+        events.append({"headline": f"[records error: {e}]",
+                       "detection_type": "error", "game_date": latest_date,
+                       "player_names": [], "team_names": []})
+
+    # All-time + franchise passing
+    try:
+        events += NE.detect_alltime_passing(conn, season, latest_date)
+        events += NE.detect_franchise_passing(conn, season, latest_date)
+    except Exception as e:
+        events.append({"headline": f"[passing detect error: {e}]",
+                       "detection_type": "error", "game_date": latest_date,
+                       "player_names": [], "team_names": []})
+
+    # Historical scans
+    try:
+        facts = []
+        facts += HS.scan_start_of_season_streaks(conn, season, latest_date)
+        facts += HS.scan_cross_season_streaks(conn, season, latest_date)
+        facts += HS.scan_pitching_start_of_season(conn, season, latest_date)
+        facts += HS.scan_team_historical(conn, season, latest_date)
+        facts += HS.scan_team_starter_era(conn, season, latest_date)
+        facts += HS.scan_career_start(conn, season, latest_date)
+        facts += HS.scan_debut_youngest(conn, season, latest_date)
+        facts += HS.scan_leaderboard_changes(conn, season, latest_date)
+        events += HS.template_facts(conn, facts, season, latest_date)
+    except Exception as e:
+        events.append({"headline": f"[historical scan error: {e}]",
+                       "detection_type": "error", "game_date": latest_date,
+                       "player_names": [], "team_names": []})
+
+    return events
+
+
+@router.api_route("/events-sandbox/run", methods=["GET", "POST"])
+async def events_sandbox_run(
+    days: int = 3,
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Run structural detectors (not AI insights) for the last N game dates.
+    Returns events WITHOUT inserting — just for preview."""
+    verify_admin(authorization, key)
+    days = max(1, min(days, 7))
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        season = date.today().year
+        rows = conn.execute("""
+            SELECT DISTINCT date FROM game_batting_logs
+            WHERE season = ? ORDER BY date DESC LIMIT ?
+        """, (season, days)).fetchall()
+        target_dates = [r[0] for r in rows]
+
+        results = []
+        for d in target_dates:
+            evts = _simulate_detect_for_date(conn, season, d)
+            results.append({
+                "game_date": d,
+                "count": len(evts),
+                "events": [
+                    {"headline": e.get("headline", ""),
+                     "detection_type": e.get("detection_type", "?"),
+                     "category": e.get("category", "?"),
+                     "player_names": e.get("player_names", [])}
+                    for e in evts
+                ],
+            })
+        conn.close()
+        return {"status": "ok", "dates": target_dates, "results": results}
+    except Exception as e:
+        import traceback
+        raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
+
+
+@router.get("/events-sandbox", response_class=HTMLResponse)
+async def events_sandbox_page(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """HTML page that runs the events sandbox and displays results."""
+    verify_admin(authorization, key)
+    key_param = key or ""
+    html = f"""<!DOCTYPE html>
+<html><head><title>Events Sandbox</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: #f5f7fa; color: #1f2937; margin: 0; padding: 24px; }}
+  h1 {{ background: linear-gradient(to right, #73B3FF, #1A40B3); -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent; margin: 0 0 8px; font-size: 28px; }}
+  .sub {{ color: #6b7280; margin-bottom: 20px; font-size: 14px; }}
+  .controls {{ display: flex; gap: 12px; align-items: center; margin-bottom: 24px;
+              padding: 16px; background: white; border-radius: 12px;
+              box-shadow: 0 1px 3px rgba(0,0,0,0.06); }}
+  input[type=number] {{ width: 60px; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; }}
+  button {{ background: linear-gradient(135deg, #1A40B3, #73B3FF); color: white;
+           border: none; padding: 10px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; }}
+  button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+  .status {{ color: #6b7280; font-size: 13px; margin-left: 8px; }}
+  .date-section {{ background: white; border-radius: 12px; padding: 20px;
+                  margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }}
+  .date-header {{ font-weight: 700; font-size: 18px; margin-bottom: 12px; color: #1A40B3; }}
+  .event {{ padding: 10px 0; border-bottom: 1px solid #e5e7eb; line-height: 1.45; }}
+  .event:last-child {{ border-bottom: none; }}
+  .dtype {{ display: inline-block; font-size: 11px; text-transform: uppercase;
+           letter-spacing: 0.5px; color: #6b7280; font-weight: 600; margin-right: 8px; }}
+</style></head>
+<body>
+  <h1>Events Sandbox</h1>
+  <div class="sub">Structural detectors (no AI insights), re-run with current code. Events NOT inserted.</div>
+  <div class="controls">
+    <label>Days back:</label>
+    <input id="days" type="number" min="1" max="7" value="3">
+    <button id="run" onclick="runSandbox()">Run</button>
+    <span class="status" id="status">Ready.</span>
+  </div>
+  <div id="results"></div>
+<script>
+const KEY = {json.dumps(key_param)};
+function esc(s) {{ return String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}})[c]); }}
+async function runSandbox() {{
+  const days = document.getElementById('days').value;
+  const btn = document.getElementById('run');
+  const status = document.getElementById('status');
+  const results = document.getElementById('results');
+  btn.disabled = true;
+  status.textContent = 'Running detectors…';
+  results.innerHTML = '';
+  try {{
+    const r = await fetch(`/admin/events-sandbox/run?days=${{days}}&key=${{encodeURIComponent(KEY)}}`, {{method: 'POST'}});
+    const data = await r.json();
+    if (data.status !== 'ok') {{
+      status.textContent = 'Error: ' + (data.detail || JSON.stringify(data)).slice(0, 400);
+      btn.disabled = false;
+      return;
+    }}
+    const html = data.results.map(d => {{
+      const evts = d.events.map(e => `<div class="event"><span class="dtype">${{esc(e.detection_type)}}</span> ${{esc(e.headline)}}</div>`).join('');
+      return `<div class="date-section">
+        <div class="date-header">${{esc(d.game_date)}} — ${{d.count}} events</div>
+        ${{evts || '<div class="event">No events.</div>'}}
+      </div>`;
+    }}).join('');
+    results.innerHTML = html;
+    status.textContent = `Done. ${{data.results.length}} dates, ${{data.results.reduce((n, r) => n + r.count, 0)}} total events.`;
+  }} catch (e) {{
+    status.textContent = 'Error: ' + e.message;
+  }}
+  btn.disabled = false;
+}}
+window.addEventListener('DOMContentLoaded', runSandbox);
+</script>
+</body></html>"""
+    return HTMLResponse(content=html)
+
+
 @router.post("/build-historical-streaks")
 async def build_historical_streaks(
     key: str | None = None,
