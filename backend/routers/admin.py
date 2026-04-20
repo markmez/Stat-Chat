@@ -3018,6 +3018,60 @@ async def records_lookup(
         conn.close()
 
 
+def _season_rank_for_game_stat(conn, stat, threshold, season, target_date, is_pitching=False):
+    """Return a phrase like 'the Nth N+ stat-game in MLB this season' for a
+    career-high event, so a big single-game stat gets season-level context.
+    Returns None when the count is too common to be worth mentioning (>25)."""
+    table = "game_pitching_logs" if is_pitching else "game_batting_logs"
+    row = conn.execute(f"""
+        SELECT COUNT(*) FROM {table}
+        WHERE season = ? AND {stat} >= ? AND date <= ?
+    """, (season, threshold, target_date)).fetchone()
+    count = row[0] if row else 0
+    if count <= 0 or count > 25:
+        return None
+
+    # Stat label for headline
+    labels = {
+        "home_runs": f"{threshold}-HR",
+        "hits": f"{threshold}-hit",
+        "rbi": f"{threshold}-RBI",
+        "stolen_bases": f"{threshold}-SB",
+        "doubles": f"{threshold}-double",
+        "strikeouts": f"{threshold}+ K" if is_pitching else f"{threshold}-K",
+    }
+    what = labels.get(stat, f"{threshold}-{stat}")
+    scope = "start" if is_pitching else "game"
+    if count == 1:
+        return f"the first {what} {scope} in MLB this season"
+    return f"the {_ordinal_number(count)} {what} {scope} in MLB this season"
+
+
+def _season_milestone_last_since(conn, stat_col, threshold, current_season,
+                                  label_short, exclude_player_id=None):
+    """For a season milestone crossing (e.g., 50+ HR), find the most recent
+    year in MLB history that any player hit that threshold. Returns a phrase
+    like ', the first 50-HR season since Y's N in YYYY' or ''."""
+    row = conn.execute(f"""
+        SELECT p.name, s.season, s.{stat_col}
+        FROM season_batting_stats s JOIN players p ON s.player_id = p.player_id
+        WHERE s.{stat_col} >= ? AND s.season < ? AND s.player_id != ?
+        ORDER BY s.season DESC, s.{stat_col} DESC LIMIT 1
+    """, (threshold, current_season, exclude_player_id or "")).fetchone()
+    if not row:
+        return f", the first {threshold}-{label_short} season in MLB history"
+    name, yr, val = row
+    return f", the first {threshold}-{label_short} season by any player since {name}'s {val} in {yr}"
+
+
+def _ordinal_number(n):
+    """Int → '1st', '2nd', '3rd', '4th', ..."""
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
 def _get_career_value(conn, player_id, stat):
     """Get a player's career total for a stat."""
     # Batting stats
@@ -3433,11 +3487,21 @@ def _simulate_records_for_date(conn, target_date):
                         context = f"a new career high, topping his previous best of {prev_high}"
                     else:
                         context = f"the first time in his career"
+
+                    # Season-rank context: Nth N+ stat-game in MLB this season
+                    season_ctx = _season_rank_for_game_stat(
+                        conn, stat, today_val, season, target_date, is_pitching=False
+                    )
+
+                    detail = f"{pname} went {game_line}. The {today_val} {stat_label} in a game is {context}"
+                    if season_ctx:
+                        detail += f" — {season_ctx}"
+                    detail += "."
                     events.append({
                         "type": "career_high",
                         "player": pname, "team": team_name,
                         "stat": stat,
-                        "detail": f"{pname} went {game_line}. The {today_val} {stat_label} in a game is {context}.",
+                        "detail": detail,
                     })
 
         # Pitching career highs
@@ -3464,11 +3528,20 @@ def _simulate_records_for_date(conn, target_date):
                     context = f"a new career high, topping his previous best of {prev_k}"
                 else:
                     context = "the first time in his career"
+
+                # Season-rank context: Nth N+ K start in MLB this season
+                season_ctx = _season_rank_for_game_stat(
+                    conn, "strikeouts", k, season, target_date, is_pitching=True
+                )
+                detail = f"{pname} struck out {k} in {ip_display} IP. The {k} K is {context}"
+                if season_ctx:
+                    detail += f" — {season_ctx}"
+                detail += "."
                 events.append({
                     "type": "career_high",
                     "player": pname, "team": team_name,
                     "stat": "strikeouts",
-                    "detail": f"{pname} struck out {k} in {ip_display} IP. The {k} K is {context}.",
+                    "detail": detail,
                 })
 
         # ===== TEAM RECORD APPROACHES / CROSSINGS (career) =====
@@ -3653,10 +3726,14 @@ def _simulate_records_for_date(conn, target_date):
                                 context = f"the first {threshold}-HR season of his career"
                             else:
                                 context = f"the {_ordinal(prior_times + 1)} {threshold}-HR season of his career"
+                            # For iconic thresholds (50+), add "last since X" anchor
+                            extra = _season_milestone_last_since(
+                                conn, "home_runs", threshold, season, "HR", pid
+                            ) if threshold >= 50 else ""
                             events.append({
                                 "type": "milestone_crossing",
                                 "player": pname, "team": team_name,
-                                "detail": f"{pname} hit his {threshold}th home run of the season — {context}.",
+                                "detail": f"{pname} hit his {threshold}th home run of the season — {context}{extra}.",
                             })
                             break
                     elif threshold in _hr_approach_proximity:
@@ -3682,10 +3759,13 @@ def _simulate_records_for_date(conn, target_date):
                                 context = f"the first {threshold}-steal season of his career"
                             else:
                                 context = f"the {_ordinal(prior_times + 1)} {threshold}-steal season of his career"
+                            extra = _season_milestone_last_since(
+                                conn, "stolen_bases", threshold, season, "SB", pid
+                            ) if threshold >= 50 else ""
                             events.append({
                                 "type": "milestone_crossing",
                                 "player": pname, "team": team_name,
-                                "detail": f"{pname} stole his {threshold}th base of the season — {context}.",
+                                "detail": f"{pname} stole his {threshold}th base of the season — {context}{extra}.",
                             })
                             break
                     elif threshold in _sb_approach_proximity:

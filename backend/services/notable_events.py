@@ -732,6 +732,51 @@ def detect_season_pace(conn, season, latest_date=None):
 # Tier 2: Medium-signal detectors
 # ---------------------------------------------------------------------------
 
+# Iconic career milestone thresholds — these get the "last since X" anchor.
+# Lower thresholds happen too often (1000 hits every year) to be worth it.
+_ICONIC_CAREER_THRESHOLDS = {
+    "home_runs": {500, 600, 700},
+    "hits": {3000},
+    "rbi": {2000, 2500, 3000},
+    "stolen_bases": {500, 600},
+    "strikeouts": {3000, 3500, 4000},  # pitching
+    "wins": {300, 350},                 # pitching
+    "saves": {400, 500},                # pitching
+}
+
+
+def _last_player_to_cross_career_threshold(conn, stat, threshold, exclude_player_id, is_pitching=False):
+    """Find the most recent player to cross this career threshold, plus the
+    total number of players who ever have. Returns (rank, name, year) or None."""
+    table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+    rows = conn.execute(f"""
+        SELECT p.name, x.season
+        FROM (
+            SELECT s.player_id, s.season,
+                   SUM(s.{stat}) OVER (
+                     PARTITION BY s.player_id ORDER BY s.season
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                   ) AS cumul,
+                   COALESCE(
+                     SUM(s.{stat}) OVER (
+                       PARTITION BY s.player_id ORDER BY s.season
+                       ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                     ), 0
+                   ) AS prev_cumul
+            FROM {table} s
+        ) x
+        JOIN players p ON p.player_id = x.player_id
+        WHERE x.cumul >= ? AND x.prev_cumul < ? AND x.player_id != ?
+        ORDER BY x.season DESC
+    """, (threshold, threshold, exclude_player_id)).fetchall()
+    if not rows:
+        return None
+    # Total players who ever crossed = len(rows) + 1 (plus this player)
+    rank = len(rows) + 1
+    last_name, last_year = rows[0]
+    return (rank, last_name, last_year)
+
+
 def detect_career_milestones(conn, season, latest_date):
     """Find players approaching career milestone numbers.
 
@@ -818,8 +863,21 @@ def detect_career_milestones(conn, season, latest_date):
                         """, (pid, game_date, season)).fetchone()
                         if game_row:
                             action = f"collected {game_row[0]} hit{'s' if game_row[0] != 1 else ''}"
+                    headline = f"{name} {action}, reaching {m:,} {label}!"
+                    # Iconic-threshold anchor: "Nth player ever; last since X in YEAR"
+                    if m in _ICONIC_CAREER_THRESHOLDS.get(col, set()):
+                        ctx = _last_player_to_cross_career_threshold(
+                            conn, col, m, pid, is_pitching=False
+                        )
+                        if ctx:
+                            rank, last_name, last_year = ctx
+                            headline = headline.rstrip("!") + (
+                                f" — the {_ordinal(rank)} player ever to reach {m:,} "
+                                f"{label.replace('career ', '')}, and the first since "
+                                f"{last_name} in {last_year}."
+                            )
                     events.append({
-                        "headline": f"{name} {action}, reaching {m:,} {label}!",
+                        "headline": headline,
                         "detail": "",
                         "category": "Milestone",
                         "game_date": game_date,
@@ -892,8 +950,20 @@ def detect_career_milestones(conn, season, latest_date):
                 elif remaining <= 0 and remaining > -stat_val:
                     # Just crossed milestone (total passed m, and today's contribution pushed them over)
                     action = action_fn(stat_val)
+                    headline = f"{name} {action}, reaching {m:,} {label}!"
+                    if m in _ICONIC_CAREER_THRESHOLDS.get(col, set()):
+                        ctx = _last_player_to_cross_career_threshold(
+                            conn, col, m, pid, is_pitching=True
+                        )
+                        if ctx:
+                            rank, last_name, last_year = ctx
+                            headline = headline.rstrip("!") + (
+                                f" — the {_ordinal(rank)} pitcher ever to reach {m:,} "
+                                f"{label.replace('career ', '')}, and the first since "
+                                f"{last_name} in {last_year}."
+                            )
                     events.append({
-                        "headline": f"{name} {action}, reaching {m:,} {label}!",
+                        "headline": headline,
                         "detail": "",
                         "category": "Milestone",
                         "game_date": game_date,
