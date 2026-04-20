@@ -1870,6 +1870,33 @@ def detect_on_this_date(conn, season, latest_date):
             "priority": 3,
         })
 
+    # Iconic career milestone crossings on this date — from historic_moments table.
+    # Ordered most recent first, cap to 2 so we don't flood.
+    try:
+        moments = conn.execute("""
+            SELECT player_name, season, stat, threshold, context
+            FROM historic_moments
+            WHERE substr(date, 6) = ? AND season < ?
+            ORDER BY season DESC, threshold DESC
+            LIMIT 2
+        """, (month_day, season)).fetchall()
+        for pname, yr, stat, threshold, context in moments:
+            # context looks like "hit his 500th career home run"
+            headline = f"On this date in {yr}, {pname} {context}."
+            events.append({
+                "headline": headline,
+                "detail": "",
+                "category": "On This Date",
+                "game_date": today,
+                "player_names": [pname],
+                "team_names": [],
+                "detection_type": "on_this_date",
+                "priority": 3,
+            })
+    except Exception as e:
+        # Table may not exist yet; silently skip
+        print(f"  On This Date milestones check failed (non-fatal): {e}")
+
     return events
 
 

@@ -1752,6 +1752,23 @@ window.addEventListener('DOMContentLoaded', runSandbox);
     return HTMLResponse(content=html)
 
 
+@router.post("/build-historic-moments")
+async def build_historic_moments(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """One-time compute of career milestone crossing dates (500 HR, 3000 H,
+    etc.) for the On This Date feature. ~30-60s."""
+    verify_admin(authorization, key)
+    try:
+        from data_pipeline.build_historic_moments import build
+        result = build(DB_PATH)
+        return {"status": "ok", **result}
+    except Exception as e:
+        import traceback
+        raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
+
+
 @router.post("/build-historical-streaks")
 async def build_historical_streaks(
     key: str | None = None,
