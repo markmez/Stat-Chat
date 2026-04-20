@@ -68,18 +68,28 @@ _NOUN_STARTERS = {"the", "his", "her", "a", "an"}
 
 def _extract_impact(headline, player_name):
     """Pull the 'impact' portion out of an event headline so it can follow a
-    stat-line lead. Strips the leading 'Player went X-for-Y' or similar.
+    stat-line lead. Strips embedded stat-line prefixes and leading player name.
     Returns a sentence-cased string ending in '.'."""
     h = headline.strip()
     impact = ""
     if "—" in h:
         # AI-insight shape: "{player} did X — {impact}"
         impact = h.split("—", 1)[1].strip()
-    elif h.startswith(player_name + " "):
-        # Structural shape: "{player} {action}" — strip name, add "He"
-        impact = "He " + h[len(player_name) + 1:].strip()
     else:
-        impact = h
+        # Strip leading "{player_name} " if present
+        if h.startswith(player_name + " "):
+            h = h[len(player_name) + 1:].strip()
+        # Many structural headlines embed their own stat line then state the
+        # impact ("went 7.0 IP, 5 H, 1 ER. He now has 2608 K..."). When we see
+        # multiple sentences, drop the first (stat line) and keep the rest.
+        sentences = [s.strip() for s in h.split(". ") if s.strip()]
+        if len(sentences) >= 2:
+            # Drop first (stat line); rejoin rest
+            impact = ". ".join(sentences[1:])
+        elif sentences:
+            # Single sentence — treat as bare fact, prepend subject
+            impact = "He " + sentences[0]
+
     if not impact:
         return ""
 
