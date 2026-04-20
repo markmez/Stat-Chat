@@ -672,6 +672,8 @@ def load_game_logs(conn, start_season, end_season):
             pa = safe_int(row.get("b_pa"))
             hbp = safe_int(row.get("b_hbp"))
             sf = safe_int(row.get("b_sf"))
+            sb = safe_int(row.get("b_sb"))
+            cs = safe_int(row.get("b_cs"))
 
             date = format_date(row.get("date", ""))
             opp = str(row.get("opp", "")) if pd.notna(row.get("opp")) else None
@@ -689,11 +691,13 @@ def load_game_logs(conn, start_season, end_season):
                     player_id, season, date, game_number, opponent, vishome,
                     plate_appearances, at_bats, hits, doubles, triples,
                     home_runs, runs, rbi, walks, strikeouts,
+                    stolen_bases, caught_stealing,
                     batting_avg, obp, slg, ops
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 pid, season, date, game_num, opp, vishome,
                 pa, ab, h, doubles, triples, hr, r, rbi, bb, so,
+                sb, cs,
                 rates["avg"], rates["obp"], rates["slg"], rates["ops"],
             ))
             season_rows += 1
