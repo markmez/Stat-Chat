@@ -1759,23 +1759,37 @@ async def inspect_retrosheet_columns(
     authorization: str | None = Header(None),
 ):
     """One-off: download a Retrosheet season zip and list columns in batting.csv.
-    Used to find the correct field name for doubleheader game number."""
+    Stdlib-only — no pandas dependency on the server."""
     verify_admin(authorization, key)
+    import csv
+    import io
+    import urllib.request
+    import zipfile
     try:
-        from data_pipeline.pull_stats import download_retrosheet_zip, read_csv_from_zip
-        zf = download_retrosheet_zip(season)
-        batting = read_csv_from_zip(zf, "batting")
-        cols = list(batting.columns)
-        # Sample a doubleheader if present — same player appearing twice on same date
-        sample = None
-        if "gid" in cols:
-            sample_row = batting.head(5).to_dict(orient="records")
-        else:
-            sample_row = batting.head(3).to_dict(orient="records")
+        # Retrosheet publishes per-season ZIPs at this URL pattern
+        url = f"https://www.retrosheet.org/downloads/othercsv/{season}/{season}.zip"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            names = zf.namelist()
+            batting_name = next((n for n in names if "batting" in n.lower()), None)
+            if not batting_name:
+                return {"error": "no batting file in zip", "files": names}
+            with zf.open(batting_name) as f:
+                reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8"))
+                cols = reader.fieldnames
+                sample = []
+                for i, row in enumerate(reader):
+                    if i >= 3:
+                        break
+                    sample.append(dict(row))
         return {
             "season": season,
+            "zip_files": names,
+            "batting_file": batting_name,
             "columns": cols,
-            "sample_rows": sample_row[:3],
+            "sample_rows": sample,
         }
     except Exception as e:
         import traceback
