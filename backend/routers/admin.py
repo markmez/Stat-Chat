@@ -1310,9 +1310,14 @@ async def ai_backtest_multi_page(
     key: str | None = None,
     authorization: str | None = Header(None),
 ):
-    """HTML page for multi-prompt comparison."""
+    """HTML page for multi-prompt comparison. Renders cached result on load."""
     verify_admin(authorization, key)
     key_param = key or ""
+    try:
+        from services.cached_multi_result import CACHED_RESULT
+        cached_json = json.dumps(CACHED_RESULT)
+    except Exception:
+        cached_json = "null"
     html = f"""<!DOCTYPE html>
 <html><head><title>AI Insight Multi-Prompt Comparison</title>
 <style>
@@ -1351,12 +1356,22 @@ async def ai_backtest_multi_page(
   <div class="controls">
     <label for="days">Days back:</label>
     <input id="days" type="number" min="1" max="7" value="3">
-    <button id="run" onclick="runComparison()">Run comparison</button>
-    <span class="status" id="status">Cost: ~$0.04 per date per prompt. 3 days × 5 prompts ≈ $0.60.</span>
+    <button id="run" onclick="runComparison()">Re-run (~$0.60)</button>
+    <span class="status" id="status">Loading cached result…</span>
   </div>
   <div id="results"></div>
 <script>
 const KEY = {json.dumps(key_param)};
+const CACHED = {cached_json};
+window.addEventListener('DOMContentLoaded', () => {{
+  if (CACHED && CACHED.status === 'ok') {{
+    render(CACHED);
+    document.getElementById('status').textContent =
+      `Showing cached result for dates: ${{CACHED.dates.join(', ')}}. Click "Re-run" for fresh data (~$0.60).`;
+  }} else {{
+    document.getElementById('status').textContent = 'No cached result. Click "Re-run" to generate (~$0.60).';
+  }}
+}});
 async function runComparison() {{
   const days = document.getElementById('days').value;
   const btn = document.getElementById('run');
