@@ -335,6 +335,10 @@ def _ensure_subject(text):
     phrase like 'the first', prepend "that was "."""
     if not text:
         return text
+    # Slash-line fragment like ".364/.533/.955 with 4 HR over 7 games" —
+    # needs a subject + verb to stand alone.
+    if re.match(r"^\.?\d+\s*/\s*\.?\d+\s*/\s*\.?\d+", text):
+        return "he's hitting " + text
     first = text.split()[0].lower().rstrip(",.")
     # Already has a subject
     if first in ("he", "she", "they", "that", "this", "it"):
@@ -342,16 +346,30 @@ def _ensure_subject(text):
     if first in _PAST_VERB_STARTERS or first in _HAS_BE_STARTERS:
         return "he " + text[0].lower() + text[1:]
     if first in ("the", "his", "her", "a", "an"):
-        # If the noun-phrase is itself a sentence ("The 6 RBI ... is a new
-        # career high"), don't prepend "that was" — that produces broken
-        # "that was the 6 RBI ... is a new career high". Instead just
-        # capitalize and let it stand alone.
-        # Detect by checking if there's an "is/was/has" in the first ~10 words
         first_clause = " ".join(text.split()[:10]).lower()
         if any(f" {v} " in f" {first_clause} " for v in ("is", "was", "has", "had", "are", "were")):
             return text[0].upper() + text[1:]
         return "that was " + text[0].lower() + text[1:]
     return text
+
+
+def _dedupe_by_substring(impacts):
+    """Drop impacts whose content is entirely contained in another impact.
+    Handles overlap between hot_streak_pelt ('.364/.533/.955 with 4 HR...')
+    and an ai_insight that includes the same phrase embedded in richer
+    narrative ('extended his red-hot stretch to .364/.533/.955 with 4 HR...').
+    """
+    if len(impacts) <= 1:
+        return impacts
+    kept = []
+    for i, a in enumerate(impacts):
+        # Drop if any OTHER impact's normalized form contains this one's
+        a_norm = a.lower().strip()
+        if any(i != j and a_norm in b.lower().strip() and a_norm != b.lower().strip()
+               for j, b in enumerate(impacts)):
+            continue
+        kept.append(a)
+    return kept
 
 
 def _format_impact(headline, player_name, detection_type, today_stats):
@@ -502,6 +520,9 @@ def _merge_player_events(conn, group, player_name, game_date):
             impact = _extract_raw_impact(e["headline"], player_name)
             if impact and impact not in raw_impacts:
                 raw_impacts.append(impact)
+        # Drop impacts that are substrings of other impacts (e.g., bare slash
+        # line when another impact embeds it in richer narrative)
+        raw_impacts = _dedupe_by_substring(raw_impacts)
         if not raw_impacts:
             continue
 
