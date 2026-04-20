@@ -1567,11 +1567,12 @@ Examples of good lead-ins:
 - "By going 2-for-3, he reached 1,000 career hits."
 - "By driving in 4 runs, he is now 4 away from 500 career RBI."
 
-Rules:
-- Use ONLY facts from the input headlines. Do not invent.
-- Past tense throughout (no "-ing" verbs in main clauses).
-- Don't restate the stat line beyond the first sentence.
-- Output ONLY the merged card text — no JSON, no commentary, no quotes."""
+STRICT RULES:
+1. Use ONLY facts present in the input headlines. Do NOT add commentary, qualitative descriptions, or invented context like "showcased dominant pitching" or "established momentum."
+2. Do NOT derive or compute numbers. If the input says "4 away from 500 career RBI," do NOT write "moved to 496 career RBI." Use only numbers explicitly stated in the input.
+3. Past tense throughout (no "-ing" verbs in main clauses).
+4. Don't restate the stat line beyond the first sentence.
+5. Output ONLY the merged card text — no JSON, no commentary, no quotes."""
 
     groups = [
         ("Chris Sale", "2026-04-18"),
@@ -1591,11 +1592,14 @@ Rules:
     results = []
     try:
         for player, game_date in groups:
+            # player_names stored as ASCII-escaped JSON (e.g. "Jos\u00e9");
+            # use json.dumps to match the stored form
+            search = json.dumps(player)  # → '"Jos\\u00e9 Ram\\u00edrez"'
             rows = conn.execute("""
                 SELECT headline FROM notable_events
                 WHERE game_date = ? AND player_names LIKE ?
                 ORDER BY id ASC
-            """, (game_date, f'%"{player}"%')).fetchall()
+            """, (game_date, f'%{search}%')).fetchall()
             originals = [r[0] for r in rows]
             if len(originals) < 2:
                 results.append({"player": player, "date": game_date,
