@@ -1752,6 +1752,33 @@ window.addEventListener('DOMContentLoaded', runSandbox);
     return HTMLResponse(content=html)
 
 
+@router.get("/download-live-db")
+async def download_live_db(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Stream the live SQLite DB file for the admin to grab. Makes a consistent
+    snapshot via SQLite's backup API first to avoid torn reads during writes."""
+    verify_admin(authorization, key)
+    import tempfile
+    snap_path = tempfile.mktemp(suffix=".db", dir="/tmp")
+    try:
+        src = sqlite3.connect(DB_PATH)
+        dst = sqlite3.connect(snap_path)
+        src.backup(dst)
+        src.close()
+        dst.close()
+    except Exception as e:
+        if os.path.exists(snap_path):
+            os.remove(snap_path)
+        raise HTTPException(500, f"Snapshot failed: {e}")
+
+    from fastapi.responses import FileResponse
+    # Caller must clean up; we leave the temp file for the OS to reap (it's in /tmp)
+    return FileResponse(snap_path, filename="baseball_stats_live.db",
+                        media_type="application/octet-stream")
+
+
 @router.get("/inspect-retrosheet-columns")
 async def inspect_retrosheet_columns(
     season: int = 1987,
