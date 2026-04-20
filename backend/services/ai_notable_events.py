@@ -367,7 +367,7 @@ CRITICAL RULES:
 4. Do NOT invent historical comparisons. Only cite facts confirmed by tool calls.
 5. Do NOT duplicate events listed under ALREADY-DETECTED. If an already-detected event covers a player, you may write about that player ONLY if your angle is substantially different.
 6. Write each as a single flowing sentence, conversational and punchy. Always include units — "6 innings" not just "6", "3 starts" not just "3".
-7. Output ONLY a JSON array: [{"headline": "...", "player_names": ["..."], "team_names": ["..."], "opponent": "OPP"}]. The "opponent" field must be the team abbreviation the primary player played against (from the box score).
+7. Output ONLY a JSON array: [{"headline": "...", "player_names": ["..."], "team_names": ["..."], "opponent": "OPP"}]. The "opponent" field must be the team abbreviation the primary player played against (from the box score). If nothing meets the bar, return an empty array []. NEVER return prose, explanation, or commentary — only the JSON array.
 
 WHAT MATTERS MOST — every event must carry at least ONE of these:
 
@@ -529,10 +529,18 @@ def generate_ai_insights(conn, season, latest_date, dry_run=False, preview=False
             return {"snapshot": snapshot, "events": [],
                     "error": f"Hit {max_iterations} iterations without end_turn"}
 
-        text = final_text
+        text = (final_text or "").strip()
         if "```" in text:
             text = text.split("```json")[-1].split("```")[0].strip()
-        events = json.loads(text)
+        # Try to extract a JSON array even if Sonnet wrapped it in prose
+        if not text.startswith("["):
+            m = re.search(r"\[.*\]", text, re.DOTALL)
+            text = m.group(0) if m else "[]"
+        try:
+            events = json.loads(text)
+        except json.JSONDecodeError:
+            print(f"  AI insights: JSON parse failed, treating as empty. Raw response: {(final_text or '')[:200]!r}")
+            events = []
         before_filter = len(events)
         events = _strip_below_floor_anchors(events)
         filtered = before_filter - len(events)
