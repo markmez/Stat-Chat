@@ -338,32 +338,101 @@ def _format_impact(headline, player_name, detection_type, today_stats):
     return sentence
 
 
+def _extract_raw_impact(headline, player_name):
+    """Extract just the impact clause (no lead-in, no terminal period).
+    Used when combining multiple impacts under one shared lead-in."""
+    h = headline.strip()
+    if "—" in h:
+        impact_text = h.split("—", 1)[1].strip()
+    else:
+        if h.startswith(player_name + " "):
+            h = h[len(player_name) + 1:].strip()
+        sentences = [s.strip() for s in h.split(". ") if s.strip()]
+        if len(sentences) >= 2:
+            impact_text = ". ".join(sentences[1:])
+        elif sentences:
+            impact_text = "He " + sentences[0]
+        else:
+            return ""
+    impact_text = _strip_redundant_prefix(impact_text)
+    impact_text = _to_past_tense(impact_text)
+    impact_text = impact_text.strip().rstrip(".!?,;: ")
+    return impact_text
+
+
+def _strip_subject_pronoun(text):
+    """Remove leading 'he '/'that was '/'that ' so an impact can join a list."""
+    text = text.strip()
+    for prefix in ("he ", "He ", "that was ", "That was ", "that ", "That ", "it ", "It "):
+        if text.startswith(prefix):
+            return text[len(prefix):]
+    return text
+
+
 def _merge_player_events(conn, group, player_name, game_date):
     """Combine 2+ events for the same player+date into one card.
 
-    Lead = deterministic stat line from game logs.
-    Followups = "By [stat-action], [past-tense impact]." per event.
-    Falls back to first event's headline if no stat line is buildable.
+    - Lead = deterministic stat line from game logs.
+    - Events sharing a stat key collapse into one sentence:
+        "By [stat-action], he [impact 1], [impact 2], and [impact 3]."
+    - Different stat keys get their own sentence.
     """
     stat_line = _build_stat_line(conn, player_name, game_date)
     today_stats = _today_stats_for_player(conn, player_name, game_date)
 
-    impacts = []
+    # Group events by their relevant stat key (or "_other" if undetectable)
+    by_stat = defaultdict(list)
+    stat_order = []  # preserve discovery order
     for e in group:
-        sentence = _format_impact(
-            e["headline"], player_name, e.get("_type", ""), today_stats
-        )
-        if sentence and sentence not in impacts:  # dedup identical follow-ups
-            impacts.append(sentence)
+        dt = e.get("_type", "")
+        stat = _DETECTION_TYPE_STAT.get(dt) or _detect_stat_from_headline(e["headline"])
+        key = stat or "_other"
+        if key not in by_stat:
+            stat_order.append(key)
+        by_stat[key].append(e)
+
+    sentences = []
+    for stat in stat_order:
+        events = by_stat[stat]
+        # Extract raw impact for each event in this stat group
+        raw_impacts = []
+        for e in events:
+            impact = _extract_raw_impact(e["headline"], player_name)
+            if impact and impact not in raw_impacts:
+                raw_impacts.append(impact)
+        if not raw_impacts:
+            continue
+
+        # Build lead-in if we have a stat key + count
+        lead_in = None
+        if stat != "_other":
+            count = today_stats.get(stat, 0)
+            lead_in = _lead_in_for_stat(stat, count)
+
+        # Combine impacts: first keeps its subject; rest get stripped and joined
+        first = _ensure_subject(raw_impacts[0])
+        if len(raw_impacts) == 1:
+            body = first
+        elif len(raw_impacts) == 2:
+            body = first + ", and " + _strip_subject_pronoun(raw_impacts[1])
+        else:
+            mid = ", ".join(_strip_subject_pronoun(i) for i in raw_impacts[1:-1])
+            body = first + ", " + mid + ", and " + _strip_subject_pronoun(raw_impacts[-1])
+
+        if lead_in:
+            if body and body[0].isupper():
+                body = body[0].lower() + body[1:]
+            sentence = f"{lead_in}, {body}"
+        else:
+            sentence = body[0].upper() + body[1:] if body else ""
+        if sentence and not sentence.endswith((".", "!", "?")):
+            sentence = sentence.rstrip(",;: ") + "."
+        sentences.append(sentence)
 
     if stat_line:
-        merged_headline = f"{stat_line}. " + " ".join(impacts)
-    elif impacts:
-        merged_headline = group[0]["headline"]
-        if not merged_headline.endswith((".", "!", "?")):
-            merged_headline += "."
-        if len(impacts) > 1:
-            merged_headline += " " + " ".join(impacts[1:])
+        merged_headline = f"{stat_line}. " + " ".join(sentences)
+    elif sentences:
+        merged_headline = " ".join(sentences)
     else:
         merged_headline = group[0]["headline"]
 
