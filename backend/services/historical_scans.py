@@ -1565,18 +1565,32 @@ def template_facts(conn, facts, season, latest_date):
             ctx = "dating back to last season" if f["spans_seasons"] else "this season"
 
             # Historical ranking context. First phrase attaches with em-dash;
-            # subsequent phrases become their own sentences (tweet-style punch)
-            # instead of semicolon-chained run-on.
+            # last two phrases join with "and"; any middle phrase becomes its
+            # own sentence. Prose reads tighter than semicolon chains.
             hist_phrases = f.get("historical_context") or []
-            if hist_phrases:
-                first, *rest = hist_phrases
-                rest_sentences = [(p[0].upper() + p[1:]) for p in rest]
-                if rest_sentences:
-                    hist_suffix = " — " + first + ". " + ". ".join(rest_sentences)
-                else:
-                    hist_suffix = " — " + first
-            else:
+            if not hist_phrases:
                 hist_suffix = ""
+            elif len(hist_phrases) == 1:
+                hist_suffix = " — " + hist_phrases[0]
+            elif len(hist_phrases) == 2:
+                hist_suffix = " — " + hist_phrases[0] + " and " + hist_phrases[1]
+            else:
+                # 3+: middle phrases as sentences, last two joined with "and"
+                first = hist_phrases[0]
+                middle = [(p[0].upper() + p[1:]) for p in hist_phrases[1:-1]]
+                last = hist_phrases[-1]
+                # Capitalize the second-to-last (it starts its sentence)
+                last_sentence_start = middle[-1] if middle else first
+                # Build: "— first. Middle1. Middle2 and last"
+                if middle:
+                    # Last middle phrase joins with "and last" instead of standalone
+                    middle_minus_last = middle[:-1]
+                    last_middle = middle[-1]
+                    sentences = [first] + middle_minus_last
+                    joined = ". ".join(sentences)
+                    hist_suffix = " — " + joined + ". " + last_middle + " and " + last
+                else:
+                    hist_suffix = " — " + first + " and " + last
 
             if game_line:
                 headline = f"{player} went {game_line}, extending the longest active {label} in MLB to {streak} games, {ctx}{hist_suffix}."
