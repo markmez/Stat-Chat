@@ -89,6 +89,46 @@ async def refresh_live_data(
         raise HTTPException(500, str(e))
 
 
+@router.post("/kill-pipeline")
+async def kill_pipeline(
+    authorization: str | None = Header(None),
+):
+    """Kill any stuck pull_live_stats.py process and clear the cron lock.
+
+    Use when a cron-invoked pipeline hangs (typically on an MSF call with no
+    timeout). The systemd service has PrivateTmp=true, so the lock file at
+    /tmp/statchat_pipeline.lock is in the cron's system /tmp and not visible
+    from here — but since the lock also has a 90-min stale threshold, the
+    next cron will clear it automatically once the process is dead. We just
+    need to kill the zombie.
+    """
+    verify_admin(authorization)
+
+    before = subprocess.run(
+        ["pgrep", "-af", "pull_live_stats.py"],
+        capture_output=True, text=True
+    )
+    matches = [line for line in before.stdout.splitlines() if line.strip()]
+
+    if not matches:
+        return {"status": "ok", "killed": 0, "message": "No stuck pipeline process found."}
+
+    # SIGTERM first; fall back to SIGKILL for anything that ignores it.
+    subprocess.run(["pkill", "-TERM", "-f", "pull_live_stats.py"])
+    # Give TERM 3 seconds to take effect before escalating
+    import time as _time
+    _time.sleep(3)
+    still = subprocess.run(["pgrep", "-f", "pull_live_stats.py"], capture_output=True, text=True)
+    if still.stdout.strip():
+        subprocess.run(["pkill", "-KILL", "-f", "pull_live_stats.py"])
+
+    return {
+        "status": "ok",
+        "killed": len(matches),
+        "processes": matches,
+    }
+
+
 @router.get("/simulate-passing")
 async def simulate_passing(
     season: int = 2025,
