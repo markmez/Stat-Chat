@@ -413,15 +413,27 @@ def _format_ordinal(n):
     return f"{n}{suffix}"
 
 
-def get_streak_historical_context(conn, streak_type, current_length, current_start_date):
+def get_streak_historical_context(conn, streak_type, current_length, current_start_date,
+                                   player_team=None):
     """Rank a currently-active streak against the historical_streaks table.
 
     Returns a list of context phrases. Fires when a streak is:
-      (a) Longer than anything in the last year, AND/OR
-      (b) Top 100 in the last 100+ years.
+      (a) Longer than anything in the last year (MLB-wide), AND/OR
+      (b) Top 100 in the last 100+ years (MLB-wide), AND/OR
+      (c) Team anchor: longest on this franchise in ≥10 years MORE than
+          the MLB comparison (or MLB has no match but franchise does).
 
-    Both phrases can appear together when both apply.
-    Empty list if the table doesn't exist or no useful ranking exists.
+    player_team: optional team code for the current player — used to
+    anchor (c). Without it, team context is skipped.
+
+    Team context rules:
+      - Franchise match requires the historical player was cleanly on one
+        of this franchise's codes (exact match; excludes slash-separated
+        mid-season trades).
+      - Single-season streaks only (start_season = end_season) — cross-
+        season streaks skip team anchoring.
+      - Delta threshold: team_gap − mlb_gap ≥ 10 years, OR MLB empty and
+        team gap ≥ 10.
     """
     try:
         conn.execute("SELECT 1 FROM historical_streaks LIMIT 1").fetchone()
@@ -430,32 +442,29 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
 
     phrases = []
 
-    # (1) "Longest since X's Y in YEAR" — most recent prior streak of equal
-    # or greater length, ENDING before current streak started, AND with at
-    # least a year's gap (so routine recent matches don't add noise).
-    # current_start_date is YYYY-MM-DD; compute cutoff by simple string swap
-    # (works across year boundaries since SQLite compares dates as strings).
+    # (1) "Longest since X's Y in YEAR" — MLB-wide most recent prior streak
     try:
         start_year = int(current_start_date[:4])
         one_year_before = f"{start_year - 1}" + current_start_date[4:]
     except (ValueError, IndexError):
         one_year_before = current_start_date
-    prior = conn.execute("""
+    mlb_prior = conn.execute("""
         SELECT player_name, length, end_date, end_season
         FROM historical_streaks
         WHERE streak_type = ? AND length >= ? AND end_date < ?
         ORDER BY end_date DESC
         LIMIT 1
     """, (streak_type, current_length, one_year_before)).fetchone()
-    if prior:
-        pname, plen, pend, pseason = prior
+    mlb_season = None
+    if mlb_prior:
+        pname, plen, pend, pseason = mlb_prior
+        mlb_season = pseason
         if plen == current_length:
             phrases.append(f"matching {pname}'s {plen}-game run from {pseason}")
         else:
             phrases.append(f"the longest by any player since {pname}'s {plen} in {pseason}")
 
-    # (2) "Nth-longest in the last 100 years" — count of streaks STRICTLY
-    # LONGER, ending before this one started. Top 100 cutoff.
+    # (2) Nth-longest (MLB-wide)
     longer_count = conn.execute("""
         SELECT COUNT(*) FROM historical_streaks
         WHERE streak_type = ? AND length > ? AND end_date < ?
@@ -463,6 +472,52 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
     rank = longer_count + 1
     if rank <= 100:
         phrases.append(f"{_format_ordinal(rank)}-longest in the last 100+ years")
+
+    # (3) Team-since anchor: "the longest by a {Franchise} player since X in Y"
+    # Only when team history goes meaningfully deeper than MLB (10+ yr delta).
+    if player_team:
+        try:
+            from services.franchise import get_franchise_codes, get_franchise_name
+            team_codes = get_franchise_codes(player_team)
+            franchise_name = get_franchise_name(player_team)
+        except Exception:
+            team_codes = []
+            franchise_name = None
+
+        if team_codes and franchise_name:
+            placeholders = ",".join("?" * len(team_codes))
+            team_prior = conn.execute(f"""
+                SELECT hs.player_name, hs.length, hs.end_season
+                FROM historical_streaks hs
+                JOIN season_batting_stats ss
+                  ON ss.player_id = hs.player_id AND ss.season = hs.start_season
+                WHERE hs.streak_type = ?
+                  AND hs.length >= ?
+                  AND hs.end_date < ?
+                  AND hs.start_season = hs.end_season  -- single-season only
+                  AND ss.team IN ({placeholders})  -- exact match; excludes 'NYA/BOS' style
+                ORDER BY hs.end_date DESC
+                LIMIT 1
+            """, [streak_type, current_length, current_start_date] + team_codes).fetchone()
+
+            if team_prior:
+                t_name, t_len, t_season = team_prior
+                current_year = int(current_start_date[:4])
+                team_gap = current_year - t_season
+                mlb_gap = (current_year - mlb_season) if mlb_season is not None else 9999
+                # Fire team phrase if the delta is meaningful OR MLB had no
+                # match and the team gap is substantial on its own
+                if (mlb_season is None and team_gap >= 10) or (team_gap - mlb_gap >= 10):
+                    if t_len == current_length:
+                        phrases.append(
+                            f"matching {t_name}'s {t_len}-game run as a "
+                            f"{franchise_name} in {t_season}"
+                        )
+                    else:
+                        phrases.append(
+                            f"the longest by a {franchise_name} player "
+                            f"since {t_name}'s {t_len} in {t_season}"
+                        )
 
     return phrases
 
@@ -545,8 +600,16 @@ def scan_cross_season_streaks(conn, season, latest_date):
             """, (pid, latest_date)).fetchone()
             streak_start = start_row[0] if start_row and start_row[0] else latest_date
 
+            # Derive player_team for franchise anchor (uses players.team —
+            # current team, sufficient for surfacing recent franchise moves).
+            pt_row = conn.execute(
+                "SELECT team FROM players WHERE player_id = ?", (pid,)
+            ).fetchone()
+            player_team = None
+            if pt_row and pt_row[0]:
+                player_team = pt_row[0].split("/")[0].strip() or None
             historical_context = get_streak_historical_context(
-                conn, streak_type_key, streak, streak_start
+                conn, streak_type_key, streak, streak_start, player_team=player_team
             )
 
             facts.append({

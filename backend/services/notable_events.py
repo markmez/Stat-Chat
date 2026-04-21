@@ -380,17 +380,41 @@ def _player_team_display(conn, player_id, season):
     return team_display(row[0]) if row and row[0] else ""
 
 
+def _player_team_code(conn, player_id, season):
+    """Get raw single-team code for franchise lookups. Multi-team season
+    ('NYA/BOS') returns first code — consistent with 'primary team' heuristic.
+    Returns None if no match."""
+    row = conn.execute(
+        "SELECT team FROM season_batting_stats WHERE player_id = ? AND season = ?",
+        (player_id, season)
+    ).fetchone()
+    if not row:
+        row = conn.execute(
+            "SELECT team FROM season_pitching_stats WHERE player_id = ? AND season = ?",
+            (player_id, season)
+        ).fetchone()
+    if row and row[0]:
+        return row[0].split("/")[0].strip() or None
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Historical comparison engine
 # ---------------------------------------------------------------------------
 
 def _historical_context(conn, streak_len, condition_sql, table="game_batting_logs",
                         exclude_season=None, exclude_player=None,
-                        at_bat_filter="at_bats > 0"):
+                        at_bat_filter="at_bats > 0",
+                        player_team=None):
     """For streaks: find the last time someone had a consecutive-game streak
-    of this length. Returns context string or empty."""
+    of this length. Returns context string or empty.
+
+    Returns MLB-wide "longest since X" when streak >= 20, AND a
+    franchise-specific "longest by a {Team} player since X" when the team
+    match goes 10+ years deeper than the MLB match (or MLB is empty).
+    player_team: current player's team code (for franchise anchor).
+    """
     # Only add "longest since" context for genuinely rare streaks
-    # Short streaks (< 20 games) happen dozens of times per season
     if streak_len < 20:
         return ""
 
@@ -403,43 +427,95 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
         ORDER BY season DESC
     """, (exclude_season,)).fetchall()
 
-    for (szn,) in seasons:
-        games = conn.execute(f"""
-            SELECT player_id, ({condition_sql}) as met
-            FROM {table}
-            WHERE season = ? AND ({at_bat_filter})
-            ORDER BY player_id, date
-        """, (szn,)).fetchall()
-
-        best_pid = None
-        best_run = 0
-        current_pid = None
-        current_run = 0
-        max_run_for_player = 0
-
-        for pid, met in games:
-            if pid != current_pid:
-                if current_pid and current_pid != exclude_player and max_run_for_player > best_run:
-                    best_run = max_run_for_player
-                    best_pid = current_pid
-                current_pid = pid
-                current_run = 0
-                max_run_for_player = 0
-            if met:
-                current_run += 1
-                max_run_for_player = max(max_run_for_player, current_run)
+    def _scan_seasons(team_codes_filter=None):
+        """Yield (season, best_pid, best_run) for the first season found with a
+        qualifying streak. team_codes_filter: list of codes to restrict to, or None for MLB-wide."""
+        for (szn,) in seasons:
+            if team_codes_filter:
+                placeholders = ",".join("?" * len(team_codes_filter))
+                # Scope to players whose season team was exactly one of the
+                # franchise codes (exact match excludes 'NYA/BOS' mid-season trades).
+                games = conn.execute(f"""
+                    SELECT player_id, ({condition_sql}) as met
+                    FROM {table}
+                    WHERE season = ? AND ({at_bat_filter})
+                      AND player_id IN (
+                          SELECT player_id FROM {
+                              "season_batting_stats" if "batting" in table else "season_pitching_stats"
+                          }
+                          WHERE season = ? AND team IN ({placeholders})
+                      )
+                    ORDER BY player_id, date
+                """, [szn, szn] + team_codes_filter).fetchall()
             else:
-                current_run = 0
+                games = conn.execute(f"""
+                    SELECT player_id, ({condition_sql}) as met
+                    FROM {table}
+                    WHERE season = ? AND ({at_bat_filter})
+                    ORDER BY player_id, date
+                """, (szn,)).fetchall()
 
-        if current_pid and current_pid != exclude_player and max_run_for_player > best_run:
-            best_run = max_run_for_player
-            best_pid = current_pid
+            best_pid = None
+            best_run = 0
+            current_pid = None
+            current_run = 0
+            max_run_for_player = 0
+            for pid, met in games:
+                if pid != current_pid:
+                    if current_pid and current_pid != exclude_player and max_run_for_player > best_run:
+                        best_run = max_run_for_player
+                        best_pid = current_pid
+                    current_pid = pid
+                    current_run = 0
+                    max_run_for_player = 0
+                if met:
+                    current_run += 1
+                    max_run_for_player = max(max_run_for_player, current_run)
+                else:
+                    current_run = 0
+            if current_pid and current_pid != exclude_player and max_run_for_player > best_run:
+                best_run = max_run_for_player
+                best_pid = current_pid
+            if best_run >= streak_len:
+                return (szn, best_pid, best_run)
+        return None
 
-        if best_run >= streak_len:
-            name = _player_name(conn, best_pid)
-            return f"The longest since {name} ({best_run} games) in {szn}."
+    # MLB-wide
+    mlb_match = _scan_seasons(None)
+    mlb_phrase = ""
+    mlb_year = None
+    if mlb_match:
+        mlb_year, mlb_pid, mlb_run = mlb_match
+        name = _player_name(conn, mlb_pid)
+        mlb_phrase = f"The longest since {name} ({mlb_run} games) in {mlb_year}."
 
-    return ""
+    # Team
+    team_phrase = ""
+    if player_team:
+        try:
+            from services.franchise import get_franchise_codes, get_franchise_name
+            codes = get_franchise_codes(player_team)
+            franchise_name = get_franchise_name(player_team)
+        except Exception:
+            codes = []
+            franchise_name = None
+        if codes and franchise_name:
+            team_match = _scan_seasons(codes)
+            if team_match:
+                t_year, t_pid, t_run = team_match
+                t_name = _player_name(conn, t_pid)
+                current_year = exclude_season
+                team_gap = current_year - t_year
+                mlb_gap = (current_year - mlb_year) if mlb_year else 9999
+                if (mlb_year is None and team_gap >= 10) or (team_gap - mlb_gap >= 10):
+                    team_phrase = (
+                        f"the longest by a {franchise_name} player "
+                        f"since {t_name}'s {t_run} in {t_year}."
+                    )
+
+    if mlb_phrase and team_phrase:
+        return mlb_phrase.rstrip(".") + " — and " + team_phrase
+    return mlb_phrase or team_phrase
 
 
 def _rarity_last_occurrence(conn, condition_sql, table="game_batting_logs",
@@ -609,10 +685,12 @@ def detect_hitting_streaks(conn, season, latest_date, min_games=8):
         if streak >= min_games:
             name = _player_name(conn, pid)
             team = _player_team_display(conn, pid, season)
+            team_code = _player_team_code(conn, pid, season)
             game_line, _ = _get_game_line(conn, pid, latest_date, season)
             context = _historical_context(
                 conn, streak, "hits > 0",
-                exclude_season=season, exclude_player=pid
+                exclude_season=season, exclude_player=pid,
+                player_team=team_code,
             )
             intro = f"{name} went {game_line}" if game_line else name
             headline = f"{intro}, extending his hitting streak to {streak} straight games"
@@ -667,12 +745,14 @@ def detect_onbase_streaks(conn, season, latest_date, min_games=12):
         if streak >= min_games:
             name = _player_name(conn, pid)
             team = _player_team_display(conn, pid, season)
+            team_code = _player_team_code(conn, pid, season)
             game_line, _ = _get_game_line(conn, pid, latest_date, season)
             context = _historical_context(
                 conn, streak,
                 "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
                 exclude_season=season, exclude_player=pid,
-                at_bat_filter="(at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)"
+                at_bat_filter="(at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)",
+                player_team=team_code,
             )
             intro = f"{name} went {game_line}" if game_line else name
             headline = f"{intro}, extending his on-base streak to {streak} straight games"
@@ -735,10 +815,12 @@ def detect_hr_streaks(conn, season, latest_date, min_games=4):
             """, (pid, season)).fetchone()
             hr_today = today_hr[0] if today_hr else 1
             hr_total = season_hr[0] if season_hr else 0
+            team_code = _player_team_code(conn, pid, season)
             game_line, _ = _get_game_line(conn, pid, latest_date, season)
             context = _historical_context(
                 conn, streak, "home_runs > 0",
-                exclude_season=season, exclude_player=pid
+                exclude_season=season, exclude_player=pid,
+                player_team=team_code,
             )
             # Build intro with HR number
             ordinal = f"his {_ordinal(hr_total)}" if hr_total else "a"
@@ -2371,8 +2453,10 @@ def detect_for_players(db_path, season, player_ids):
                     break
             if streak >= 8:
                 team = _player_team_display(conn, pid, season)
+                team_code = _player_team_code(conn, pid, season)
                 context = _historical_context(conn, streak, "hits > 0",
-                                              exclude_season=season, exclude_player=pid)
+                                              exclude_season=season, exclude_player=pid,
+                                              player_team=team_code)
                 headline = f"{name} has hit safely in {streak} straight games"
                 if context:
                     headline += f", {context.lower()}"
@@ -2402,9 +2486,11 @@ def detect_for_players(db_path, season, player_ids):
                     break
             if ob_streak >= 12:
                 team = _player_team_display(conn, pid, season)
+                team_code = _player_team_code(conn, pid, season)
                 context = _historical_context(
                     conn, ob_streak, "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
-                    exclude_season=season, exclude_player=pid)
+                    exclude_season=season, exclude_player=pid,
+                    player_team=team_code)
                 headline = f"{name} has reached base in {ob_streak} straight games"
                 if context:
                     headline += f", {context.lower()}"
@@ -2430,8 +2516,10 @@ def detect_for_players(db_path, season, player_ids):
                 else:
                     break
             if hr_streak >= 4:
+                team_code = _player_team_code(conn, pid, season)
                 context = _historical_context(conn, hr_streak, "home_runs > 0",
-                                              exclude_season=season, exclude_player=pid)
+                                              exclude_season=season, exclude_player=pid,
+                                              player_team=team_code)
                 headline = f"{name} has homered in {hr_streak} straight games"
                 if context:
                     headline += f", {context.lower()}"
