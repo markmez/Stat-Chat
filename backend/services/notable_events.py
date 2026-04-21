@@ -446,7 +446,9 @@ def _rarity_last_occurrence(conn, condition_sql, table="game_batting_logs",
                             exclude_season=None):
     """For rare single-game events (≤5/yr): find the last time this happened.
     Only returns context if it's been ≥1 full season since last occurrence.
-    Returns string like 'the first since X in Y' or empty."""
+    Returns (season_of_prior_match, "the first since X in Y") or (None, "").
+    Legacy return-just-string callers can extract via _rarity_last_occurrence_str.
+    """
     exclude_season = exclude_season or 0
 
     seasons = conn.execute(f"""
@@ -465,12 +467,103 @@ def _rarity_last_occurrence(conn, condition_sql, table="game_batting_logs",
         """, (szn,)).fetchone()
 
         if row:
-            # Only show "first since" if it's been at least 1 full season
             if szn < exclude_season - 1:
-                return f"the first since {row[0]} in {szn}."
-            return ""  # Happened last season, not notable enough
+                return (szn, f"the first since {row[0]} in {szn}.")
+            return (szn, "")  # Happened last season, not notable enough
 
-    return "the first in recorded history."
+    return (None, "the first in recorded history.")
+
+
+def _rarity_last_occurrence_team(conn, condition_sql, table, team_codes, exclude_season):
+    """Team-scoped rarity-since lookup. Find the last season any player on
+    this franchise (team_codes) did the thing. Returns (season, "— and the
+    first {Franchise} player to do it since X in Y") or (None, "").
+    """
+    if not team_codes:
+        return (None, "")
+    stats_table = "season_batting_stats" if "batting" in table else "season_pitching_stats"
+    placeholders = ",".join("?" * len(team_codes))
+
+    seasons = conn.execute(f"""
+        SELECT DISTINCT season FROM {table}
+        WHERE season < ? ORDER BY season DESC
+    """, (exclude_season,)).fetchall()
+
+    for (szn,) in seasons:
+        params = [szn] + [f"%/{c}/%" for c in team_codes]
+        # Subquery scopes condition_sql to game-log columns only, avoiding
+        # ambiguity with identically-named columns in season_batting_stats.
+        row = conn.execute(f"""
+            SELECT p.name
+            FROM (
+                SELECT g.player_id, g.season FROM {table} g
+                WHERE g.season = ? AND ({condition_sql})
+            ) matches
+            JOIN players p ON p.player_id = matches.player_id
+            JOIN {stats_table} ss ON ss.player_id = matches.player_id AND ss.season = matches.season
+            WHERE ({" OR ".join(["('/' || ss.team || '/') LIKE ?"] * len(team_codes))})
+            LIMIT 1
+        """, params).fetchone()
+        if row:
+            return (szn, row[0])
+    return (None, None)
+
+
+def _rarity_context_combined(conn, condition_sql, table, exclude_season,
+                              player_id, min_team_gap=6):
+    """Combine MLB and team rarity context for a single-game event.
+
+    Returns a trailing-context string to append to the headline.
+
+    - MLB-since is always shown when it meets the 1-season threshold
+    - Team-since is appended only if the team match is at least
+      min_team_gap years older than the MLB match (default 6 years).
+    - If MLB has no history and team has one, team alone is shown.
+    - Purely enrichment: the event firing decision lives upstream and
+      does not use this output."""
+    mlb_season, mlb_str = _rarity_last_occurrence(conn, condition_sql, table, exclude_season)
+
+    # Look up player's current franchise codes
+    team_codes = []
+    try:
+        row = conn.execute("SELECT team FROM players WHERE player_id = ?", (player_id,)).fetchone()
+        if row and row[0]:
+            # Current team could be "X/Y" for recent trades — use first code
+            primary = row[0].split("/")[0].strip()
+            from services.franchise import get_franchise_codes, get_franchise_name
+            team_codes = get_franchise_codes(primary)
+            franchise_name = get_franchise_name(primary)
+    except Exception:
+        franchise_name = None
+
+    team_season, team_name = _rarity_last_occurrence_team(
+        conn, condition_sql, table, team_codes, exclude_season
+    )
+
+    parts = []
+    if mlb_str:
+        parts.append(mlb_str.rstrip("."))
+
+    # Append team context only if it's meaningfully deeper than MLB
+    if team_season is not None and team_name and franchise_name:
+        mlb_gap = (exclude_season - mlb_season) if mlb_season is not None else 9999
+        team_gap = exclude_season - team_season
+        if team_gap - mlb_gap >= min_team_gap:
+            parts.append(f"the first {franchise_name} player to do it since {team_name} in {team_season}")
+
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0] + "."
+    # Combine with " — and "
+    return " — and ".join(parts) + "."
+
+
+def _rarity_last_occurrence_str(conn, condition_sql, table="game_batting_logs",
+                                 exclude_season=None):
+    """Back-compat shim for callers that want just the string."""
+    _, s = _rarity_last_occurrence(conn, condition_sql, table, exclude_season)
+    return s
 
 
 def _is_first_this_season(conn, condition_sql, table="game_batting_logs",
@@ -1133,9 +1226,9 @@ def detect_rarities(conn, season, latest_date):
                 headline = check["headline"](name, r)
 
                 if use_first_since:
-                    context = _rarity_last_occurrence(
+                    context = _rarity_context_combined(
                         conn, check["history_sql"], "game_batting_logs",
-                        exclude_season=season
+                        exclude_season=season, player_id=pid,
                     )
                     if context:
                         headline = headline.rstrip(".") + f" — {context}"
@@ -1247,7 +1340,10 @@ def detect_rarities(conn, season, latest_date):
         if ip_outs >= 27 and h == 0 and key not in seen:
             seen.add(key)
             headline = f"{name} threw a no-hitter over {ip_display} innings, striking out {so}."
-            context = _rarity_last_occurrence(conn, "ip_outs >= 27 AND hits = 0", "game_pitching_logs", exclude_season=season)
+            context = _rarity_context_combined(
+                conn, "ip_outs >= 27 AND hits = 0", "game_pitching_logs",
+                exclude_season=season, player_id=pid,
+            )
             if context:
                 headline = headline.rstrip(".") + f" — {context}"
             events.append({"headline": headline, "detail": "", "category": "Rarity", "game_date": game_date,
@@ -1258,7 +1354,10 @@ def detect_rarities(conn, season, latest_date):
         if ip_outs >= 27 and h == 1 and key not in seen:
             seen.add(key)
             headline = f"{name} threw a 1-hitter over {ip_display} innings, striking out {so}."
-            context = _rarity_last_occurrence(conn, "ip_outs >= 27 AND hits <= 1", "game_pitching_logs", exclude_season=season)
+            context = _rarity_context_combined(
+                conn, "ip_outs >= 27 AND hits <= 1", "game_pitching_logs",
+                exclude_season=season, player_id=pid,
+            )
             if context:
                 headline = headline.rstrip(".") + f" — {context}"
             events.append({"headline": headline, "detail": "", "category": "Rarity", "game_date": game_date,
@@ -1268,7 +1367,10 @@ def detect_rarities(conn, season, latest_date):
         if so >= 15 and (pid, game_date, "15k") not in seen:
             seen.add((pid, game_date, "15k"))
             headline = f"{name} struck out {so} in {ip_display} innings, allowing {h} hits and {er} earned runs."
-            context = _rarity_last_occurrence(conn, f"strikeouts >= {so}", "game_pitching_logs", exclude_season=season)
+            context = _rarity_context_combined(
+                conn, f"strikeouts >= {so}", "game_pitching_logs",
+                exclude_season=season, player_id=pid,
+            )
             if context:
                 headline = headline.rstrip(".") + f" — {context}"
             events.append({"headline": headline, "detail": "", "category": "Rarity", "game_date": game_date,
