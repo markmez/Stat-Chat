@@ -14,8 +14,15 @@ Usage:
 """
 
 import argparse
+import os
 import sqlite3
+import sys
 import time
+
+# Import franchise mapping so records can be consolidated per franchise
+# (Athletics records span PHA/KC1/OAK/ATH codes, etc.)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from services.franchise import FRANCHISE_MAP, FRANCHISE_CANONICAL
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +155,66 @@ def _get_all_single_team_codes(conn):
     return sorted(teams)
 
 
+def _canonical_franchises_from_teams(team_codes):
+    """Given a list of raw team codes, return canonical franchise codes.
+    Deduped — one entry per franchise. Teams without a canonical mapping
+    (defunct pre-1900 clubs, Federal League, Negro League etc.) pass through
+    as-is so their records aren't lost."""
+    seen = set()
+    result = []
+    for tc in team_codes:
+        canon = FRANCHISE_CANONICAL.get(tc, tc)
+        if canon not in seen:
+            seen.add(canon)
+            result.append(canon)
+    return sorted(result)
+
+
+def _franchise_team_list(canon):
+    """Expand a canonical franchise code to the full list of historical codes
+    to include when querying. Single-code franchises return [canon]."""
+    return FRANCHISE_MAP.get(canon, [canon])
+
+
+def _build_team_split_indexes(conn):
+    """Pre-normalize the `team` column (which can be slash-separated like
+    'NYA/BOS' for mid-season trades) into per-row indexed lookups.
+
+    Without this, querying records per franchise requires OR-chained LIKE
+    patterns that can't use indexes. With these temp tables, queries can
+    use indexed equality lookups, ~50-100x faster.
+
+    Creates two temp tables:
+      season_batting_teams (player_id, season, team)
+      season_pitching_teams (player_id, season, team)
+    Both indexed on (team, player_id, season).
+    """
+    print("Pre-normalizing team columns into indexed lookup tables...")
+    for kind, src in [
+        ("season_batting_teams", "season_batting_stats"),
+        ("season_pitching_teams", "season_pitching_stats"),
+    ]:
+        conn.execute(f"DROP TABLE IF EXISTS {kind}")
+        conn.execute(f"""
+            CREATE TEMP TABLE {kind} (
+                player_id TEXT, season INTEGER, team TEXT
+            )
+        """)
+        rows = conn.execute(f"SELECT player_id, season, team FROM {src} WHERE team IS NOT NULL").fetchall()
+        insert_data = []
+        for pid, season, team_str in rows:
+            for t in team_str.split('/'):
+                t = t.strip()
+                if t:
+                    insert_data.append((pid, season, t))
+        conn.executemany(
+            f"INSERT INTO {kind} VALUES (?, ?, ?)",
+            insert_data
+        )
+        conn.execute(f"CREATE INDEX idx_{kind}_team ON {kind}(team, player_id, season)")
+        print(f"  {kind}: {len(insert_data):,} rows indexed")
+
+
 def _player_name(conn, player_id):
     """Look up player name from players table."""
     row = conn.execute("SELECT name FROM players WHERE player_id = ?", (player_id,)).fetchone()
@@ -158,27 +225,36 @@ def _player_name(conn, player_id):
 # Career records (summed across all seasons with that team)
 # ---------------------------------------------------------------------------
 
-def _build_career_records(conn, team_code, stats_config, table_name, target_table):
-    """Build career records for a team from a stats table.
+def _build_career_records(conn, canonical_code, stats_config, table_name, target_table):
+    """Build career records for a franchise. canonical_code is the single
+    code we store under (e.g. "ATH" for the Athletics); we query all
+    historical codes for that franchise (PHA/KC1/OAK/ATH).
 
-    For multi-team seasons (e.g. 'NYA/BOS'), we include the player for EACH
-    team in the slash-separated string. This means their full-season stats count
-    toward every team they played for that year. Acceptable for records purposes.
+    Uses the pre-built season_batting_teams / season_pitching_teams indexed
+    lookup tables for fast franchise filtering. Driving JOIN pattern is much
+    faster than correlated EXISTS subquery.
     """
+    team_codes = _franchise_team_list(canonical_code)
+    teams_lookup = "season_batting_teams" if "batting" in table_name else "season_pitching_teams"
+    placeholders = ",".join("?" * len(team_codes))
+
     count = 0
     for stat_name, agg_expr, _ in stats_config:
         order = "ASC" if stat_name in LOWER_IS_BETTER else "DESC"
 
-        # Match team_code anywhere in the slash-separated team field
+        # DISTINCT on teams_lookup first dedupes against the (rare) case of
+        # a player on multiple franchise codes in same year (not possible
+        # for well-formed franchises, but defensive).
         rows = conn.execute(f"""
             SELECT s.player_id, {agg_expr} as val
-            FROM {table_name} s
-            WHERE ('/' || s.team || '/') LIKE ?
+            FROM (SELECT DISTINCT player_id, season FROM {teams_lookup}
+                  WHERE team IN ({placeholders})) t
+            JOIN {table_name} s ON s.player_id = t.player_id AND s.season = t.season
             GROUP BY s.player_id
             HAVING val IS NOT NULL
             ORDER BY val {order}
             LIMIT {TOP_N}
-        """, (f"%/{team_code}/%",)).fetchall()
+        """, team_codes).fetchall()
 
         for pid, val in rows:
             name = _player_name(conn, pid)
@@ -186,7 +262,7 @@ def _build_career_records(conn, team_code, stats_config, table_name, target_tabl
                 INSERT OR REPLACE INTO {target_table}_new
                 ({'' if target_table == 'mlb_records' else 'team_code, '}stat, record_type, value, player_name, player_id, season)
                 VALUES ({'' if target_table == 'mlb_records' else '?, '}?, 'career', ?, ?, ?, NULL)
-            """, (team_code, stat_name, val, name, pid) if target_table == 'team_records' else
+            """, (canonical_code, stat_name, val, name, pid) if target_table == 'team_records' else
                  (stat_name, val, name, pid))
             count += 1
 
@@ -197,26 +273,30 @@ def _build_career_records(conn, team_code, stats_config, table_name, target_tabl
 # Single-season records
 # ---------------------------------------------------------------------------
 
-def _build_season_records(conn, team_code, stats_config, table_name, target_table):
-    """Build single-season records for a team."""
+def _build_season_records(conn, canonical_code, stats_config, table_name, target_table):
+    """Build single-season records for a franchise (multi-code if relocated)."""
+    team_codes = _franchise_team_list(canonical_code)
+    teams_lookup = "season_batting_teams" if "batting" in table_name else "season_pitching_teams"
+    placeholders = ",".join("?" * len(team_codes))
+
     count = 0
     for stat_name, col_expr, qualifier in stats_config:
         order = "ASC" if stat_name in LOWER_IS_BETTER else "DESC"
         where = f"AND ({qualifier})" if qualifier else ""
 
-        # Get each player's best season only (UNIQUE constraint allows one per player)
         rows = conn.execute(f"""
             SELECT player_id, val, season FROM (
                 SELECT s.player_id, s.{col_expr} as val, s.season,
                     ROW_NUMBER() OVER (PARTITION BY s.player_id ORDER BY s.{col_expr} {order}) as rn
-                FROM {table_name} s
-                WHERE ('/' || s.team || '/') LIKE ?
-                  AND s.{col_expr} IS NOT NULL
+                FROM (SELECT DISTINCT player_id, season FROM {teams_lookup}
+                      WHERE team IN ({placeholders})) t
+                JOIN {table_name} s ON s.player_id = t.player_id AND s.season = t.season
+                WHERE s.{col_expr} IS NOT NULL
                   {where}
             ) WHERE rn = 1
             ORDER BY val {order}
             LIMIT {TOP_N}
-        """, (f"%/{team_code}/%",)).fetchall()
+        """, team_codes).fetchall()
 
         for pid, val, season in rows:
             name = _player_name(conn, pid)
@@ -224,7 +304,7 @@ def _build_season_records(conn, team_code, stats_config, table_name, target_tabl
                 INSERT OR REPLACE INTO {target_table}_new
                 ({'' if target_table == 'mlb_records' else 'team_code, '}stat, record_type, value, player_name, player_id, season)
                 VALUES ({'' if target_table == 'mlb_records' else '?, '}?, 'season', ?, ?, ?, ?)
-            """, (team_code, stat_name, val, name, pid, season) if target_table == 'team_records' else
+            """, (canonical_code, stat_name, val, name, pid, season) if target_table == 'team_records' else
                  (stat_name, val, name, pid, season))
             count += 1
 
@@ -235,47 +315,59 @@ def _build_season_records(conn, team_code, stats_config, table_name, target_tabl
 # Single-game records
 # ---------------------------------------------------------------------------
 
-def _build_game_records(conn, team_code, stats_config, log_table, season_table, target_table):
-    """Build single-game records for a team.
+def _build_game_records(conn, canonical_code, stats_config, log_table, season_table, target_table):
+    """Build single-game records for a franchise.
 
     Game logs don't have a 'team' column — we join through season stats to find
     which team a player was on. We also filter out spring training by requiring
-    date > YYYY-03-25 for each season.
+    date > YYYY-03-25 for each season. canonical_code=None means MLB-wide.
     """
     count = 0
+    # For franchise-scoped: use driving JOIN from the indexed teams lookup
+    # table. For MLB-wide: no filter, just full table aggregate.
+    teams_lookup = "season_batting_teams" if "batting" in season_table else "season_pitching_teams"
+    if canonical_code is not None:
+        team_codes = _franchise_team_list(canonical_code)
+        placeholders = ",".join("?" * len(team_codes))
+        # Driving JOIN pattern: pre-filter game logs to only (player, season)
+        # tuples that were on this franchise. Much faster than EXISTS for
+        # 4.8M-row game_logs.
+        inner_from = f"""
+            (SELECT DISTINCT player_id, season FROM {teams_lookup} WHERE team IN ({placeholders})) t
+            JOIN {log_table} g ON g.player_id = t.player_id AND g.season = t.season
+        """
+        params = tuple(team_codes)
+    else:
+        inner_from = f"{log_table} g"
+        params = ()
     for stat_name, col in stats_config:
         order = "ASC" if stat_name in LOWER_IS_BETTER else "DESC"
 
-        # Join game logs to season stats to get the team. Filter spring training.
-        # For multi-team seasons, include if ANY team matches.
-        if team_code is not None:
-            team_filter = "AND ('/' || ss.team || '/') LIKE ?"
-            params = (f"%/{team_code}/%",)
-        else:
-            team_filter = ""
-            params = ()
-
-        # Use a subquery to get the best game per player, then pick the
-        # actual season from that specific game row.
-        rows = conn.execute(f"""
-            SELECT sub.player_id, sub.val, g2.season
-            FROM (
-                SELECT g.player_id, MAX(g.{col}) as val
-                FROM {log_table} g
-                JOIN {season_table} ss ON g.player_id = ss.player_id AND g.season = ss.season
-                WHERE g.{col} IS NOT NULL
-                  AND g.date > (g.season || '-03-25')
-                  {team_filter}
-                GROUP BY g.player_id
-                HAVING val IS NOT NULL
-                ORDER BY val {order}
-                LIMIT {TOP_N}
-            ) sub
-            JOIN {log_table} g2 ON g2.player_id = sub.player_id AND g2.{col} = sub.val
-              AND g2.date > (g2.season || '-03-25')
-            GROUP BY sub.player_id
-            ORDER BY sub.val {order}
+        # Phase 1: top 5 players by best game (fast aggregate with GROUP BY)
+        top = conn.execute(f"""
+            SELECT g.player_id, MAX(g.{col}) as val
+            FROM {inner_from}
+            WHERE g.{col} IS NOT NULL
+              AND g.date > (g.season || '-03-25')
+            GROUP BY g.player_id
+            HAVING val IS NOT NULL
+            ORDER BY val {order}
+            LIMIT {TOP_N}
         """, params).fetchall()
+
+        # Phase 2: for each top player, look up a season where that max
+        # occurred (separate indexed lookup — much faster than a window
+        # function over the full franchise game-log rowset).
+        rows = []
+        for pid, val in top:
+            season_row = conn.execute(f"""
+                SELECT season FROM {log_table}
+                WHERE player_id = ? AND {col} = ?
+                  AND date > (season || '-03-25')
+                ORDER BY season DESC LIMIT 1
+            """, (pid, val)).fetchone()
+            season = season_row[0] if season_row else None
+            rows.append((pid, val, season))
 
         for pid, val, season in rows:
             name = _player_name(conn, pid)
@@ -284,7 +376,7 @@ def _build_game_records(conn, team_code, stats_config, log_table, season_table, 
                     INSERT OR REPLACE INTO team_records_new
                     (team_code, stat, record_type, value, player_name, player_id, season)
                     VALUES (?, ?, 'game', ?, ?, ?, ?)
-                """, (team_code, stat_name, val, name, pid, season))
+                """, (canonical_code, stat_name, val, name, pid, season))
             else:
                 conn.execute("""
                     INSERT OR REPLACE INTO mlb_records_new
@@ -367,47 +459,53 @@ def build_all(db_path):
 
     create_tables(conn)
 
-    # Get all distinct single-team codes
+    # Pre-build indexed lookup tables for franchise filtering — turns
+    # OR-chained LIKE patterns (full table scans) into indexed lookups.
+    _build_team_split_indexes(conn)
+
+    # Get all distinct team codes, then collapse to canonical franchises
     all_teams = _get_all_single_team_codes(conn)
-    print(f"Found {len(all_teams)} distinct team codes.")
+    canonical_franchises = _canonical_franchises_from_teams(all_teams)
+    print(f"Found {len(all_teams)} raw team codes, "
+          f"{len(canonical_franchises)} canonical franchises.")
 
     total = 0
     start = time.time()
 
-    # --------------- Team records ---------------
-    for i, team in enumerate(all_teams):
+    # --------------- Team records (one entry per franchise) ---------------
+    for i, canon in enumerate(canonical_franchises):
         team_count = 0
 
         # Career batting
         team_count += _build_career_records(
-            conn, team, BATTING_CAREER_STATS, "season_batting_stats", "team_records")
+            conn, canon, BATTING_CAREER_STATS, "season_batting_stats", "team_records")
 
         # Career pitching
         team_count += _build_career_records(
-            conn, team, PITCHING_CAREER_STATS, "season_pitching_stats", "team_records")
+            conn, canon, PITCHING_CAREER_STATS, "season_pitching_stats", "team_records")
 
         # Season batting
         team_count += _build_season_records(
-            conn, team, BATTING_SEASON_STATS, "season_batting_stats", "team_records")
+            conn, canon, BATTING_SEASON_STATS, "season_batting_stats", "team_records")
 
         # Season pitching
         team_count += _build_season_records(
-            conn, team, PITCHING_SEASON_STATS, "season_pitching_stats", "team_records")
+            conn, canon, PITCHING_SEASON_STATS, "season_pitching_stats", "team_records")
 
         # Game batting
         team_count += _build_game_records(
-            conn, team, BATTING_GAME_STATS, "game_batting_logs",
+            conn, canon, BATTING_GAME_STATS, "game_batting_logs",
             "season_batting_stats", "team_records")
 
         # Game pitching
         team_count += _build_game_records(
-            conn, team, PITCHING_GAME_STATS, "game_pitching_logs",
+            conn, canon, PITCHING_GAME_STATS, "game_pitching_logs",
             "season_pitching_stats", "team_records")
 
         total += team_count
-        if (i + 1) % 10 == 0 or i == len(all_teams) - 1:
+        if (i + 1) % 10 == 0 or i == len(canonical_franchises) - 1:
             elapsed = time.time() - start
-            print(f"  [{i+1}/{len(all_teams)}] {team}: {team_count} records "
+            print(f"  [{i+1}/{len(canonical_franchises)}] {canon}: {team_count} records "
                   f"(total: {total}, {elapsed:.1f}s)")
 
     conn.commit()

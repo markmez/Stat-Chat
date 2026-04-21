@@ -20,6 +20,8 @@ import logging
 from datetime import date, datetime
 from typing import Optional
 
+from services.franchise import get_franchise_codes, get_franchise_name
+
 logger = logging.getLogger("statchat.deep_scans")
 
 DB_PATH = "/data/baseball_stats_full.db"
@@ -51,18 +53,21 @@ SCAN_CONFIG = {
         "gate": "HR ≥ 8 through ≤ 30 games, OR HR ≥ 15 through ≤ 50 games",
         "interesting_if": "Nobody with this many HR through this few games in 5+ years",
         "min_years_mlb": 5,
+        "min_years_team": 3,
     },
     "sb_accumulation": {
         "description": "SB accumulation pace through N games",
         "gate": "SB ≥ 10 through ≤ 30 games, OR SB ≥ 20 through ≤ 50 games",
         "interesting_if": "Nobody with this many SB through this few games in 5+ years",
         "min_years_mlb": 5,
+        "min_years_team": 3,
     },
     "power_speed": {
         "description": "HR + SB combo through N games",
         "gate": "HR ≥ 5 AND SB ≥ 5 through ≤ 25 games",
         "interesting_if": "Nobody with both stats this high through same game count in 5+ years",
         "min_years_mlb": 5,
+        "min_years_team": 3,
     },
     "pitching_dominance": {
         "description": "ERA + K rate through first N starts",
@@ -72,6 +77,7 @@ SCAN_CONFIG = {
         "gate_k_per_start": 8,
         "gate_min_starts": 3,
         "min_years_mlb": 5,
+        "min_years_team": 3,
     },
     "cooldown": {
         "description": "After firing, player blocked on that scan type for N games",
@@ -194,7 +200,28 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
         if games >= cfg["gate_min_games"] and ops >= ops_gate and not _check_cooldown(pid, "ops_season"):
             last_match = _find_last_ops_match(conn, pid, season, games, ops)
             ops_display = f"{ops:.3f}"
-            if last_match:
+            team_scan_fired = False
+            # If MLB match isn't rare enough, try team-scoped fallback
+            if last_match and (season - last_match["season"]) < cfg["min_years_mlb"] and team:
+                team_codes = get_franchise_codes(team)
+                last_team = _find_last_ops_match(conn, pid, season, games, ops, team_codes=team_codes)
+                if last_team and (season - last_team["season"]) >= cfg["min_years_team"]:
+                    franchise_name = get_franchise_name(team)
+                    events.append({
+                        "type": "deep_scan",
+                        "scan": "slash_line_season",
+                        "player": pname, "team": team or "",
+                        "detail": (
+                            f"{pname} is posting a {ops_display} OPS "
+                            f"({_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)}) "
+                            f"through {games} games — the last {franchise_name} player to "
+                            f"post an OPS that high through {games} games was "
+                            f"{last_team['name']} in {last_team['season']}."
+                        ),
+                    })
+                    _set_cooldown(pid, "ops_season")
+                    team_scan_fired = True
+            if last_match and not team_scan_fired:
                 years_ago = season - last_match["season"]
                 if years_ago >= cfg["min_years_mlb"]:
                     events.append({
@@ -236,11 +263,31 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                 _set_cooldown(pid, "ops_season")
 
         # === HR ACCUMULATION ===
+        cfg_hr = SCAN_CONFIG["hr_accumulation"]
         if ((hr >= 8 and games <= 30) or (hr >= 15 and games <= 50)) and not _check_cooldown(pid, "hr_acc"):
             last_hr = _find_last_hr_pace(conn, pid, season, games, hr)
-            if last_hr:
+            hr_team_fired = False
+            # Team fallback when MLB isn't rare enough
+            if last_hr and (season - last_hr["season"]) < cfg_hr["min_years_mlb"] and team:
+                team_codes = get_franchise_codes(team)
+                last_team = _find_last_hr_pace(conn, pid, season, games, hr, team_codes=team_codes)
+                if last_team and (season - last_team["season"]) >= cfg_hr["min_years_team"]:
+                    franchise_name = get_franchise_name(team)
+                    events.append({
+                        "type": "deep_scan",
+                        "scan": "hr_accumulation",
+                        "player": pname, "team": team or "",
+                        "detail": (
+                            f"{pname} has {hr} HR through {games} games — "
+                            f"the last {franchise_name} player to hit that many through {games} games was "
+                            f"{last_team['name']} ({last_team['value']} HR) in {last_team['season']}."
+                        ),
+                    })
+                    _set_cooldown(pid, "hr_acc")
+                    hr_team_fired = True
+            if last_hr and not hr_team_fired:
                 years_ago = season - last_hr["season"]
-                if years_ago >= 5:
+                if years_ago >= cfg_hr["min_years_mlb"]:
                     events.append({
                         "type": "deep_scan",
                         "scan": "hr_accumulation",
@@ -251,7 +298,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                             f"{last_hr['name']} ({last_hr['value']} HR) in {last_hr['season']}."
                         ),
                     })
-            elif last_hr is None:
+            elif last_hr is None and not hr_team_fired:
                 events.append({
                     "type": "deep_scan",
                     "scan": "hr_accumulation",
@@ -265,11 +312,30 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                 _set_cooldown(pid, "hr_acc")
 
         # === SB ACCUMULATION ===
+        cfg_sb = SCAN_CONFIG["sb_accumulation"]
         if ((sb >= 10 and games <= 30) or (sb >= 20 and games <= 50)) and not _check_cooldown(pid, "sb_acc"):
             last_sb = _find_last_sb_pace(conn, pid, season, games, sb)
-            if last_sb:
+            sb_team_fired = False
+            if last_sb and (season - last_sb["season"]) < cfg_sb["min_years_mlb"] and team:
+                team_codes = get_franchise_codes(team)
+                last_team = _find_last_sb_pace(conn, pid, season, games, sb, team_codes=team_codes)
+                if last_team and (season - last_team["season"]) >= cfg_sb["min_years_team"]:
+                    franchise_name = get_franchise_name(team)
+                    events.append({
+                        "type": "deep_scan",
+                        "scan": "sb_accumulation",
+                        "player": pname, "team": team or "",
+                        "detail": (
+                            f"{pname} has {sb} SB through {games} games — "
+                            f"the last {franchise_name} player to steal that many through {games} games was "
+                            f"{last_team['name']} ({last_team['value']} SB) in {last_team['season']}."
+                        ),
+                    })
+                    _set_cooldown(pid, "sb_acc")
+                    sb_team_fired = True
+            if last_sb and not sb_team_fired:
                 years_ago = season - last_sb["season"]
-                if years_ago >= 5:
+                if years_ago >= cfg_sb["min_years_mlb"]:
                     events.append({
                         "type": "deep_scan",
                         "scan": "sb_accumulation",
@@ -284,11 +350,30 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                 _set_cooldown(pid, "sb_acc")
 
         # === POWER-SPEED COMBO ===
+        cfg_ps = SCAN_CONFIG["power_speed"]
         if hr >= 5 and sb >= 5 and games <= 25 and not _check_cooldown(pid, "power_speed"):
             last_ps = _find_last_power_speed(conn, pid, season, games, hr, sb)
-            if last_ps:
+            ps_team_fired = False
+            if last_ps and (season - last_ps["season"]) < cfg_ps["min_years_mlb"] and team:
+                team_codes = get_franchise_codes(team)
+                last_team = _find_last_power_speed(conn, pid, season, games, hr, sb, team_codes=team_codes)
+                if last_team and (season - last_team["season"]) >= cfg_ps["min_years_team"]:
+                    franchise_name = get_franchise_name(team)
+                    events.append({
+                        "type": "deep_scan",
+                        "scan": "power_speed",
+                        "player": pname, "team": team or "",
+                        "detail": (
+                            f"{pname} has {hr} HR and {sb} SB through {games} games — "
+                            f"the last {franchise_name} player with that power-speed combo through {games} games was "
+                            f"{last_team['name']} ({last_team['hr']} HR, {last_team['sb']} SB) in {last_team['season']}."
+                        ),
+                    })
+                    _set_cooldown(pid, "power_speed")
+                    ps_team_fired = True
+            if last_ps and not ps_team_fired:
                 years_ago = season - last_ps["season"]
-                if years_ago >= 5:
+                if years_ago >= cfg_ps["min_years_mlb"]:
                     events.append({
                         "type": "deep_scan",
                         "scan": "power_speed",
@@ -335,10 +420,29 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
 
         if starts >= cfg_p["gate_min_starts"] and era <= cfg_p["gate_era"] and k_per_start >= cfg_p["gate_k_per_start"] and not _check_cooldown(pid, "pitch_dom"):
             last_dom = _find_last_pitching_dominance(conn, pid, season, starts, era, total_k)
-            if last_dom:
+            ip_display = f"{total_ip_outs // 3}.{total_ip_outs % 3}"
+            pd_team_fired = False
+            if last_dom and (season - last_dom["season"]) < cfg_p["min_years_mlb"] and team:
+                team_codes = get_franchise_codes(team)
+                last_team = _find_last_pitching_dominance(conn, pid, season, starts, era, total_k, team_codes=team_codes)
+                if last_team and (season - last_team["season"]) >= cfg_p["min_years_team"]:
+                    franchise_name = get_franchise_name(team)
+                    events.append({
+                        "type": "deep_scan",
+                        "scan": "pitching_dominance",
+                        "player": pname, "team": team or "",
+                        "detail": (
+                            f"{pname} has a {era:.2f} ERA with {total_k} K through {starts} starts "
+                            f"({ip_display} IP) — the last {franchise_name} pitcher to do that through "
+                            f"{starts} starts was {last_team['name']} "
+                            f"({last_team['era']:.2f} ERA, {last_team['k']} K) in {last_team['season']}."
+                        ),
+                    })
+                    _set_cooldown(pid, "pitch_dom")
+                    pd_team_fired = True
+            if last_dom and not pd_team_fired:
                 years_ago = season - last_dom["season"]
-                if years_ago >= 5:
-                    ip_display = f"{total_ip_outs // 3}.{total_ip_outs % 3}"
+                if years_ago >= cfg_p["min_years_mlb"]:
                     events.append({
                         "type": "deep_scan",
                         "scan": "pitching_dominance",
@@ -362,15 +466,36 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
 # Historical comparison queries
 # ---------------------------------------------------------------------------
 
-def _find_last_ops_match(conn, exclude_pid, season, games, ops):
+def _team_filter_clause(team_codes, table_alias="numbered", stats_table="season_batting_stats"):
+    """Build an EXISTS filter for team scope. Returns (sql_fragment, params)."""
+    if not team_codes:
+        return "", []
+    like_clauses = " OR ".join(["('/' || ss.team || '/') LIKE ?"] * len(team_codes))
+    sql = f"""
+        AND EXISTS (
+            SELECT 1 FROM {stats_table} ss
+            WHERE ss.player_id = {table_alias}.player_id
+              AND ss.season = {table_alias}.season
+              AND ({like_clauses})
+        )
+    """
+    params = [f"%/{c}/%" for c in team_codes]
+    return sql, params
+
+
+def _find_last_ops_match(conn, exclude_pid, season, games, ops, team_codes=None):
     """Find the most recent player with OPS >= the given value through
     the same number of games (first N games of a season).
 
     Scans one year at a time working backwards to avoid massive window
-    function queries. Stops at first match.
+    function queries. Stops at first match. team_codes: optional list of
+    franchise codes to restrict search to players on that franchise.
     """
-    for check_season in range(season - 1, season - 26, -1):
-        row = conn.execute("""
+    # Longer lookback when team-scoped (franchises span many decades)
+    lookback = 101 if team_codes else 26
+    tf_sql, tf_params = _team_filter_clause(team_codes)
+    for check_season in range(season - 1, season - lookback, -1):
+        row = conn.execute(f"""
             SELECT p.name, sub.season FROM (
                 SELECT player_id, season,
                        CAST(SUM(hits) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) AS REAL) /
@@ -388,6 +513,7 @@ def _find_last_ops_match(conn, exclude_pid, season, games, ops):
                     WHERE g.at_bats > 0 AND g.season = ?
                 ) numbered
                 WHERE gnum <= ?
+                  {tf_sql}
                 GROUP BY player_id, season
                 HAVING SUM(at_bats) >= ?
             ) sub
@@ -395,7 +521,7 @@ def _find_last_ops_match(conn, exclude_pid, season, games, ops):
             WHERE sub.player_id != ?
             AND sub.ops_calc >= ?
             LIMIT 1
-        """, (check_season, games, max(games * 2, 20), exclude_pid, ops)).fetchone()
+        """, (check_season, games, *tf_params, max(games * 2, 20), exclude_pid, ops)).fetchone()
 
         if row:
             return {"name": row[0], "season": row[1]}
@@ -403,11 +529,14 @@ def _find_last_ops_match(conn, exclude_pid, season, games, ops):
     return None
 
 
-def _find_last_hr_pace(conn, exclude_pid, season, games, hr):
+def _find_last_hr_pace(conn, exclude_pid, season, games, hr, team_codes=None):
     """Find last player with >= hr home runs through first N games.
-    Scans one year at a time working backwards."""
-    for check_season in range(season - 1, season - 26, -1):
-        row = conn.execute("""
+    Scans one year at a time working backwards. team_codes: optional
+    franchise codes to restrict to that franchise's history."""
+    lookback = 101 if team_codes else 26
+    tf_sql, tf_params = _team_filter_clause(team_codes)
+    for check_season in range(season - 1, season - lookback, -1):
+        row = conn.execute(f"""
             SELECT p.name, sub.season, sub.total_hr FROM (
                 SELECT player_id, season, SUM(home_runs) as total_hr
                 FROM (
@@ -417,13 +546,14 @@ def _find_last_hr_pace(conn, exclude_pid, season, games, hr):
                     WHERE at_bats > 0 AND season = ?
                 ) numbered
                 WHERE gnum <= ?
+                  {tf_sql}
                 GROUP BY player_id, season
                 HAVING total_hr >= ?
             ) sub
             JOIN players p ON sub.player_id = p.player_id
             WHERE sub.player_id != ?
             LIMIT 1
-        """, (check_season, games, hr, exclude_pid)).fetchone()
+        """, (check_season, games, *tf_params, hr, exclude_pid)).fetchone()
 
         if row:
             return {"name": row[0], "season": row[1], "value": int(row[2])}
@@ -431,11 +561,13 @@ def _find_last_hr_pace(conn, exclude_pid, season, games, hr):
     return None
 
 
-def _find_last_sb_pace(conn, exclude_pid, season, games, sb):
+def _find_last_sb_pace(conn, exclude_pid, season, games, sb, team_codes=None):
     """Find last player with >= sb stolen bases through first N games.
     Scans one year at a time working backwards."""
-    for check_season in range(season - 1, season - 26, -1):
-        row = conn.execute("""
+    lookback = 101 if team_codes else 26
+    tf_sql, tf_params = _team_filter_clause(team_codes)
+    for check_season in range(season - 1, season - lookback, -1):
+        row = conn.execute(f"""
             SELECT p.name, sub.season, sub.total_sb FROM (
                 SELECT player_id, season, SUM(stolen_bases) as total_sb
                 FROM (
@@ -445,13 +577,14 @@ def _find_last_sb_pace(conn, exclude_pid, season, games, sb):
                     WHERE season = ?
                 ) numbered
                 WHERE gnum <= ?
+                  {tf_sql}
                 GROUP BY player_id, season
                 HAVING total_sb >= ?
             ) sub
             JOIN players p ON sub.player_id = p.player_id
             WHERE sub.player_id != ?
             LIMIT 1
-        """, (check_season, games, sb, exclude_pid)).fetchone()
+        """, (check_season, games, *tf_params, sb, exclude_pid)).fetchone()
 
         if row:
             return {"name": row[0], "season": row[1], "value": int(row[2])}
@@ -459,11 +592,13 @@ def _find_last_sb_pace(conn, exclude_pid, season, games, sb):
     return None
 
 
-def _find_last_power_speed(conn, exclude_pid, season, games, hr, sb):
+def _find_last_power_speed(conn, exclude_pid, season, games, hr, sb, team_codes=None):
     """Find last player with >= hr HR AND >= sb SB through first N games.
     Scans one year at a time working backwards."""
-    for check_season in range(season - 1, season - 26, -1):
-        row = conn.execute("""
+    lookback = 101 if team_codes else 26
+    tf_sql, tf_params = _team_filter_clause(team_codes)
+    for check_season in range(season - 1, season - lookback, -1):
+        row = conn.execute(f"""
             SELECT p.name, sub.season, sub.total_hr, sub.total_sb FROM (
                 SELECT player_id, season,
                        SUM(home_runs) as total_hr, SUM(stolen_bases) as total_sb
@@ -474,13 +609,14 @@ def _find_last_power_speed(conn, exclude_pid, season, games, hr, sb):
                     WHERE at_bats > 0 AND season = ?
                 ) numbered
                 WHERE gnum <= ?
+                  {tf_sql}
                 GROUP BY player_id, season
                 HAVING total_hr >= ? AND total_sb >= ?
             ) sub
             JOIN players p ON sub.player_id = p.player_id
             WHERE sub.player_id != ?
             LIMIT 1
-        """, (check_season, games, hr, sb, exclude_pid)).fetchone()
+        """, (check_season, games, *tf_params, hr, sb, exclude_pid)).fetchone()
 
         if row:
             return {"name": row[0], "season": row[1], "hr": int(row[2]), "sb": int(row[3])}
@@ -488,11 +624,13 @@ def _find_last_power_speed(conn, exclude_pid, season, games, hr, sb):
     return None
 
 
-def _find_last_pitching_dominance(conn, exclude_pid, season, starts, era, total_k):
+def _find_last_pitching_dominance(conn, exclude_pid, season, starts, era, total_k, team_codes=None):
     """Find last pitcher with ERA <= this and K >= this through same number of starts.
     Scans one year at a time working backwards."""
-    for check_season in range(season - 1, season - 26, -1):
-        row = conn.execute("""
+    lookback = 101 if team_codes else 26
+    tf_sql, tf_params = _team_filter_clause(team_codes, stats_table="season_pitching_stats")
+    for check_season in range(season - 1, season - lookback, -1):
+        row = conn.execute(f"""
             SELECT p.name, sub.season, sub.era_calc, sub.total_k FROM (
                 SELECT player_id, season,
                        CAST(SUM(earned_runs) AS REAL) * 27 / NULLIF(SUM(ip_outs), 0) as era_calc,
@@ -504,6 +642,7 @@ def _find_last_pitching_dominance(conn, exclude_pid, season, starts, era, total_
                     WHERE is_start = 1 AND season = ?
                 ) numbered
                 WHERE snum <= ?
+                  {tf_sql}
                 GROUP BY player_id, season
                 HAVING SUM(ip_outs) > 0
             ) sub
@@ -511,7 +650,7 @@ def _find_last_pitching_dominance(conn, exclude_pid, season, starts, era, total_
             WHERE sub.player_id != ?
             AND sub.era_calc <= ? AND sub.total_k >= ?
             LIMIT 1
-        """, (check_season, starts, exclude_pid, era, total_k)).fetchone()
+        """, (check_season, starts, *tf_params, exclude_pid, era, total_k)).fetchone()
 
         if row:
             return {"name": row[0], "season": row[1], "era": round(row[2], 2), "k": int(row[3])}
@@ -556,7 +695,27 @@ def _run_pelt_scans(conn, season, target_date, bat_games, cooldowns=None):
                 pass
         if num_games >= 7 and cf_ops >= cfg.get("gate_ops", 1.000) and not _on_cooldown:
             last = _find_last_streak_ops(conn, pid, season, num_games, cf_ops)
-            if last:
+            pelt_team_fired = False
+            if last and (season - last["season"]) < cfg["min_years_mlb"] and team:
+                team_codes = get_franchise_codes(team)
+                last_team = _find_last_streak_ops(conn, pid, season, num_games, cf_ops, team_codes=team_codes)
+                if last_team and (season - last_team["season"]) >= cfg["min_years_team"]:
+                    franchise_name = get_franchise_name(team)
+                    events.append({
+                        "type": "deep_scan",
+                        "scan": "slash_line_pelt",
+                        "player": pname, "team": team or "",
+                        "detail": (
+                            f"{pname} is posting a {cf_ops:.3f} OPS "
+                            f"({_format_avg(cf_avg)}/{_format_avg(cf_obp)}/{_format_avg(cf_slg)}) "
+                            f"over his current {num_games}-game hot streak — "
+                            f"the last {franchise_name} player with a stretch that dominant was "
+                            f"{last_team['name']} in {last_team['season']}."
+                        ),
+                    })
+                    cooldowns[_cd_key] = target_date
+                    pelt_team_fired = True
+            if last and not pelt_team_fired:
                 years_ago = season - last["season"]
                 if years_ago >= cfg["min_years_mlb"]:
                     events.append({
@@ -576,19 +735,33 @@ def _run_pelt_scans(conn, season, target_date, bat_games, cooldowns=None):
     return events
 
 
-def _find_last_streak_ops(conn, exclude_pid, season, window, ops):
+def _find_last_streak_ops(conn, exclude_pid, season, window, ops, team_codes=None):
     """Find last player with a hot streak OPS >= the given value.
-    Uses current_form from prior seasons as proxy for rolling windows."""
-    row = conn.execute("""
+    Uses current_form from prior seasons as proxy for rolling windows.
+    team_codes: optional franchise filter."""
+    tf_sql = ""
+    tf_params = []
+    if team_codes:
+        like_clauses = " OR ".join(["('/' || ss.team || '/') LIKE ?"] * len(team_codes))
+        tf_sql = f"""
+            AND EXISTS (
+                SELECT 1 FROM season_batting_stats ss
+                WHERE ss.player_id = cf.player_id AND ss.season = cf.season
+                  AND ({like_clauses})
+            )
+        """
+        tf_params = [f"%/{c}/%" for c in team_codes]
+    row = conn.execute(f"""
         SELECT p.name, cf.season
         FROM current_form cf
         JOIN players p ON cf.player_id = p.player_id
         WHERE cf.season < ? AND cf.player_id != ?
         AND cf.num_games >= ?
         AND cf.ops >= ?
+        {tf_sql}
         ORDER BY cf.season DESC
         LIMIT 1
-    """, (season, exclude_pid, max(window - 5, 5), ops)).fetchone()
+    """, (season, exclude_pid, max(window - 5, 5), ops, *tf_params)).fetchone()
 
     if row:
         return {"name": row[0], "season": row[1]}
