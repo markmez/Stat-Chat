@@ -1564,9 +1564,19 @@ def template_facts(conn, facts, season, latest_date):
             label = f["label"]
             ctx = "dating back to last season" if f["spans_seasons"] else "this season"
 
-            # Historical ranking context, if the precomputed table is populated
+            # Historical ranking context. First phrase attaches with em-dash;
+            # subsequent phrases become their own sentences (tweet-style punch)
+            # instead of semicolon-chained run-on.
             hist_phrases = f.get("historical_context") or []
-            hist_suffix = (" — " + "; ".join(hist_phrases)) if hist_phrases else ""
+            if hist_phrases:
+                first, *rest = hist_phrases
+                rest_sentences = [(p[0].upper() + p[1:]) for p in rest]
+                if rest_sentences:
+                    hist_suffix = " — " + first + ". " + ". ".join(rest_sentences)
+                else:
+                    hist_suffix = " — " + first
+            else:
+                hist_suffix = ""
 
             if game_line:
                 headline = f"{player} went {game_line}, extending the longest active {label} in MLB to {streak} games, {ctx}{hist_suffix}."
