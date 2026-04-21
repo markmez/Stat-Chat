@@ -558,36 +558,60 @@ enum PlayerCardService {
             return nil
         }
 
-        // Partial-response detection: if the player has current-season batting activity
-        // but splits or game logs for that year are missing, the card will render as
-        // "career only" — the failure mode a user just hit. Log it to the dashboard so
-        // we can tell transient hiccups from a real bug.
+        // Partial-response detection. Decoded the player card; now check whether
+        // the per-season splits / game logs that should be there for an active
+        // player actually arrived. When they don't, the iOS card silently renders
+        // as "career only" — the failure mode the user actually sees. Log to the
+        // dashboard so we can tell transient hiccups from real bugs.
+        //
+        // Two side-by-side checks because batter and pitcher cards use different
+        // shape fields. A pitcher having an empty batting `game_logs` is not a
+        // partial — it's the expected state. A pitcher having current-year
+        // `pitching_seasons` with G > 0 but empty `pitching_game_logs` IS a
+        // partial. Same for batters with the batting fields.
         let currentYear = Calendar.current.component(.year, from: Date())
-        if let currentSeason = data.batting_seasons.first(where: { $0.year == currentYear }),
-           currentSeason.G > 0 {
-            var missing: [String] = []
-            let hasSplits = (data.season_splits ?? []).contains(where: { $0.year == currentYear })
-            if !hasSplits { missing.append("season_splits") }
-            if (data.game_logs ?? []).isEmpty { missing.append("game_logs") }
-            if !missing.isEmpty && !deviceId.isEmpty {
-                let capturedName = name
-                let capturedMissing = missing
-                let capturedDevice = deviceId
-                let capturedRid = data.request_id ?? ""
-                Task.detached {
-                    var ctx: [String: Any] = [
-                        "player": capturedName,
-                        "missing": capturedMissing,
-                    ]
-                    if !capturedRid.isEmpty {
-                        ctx["request_id"] = capturedRid
-                    }
-                    await backendService.logClientEvent(
-                        eventType: "partial_player_card",
-                        context: ctx,
-                        deviceId: capturedDevice
-                    )
+        var missing: [String] = []
+
+        // Batter check — only when the player is primarily a batter.
+        if !data.is_pitcher {
+            if let curBat = data.batting_seasons.first(where: { $0.year == currentYear }),
+               curBat.G > 0 {
+                let hasSplits = (data.season_splits ?? []).contains(where: { $0.year == currentYear })
+                if !hasSplits { missing.append("season_splits") }
+                if (data.game_logs ?? []).isEmpty { missing.append("game_logs") }
+            }
+        }
+
+        // Pitcher check — fires for pitchers AND two-way players.
+        if data.is_pitcher || data.is_two_way {
+            if let curPit = data.pitching_seasons.first(where: { $0.year == currentYear }),
+               curPit.G > 0 {
+                let hasPitSplits = (data.pitching_season_splits ?? []).contains(where: { $0.year == currentYear })
+                if !hasPitSplits { missing.append("pitching_season_splits") }
+                if (data.pitching_game_logs ?? []).isEmpty { missing.append("pitching_game_logs") }
+            }
+        }
+
+        if !missing.isEmpty && !deviceId.isEmpty {
+            let capturedName = name
+            let capturedMissing = missing
+            let capturedDevice = deviceId
+            let capturedRid = data.request_id ?? ""
+            let capturedRole = data.is_pitcher ? "pitcher" : (data.is_two_way ? "two_way" : "batter")
+            Task.detached {
+                var ctx: [String: Any] = [
+                    "player": capturedName,
+                    "missing": capturedMissing,
+                    "role": capturedRole,
+                ]
+                if !capturedRid.isEmpty {
+                    ctx["request_id"] = capturedRid
                 }
+                await backendService.logClientEvent(
+                    eventType: "partial_player_card",
+                    context: ctx,
+                    deviceId: capturedDevice
+                )
             }
         }
 

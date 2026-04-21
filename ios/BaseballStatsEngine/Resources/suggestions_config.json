@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "algorithm": {
     "impressionThreshold": 6,
     "poolSize": 12,
@@ -33,6 +33,12 @@
       "text": "How did Juan Soto do last year?",
       "weight": 1.0,
       "inSeasonText": "How is Juan Soto doing this season?"
+    },
+    {
+      "id": "d92",
+      "text": "Best hitter with 2 strikes last season",
+      "weight": 1.0,
+      "inSeasonText": "Best hitter with 2 strikes this season"
     },
     {
       "id": "d6",
@@ -325,22 +331,22 @@
     {
       "id": "d57",
       "text": "Most RBIs in a single game",
-      "weight": 0.7,
+      "weight": 0.7
     },
     {
       "id": "d58",
       "text": "Most career grand slams",
-      "weight": 0.7,
+      "weight": 0.7
     },
     {
       "id": "d59",
       "text": "Perfect games since 2010",
-      "weight": 0.7,
+      "weight": 0.7
     },
     {
       "id": "d60",
       "text": "Most K in a single season",
-      "weight": 0.7,
+      "weight": 0.7
     },
     {
       "id": "d61",

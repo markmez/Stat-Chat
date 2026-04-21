@@ -21,8 +21,16 @@ fi
 
 SIZE_BEFORE=$(du -h "$DB" | cut -f1)
 
+# Stop the server to get exclusive DB access for VACUUM
+sudo systemctl stop statchat
+sleep 2
+
 sqlite3 "$DB" "VACUUM;"
 RC=$?
+
+# Restart the server
+sudo systemctl start statchat
+sleep 2
 
 SIZE_AFTER=$(du -h "$DB" | cut -f1)
 
