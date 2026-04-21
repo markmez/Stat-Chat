@@ -4572,3 +4572,99 @@ function fmt(n) {{ return n != null ? Number(n).toLocaleString() : '--'; }}
 </html>"""
 
     return HTMLResponse(content=html)
+
+
+@router.get("/on-this-date-sandbox", response_class=HTMLResponse)
+async def on_this_date_sandbox(
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Show every On This Date event that would fire on each calendar day
+    of the current year. One long scrollable list grouped by month so we
+    can scan the whole feed and decide where to tighten/loosen rules.
+    """
+    verify_admin(authorization, key)
+
+    from services.notable_events import detect_on_this_date
+    from datetime import date as _date, timedelta as _timedelta
+
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    season = _date.today().year
+
+    by_month = {m: [] for m in range(1, 13)}
+    total_events = 0
+    days_with_events = 0
+    try:
+        d = _date(season, 1, 1)
+        end = _date(season, 12, 31)
+        while d <= end:
+            iso = d.isoformat()
+            events = detect_on_this_date(conn, season, iso, target_date=iso)
+            if events:
+                days_with_events += 1
+                total_events += len(events)
+                by_month[d.month].append({
+                    "date": iso,
+                    "month_day": d.strftime("%B %-d"),
+                    "events": events,
+                })
+            d += _timedelta(days=1)
+    finally:
+        conn.close()
+
+    months = ["January", "February", "March", "April", "May", "June",
+              "July", "August", "September", "October", "November", "December"]
+
+    sections = []
+    for m in range(1, 13):
+        days = by_month[m]
+        if not days:
+            sections.append(f'<h2 id="m{m}">{months[m-1]}</h2>'
+                            f'<p style="color:#999;">No events.</p>')
+            continue
+        rows = []
+        for entry in days:
+            event_lines = "".join(
+                f'<li>{e["headline"]}</li>' for e in entry["events"])
+            n = len(entry['events'])
+            rows.append(
+                f'<div class="day"><div class="day-header">'
+                f'{entry["month_day"]} <span class="count">'
+                f'({n} event{"s" if n != 1 else ""})</span></div>'
+                f'<ul>{event_lines}</ul></div>')
+        sections.append(f'<h2 id="m{m}">{months[m-1]}</h2>' + "\n".join(rows))
+
+    nav_links = " ".join(f'<a href="#m{m}">{months[m-1][:3]}</a>'
+                        for m in range(1, 13))
+
+    total_days = (_date(season, 12, 31) - _date(season, 1, 1)).days + 1
+
+    html = f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>On This Date Sandbox</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         max-width: 1100px; margin: 24px auto; padding: 0 20px; color: #333; }}
+  h1 {{ color: #1A40B3; }}
+  h2 {{ margin-top: 36px; padding-bottom: 6px; border-bottom: 2px solid #1A40B3; color: #1A40B3; }}
+  .summary {{ background: linear-gradient(135deg, #1A40B3, #73B3FF); color: white;
+              padding: 16px 20px; border-radius: 8px; margin-bottom: 20px; }}
+  .day {{ margin: 14px 0; }}
+  .day-header {{ font-weight: 600; color: #555; margin-bottom: 4px; }}
+  .count {{ color: #999; font-weight: normal; font-size: 0.9em; }}
+  ul {{ margin: 0; padding-left: 20px; }}
+  li {{ margin: 4px 0; line-height: 1.4; }}
+  .nav {{ position: sticky; top: 0; background: white; padding: 8px 0; border-bottom: 1px solid #eee; margin-bottom: 16px; z-index: 10; }}
+  .nav a {{ margin-right: 12px; color: #1A40B3; text-decoration: none; font-size: 0.9em; }}
+</style>
+</head><body>
+<h1>On This Date — Annual Sandbox</h1>
+<div class="summary">
+  <div><strong>{total_events}</strong> total events would fire across <strong>{days_with_events}</strong> of {total_days} days in {season}.</div>
+  <div style="margin-top:6px;font-size:0.92em;opacity:0.9;">No-hitters, 4+ HR games, 18+ K games, 10+ RBI games, iconic career-threshold crossings (auto-ranked), and hand-curated manual moments. No artificial caps.</div>
+</div>
+<div class="nav">{nav_links}</div>
+{''.join(sections)}
+</body></html>"""
+    return HTMLResponse(content=html)

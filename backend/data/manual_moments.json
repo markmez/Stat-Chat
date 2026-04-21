@@ -1,0 +1,110 @@
+[
+  {
+    "date": "1947-04-15",
+    "headline": "On this date in 1947, Jackie Robinson made his MLB debut with the Brooklyn Dodgers, breaking baseball's color barrier.",
+    "player_names": ["Jackie Robinson"],
+    "team_names": ["Brooklyn Dodgers"]
+  },
+  {
+    "date": "1935-05-24",
+    "headline": "On this date in 1935, the Reds beat the Phillies 2-1 at Crosley Field in MLB's first night game — President Roosevelt flipped the switch from the White House.",
+    "player_names": [],
+    "team_names": ["Cincinnati Reds", "Philadelphia Phillies"]
+  },
+  {
+    "date": "1933-07-06",
+    "headline": "On this date in 1933, MLB held its first All-Star Game at Comiskey Park; the AL beat the NL 4-2 and Babe Ruth hit the first All-Star home run.",
+    "player_names": ["Babe Ruth"],
+    "team_names": []
+  },
+  {
+    "date": "1974-04-08",
+    "headline": "On this date in 1974, Hank Aaron hit his 715th career home run off Al Downing, passing Babe Ruth for the all-time record.",
+    "player_names": ["Hank Aaron", "Al Downing"],
+    "team_names": ["Atlanta Braves", "Los Angeles Dodgers"]
+  },
+  {
+    "date": "1961-10-01",
+    "headline": "On this date in 1961, Roger Maris hit his 61st home run off Tracy Stallard, breaking Babe Ruth's single-season record.",
+    "player_names": ["Roger Maris", "Tracy Stallard"],
+    "team_names": ["New York Yankees", "Boston Red Sox"]
+  },
+  {
+    "date": "1998-09-08",
+    "headline": "On this date in 1998, Mark McGwire hit his 62nd home run off Steve Trachsel, breaking Roger Maris's 37-year-old single-season record.",
+    "player_names": ["Mark McGwire", "Steve Trachsel"],
+    "team_names": ["St. Louis Cardinals", "Chicago Cubs"]
+  },
+  {
+    "date": "1939-05-02",
+    "headline": "On this date in 1939, Lou Gehrig pulled himself from the Yankees lineup, ending his consecutive games streak at 2,130.",
+    "player_names": ["Lou Gehrig"],
+    "team_names": ["New York Yankees"]
+  },
+  {
+    "date": "1995-09-06",
+    "headline": "On this date in 1995, Cal Ripken Jr. played in his 2,131st consecutive game, breaking Lou Gehrig's 56-year-old record.",
+    "player_names": ["Cal Ripken Jr."],
+    "team_names": ["Baltimore Orioles"]
+  },
+  {
+    "date": "1970-04-22",
+    "headline": "On this date in 1970, Tom Seaver struck out 19 Padres including the last 10 batters in a row — a consecutive-strikeout record that still stands.",
+    "player_names": ["Tom Seaver"],
+    "team_names": ["New York Mets", "San Diego Padres"]
+  },
+  {
+    "date": "1998-05-06",
+    "headline": "On this date in 1998, rookie Kerry Wood struck out 20 Astros in his 5th career start — a one-hit, no-walk shutout that tied Roger Clemens's nine-inning record.",
+    "player_names": ["Kerry Wood"],
+    "team_names": ["Chicago Cubs", "Houston Astros"]
+  },
+  {
+    "date": "1956-10-08",
+    "headline": "On this date in 1956, Don Larsen threw the only perfect game in World Series history, retiring all 27 Dodgers in Game 5.",
+    "player_names": ["Don Larsen"],
+    "team_names": ["New York Yankees", "Brooklyn Dodgers"]
+  },
+  {
+    "date": "1993-04-13",
+    "headline": "On this date in 1993, Lee Smith recorded his 358th career save, passing Jeff Reardon to become MLB's all-time saves leader.",
+    "player_names": ["Lee Smith", "Jeff Reardon"],
+    "team_names": ["St. Louis Cardinals"]
+  },
+  {
+    "date": "2006-09-24",
+    "headline": "On this date in 2006, Trevor Hoffman recorded his 479th career save against the Pirates, passing Lee Smith to become MLB's all-time saves leader.",
+    "player_names": ["Trevor Hoffman", "Lee Smith"],
+    "team_names": ["San Diego Padres", "Pittsburgh Pirates"]
+  },
+  {
+    "date": "2011-09-19",
+    "headline": "On this date in 2011, Mariano Rivera recorded his 602nd career save against the Twins, passing Trevor Hoffman to become MLB's all-time saves leader.",
+    "player_names": ["Mariano Rivera", "Trevor Hoffman"],
+    "team_names": ["New York Yankees", "Minnesota Twins"]
+  },
+  {
+    "date": "2007-08-07",
+    "headline": "On this date in 2007, Barry Bonds hit his 756th career home run off Mike Bacsik, passing Hank Aaron to become MLB's all-time home run leader.",
+    "player_names": ["Barry Bonds", "Hank Aaron", "Mike Bacsik"],
+    "team_names": ["San Francisco Giants", "Washington Nationals"]
+  },
+  {
+    "date": "1985-09-11",
+    "headline": "On this date in 1985, Pete Rose singled off Eric Show for his 4,192nd career hit, passing Ty Cobb to become MLB's all-time hits leader.",
+    "player_names": ["Pete Rose", "Ty Cobb", "Eric Show"],
+    "team_names": ["Cincinnati Reds", "San Diego Padres"]
+  },
+  {
+    "date": "1991-05-01",
+    "headline": "On this date in 1991, Rickey Henderson stole his 939th career base, passing Lou Brock to become MLB's all-time stolen base leader.",
+    "player_names": ["Rickey Henderson", "Lou Brock"],
+    "team_names": ["Oakland Athletics"]
+  },
+  {
+    "date": "2022-10-04",
+    "headline": "On this date in 2022, Aaron Judge hit his 62nd home run of the season, breaking Roger Maris's 61-year-old American League single-season home run record.",
+    "player_names": ["Aaron Judge", "Roger Maris"],
+    "team_names": ["New York Yankees", "Texas Rangers"]
+  }
+]

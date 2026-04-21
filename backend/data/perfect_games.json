@@ -1,0 +1,23 @@
+[
+  {"date": "1904-05-05", "player": "Cy Young", "opponent": "Philadelphia Athletics"},
+  {"date": "1908-10-02", "player": "Addie Joss", "opponent": "Chicago White Sox"},
+  {"date": "1922-04-30", "player": "Charlie Robertson", "opponent": "Detroit Tigers"},
+  {"date": "1964-06-21", "player": "Jim Bunning", "opponent": "New York Mets"},
+  {"date": "1965-09-09", "player": "Sandy Koufax", "opponent": "Chicago Cubs"},
+  {"date": "1968-05-08", "player": "Catfish Hunter", "opponent": "Minnesota Twins"},
+  {"date": "1981-05-15", "player": "Len Barker", "opponent": "Toronto Blue Jays"},
+  {"date": "1984-09-30", "player": "Mike Witt", "opponent": "Texas Rangers"},
+  {"date": "1988-09-16", "player": "Tom Browning", "opponent": "Los Angeles Dodgers"},
+  {"date": "1991-07-28", "player": "Dennis Martinez", "opponent": "Los Angeles Dodgers"},
+  {"date": "1994-07-28", "player": "Kenny Rogers", "opponent": "California Angels"},
+  {"date": "1998-05-17", "player": "David Wells", "opponent": "Minnesota Twins"},
+  {"date": "1999-07-18", "player": "David Cone", "opponent": "Montreal Expos"},
+  {"date": "2004-05-18", "player": "Randy Johnson", "opponent": "Atlanta Braves"},
+  {"date": "2009-07-23", "player": "Mark Buehrle", "opponent": "Tampa Bay Rays"},
+  {"date": "2010-05-09", "player": "Dallas Braden", "opponent": "Tampa Bay Rays"},
+  {"date": "2010-05-29", "player": "Roy Halladay", "opponent": "Florida Marlins"},
+  {"date": "2012-04-21", "player": "Philip Humber", "opponent": "Seattle Mariners"},
+  {"date": "2012-06-13", "player": "Matt Cain", "opponent": "Houston Astros"},
+  {"date": "2012-08-15", "player": "Felix Hernandez", "opponent": "Tampa Bay Rays"},
+  {"date": "2023-06-28", "player": "Domingo German", "opponent": "Oakland Athletics"}
+]

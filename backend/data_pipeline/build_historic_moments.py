@@ -21,12 +21,20 @@ _BATTING_THRESHOLDS = {
     "home_runs": [500, 600, 700],
     "hits":      [3000],
     "rbi":       [2000, 2500, 3000],
+    "runs":      [2000],
     "stolen_bases": [500, 600],
 }
 _PITCHING_THRESHOLDS = {
     "strikeouts": [3000, 3500, 4000],
     "wins":       [300, 350],
     "saves":      [400, 500],
+}
+
+# In-season milestones (single-season thresholds — stat key stored as
+# "season_<stat>" so they can be ranked and rendered distinctly from career
+# crossings).
+_SEASON_BATTING_THRESHOLDS = {
+    "home_runs": [60, 70],
 }
 
 _PITCHING_GAME_COL = {"wins": "win", "saves": "save", "strikeouts": "strikeouts"}
@@ -101,9 +109,17 @@ def _pitching_context(stat, threshold):
 def _batting_context(stat, threshold):
     return f"hit his {_format_num(threshold)}th career {_label(stat)}" if stat == "home_runs" \
         else (f"recorded his {_format_num(threshold)}th career {_label(stat)}" if stat == "hits"
-              else f"drove in his {_format_num(threshold)}th career run" if stat == "rbi"
+              else f"recorded his {_format_num(threshold)}th career RBI" if stat == "rbi"
+              else f"scored his {_format_num(threshold)}th career run" if stat == "runs"
               else f"stole his {_format_num(threshold)}th career base" if stat == "stolen_bases"
               else f"reached {_format_num(threshold)} career {_label(stat)}")
+
+
+def _season_batting_context(stat, threshold):
+    """Context phrase for in-season milestones (e.g. 60th HR of the season)."""
+    if stat == "home_runs":
+        return f"hit his {threshold}th home run of the season"
+    return f"reached {threshold} {_label(stat)} on the season"
 
 
 def _get_mlb_players_with_career_total(conn, stat, threshold, is_pitching=False):
@@ -253,6 +269,40 @@ def build(db_path):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (pid, info["name"], stat, threshold, date, crossing_season, context, is_exact))
             total_inserted += 1
+
+    # Single-season crossings (60+ HR in a season, etc.) — stored with
+    # stat key "season_<stat>" so they're ranked and rendered distinctly.
+    placeholders = ",".join("?" * len(_NEGRO_LEAGUE_TEAMS))
+    for stat, thresholds in _SEASON_BATTING_THRESHOLDS.items():
+        for threshold in thresholds:
+            # Find each (player, season) whose season total reached threshold
+            seasons_rows = conn.execute(f"""
+                SELECT s.player_id, COALESCE(p.name, s.player_id) AS name,
+                       s.season, SUM(s.{stat}) AS season_total
+                FROM season_batting_stats s
+                LEFT JOIN players p ON p.player_id = s.player_id
+                WHERE s.team NOT IN ({placeholders}) AND s.{stat} IS NOT NULL
+                GROUP BY s.player_id, s.season
+                HAVING season_total >= ?
+                ORDER BY s.season, s.player_id
+            """, list(_NEGRO_LEAGUE_TEAMS) + [threshold]).fetchall()
+            print(f"  season {stat} >= {threshold}: {len(seasons_rows)} qualifying seasons")
+            for pid, name, season, _season_total in seasons_rows:
+                # Within that season, find the in-season game where cumulative
+                # reached the threshold — reuse _find_crossing_game with
+                # prior_cumul=0 (in-season, not career).
+                date, _ = _find_crossing_game(conn, pid, stat, 0, threshold,
+                                              season, False)
+                is_exact = 1 if date else 0
+                if date is None:
+                    date = f"{season}-09-01"  # late-season fallback
+                context = _season_batting_context(stat, threshold)
+                conn.execute("""
+                    INSERT INTO historic_moments
+                        (player_id, player_name, stat, threshold, date, season, context, is_exact)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (pid, name, f"season_{stat}", threshold, date, season, context, is_exact))
+                total_inserted += 1
 
     conn.commit()
     elapsed = (datetime.now() - start).total_seconds()

@@ -23,6 +23,7 @@ DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
 
 # Retrosheet team code → display name
 RETRO_TO_DISPLAY = {
+    # Current franchises
     "NYA": "Yankees", "NYN": "Mets", "LAN": "Dodgers", "ANA": "Angels",
     "CHN": "Cubs", "CHA": "White Sox", "SFN": "Giants", "SDN": "Padres",
     "SLN": "Cardinals", "KCA": "Royals", "TBA": "Rays", "WAS": "Nationals",
@@ -31,7 +32,72 @@ RETRO_TO_DISPLAY = {
     "CLE": "Guardians", "SEA": "Mariners", "MIL": "Brewers", "CIN": "Reds",
     "PIT": "Pirates", "DET": "Tigers", "ARI": "Diamondbacks", "COL": "Rockies",
     "MIA": "Marlins", "OAK": "Athletics", "ATH": "Athletics",
+    # Historic franchises / prior team codes
+    "BRO": "Brooklyn Dodgers", "BSN": "Boston Braves", "PHA": "Philadelphia Athletics",
+    "SLA": "St. Louis Browns", "NY1": "New York Giants", "WS1": "Washington Senators",
+    "WS2": "Washington Senators", "KC1": "Kansas City Athletics",
+    "MLN": "Milwaukee Braves", "LAA": "LA Angels", "CAL": "California Angels",
+    "MON": "Montreal Expos", "FLO": "Florida Marlins",
 }
+
+
+_MANUAL_MOMENTS_CACHE = None
+_MANUAL_MOMENTS_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                    "data", "manual_moments.json")
+
+_PERFECT_GAMES_CACHE = None
+_PERFECT_GAMES_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                   "data", "perfect_games.json")
+# MLB all-time perfect game count (21 modern regular season + Larsen WS + 2 pre-1900)
+_TOTAL_PERFECT_GAMES_MLB = 24
+
+
+# Negro League team codes — mirrors list in build_historic_moments.py. Used
+# to filter On This Date entries so obscure Negro League no-hitters don't
+# surface with cryptic team codes like "MEM"/"BIR". Drop for now; revisit
+# when we have proper team display names for these codes.
+_NEGRO_LEAGUE_TEAMS = frozenset({
+    "BIR", "CAG", "KCM", "HOM", "MEM", "PH5", "NY5", "NY6", "NW1", "NW2",
+    "BLG", "BLS", "CVB", "PTC", "IN6", "IN7", "IN9", "JAX", "SSN", "SSA",
+    "ATN", "CIA", "SNO", "CV9", "WEG", "HIL", "CI1", "CI2", "BRN", "DT1",
+    "DT2", "NSH", "HB1", "LOS", "PBG", "TOL", "BAC", "BCR", "CHS", "CLE2",
+    "HAR", "IND", "LOU", "NEW", "NYB", "NYC", "PHS", "PIT2", "STL2", "WIL",
+    # Additional Negro League team codes surfaced in On This Date sandbox
+    # (all 1921-1949 with small game counts — verified not MLB franchises):
+    "CB1", "CG1", "CNN", "IN4", "SLG", "ML4", "BRG", "CUW", "HAE", "CUE",
+    "DAY", "NYL", "CV6", "LS4", "WSW", "CUS", "BFA", "WBS", "IN8", "CCB",
+    "HSL", "TLC", "HOE", "LCB",
+})
+
+
+def _load_manual_moments():
+    """Hand-curated iconic moments (Jackie Robinson debut, Aaron 715, etc.).
+    Loaded once, cached for module lifetime. Returns [] on any error.
+    """
+    global _MANUAL_MOMENTS_CACHE
+    if _MANUAL_MOMENTS_CACHE is not None:
+        return _MANUAL_MOMENTS_CACHE
+    try:
+        with open(_MANUAL_MOMENTS_PATH) as f:
+            _MANUAL_MOMENTS_CACHE = json.load(f)
+    except Exception as e:
+        print(f"  Manual moments load failed (non-fatal): {e}")
+        _MANUAL_MOMENTS_CACHE = []
+    return _MANUAL_MOMENTS_CACHE
+
+
+def _load_perfect_games():
+    """Hand-curated list of MLB perfect games. Return list of {date, player, opponent}."""
+    global _PERFECT_GAMES_CACHE
+    if _PERFECT_GAMES_CACHE is not None:
+        return _PERFECT_GAMES_CACHE
+    try:
+        with open(_PERFECT_GAMES_PATH) as f:
+            _PERFECT_GAMES_CACHE = json.load(f)
+    except Exception as e:
+        print(f"  Perfect games load failed (non-fatal): {e}")
+        _PERFECT_GAMES_CACHE = []
+    return _PERFECT_GAMES_CACHE
 
 
 def team_display(retro_code):
@@ -244,6 +310,39 @@ def _ordinal(n):
     if 11 <= n % 100 <= 13:
         return f"{n}th"
     return f"{n}{['th','st','nd','rd','th','th','th','th','th','th'][n % 10]}"
+
+
+def _rank_phrase(rank, total, stat, threshold):
+    """Build the 'Nth player at the time to reach X' clause.
+
+    rank: 1-indexed order this player crossed the threshold
+    total: total players ever to cross it (used for "now N total" tail)
+    stat: stat key used to pick a specific noun ("RBI mark" vs "milestone")
+    """
+    if not rank or rank <= 0:
+        return ""
+    # Noun for the milestone — makes "2,000th career run" disambiguation clear.
+    mark = {
+        "rbi": f"the {threshold:,} RBI mark",
+        "home_runs": f"the {threshold:,} HR mark",
+        "hits": f"the {threshold:,} hit mark",
+        "runs": f"the {threshold:,} runs scored mark",
+        "stolen_bases": f"the {threshold:,} stolen base mark",
+        "strikeouts": f"the {threshold:,} strikeout mark",
+        "wins": f"the {threshold:,} win mark",
+        "saves": f"the {threshold:,} save mark",
+        "season_home_runs": f"a {threshold}-HR season",
+    }.get(stat, "the milestone")
+
+    if rank == 1:
+        if total and total > 1:
+            return f"the first player to reach {mark} (now {total} total)"
+        return f"the first player to reach {mark}"
+    if total and rank == total:
+        return f"the {_ordinal(rank)} and most recent player to reach {mark}"
+    if total and total > rank:
+        return f"the {_ordinal(rank)} player at the time to reach {mark} (now {total} total)"
+    return f"the {_ordinal(rank)} player to reach {mark}"
 
 
 def _player_name(conn, player_id):
@@ -1748,30 +1847,71 @@ def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
 # On This Date — historic moments from today's date in past years
 # ---------------------------------------------------------------------------
 
-def detect_on_this_date(conn, season, latest_date):
-    """Find historic moments from today's month-day in past seasons.
+def detect_on_this_date(conn, season, latest_date, target_date=None):
+    """Find historic moments from a given date's month-day in past seasons.
 
     Very high threshold — no-hitters, 4+ HR games, 20+ K, etc.
-    Returns 1-2 items max to avoid competing with current events.
+    target_date defaults to date.today(); pass an ISO YYYY-MM-DD to inspect
+    other days (used by the on-this-date sandbox).
     """
     events = []
 
     try:
-        today = date.today().isoformat()  # Use today's actual date, not latest game date
+        today = (target_date or date.today().isoformat())
         month_day = today[5:]  # "04-09" from "2026-04-09"
     except:
         return events
 
-    # No-hitters on this date
-    nohitters = conn.execute("""
-        SELECT p.name, g.season, g.innings_pitched, g.strikeouts, g.walks, g.opponent
+    nl_placeholders = ",".join("?" * len(_NEGRO_LEAGUE_TEAMS))
+    nl_params = list(_NEGRO_LEAGUE_TEAMS)
+
+    def _append(headline, player_names, team_names):
+        events.append({
+            "headline": headline, "detail": "",
+            "category": "On This Date", "game_date": today,
+            "player_names": player_names, "team_names": team_names,
+            "detection_type": "on_this_date", "priority": 3,
+        })
+
+    # --- Perfect games (hand-curated list; emit first, with dedicated phrasing) ---
+    perfect_games = _load_perfect_games()
+    perfect_game_dates = {pg["date"] for pg in perfect_games}
+    for pg in perfect_games:
+        if pg["date"][5:] != month_day:
+            continue
+        yr = pg["date"][:4]
+        if int(yr) >= season:
+            continue
+        headline = (f"On this date in {yr}, {pg['player']} threw a perfect game "
+                    f"against the {pg['opponent']}. There have only been "
+                    f"{_TOTAL_PERFECT_GAMES_MLB} perfect games in MLB history.")
+        _append(headline, [pg["player"]], [pg["opponent"]])
+
+    # --- No-hitters (fame-filtered; excludes perfect games which were emitted above) ---
+    # Fame filter: 12+ K OR HoF OR Cy Young OR 4+ AS OR (3+ AS AND still active)
+    nohitters = conn.execute(f"""
+        SELECT g.date, p.name, g.season, g.innings_pitched, g.strikeouts,
+               g.walks, g.opponent
         FROM game_pitching_logs g
         JOIN players p ON g.player_id = p.player_id
         WHERE substr(g.date, 6) = ? AND g.season < ? AND g.ip_outs >= 27 AND g.hits = 0
+          AND (
+            g.strikeouts >= 12
+            OR EXISTS (SELECT 1 FROM awards a WHERE a.player_id = g.player_id AND a.award = 'HOF')
+            OR EXISTS (SELECT 1 FROM awards a WHERE a.player_id = g.player_id AND a.award = 'CY')
+            OR (SELECT COUNT(*) FROM awards a WHERE a.player_id = g.player_id AND a.award = 'ALL_STAR') >= 4
+            OR (
+                (SELECT COUNT(*) FROM awards a WHERE a.player_id = g.player_id AND a.award = 'ALL_STAR') >= 3
+                AND COALESCE(p.last_season, 0) >= 2024
+            )
+          )
+          AND (g.opponent IS NULL OR g.opponent NOT IN ({nl_placeholders}))
         ORDER BY g.season DESC
-    """, (month_day, season)).fetchall()
+    """, [month_day, season] + nl_params).fetchall()
 
-    for name, yr, ip, so, bb, opp in nohitters[:1]:  # Just the most recent
+    for date_full, name, yr, ip, so, bb, opp in nohitters:
+        if date_full in perfect_game_dates:
+            continue  # already emitted as a perfect game
         opp_name = team_display(opp) if opp else ""
         headline = f"On this date in {yr}, {name} threw a no-hitter"
         if so:
@@ -1779,110 +1919,152 @@ def detect_on_this_date(conn, season, latest_date):
         if opp_name:
             headline += f" against the {opp_name}"
         headline += "."
-        events.append({
-            "headline": headline,
-            "detail": "",
-            "category": "On This Date",
-            "game_date": today,
-            "player_names": [name],
-            "team_names": [opp_name] if opp_name else [],
-            "detection_type": "on_this_date",
-            "priority": 3,
-        })
+        _append(headline, [name], [opp_name] if opp_name else [])
 
-    # 4+ HR games on this date
-    big_hr = conn.execute("""
+    # --- 4+ HR games (tied MLB single-game record) ---
+    total_4hr = conn.execute(f"""
+        SELECT COUNT(*) FROM game_batting_logs
+        WHERE home_runs >= 4 AND (opponent IS NULL OR opponent NOT IN ({nl_placeholders}))
+    """, nl_params).fetchone()[0]
+    big_hr = conn.execute(f"""
         SELECT p.name, g.season, g.home_runs, g.hits, g.at_bats, g.rbi, g.opponent
         FROM game_batting_logs g
         JOIN players p ON g.player_id = p.player_id
         WHERE substr(g.date, 6) = ? AND g.season < ? AND g.home_runs >= 4
+          AND (g.opponent IS NULL OR g.opponent NOT IN ({nl_placeholders}))
         ORDER BY g.home_runs DESC, g.season DESC
-    """, (month_day, season)).fetchall()
-
-    for name, yr, hr, h, ab, rbi, opp in big_hr[:1]:
+    """, [month_day, season] + nl_params).fetchall()
+    for name, yr, hr, h, ab, rbi, opp in big_hr:
         opp_name = team_display(opp) if opp else ""
         headline = f"On this date in {yr}, {name} hit {hr} home runs"
         if opp_name:
             headline += f" against the {opp_name}"
-        headline += f", going {h}-for-{ab} with {rbi or 0} RBI."
-        events.append({
-            "headline": headline,
-            "detail": "",
-            "category": "On This Date",
-            "game_date": today,
-            "player_names": [name],
-            "team_names": [opp_name] if opp_name else [],
-            "detection_type": "on_this_date",
-            "priority": 3,
-        })
+        headline += (f", going {h}-for-{ab} with {rbi or 0} RBI — tied the MLB "
+                     f"single-game record (only {total_4hr} times ever).")
+        _append(headline, [name], [opp_name] if opp_name else [])
 
-    # 18+ K games on this date (extremely rare)
-    big_k = conn.execute("""
+    # --- 5+ XBH games (ties MLB single-game XBH record; never 6) ---
+    total_5xbh = conn.execute(f"""
+        SELECT COUNT(*) FROM game_batting_logs
+        WHERE (doubles + triples + home_runs) >= 5
+          AND (opponent IS NULL OR opponent NOT IN ({nl_placeholders}))
+    """, nl_params).fetchone()[0]
+    xbh_rows = conn.execute(f"""
+        SELECT p.name, g.season, g.doubles, g.triples, g.home_runs,
+               g.hits, g.at_bats, g.rbi, g.opponent
+        FROM game_batting_logs g
+        JOIN players p ON g.player_id = p.player_id
+        WHERE substr(g.date, 6) = ? AND g.season < ?
+          AND (g.doubles + g.triples + g.home_runs) >= 5
+          AND g.home_runs < 4  -- 4-HR games get their own headline above
+          AND (g.opponent IS NULL OR g.opponent NOT IN ({nl_placeholders}))
+        ORDER BY g.season DESC
+    """, [month_day, season] + nl_params).fetchall()
+    for name, yr, d, t, hr, h, ab, rbi, opp in xbh_rows:
+        opp_name = team_display(opp) if opp else ""
+        parts = []
+        if d: parts.append(f"{d} double{'s' if d != 1 else ''}")
+        if t: parts.append(f"{t} triple{'s' if t != 1 else ''}")
+        if hr: parts.append(f"{hr} home run{'s' if hr != 1 else ''}")
+        combo = (", ".join(parts[:-1]) + (" and " if len(parts) > 1 else "") + parts[-1]) if parts else ""
+        headline = f"On this date in {yr}, {name} had {combo}"
+        if opp_name:
+            headline += f" against the {opp_name}"
+        headline += (f", going {h}-for-{ab} with {rbi or 0} RBI — tied the MLB "
+                     f"single-game extra-base hit record (only {total_5xbh} times ever).")
+        _append(headline, [name], [opp_name] if opp_name else [])
+
+    # --- 18+ K games ---
+    total_18k = conn.execute(f"""
+        SELECT COUNT(*) FROM game_pitching_logs
+        WHERE strikeouts >= 18 AND (opponent IS NULL OR opponent NOT IN ({nl_placeholders}))
+    """, nl_params).fetchone()[0]
+    big_k = conn.execute(f"""
         SELECT p.name, g.season, g.strikeouts, g.innings_pitched, g.ip_outs,
                g.hits, g.earned_runs, g.opponent
         FROM game_pitching_logs g
         JOIN players p ON g.player_id = p.player_id
         WHERE substr(g.date, 6) = ? AND g.season < ? AND g.strikeouts >= 18
+          AND (g.opponent IS NULL OR g.opponent NOT IN ({nl_placeholders}))
         ORDER BY g.strikeouts DESC, g.season DESC
-    """, (month_day, season)).fetchall()
-
-    for name, yr, so, ip, ip_outs, h, er, opp in big_k[:1]:
+    """, [month_day, season] + nl_params).fetchall()
+    for name, yr, so, ip, ip_outs, h, er, opp in big_k:
         opp_name = team_display(opp) if opp else ""
         ip_display = ip or f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
         headline = f"On this date in {yr}, {name} struck out {so} in {ip_display} innings"
         if opp_name:
             headline += f" against the {opp_name}"
-        headline += "."
-        events.append({
-            "headline": headline,
-            "detail": "",
-            "category": "On This Date",
-            "game_date": today,
-            "player_names": [name],
-            "team_names": [opp_name] if opp_name else [],
-            "detection_type": "on_this_date",
-            "priority": 3,
-        })
+        headline += f" — one of only {total_18k} 18+ K games in MLB history."
+        _append(headline, [name], [opp_name] if opp_name else [])
 
-    # 10+ RBI game on this date (extremely rare)
-    big_rbi = conn.execute("""
+    # --- 10+ RBI games (with extreme-combo callouts) ---
+    total_10rbi = conn.execute(f"""
+        SELECT COUNT(*) FROM game_batting_logs
+        WHERE rbi >= 10 AND (opponent IS NULL OR opponent NOT IN ({nl_placeholders}))
+    """, nl_params).fetchone()[0]
+    big_rbi = conn.execute(f"""
         SELECT p.name, g.season, g.rbi, g.hits, g.at_bats, g.home_runs, g.opponent
         FROM game_batting_logs g
         JOIN players p ON g.player_id = p.player_id
         WHERE substr(g.date, 6) = ? AND g.season < ? AND g.rbi >= 10
+          AND (g.opponent IS NULL OR g.opponent NOT IN ({nl_placeholders}))
         ORDER BY g.rbi DESC, g.season DESC
-    """, (month_day, season)).fetchall()
+    """, [month_day, season] + nl_params).fetchall()
 
-    for name, yr, rbi, h, ab, hr, opp in big_rbi[:1]:
+    def _combo_count(rbi_min, hr_min, hits_min):
+        return conn.execute(f"""
+            SELECT COUNT(*) FROM game_batting_logs
+            WHERE rbi >= ? AND home_runs >= ? AND hits >= ?
+              AND (opponent IS NULL OR opponent NOT IN ({nl_placeholders}))
+        """, [rbi_min, hr_min, hits_min] + nl_params).fetchone()[0]
+
+    for name, yr, rbi, h, ab, hr, opp in big_rbi:
         opp_name = team_display(opp) if opp else ""
-        headline = f"On this date in {yr}, {name} drove in {rbi} runs, going {h}-for-{ab} with {hr or 0} home runs"
+        hr = hr or 0
+        headline = (f"On this date in {yr}, {name} drove in {rbi} runs, "
+                    f"going {h}-for-{ab} with {hr} home runs")
         if opp_name:
             headline += f" against the {opp_name}"
-        headline += "."
-        events.append({
-            "headline": headline,
-            "detail": "",
-            "category": "On This Date",
-            "game_date": today,
-            "player_names": [name],
-            "team_names": [opp_name] if opp_name else [],
-            "detection_type": "on_this_date",
-            "priority": 3,
-        })
+        # Pick most specific rarity first
+        if rbi >= 12 and hr >= 3 and h >= 5:
+            n = _combo_count(12, 3, 5)
+            suffix = f" — one of only {n} games ever with 12+ RBI, 3+ HR, and 5+ hits"
+        elif rbi >= 10 and hr >= 3 and h >= 6:
+            n = _combo_count(10, 3, 6)
+            suffix = f" — one of only {n} games ever with 10+ RBI, 3+ HR, and 6+ hits"
+        elif rbi >= 11:
+            n = _combo_count(11, 0, 0)
+            suffix = f" — one of only {n} games ever with {rbi}+ RBI"
+        else:
+            suffix = f" — one of only {total_10rbi} 10+ RBI games in MLB history"
+        headline += suffix + "."
+        _append(headline, [name], [opp_name] if opp_name else [])
 
     # Iconic career milestone crossings on this date — from historic_moments table.
-    # Ordered most recent first, cap to 2 so we don't flood.
+    # Each entry is augmented with "Nth player to reach the milestone" using a
+    # window function over (stat, threshold) ordered by date.
     try:
         moments = conn.execute("""
-            SELECT player_name, season, stat, threshold, context
-            FROM historic_moments
+            WITH ranked AS (
+                SELECT player_name, season, stat, threshold, context, date,
+                       ROW_NUMBER() OVER (
+                         PARTITION BY stat, threshold ORDER BY date
+                       ) AS rank_at_crossing,
+                       COUNT(*) OVER (PARTITION BY stat, threshold) AS total_to_date
+                FROM historic_moments
+            )
+            SELECT player_name, season, stat, threshold, context,
+                   rank_at_crossing, total_to_date
+            FROM ranked
             WHERE substr(date, 6) = ? AND season < ?
             ORDER BY season DESC, threshold DESC
-            LIMIT 2
         """, (month_day, season)).fetchall()
-        for pname, yr, stat, threshold, context in moments:
-            # context looks like "hit his 500th career home run"
-            headline = f"On this date in {yr}, {pname} {context}."
+        for pname, yr, stat, threshold, context, rank_, total_ in moments:
+            rank_phrase = _rank_phrase(rank_, total_, stat, threshold)
+            headline = f"On this date in {yr}, {pname} {context}"
+            if rank_phrase:
+                headline += f" — {rank_phrase}"
+            headline += "."
             events.append({
                 "headline": headline,
                 "detail": "",
@@ -1896,6 +2078,29 @@ def detect_on_this_date(conn, season, latest_date):
     except Exception as e:
         # Table may not exist yet; silently skip
         print(f"  On This Date milestones check failed (non-fatal): {e}")
+
+    # Hand-curated iconic non-stat moments (Jackie Robinson debut, Aaron 715,
+    # Larsen perfect game, etc). Loaded from JSON, deduped against current year.
+    for moment in _load_manual_moments():
+        m_date = moment.get("date", "")
+        if len(m_date) < 10 or m_date[5:] != month_day:
+            continue
+        try:
+            m_year = int(m_date[:4])
+        except ValueError:
+            continue
+        if m_year >= season:
+            continue
+        events.append({
+            "headline": moment["headline"],
+            "detail": "",
+            "category": "On This Date",
+            "game_date": today,
+            "player_names": moment.get("player_names", []),
+            "team_names": moment.get("team_names", []),
+            "detection_type": "on_this_date",
+            "priority": 3,
+        })
 
     return events
 
@@ -2851,6 +3056,19 @@ def detect_all(db_path=None, season=None, from_poll=False):
             conn = sqlite3.connect(db_path or DB_PATH)
     except Exception as e:
         print(f"  Historical streaks rebuild check failed (non-fatal): {e}")
+
+    # Refresh historic_moments table if any player crossed an iconic career
+    # milestone today (500 HR, 3000 hits, 3000 K, etc.)
+    try:
+        from services.historical_scans import check_if_historic_moments_rebuild_needed
+        if check_if_historic_moments_rebuild_needed(conn, latest_date):
+            print("  Historic moments: rebuild triggered (iconic threshold crossed)")
+            from data_pipeline.build_historic_moments import build
+            conn.close()
+            build(db_path or DB_PATH)
+            conn = sqlite3.connect(db_path or DB_PATH)
+    except Exception as e:
+        print(f"  Historic moments rebuild check failed (non-fatal): {e}")
 
     conn.close()
 

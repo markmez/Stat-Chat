@@ -236,6 +236,73 @@ def check_if_historical_streaks_rebuild_needed(conn, season, latest_date):
     return False
 
 
+# Iconic career-milestone thresholds. Must stay in sync with
+# data_pipeline/build_historic_moments.py — when a crossing happens, the
+# historic_moments table goes stale until rebuilt.
+_HISTORIC_MOMENT_BATTING_THRESHOLDS = {
+    "home_runs": [500, 600, 700],
+    "hits":      [3000],
+    "rbi":       [2000, 2500, 3000],
+    "stolen_bases": [500, 600],
+}
+_HISTORIC_MOMENT_PITCHING_THRESHOLDS = {
+    "strikeouts": [3000, 3500, 4000],
+    "wins":       [300, 350],
+    "saves":      [400, 500],
+}
+_HISTORIC_MOMENT_PITCHING_GAME_COL = {
+    "wins": "win", "saves": "save", "strikeouts": "strikeouts",
+}
+
+
+def check_if_historic_moments_rebuild_needed(conn, latest_date):
+    """Returns True if any player who played today crossed one of the iconic
+    career milestone thresholds (500 HR, 3000 hits, 3000 K, etc.) on this
+    date. Uses game-log cumulative totals: if career total was below
+    threshold before today and is now at or above, rebuild is needed.
+    """
+    # Players who batted today
+    batters = conn.execute("""
+        SELECT DISTINCT player_id FROM game_batting_logs WHERE date = ?
+    """, (latest_date,)).fetchall()
+    for (pid,) in batters:
+        for stat, thresholds in _HISTORIC_MOMENT_BATTING_THRESHOLDS.items():
+            prior = conn.execute(f"""
+                SELECT COALESCE(SUM({stat}), 0) FROM game_batting_logs
+                WHERE player_id = ? AND date < ?
+            """, (pid, latest_date)).fetchone()[0]
+            today_val = conn.execute(f"""
+                SELECT COALESCE(SUM({stat}), 0) FROM game_batting_logs
+                WHERE player_id = ? AND date = ?
+            """, (pid, latest_date)).fetchone()[0]
+            current = prior + today_val
+            for t in thresholds:
+                if prior < t <= current:
+                    return True
+
+    # Players who pitched today
+    pitchers = conn.execute("""
+        SELECT DISTINCT player_id FROM game_pitching_logs WHERE date = ?
+    """, (latest_date,)).fetchall()
+    for (pid,) in pitchers:
+        for stat, thresholds in _HISTORIC_MOMENT_PITCHING_THRESHOLDS.items():
+            col = _HISTORIC_MOMENT_PITCHING_GAME_COL[stat]
+            prior = conn.execute(f"""
+                SELECT COALESCE(SUM({col}), 0) FROM game_pitching_logs
+                WHERE player_id = ? AND date < ?
+            """, (pid, latest_date)).fetchone()[0]
+            today_val = conn.execute(f"""
+                SELECT COALESCE(SUM({col}), 0) FROM game_pitching_logs
+                WHERE player_id = ? AND date = ?
+            """, (pid, latest_date)).fetchone()[0]
+            current = prior + today_val
+            for t in thresholds:
+                if prior < t <= current:
+                    return True
+
+    return False
+
+
 def _format_ordinal(n):
     """Convert 1 → '1st', 2 → '2nd', 3 → '3rd', 4+ → 'Nth'."""
     if 10 <= n % 100 <= 20:
