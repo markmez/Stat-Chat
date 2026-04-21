@@ -132,6 +132,19 @@ def ensure_table(conn):
         conn.execute("ALTER TABLE notable_events ADD COLUMN game_context TEXT")
     if "expires_at" not in cols:
         conn.execute("ALTER TABLE notable_events ADD COLUMN expires_at TEXT")
+    # Deep-scan cooldown persistence: tracks (player, scan_type) last-fire
+    # date + historical "since" gap for the progressive-deepen logic. Without
+    # persistence, cooldown state resets every cron invocation and the
+    # story-deepen check never kicks in.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS deep_scan_cooldowns (
+            player_id TEXT NOT NULL,
+            scan_type TEXT NOT NULL,
+            last_date TEXT NOT NULL,
+            last_gap INTEGER NOT NULL,
+            PRIMARY KEY (player_id, scan_type)
+        )
+    """)
     conn.commit()
 
 
@@ -2928,6 +2941,50 @@ def detect_all(db_path=None, season=None, from_poll=False):
         print(f"    Historical: {len(hist_events)} events")
     except Exception as e:
         print(f"    Historical scans failed: {e}")
+
+    # Deep scans (team-context fallback, progressive-deepen cooldowns).
+    # Persist cooldowns across cron invocations — without persistence the
+    # story-deepen logic resets every night.
+    try:
+        from services.deep_scans import run_deep_scans
+        print("  Running deep scans...")
+        # Load persisted cooldowns from the last 45 days (older is moot
+        # since the scans have natural game-count windows of ~30 games)
+        cd_rows = conn.execute("""
+            SELECT player_id, scan_type, last_date, last_gap
+            FROM deep_scan_cooldowns
+            WHERE last_date >= date(?, '-45 days')
+        """, (latest_date,)).fetchall()
+        cooldowns = {(pid, st): (ld, lg) for pid, st, ld, lg in cd_rows}
+        deep_events = run_deep_scans(conn, season, latest_date, cooldowns=cooldowns)
+        for de in deep_events:
+            events.append({
+                "headline": de.get("detail", ""),
+                "detail": "",
+                "category": "Deep Scan",
+                "game_date": latest_date,
+                "player_names": [de.get("player")] if de.get("player") else [],
+                "team_names": [de.get("team")] if de.get("team") else [],
+                "detection_type": f"deep_scan_{de.get('scan', 'unknown')}",
+                "priority": 2,
+            })
+        # Persist updated cooldowns (run_deep_scans mutated the dict in place)
+        for (pid, st), val in cooldowns.items():
+            if isinstance(val, tuple) and len(val) >= 2:
+                last_date_s, last_gap = val[0], val[1]
+            else:
+                last_date_s, last_gap = val, 0
+            conn.execute("""
+                INSERT OR REPLACE INTO deep_scan_cooldowns
+                    (player_id, scan_type, last_date, last_gap)
+                VALUES (?, ?, ?, ?)
+            """, (pid, st, last_date_s, int(last_gap or 0)))
+        conn.commit()
+        print(f"    Deep scans: {len(deep_events)} events")
+    except Exception as e:
+        import traceback
+        print(f"    Deep scans failed (non-fatal): {e}")
+        traceback.print_exc()
 
     # Tonight's matchup previews — wipe previous previews for today first
     # (multiple pipeline runs would otherwise accumulate 3 per run)
