@@ -762,20 +762,18 @@ def detect_hr_streaks(conn, season, latest_date, min_games=4):
     return events
 
 
-def _pitching_streak_context(conn, pid, season, streak_len, condition_sql, min_context_len):
+def _pitching_streak_context(conn, pid, season, streak_len, condition_sql):
     """Compute MLB + team "first since X" context for a pitching-shape streak.
 
     streak_len: current active streak length (N consecutive starts matching).
     condition_sql: per-start SQL fragment like 'earned_runs = 0 AND ip_outs >= 15'.
-    min_context_len: suppress context below this bar (common short streaks
-    aren't historically interesting).
 
     Returns a trailing-context string or empty. Follows same rules as
-    _rarity_context_combined: MLB always shown when meaningful, team
-    appended only if team gap is 6+ years deeper than MLB.
+    _rarity_context_combined: MLB shown when gap is 2+ years, team
+    appended when team gap is 6+ years deeper than MLB. The data decides
+    what's rare — we don't pre-filter by streak length. Common streaks
+    hit matches in the immediately-prior season and return fast.
     """
-    if streak_len < min_context_len:
-        return ""
     from services.historical_scans import _find_last_consecutive_start_streak
     # MLB
     mlb = _find_last_consecutive_start_streak(conn, pid, season, streak_len, condition_sql)
@@ -859,8 +857,7 @@ def detect_pitching_streaks(conn, season, latest_date):
             headline = f"{game_line}now has {scoreless} consecutive scoreless starts."
             # Historical context only when the streak is rare enough (5+)
             ctx = _pitching_streak_context(conn, pid, season, scoreless,
-                                           "earned_runs = 0 AND ip_outs >= 15",
-                                           min_context_len=5)
+                                           "earned_runs = 0 AND ip_outs >= 15")
             if ctx:
                 headline = headline.rstrip(".") + f" — {ctx}"
             events.append({
@@ -892,8 +889,7 @@ def detect_pitching_streaks(conn, season, latest_date):
             game_line = f"{name} went {last_ip} IP, {last_er} ER, {last_so} K and "
             headline = f"{game_line}now has {qs} consecutive quality starts (6+ IP, ≤3 ER)."
             ctx = _pitching_streak_context(conn, pid, season, qs,
-                                           "ip_outs >= 18 AND earned_runs <= 3",
-                                           min_context_len=6)
+                                           "ip_outs >= 18 AND earned_runs <= 3")
             if ctx:
                 headline = headline.rstrip(".") + f" — {ctx}"
             events.append({
@@ -923,8 +919,7 @@ def detect_pitching_streaks(conn, season, latest_date):
             game_line = f"{name} struck out {last_so} in {last_ip} innings and "
             headline = f"{game_line}now has {k10} consecutive 10+ strikeout starts."
             ctx = _pitching_streak_context(conn, pid, season, k10,
-                                           "strikeouts >= 10",
-                                           min_context_len=3)
+                                           "strikeouts >= 10")
             if ctx:
                 headline = headline.rstrip(".") + f" — {ctx}"
             events.append({
