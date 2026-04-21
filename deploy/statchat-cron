@@ -44,7 +44,8 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # Weekly full reconciliation: Tuesday 4:30 AM ET (08:30 UTC)
 30 8 * * 2 statchat /opt/statchat/repo/deploy/refresh.sh --full-refresh >> /data/refresh.log 2>&1
 
-# Weekly records rebuild: Tuesday 3:00 AM ET (07:00 UTC) — runs 2+ hours, finishes before 5:35 AM cascade
+# Weekly records rebuild: Tuesday 3:00 AM ET (07:00 UTC) — ~2-3 min with
+# indexed teams-lookup + franchise grouping (was 2+ hours before the refactor).
 0 7 * * 2 statchat /opt/statchat/venv/bin/python /opt/statchat/repo/backend/data_pipeline/build_records.py --db /data/baseball_stats_full.db >> /data/refresh.log 2>&1
 
 # Health monitor: every 5 min, pings Healthchecks.io if API + DB are up
