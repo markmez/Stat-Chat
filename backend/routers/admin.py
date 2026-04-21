@@ -1628,6 +1628,28 @@ def _simulate_detect_for_date(conn, season, latest_date):
                        "detection_type": "error", "game_date": latest_date,
                        "player_names": [], "team_names": []})
 
+    # Deep scans (OPS/HR/SB/power-speed/pitching dominance/PELT) with
+    # MLB-wide + team-context fallback. Cooldowns reset per-date since
+    # the sandbox doesn't carry state across dates; production does.
+    try:
+        from services.deep_scans import run_deep_scans
+        deep_events = run_deep_scans(conn, season, latest_date, cooldowns={})
+        for e in deep_events:
+            events.append({
+                "headline": e.get("detail", ""),
+                "detail": "",
+                "category": "Deep Scan",
+                "game_date": latest_date,
+                "player_names": [e.get("player")] if e.get("player") else [],
+                "team_names": [e.get("team")] if e.get("team") else [],
+                "detection_type": f"deep_scan_{e.get('scan', 'unknown')}",
+                "priority": 2,
+            })
+    except Exception as e:
+        events.append({"headline": f"[deep scan error: {e}]",
+                       "detection_type": "error", "game_date": latest_date,
+                       "player_names": [], "team_names": []})
+
     return events
 
 
