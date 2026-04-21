@@ -105,8 +105,9 @@ def _format_avg(val):
 def run_deep_scans(conn, season, target_date, cooldowns=None):
     """Run all deep scans for a given date. Returns list of event dicts.
 
-    cooldowns: optional dict of {(player_id, scan_type): last_fired_date}
+    cooldowns: optional dict of {(player_id, scan_type): (last_fired_date, last_gap_years)}
     Pass the same dict across multiple calls to enforce cooldown across dates.
+    Values may also be bare date strings for back-compat; treated as gap=0.
     """
     if cooldowns is None:
         cooldowns = {}
@@ -115,11 +116,12 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
     COOLDOWN_DAYS = 5
 
     def _check_cooldown(pid, scan_type):
-        """Return True if this player+scan is on cooldown."""
+        """Time-based cooldown: blocked if fired within last 5 days."""
         key = (pid, scan_type)
         if key not in cooldowns:
             return False
-        last_date = cooldowns[key]
+        val = cooldowns[key]
+        last_date = val[0] if isinstance(val, tuple) else val
         try:
             from datetime import datetime as _dt
             last = _dt.strptime(last_date, "%Y-%m-%d")
@@ -128,8 +130,21 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
         except Exception:
             return False
 
-    def _set_cooldown(pid, scan_type):
-        cooldowns[(pid, scan_type)] = target_date
+    def _previous_gap(pid, scan_type):
+        """Return the 'since' gap in years that previously fired for this
+        (player, scan) pair, or 0 if never. Used to gate re-fires to
+        require the story to deepen (e.g., from 10yrs-since to 15yrs-since).
+        """
+        val = cooldowns.get((pid, scan_type))
+        if val is None:
+            return 0
+        if isinstance(val, tuple) and len(val) >= 2:
+            return val[1] or 0
+        return 0
+
+    def _set_cooldown(pid, scan_type, gap=0):
+        """Record the fire. gap = years-since-last shown in this event."""
+        cooldowns[(pid, scan_type)] = (target_date, gap)
 
     # Get players who played on this date
     bat_games = conn.execute("""
@@ -209,8 +224,10 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
             mlb_ok = last_mlb and mlb_gap >= cfg["min_years_mlb"]
             team_ok = last_team and team_gap >= cfg["min_years_team"]
             team_scan_fired = False
-            # Fire team framing when it's the deeper comparison OR MLB doesn't qualify
-            if team_ok and (not mlb_ok or team_gap > mlb_gap):
+            prev_gap = _previous_gap(pid, "ops_season")
+            # Fire team framing when it's the deeper comparison OR MLB doesn't qualify;
+            # but only if the story deepens vs what previously fired for this player.
+            if team_ok and (not mlb_ok or team_gap > mlb_gap) and team_gap > prev_gap:
                 franchise_name = get_franchise_name(team)
                 events.append({
                     "type": "deep_scan",
@@ -224,12 +241,12 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         f"{last_team['name']} in {last_team['season']}."
                     ),
                 })
-                _set_cooldown(pid, "ops_season")
+                _set_cooldown(pid, "ops_season", team_gap)
                 team_scan_fired = True
             last_match = last_mlb  # preserve downstream variable name
             if last_match and not team_scan_fired:
                 years_ago = season - last_match["season"]
-                if years_ago >= cfg["min_years_mlb"]:
+                if years_ago >= cfg["min_years_mlb"] and years_ago > prev_gap:
                     events.append({
                         "type": "deep_scan",
                         "scan": "slash_line_season",
@@ -241,19 +258,9 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                             f"{last_match['name']} in {last_match['season']} ({years_ago} years ago)."
                         ),
                     })
-                elif years_ago >= cfg["min_years_team"]:
-                    events.append({
-                        "type": "deep_scan",
-                        "scan": "slash_line_season",
-                        "player": pname, "team": team or "",
-                        "detail": (
-                            f"{pname} is posting a {ops_display} OPS "
-                            f"({_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)}) "
-                            f"through {games} games — the last to do that through {games} games was "
-                            f"{last_match['name']} in {last_match['season']}."
-                        ),
-                    })
-            elif last_match is None:
+                    _set_cooldown(pid, "ops_season", years_ago)
+            elif last_match is None and prev_gap < 999:
+                # "No precedent" event — infinite gap, fires only once per player
                 events.append({
                     "type": "deep_scan",
                     "scan": "slash_line_season",
@@ -264,9 +271,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         f"through {games} games — no player in our records has posted an OPS that high through {games} games."
                     ),
                 })
-            # Set cooldown if any event was generated
-            if any(e.get("scan") == "slash_line_season" and e.get("player") == pname for e in events):
-                _set_cooldown(pid, "ops_season")
+                _set_cooldown(pid, "ops_season", 999)
 
         # === HR ACCUMULATION ===
         cfg_hr = SCAN_CONFIG["hr_accumulation"]
@@ -281,7 +286,8 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
             mlb_ok = last_hr_mlb and mlb_gap >= cfg_hr["min_years_mlb"]
             team_ok = last_hr_team and team_gap >= cfg_hr["min_years_team"]
             hr_team_fired = False
-            if team_ok and (not mlb_ok or team_gap > mlb_gap):
+            prev_gap_hr = _previous_gap(pid, "hr_acc")
+            if team_ok and (not mlb_ok or team_gap > mlb_gap) and team_gap > prev_gap_hr:
                 franchise_name = get_franchise_name(team)
                 events.append({
                     "type": "deep_scan",
@@ -293,12 +299,12 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         f"{last_hr_team['name']} ({last_hr_team['value']} HR) in {last_hr_team['season']}."
                     ),
                 })
-                _set_cooldown(pid, "hr_acc")
+                _set_cooldown(pid, "hr_acc", team_gap)
                 hr_team_fired = True
             last_hr = last_hr_mlb
             if last_hr and not hr_team_fired:
                 years_ago = season - last_hr["season"]
-                if years_ago >= cfg_hr["min_years_mlb"]:
+                if years_ago >= cfg_hr["min_years_mlb"] and years_ago > prev_gap_hr:
                     events.append({
                         "type": "deep_scan",
                         "scan": "hr_accumulation",
@@ -309,7 +315,8 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                             f"{last_hr['name']} ({last_hr['value']} HR) in {last_hr['season']}."
                         ),
                     })
-            elif last_hr is None and not hr_team_fired:
+                    _set_cooldown(pid, "hr_acc", years_ago)
+            elif last_hr is None and not hr_team_fired and prev_gap_hr < 999:
                 events.append({
                     "type": "deep_scan",
                     "scan": "hr_accumulation",
@@ -319,8 +326,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         f"no player in our records has reached that mark this quickly."
                     ),
                 })
-            if any(e.get("scan") == "hr_accumulation" and e.get("player") == pname for e in events):
-                _set_cooldown(pid, "hr_acc")
+                _set_cooldown(pid, "hr_acc", 999)
 
         # === SB ACCUMULATION ===
         cfg_sb = SCAN_CONFIG["sb_accumulation"]
@@ -335,7 +341,8 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
             mlb_ok = last_sb_mlb and mlb_gap >= cfg_sb["min_years_mlb"]
             team_ok = last_sb_team and team_gap >= cfg_sb["min_years_team"]
             sb_team_fired = False
-            if team_ok and (not mlb_ok or team_gap > mlb_gap):
+            prev_gap_sb = _previous_gap(pid, "sb_acc")
+            if team_ok and (not mlb_ok or team_gap > mlb_gap) and team_gap > prev_gap_sb:
                 franchise_name = get_franchise_name(team)
                 events.append({
                     "type": "deep_scan",
@@ -347,12 +354,12 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         f"{last_sb_team['name']} ({last_sb_team['value']} SB) in {last_sb_team['season']}."
                     ),
                 })
-                _set_cooldown(pid, "sb_acc")
+                _set_cooldown(pid, "sb_acc", team_gap)
                 sb_team_fired = True
             last_sb = last_sb_mlb
             if last_sb and not sb_team_fired:
                 years_ago = season - last_sb["season"]
-                if years_ago >= cfg_sb["min_years_mlb"]:
+                if years_ago >= cfg_sb["min_years_mlb"] and years_ago > prev_gap_sb:
                     events.append({
                         "type": "deep_scan",
                         "scan": "sb_accumulation",
@@ -363,8 +370,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                             f"{last_sb['name']} ({last_sb['value']} SB) in {last_sb['season']}."
                         ),
                     })
-            if any(e.get("scan") == "sb_accumulation" and e.get("player") == pname for e in events):
-                _set_cooldown(pid, "sb_acc")
+                    _set_cooldown(pid, "sb_acc", years_ago)
 
         # === POWER-SPEED COMBO ===
         cfg_ps = SCAN_CONFIG["power_speed"]
@@ -379,7 +385,8 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
             mlb_ok = last_ps_mlb and mlb_gap >= cfg_ps["min_years_mlb"]
             team_ok = last_ps_team and team_gap >= cfg_ps["min_years_team"]
             ps_team_fired = False
-            if team_ok and (not mlb_ok or team_gap > mlb_gap):
+            prev_gap_ps = _previous_gap(pid, "power_speed")
+            if team_ok and (not mlb_ok or team_gap > mlb_gap) and team_gap > prev_gap_ps:
                 franchise_name = get_franchise_name(team)
                 events.append({
                     "type": "deep_scan",
@@ -391,12 +398,12 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         f"{last_ps_team['name']} ({last_ps_team['hr']} HR, {last_ps_team['sb']} SB) in {last_ps_team['season']}."
                     ),
                 })
-                _set_cooldown(pid, "power_speed")
+                _set_cooldown(pid, "power_speed", team_gap)
                 ps_team_fired = True
             last_ps = last_ps_mlb
             if last_ps and not ps_team_fired:
                 years_ago = season - last_ps["season"]
-                if years_ago >= cfg_ps["min_years_mlb"]:
+                if years_ago >= cfg_ps["min_years_mlb"] and years_ago > prev_gap_ps:
                     events.append({
                         "type": "deep_scan",
                         "scan": "power_speed",
@@ -407,8 +414,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                             f"{last_ps['name']} ({last_ps['hr']} HR, {last_ps['sb']} SB) in {last_ps['season']}."
                         ),
                     })
-            if any(e.get("scan") == "power_speed" and e.get("player") == pname for e in events):
-                _set_cooldown(pid, "power_speed")
+                    _set_cooldown(pid, "power_speed", years_ago)
 
     # --- Pitching scans ---
     for row in pitch_games:
@@ -453,7 +459,8 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
             mlb_ok = last_dom_mlb and mlb_gap >= cfg_p["min_years_mlb"]
             team_ok = last_dom_team and team_gap >= cfg_p["min_years_team"]
             pd_team_fired = False
-            if team_ok and (not mlb_ok or team_gap > mlb_gap):
+            prev_gap_pd = _previous_gap(pid, "pitch_dom")
+            if team_ok and (not mlb_ok or team_gap > mlb_gap) and team_gap > prev_gap_pd:
                 franchise_name = get_franchise_name(team)
                 events.append({
                     "type": "deep_scan",
@@ -466,12 +473,12 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         f"({last_dom_team['era']:.2f} ERA, {last_dom_team['k']} K) in {last_dom_team['season']}."
                     ),
                 })
-                _set_cooldown(pid, "pitch_dom")
+                _set_cooldown(pid, "pitch_dom", team_gap)
                 pd_team_fired = True
             last_dom = last_dom_mlb
             if last_dom and not pd_team_fired:
                 years_ago = season - last_dom["season"]
-                if years_ago >= cfg_p["min_years_mlb"]:
+                if years_ago >= cfg_p["min_years_mlb"] and years_ago > prev_gap_pd:
                     events.append({
                         "type": "deep_scan",
                         "scan": "pitching_dominance",
@@ -482,7 +489,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                             f"{last_dom['name']} ({last_dom['era']:.2f} ERA, {last_dom['k']} K) in {last_dom['season']}."
                         ),
                     })
-                    _set_cooldown(pid, "pitch_dom")
+                    _set_cooldown(pid, "pitch_dom", years_ago)
 
     # --- PELT-triggered scans ---
     pelt_events = _run_pelt_scans(conn, season, target_date, bat_games, cooldowns)
@@ -717,9 +724,11 @@ def _run_pelt_scans(conn, season, target_date, bat_games, cooldowns=None):
         _cd_key = (pid, "ops_pelt")
         _on_cooldown = False
         if _cd_key in cooldowns:
+            _val = cooldowns[_cd_key]
+            _last_date_s = _val[0] if isinstance(_val, tuple) else _val
             try:
                 from datetime import datetime as _dt
-                _on_cooldown = (_dt.strptime(target_date, "%Y-%m-%d") - _dt.strptime(cooldowns[_cd_key], "%Y-%m-%d")).days < 5
+                _on_cooldown = (_dt.strptime(target_date, "%Y-%m-%d") - _dt.strptime(_last_date_s, "%Y-%m-%d")).days < 5
             except Exception:
                 pass
         if num_games >= 7 and cf_ops >= cfg.get("gate_ops", 1.000) and not _on_cooldown:
@@ -733,7 +742,10 @@ def _run_pelt_scans(conn, season, target_date, bat_games, cooldowns=None):
             mlb_ok = last_mlb and mlb_gap >= cfg["min_years_mlb"]
             team_ok = last_team and team_gap >= cfg["min_years_team"]
             pelt_team_fired = False
-            if team_ok and (not mlb_ok or team_gap > mlb_gap):
+            # prev_gap uses the same cooldowns dict keyed by (pid, "ops_pelt")
+            _prev = cooldowns.get(_cd_key)
+            prev_gap_pelt = _prev[1] if isinstance(_prev, tuple) and len(_prev) >= 2 else 0
+            if team_ok and (not mlb_ok or team_gap > mlb_gap) and team_gap > prev_gap_pelt:
                 franchise_name = get_franchise_name(team)
                 events.append({
                     "type": "deep_scan",
@@ -747,12 +759,12 @@ def _run_pelt_scans(conn, season, target_date, bat_games, cooldowns=None):
                         f"{last_team['name']} in {last_team['season']}."
                     ),
                 })
-                cooldowns[_cd_key] = target_date
+                cooldowns[_cd_key] = (target_date, team_gap)
                 pelt_team_fired = True
             last = last_mlb
             if last and not pelt_team_fired:
                 years_ago = season - last["season"]
-                if years_ago >= cfg["min_years_mlb"]:
+                if years_ago >= cfg["min_years_mlb"] and years_ago > prev_gap_pelt:
                     events.append({
                         "type": "deep_scan",
                         "scan": "slash_line_pelt",
@@ -765,7 +777,7 @@ def _run_pelt_scans(conn, season, target_date, bat_games, cooldowns=None):
                             f"{last['name']} in {last['season']}."
                         ),
                     })
-                    cooldowns[_cd_key] = target_date
+                    cooldowns[_cd_key] = (target_date, years_ago)
 
     return events
 
