@@ -29,8 +29,15 @@ venv/
 
 # Data files (large binaries; copy manually into ios/Resources for app builds)
 baseball_stats.db
+baseball_stats.db.*
 baseball_stats_full.db
 backend/metering.db
 data_pipeline/.cache/
+backend/data_pipeline/.cache/
 data_pipeline/pull_stats_fangraphs.py
 ios/build/
+
+# One-off research / scratch
+backend/tests/test_haiku_self_assess.py
+backend/tests/test_summary.csv
+fame_list_candidates.csv
