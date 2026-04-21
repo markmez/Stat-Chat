@@ -19,6 +19,15 @@ from datetime import date, datetime
 from services.historical_scans import _get_game_line
 from services.qualification import min_pa as _qual_min_pa
 
+# PELT config used by the feed hot-streak detector. Mirrors data_pipeline/detect_streaks.py
+# but the detector is run-time, not precomputed — windows are re-detected each cron.
+_PELT_MIN_SIZE = 6          # allow 6-game windows (user's "2 series" floor)
+_PELT_PENALTY = 3           # primary pass
+_PELT_PENALTY_FALLBACK = 1.5  # relaxed pass if no change point found
+_PELT_ROLLING_WINDOW = 5
+_FEED_STREAK_MIN_GAMES = 6
+_FEED_STREAK_MAX_GAMES = 29  # 30+ is a good month, not a streak
+
 DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
 
 # Retrosheet team code → display name
@@ -1590,113 +1599,365 @@ def detect_rarities(conn, season, latest_date):
     return events
 
 
-def detect_hot_streaks_pelt(conn, season, latest_date=None):
-    """Find players in a PELT-detected hot streak with high OPS."""
-    events = []
+def _raw_pelt_window(conn, player_id, season, latest_date):
+    """Run PELT on a player's in-season OPS signal and return the RAW
+    last-segment window (from last change point to end of season).
 
-    rows = conn.execute("""
-        SELECT p.name, cf.ops, cf.batting_avg, cf.num_games, cf.home_runs,
-               cf.hits, cf.at_bats, cf.obp, cf.slg,
-               s.ops as season_ops
+    Unlike `current_form` (which applies a 7-game minimum extension and a
+    last-30 fallback), this returns only what PELT actually detects.
+
+    Returns (start_idx, end_idx, stats_dict) or None if:
+      - fewer than 2*min_size games,
+      - no change point found at either penalty,
+      - last segment falls outside [_FEED_STREAK_MIN_GAMES, _FEED_STREAK_MAX_GAMES].
+    """
+    import numpy as np
+    import ruptures as rpt
+
+    games = conn.execute("""
+        SELECT date, at_bats, hits, doubles, triples, home_runs,
+               walks, strikeouts, plate_appearances, runs, rbi
+        FROM game_batting_logs
+        WHERE player_id = ? AND season = ?
+          AND date <= ?
+        ORDER BY date ASC
+    """, (player_id, season, latest_date)).fetchall()
+
+    n = len(games)
+    if n < _PELT_MIN_SIZE * 2:
+        return None
+
+    # Per-game OPS signal (same derivation as detect_streaks.py)
+    ops_signal = []
+    for g in games:
+        ab = g[1] or 0
+        h = g[2] or 0
+        db = g[3] or 0
+        tr = g[4] or 0
+        hr = g[5] or 0
+        bb = g[6] or 0
+        pa = g[8] or 0
+        if ab > 0 and pa > 0:
+            tb = (h - db - tr - hr) + 2 * db + 3 * tr + 4 * hr
+            slg = tb / ab
+            obp = (h + bb) / pa
+            ops_signal.append(obp + slg)
+        else:
+            ops_signal.append(0.0)
+
+    signal = np.array(ops_signal)
+    smoothed = np.convolve(signal, np.ones(_PELT_ROLLING_WINDOW) / _PELT_ROLLING_WINDOW, mode="same")
+    smoothed = smoothed.reshape(-1, 1)
+
+    algo = rpt.Pelt(model="l2", min_size=_PELT_MIN_SIZE, jump=1)
+    algo.fit(smoothed)
+
+    def _last_segment_len(bkps):
+        # ruptures returns breakpoints as a list of end-indices with the last
+        # being len(signal). The last segment is [bkps[-2], bkps[-1]].
+        if not bkps:
+            return None
+        if len(bkps) < 2:
+            return None
+        return bkps[-1] - bkps[-2]
+
+    # Primary pass
+    bkps = algo.predict(pen=_PELT_PENALTY)
+    seg_len = _last_segment_len(bkps)
+    # If PELT saw no change (single segment == full season), try relaxed penalty
+    if seg_len is None or len(bkps) == 1:
+        bkps = algo.predict(pen=_PELT_PENALTY_FALLBACK)
+        seg_len = _last_segment_len(bkps)
+        if seg_len is None or len(bkps) == 1:
+            return None
+
+    start_idx = bkps[-2]
+    end_idx = bkps[-1]
+    num_games = end_idx - start_idx
+
+    if num_games < _FEED_STREAK_MIN_GAMES or num_games > _FEED_STREAK_MAX_GAMES:
+        return None
+
+    # Aggregate stats over the window
+    segment = games[start_idx:end_idx]
+    t_ab = sum(g[1] or 0 for g in segment)
+    t_h = sum(g[2] or 0 for g in segment)
+    t_2b = sum(g[3] or 0 for g in segment)
+    t_3b = sum(g[4] or 0 for g in segment)
+    t_hr = sum(g[5] or 0 for g in segment)
+    t_bb = sum(g[6] or 0 for g in segment)
+    t_pa = sum(g[8] or 0 for g in segment)
+    t_r = sum(g[9] or 0 for g in segment)
+    t_rbi = sum(g[10] or 0 for g in segment)
+
+    avg = t_h / t_ab if t_ab > 0 else 0.0
+    obp = (t_h + t_bb) / t_pa if t_pa > 0 else 0.0
+    tb = (t_h - t_2b - t_3b - t_hr) + 2 * t_2b + 3 * t_3b + 4 * t_hr
+    slg = tb / t_ab if t_ab > 0 else 0.0
+    ops = obp + slg
+
+    return {
+        "start_idx": start_idx,
+        "end_idx": end_idx,
+        "num_games": num_games,
+        "start_date": segment[0][0],
+        "end_date": segment[-1][0],
+        "at_bats": t_ab,
+        "hits": t_h,
+        "home_runs": t_hr,
+        "rbi": t_rbi,
+        "runs": t_r,
+        "walks": t_bb,
+        "plate_appearances": t_pa,
+        "batting_avg": avg,
+        "obp": obp,
+        "slg": slg,
+        "ops": ops,
+    }
+
+
+def _pelt_streak_quality(num_games, ops):
+    """Bucket a streak window into 'torrid' | 'locked-in' | None.
+
+    Thresholds scale down with window length — a 1.050 OPS across 18 games
+    is harder than across 7 games, so the gate relaxes as N grows.
+    """
+    if num_games < 6 or num_games > 29:
+        return None
+    if num_games <= 9:
+        if ops >= 1.200: return "torrid"
+        if ops >= 1.000: return "locked-in"
+    elif num_games <= 14:
+        if ops >= 1.100: return "torrid"
+        if ops >= 0.950: return "locked-in"
+    elif num_games <= 19:
+        if ops >= 1.050: return "torrid"
+        if ops >= 0.920: return "locked-in"
+    else:
+        if ops >= 1.000: return "torrid"
+        if ops >= 0.870: return "locked-in"
+    return None
+
+
+def _find_feed_pelt_comp(conn, exclude_pid, season, window, ops,
+                         lookback_years=10, team_codes=None):
+    """Find the most recent PRIOR season where a different player had a
+    streak of similar length with OPS >= the current OPS.
+
+    Uses `current_form` from prior seasons as the proxy for rolling windows
+    (same pattern as deep_scans._find_last_streak_ops) but with a strict
+    lookback cap to avoid "hottest since Bonds 2002"-style always-on comps.
+
+    team_codes: optional franchise filter (exact team match excludes mid-
+    season trades via the slash-separated team-code convention).
+
+    Returns {"name": str, "season": int} or None.
+    """
+    # Tolerance: +/-2 games on window length (6-game exact is too restrictive)
+    min_games = max(_FEED_STREAK_MIN_GAMES, window - 2)
+    max_games = min(_FEED_STREAK_MAX_GAMES, window + 2)
+    min_season = season - lookback_years
+
+    tf_sql = ""
+    tf_params = []
+    if team_codes:
+        like_clauses = " OR ".join(["('/' || ss.team || '/') LIKE ?"] * len(team_codes))
+        tf_sql = f"""
+            AND EXISTS (
+                SELECT 1 FROM season_batting_stats ss
+                WHERE ss.player_id = cf.player_id AND ss.season = cf.season
+                  AND ({like_clauses})
+            )
+        """
+        tf_params = [f"%/{c}/%" for c in team_codes]
+
+    row = conn.execute(f"""
+        SELECT p.name, cf.season
         FROM current_form cf
         JOIN players p ON cf.player_id = p.player_id
-        JOIN season_batting_stats s ON cf.player_id = s.player_id AND cf.season = s.season
-        WHERE cf.season = ?
-          AND cf.ops >= 1.000
-          AND cf.num_games >= 7
-          AND (cf.ops - s.ops) >= 0.200
-        ORDER BY cf.ops DESC
-        LIMIT 5
-    """, (season,)).fetchall()
+        WHERE cf.season < ? AND cf.season >= ?
+          AND cf.player_id != ?
+          AND cf.num_games BETWEEN ? AND ?
+          AND cf.ops >= ?
+          {tf_sql}
+        ORDER BY cf.season DESC, cf.ops DESC
+        LIMIT 1
+    """, (season, min_season, exclude_pid, min_games, max_games, ops, *tf_params)).fetchone()
 
-    _streak_phrases = ["is on a tear", "is on a hot streak", "has been red hot", "is locked in"]
-    _refire_phrases = ["is still rolling", "is still locked in", "is still red hot", "keeps it going"]
-    STREAK_COOLDOWN_DAYS = 5
-    REFIRE_LOOKBACK_DAYS = 14  # Within this window, treat a re-surface as "still"
+    if row:
+        return {"name": row[0], "season": row[1]}
+    return None
 
-    for idx, (name, ops, avg, num_games, hr, h, ab, obp, slg, season_ops) in enumerate(rows):
-        # Cooldown: skip if this player had a hot_streak_pelt event within the last N days
-        recent = conn.execute("""
-            SELECT 1 FROM notable_events
-            WHERE detection_type = 'hot_streak_pelt'
-              AND headline LIKE ?
-              AND game_date > date(?, '-' || ? || ' days')
-              AND game_date < ?
-            LIMIT 1
-        """, (f"%{name}%", latest_date, STREAK_COOLDOWN_DAYS, latest_date)).fetchone()
-        if recent:
+
+def _fmt_streak_stats(stats, num_games):
+    """Format the stat-list suffix for a hot-streak headline.
+
+    Always leads with OPS. Adds labeled counts (HR/RBI). AVG only on longer
+    windows (15+ games) where a 3-digit AVG is meaningful — in small
+    samples it's noise.
+    """
+    ops = stats.get("ops", 0) or 0
+    avg = stats.get("batting_avg", 0) or 0
+    hr = stats.get("home_runs", 0) or 0
+    rbi = stats.get("rbi", 0) or 0
+
+    parts = [f"{_fmt_ops(ops)} OPS"]
+    if num_games >= 15:
+        parts.append(f"{_fmt_ops(avg)} AVG")
+    if hr:
+        parts.append(f"{hr} HR")
+    if rbi:
+        parts.append(f"{rbi} RBI")
+    return ", ".join(parts)
+
+
+def _pelt_streak_headline(name, num_games, quality, stats_phrase, mlb_comp, team_comp, franchise_name):
+    """Assemble the final feed headline for a hot-streak event.
+
+    Short windows use "over his last N games" framing; long windows (15+)
+    use "N-game heater" framing. Quality label (torrid vs locked-in)
+    varies the verb. Historical comps append as em-dashed sentences.
+    """
+    num_games = int(num_games)
+    if num_games < 15:
+        if quality == "torrid":
+            opener = f"{name} has been torrid over his last {num_games} games"
+        else:
+            opener = f"{name} has been locked in over his last {num_games} games"
+    else:
+        if quality == "torrid":
+            opener = f"{name} is on a torrid {num_games}-game heater"
+        else:
+            opener = f"{name} is on an extended {num_games}-game heater"
+
+    sentences = [f"{opener} — {stats_phrase}"]
+
+    if mlb_comp:
+        sentences.append(
+            f"Best such stretch by any player since {mlb_comp['name']} in {mlb_comp['season']}"
+        )
+    if team_comp and franchise_name:
+        sentences.append(
+            f"Longest by a {franchise_name} since {team_comp['name']} in {team_comp['season']}"
+        )
+
+    # Join: first sentence ends at em-dash phrase, rest are separate sentences.
+    if len(sentences) == 1:
+        return sentences[0] + "."
+    return sentences[0] + ". " + ". ".join(sentences[1:]) + "."
+
+
+def detect_hot_streaks_pelt(conn, season, latest_date=None, cooldowns=None):
+    """Feed-only hot-streak detector using RAW PELT windows.
+
+    Differences from the legacy current_form-based version:
+      - Uses raw PELT last-segment (no 7-game extension, no last-30 fallback)
+      - Enforces 6 <= N <= 29 game window
+      - Dynamic torrid/locked-in quality gates by window length
+      - OPS-first prose with labeled counts (not a slash line)
+      - 10-year MLB historical comp (avoids Bonds 2001-2004 dominance)
+      - Team-since comp when deeper than MLB
+      - Progressive cooldown (story-deepen rule) via shared cooldowns dict
+
+    Player cards and chat queries still consume `current_form` — this
+    detector is intentionally decoupled from that table.
+    """
+    events = []
+    if cooldowns is None:
+        cooldowns = {}
+
+    # Candidate pool: players who played on latest_date AND have enough games
+    # for PELT to have any hope. 12 is a safe lower bound (2*min_size).
+    rows = conn.execute("""
+        SELECT DISTINCT p.player_id, p.name, sbs.team
+        FROM game_batting_logs g
+        JOIN players p ON g.player_id = p.player_id
+        LEFT JOIN season_batting_stats sbs
+          ON sbs.player_id = p.player_id AND sbs.season = g.season
+        WHERE g.season = ? AND g.date = ?
+    """, (season, latest_date)).fetchall()
+
+    from datetime import datetime as _dt
+
+    def _on_cooldown(pid, current_gap, days=5):
+        """Story-deepens rule: re-fire only if current_gap > previous_gap,
+        AND at least `days` have passed since the last fire."""
+        val = cooldowns.get((pid, "pelt_feed_streak"))
+        if not val:
+            return False, 0
+        if isinstance(val, tuple) and len(val) >= 2:
+            last_date_s, last_gap = val[0], val[1]
+        else:
+            last_date_s, last_gap = val, 0
+        try:
+            days_since = (_dt.strptime(latest_date, "%Y-%m-%d") - _dt.strptime(last_date_s, "%Y-%m-%d")).days
+        except Exception:
+            days_since = 999
+        if days_since < days:
+            return True, last_gap
+        # Past base cooldown: only re-fire if story has deepened (longer gap)
+        if current_gap is not None and last_gap is not None and current_gap <= last_gap:
+            return True, last_gap
+        return False, last_gap
+
+    from services.franchise import get_franchise_codes, get_franchise_name
+
+    for pid, name, team in rows:
+        window = _raw_pelt_window(conn, pid, season, latest_date)
+        if not window:
+            continue
+        num_games = window["num_games"]
+        ops = window["ops"]
+
+        quality = _pelt_streak_quality(num_games, ops)
+        if not quality:
             continue
 
-        # Refire detection: is this a "still going" event? Past cooldown but
-        # still within the lookback window means the player was surfaced
-        # recently and is being re-reported. Use different phrasing that
-        # acknowledges continuity instead of pretending it's fresh.
-        prior = conn.execute("""
-            SELECT game_date FROM notable_events
-            WHERE detection_type = 'hot_streak_pelt'
-              AND headline LIKE ?
-              AND game_date > date(?, '-' || ? || ' days')
-              AND game_date < ?
-            ORDER BY game_date DESC
-            LIMIT 1
-        """, (f"%{name}%", latest_date, REFIRE_LOOKBACK_DAYS, latest_date)).fetchone()
-        is_refire = prior is not None
-        prior_date = prior[0] if prior else None
-
-        # Get last game line for context
+        # Require today's game to be a reasonable line — avoids "on a tear"
+        # next to an 0-for-4. Same floor as legacy detector.
         game_row = conn.execute("""
-            SELECT g.hits, g.at_bats, g.home_runs, g.rbi, g.walks
-            FROM game_batting_logs g
-            JOIN players p ON g.player_id = p.player_id
-            WHERE p.name = ? AND g.date = ?
-        """, (name, latest_date)).fetchone()
+            SELECT hits, at_bats, home_runs, rbi
+            FROM game_batting_logs
+            WHERE player_id = ? AND date = ?
+        """, (pid, latest_date)).fetchone()
+        if game_row:
+            gh = game_row[0] or 0
+            ghr = game_row[2] or 0
+            if gh < 2 and ghr < 1:
+                continue
 
-        # "On a tear" needs to match today's line. PELT windows are rolling, so
-        # a 0-for-4 (or a sit-out) still "qualifies" statistically — but putting
-        # that headline next to "on a tear" reads as wrong. Require 2+ H OR a HR
-        # today. Silently skip otherwise; we DON'T want to burn the player's
-        # 5-day cooldown on an event that never actually rendered, so no row is
-        # written to notable_events and no visible signal is emitted.
-        gh = (game_row[0] or 0) if game_row else 0
-        gab = (game_row[1] or 0) if game_row else 0
-        ghr = (game_row[2] or 0) if game_row else 0
-        grbi = (game_row[3] or 0) if game_row else 0
-        if gh < 2 and ghr < 1:
+        # Historical comp (MLB, 10-year window)
+        mlb_comp = _find_feed_pelt_comp(conn, pid, season, num_games, ops)
+        team_comp = None
+        franchise_name = None
+        if team:
+            try:
+                team_codes = get_franchise_codes(team)
+                franchise_name = get_franchise_name(team)
+                team_comp = _find_feed_pelt_comp(
+                    conn, pid, season, num_games, ops, team_codes=team_codes
+                )
+                # Only show team line if it's a DIFFERENT player than the MLB
+                # comp and the team gap is at least as deep — otherwise it's
+                # redundant or less interesting than the MLB line.
+                if team_comp and mlb_comp and team_comp["name"] == mlb_comp["name"]:
+                    team_comp = None
+            except Exception:
+                team_comp = None
+                franchise_name = None
+
+        # Progressive cooldown: pick the deepest available gap as "the story"
+        mlb_gap = (season - mlb_comp["season"]) if mlb_comp else 0
+        team_gap = (season - team_comp["season"]) if team_comp else 0
+        current_gap = max(mlb_gap, team_gap)
+        on_cd, prev_gap = _on_cooldown(pid, current_gap)
+        if on_cd:
             continue
 
-        game_intro = ""
-        if game_row:
-            parts = [f"{gh}-for-{gab}"]
-            if ghr:
-                parts.append(f"{'a homer' if ghr == 1 else f'{ghr} homers'}")
-            if grbi:
-                parts.append(f"{grbi} RBI")
-            if len(parts) == 1:
-                game_intro = f"{name} went {parts[0]} and "
-            else:
-                game_intro = f"{name} went {parts[0]} with {', '.join(parts[1:])} and "
-
-        # Slash line + HR
-        if avg and obp and slg:
-            slash = f".{int(avg*1000):03d}/.{int(obp*1000):03d}/.{int(slg*1000):03d}"
-        else:
-            slash = f"{_fmt_ops(ops)} OPS"
-        hr_part = f" with {hr} HR" if hr else ""
-
-        # Vary the language. Refires get "still rolling"-style phrasing so
-        # the feed doesn't read as "he was hot, now fresh news: he's hot"
-        # when the player has been continuously hot. Current_form's own
-        # variance-resistant algorithm tends to pick a longer window for
-        # refires, so the stats themselves already reflect the longer arc.
-        if is_refire:
-            phrase = _refire_phrases[idx % len(_refire_phrases)]
-        else:
-            phrase = _streak_phrases[idx % len(_streak_phrases)]
-
-        if game_intro:
-            headline = f"{game_intro}{phrase} — {slash}{hr_part} over the last {num_games} games."
-        else:
-            headline = f"{name} {phrase} — {slash}{hr_part} over the last {num_games} games."
+        stats_phrase = _fmt_streak_stats(window, num_games)
+        headline = _pelt_streak_headline(
+            name, num_games, quality, stats_phrase, mlb_comp, team_comp, franchise_name
+        )
 
         events.append({
             "headline": headline,
@@ -1708,8 +1969,12 @@ def detect_hot_streaks_pelt(conn, season, latest_date=None):
             "detection_type": "hot_streak_pelt",
             "priority": 2,
         })
+        # Record progressive cooldown
+        cooldowns[(pid, "pelt_feed_streak")] = (latest_date, current_gap)
 
-    return events
+    # Cap at 5 events per run — feed would otherwise flood on hot days
+    events.sort(key=lambda e: e.get("priority", 2))
+    return events[:5]
 
 
 # ---------------------------------------------------------------------------
@@ -3133,6 +3398,17 @@ def detect_all(db_path=None, season=None, from_poll=False):
 
     events = []
 
+    # Shared progressive-cooldown dict. Loaded once and passed to both the
+    # Tier 2 PELT feed detector and the deep_scans runner so the two share
+    # state (a player's PELT feed event suppresses a redundant deep-scan
+    # firing and vice versa, and both obey the "story deepens" re-fire rule).
+    cd_rows = conn.execute("""
+        SELECT player_id, scan_type, last_date, last_gap
+        FROM deep_scan_cooldowns
+        WHERE last_date >= date(?, '-45 days')
+    """, (latest_date,)).fetchall()
+    cooldowns = {(pid, st): (ld, lg) for pid, st, ld, lg in cd_rows}
+
     # Dynamic streak thresholds — higher bar as season progresses
     games_played = conn.execute(
         "SELECT MAX(games) FROM season_batting_stats WHERE season = ?", (season,)
@@ -3156,7 +3432,7 @@ def detect_all(db_path=None, season=None, from_poll=False):
     print("  Running Tier 2 detectors...")
     events += detect_career_milestones(conn, season, latest_date)
     events += detect_rarities(conn, season, latest_date)
-    events += detect_hot_streaks_pelt(conn, season, latest_date)
+    events += detect_hot_streaks_pelt(conn, season, latest_date, cooldowns=cooldowns)
     t2_count = len(events) - t1_count
     print(f"    Tier 2: {t2_count} events")
 
@@ -3235,14 +3511,9 @@ def detect_all(db_path=None, season=None, from_poll=False):
     try:
         from services.deep_scans import run_deep_scans
         print("  Running deep scans...")
-        # Load persisted cooldowns from the last 45 days (older is moot
-        # since the scans have natural game-count windows of ~30 games)
-        cd_rows = conn.execute("""
-            SELECT player_id, scan_type, last_date, last_gap
-            FROM deep_scan_cooldowns
-            WHERE last_date >= date(?, '-45 days')
-        """, (latest_date,)).fetchall()
-        cooldowns = {(pid, st): (ld, lg) for pid, st, ld, lg in cd_rows}
+        # `cooldowns` is the shared dict loaded earlier in detect_all — both
+        # the PELT feed detector and run_deep_scans mutate it, so persisted
+        # state is unified below.
         deep_events = run_deep_scans(conn, season, latest_date, cooldowns=cooldowns)
         for de in deep_events:
             events.append({

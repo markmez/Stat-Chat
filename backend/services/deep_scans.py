@@ -695,91 +695,17 @@ def _find_last_pitching_dominance(conn, exclude_pid, season, starts, era, total_
 
 
 def _run_pelt_scans(conn, season, target_date, bat_games, cooldowns=None):
-    """Run scans using PELT-detected hot streaks as windows."""
-    events = []
+    """PELT hot-streak feed events are now produced by
+    `notable_events.detect_hot_streaks_pelt`, which runs RAW PELT (no
+    current_form extension/fallback), enforces a 6-29 game window, applies
+    dynamic torrid/locked-in quality gates, and emits MLB + team-since
+    comps with a shared progressive cooldown.
 
-    for row in bat_games:
-        pid, pname, team = row[0], row[1], row[2]
-
-        # Check if player has an active hot streak in current_form
-        cf = conn.execute("""
-            SELECT num_games, batting_avg, obp, slg, ops
-            FROM current_form
-            WHERE player_id = ? AND season = ?
-        """, (pid, season)).fetchone()
-
-        if not cf:
-            continue
-
-        num_games = cf[0] or 0
-        cf_avg = cf[1] or 0
-        cf_obp = cf[2] or 0
-        cf_slg = cf[3] or 0
-
-        cfg = SCAN_CONFIG["slash_line_pelt"]
-        cf_ops = (cf_obp or 0) + (cf_slg or 0)
-        # Check cooldown
-        if cooldowns is None:
-            cooldowns = {}
-        _cd_key = (pid, "ops_pelt")
-        _on_cooldown = False
-        if _cd_key in cooldowns:
-            _val = cooldowns[_cd_key]
-            _last_date_s = _val[0] if isinstance(_val, tuple) else _val
-            try:
-                from datetime import datetime as _dt
-                _on_cooldown = (_dt.strptime(target_date, "%Y-%m-%d") - _dt.strptime(_last_date_s, "%Y-%m-%d")).days < 5
-            except Exception:
-                pass
-        if num_games >= 7 and cf_ops >= cfg.get("gate_ops", 1.000) and not _on_cooldown:
-            last_mlb = _find_last_streak_ops(conn, pid, season, num_games, cf_ops)
-            last_team = None
-            if team:
-                team_codes = get_franchise_codes(team)
-                last_team = _find_last_streak_ops(conn, pid, season, num_games, cf_ops, team_codes=team_codes)
-            mlb_gap = (season - last_mlb["season"]) if last_mlb else None
-            team_gap = (season - last_team["season"]) if last_team else None
-            mlb_ok = last_mlb and mlb_gap >= cfg["min_years_mlb"]
-            team_ok = last_team and team_gap >= cfg["min_years_team"]
-            pelt_team_fired = False
-            # prev_gap uses the same cooldowns dict keyed by (pid, "ops_pelt")
-            _prev = cooldowns.get(_cd_key)
-            prev_gap_pelt = _prev[1] if isinstance(_prev, tuple) and len(_prev) >= 2 else 0
-            if team_ok and (not mlb_ok or team_gap > mlb_gap) and team_gap > prev_gap_pelt:
-                franchise_name = get_franchise_name(team)
-                events.append({
-                    "type": "deep_scan",
-                    "scan": "slash_line_pelt",
-                    "player": pname, "team": team or "",
-                    "detail": (
-                        f"{pname} is posting a {cf_ops:.3f} OPS "
-                        f"({_format_avg(cf_avg)}/{_format_avg(cf_obp)}/{_format_avg(cf_slg)}) "
-                        f"over his current {num_games}-game hot streak — "
-                        f"the last {franchise_name} player with a stretch that dominant was "
-                        f"{last_team['name']} in {last_team['season']}."
-                    ),
-                })
-                cooldowns[_cd_key] = (target_date, team_gap)
-                pelt_team_fired = True
-            last = last_mlb
-            if last and not pelt_team_fired:
-                years_ago = season - last["season"]
-                if years_ago >= cfg["min_years_mlb"] and years_ago > prev_gap_pelt:
-                    events.append({
-                        "type": "deep_scan",
-                        "scan": "slash_line_pelt",
-                        "player": pname, "team": team or "",
-                        "detail": (
-                            f"{pname} is posting a {cf_ops:.3f} OPS "
-                            f"({_format_avg(cf_avg)}/{_format_avg(cf_obp)}/{_format_avg(cf_slg)}) "
-                            f"over his current {num_games}-game hot streak — "
-                            f"the last player with a stretch that dominant was "
-                            f"{last['name']} in {last['season']}."
-                        ),
-                    })
-                    cooldowns[_cd_key] = (target_date, years_ago)
-
-    return events
+    This stub is retained so `run_deep_scans` still calls it safely; if you
+    need to add PELT-based deep-scan features that don't belong in the feed
+    detector, add them here.
+    """
+    return []
 
 
 def _find_last_streak_ops(conn, exclude_pid, season, window, ops, team_codes=None):
