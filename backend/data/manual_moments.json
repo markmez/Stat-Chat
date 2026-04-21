@@ -106,5 +106,17 @@
     "headline": "On this date in 2022, Aaron Judge hit his 62nd home run of the season, breaking Roger Maris's 61-year-old American League single-season home run record.",
     "player_names": ["Aaron Judge", "Roger Maris"],
     "team_names": ["New York Yankees", "Texas Rangers"]
+  },
+  {
+    "date": "1988-09-28",
+    "headline": "On this date in 1988, Orel Hershiser pitched his 59th consecutive scoreless inning, breaking Don Drysdale's 20-year-old MLB record. Hershiser's streak finished at 59, still the all-time record.",
+    "player_names": ["Orel Hershiser", "Don Drysdale"],
+    "team_names": ["Los Angeles Dodgers", "San Diego Padres"]
+  },
+  {
+    "date": "1968-06-08",
+    "headline": "On this date in 1968, Don Drysdale surpassed Walter Johnson's 1913 mark of 56 consecutive scoreless innings — a record that had stood for 55 years. Drysdale's streak finished at 58\u2154.",
+    "player_names": ["Don Drysdale", "Walter Johnson"],
+    "team_names": ["Los Angeles Dodgers", "Philadelphia Phillies"]
   }
 ]
