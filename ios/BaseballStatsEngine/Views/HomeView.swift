@@ -323,6 +323,9 @@ struct HomeView: View {
                         onMatchupTap: { query in
                             path.append(ResultsDestination(question: query))
                         },
+                        onQueryTap: { query in
+                            path.append(ResultsDestination(question: query))
+                        },
                         showHeader: false,
                         matchupPills: $matchupPills,
                         hasExpandedTrayToday: NotableEventsFeed.hasExpandedTray(),

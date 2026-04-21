@@ -38,6 +38,7 @@ struct NotableEventsFeed: View {
     var onPlayerTap: ((String) -> Void)?
     var onTeamTap: ((String) -> Void)?
     var onMatchupTap: ((String) -> Void)?  // Query string for matchup preview
+    var onQueryTap: ((String) -> Void)?    // Generic query — e.g. streak game-count links
     var showHeader: Bool = true
     @Binding var matchupPills: [String]
     var hasExpandedTrayToday: Bool = false
@@ -172,6 +173,9 @@ struct NotableEventsFeed: View {
                 } else if url.host == "matchup" {
                     let query = url.path.dropFirst().removingPercentEncoding ?? String(url.path.dropFirst())
                     onMatchupTap?(query)
+                } else if url.host == "query" {
+                    let query = url.path.dropFirst().removingPercentEncoding ?? String(url.path.dropFirst())
+                    (onQueryTap ?? onMatchupTap)?(query)
                 }
                 return .handled
             })
@@ -386,9 +390,7 @@ struct NotableEventsFeed: View {
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    Text(highlightedText(
-                        event.detail.isEmpty ? event.headline : event.headline + " " + event.detail,
-                        playerNames: event.playerNames, teamNames: event.teamNames))
+                    Text(streakAttributed(for: event))
                         .font(.system(.callout, design: .rounded))
                         .foregroundStyle(.primary)
                         .lineSpacing(3)
@@ -405,6 +407,60 @@ struct NotableEventsFeed: View {
             .frame(height: 2)
             .clipShape(Capsule())
             .opacity(isLast ? 0 : 1)
+        }
+    }
+
+    /// Build the AttributedString for a non-matchup event. For streak events
+    /// (category or prose-based detection), the first "N game(s)" span is
+    /// linked to `{player} last N games`.
+    private func streakAttributed(for event: NotableEvent) -> AttributedString {
+        let fullText = event.detail.isEmpty ? event.headline : event.headline + " " + event.detail
+        var attr = highlightedText(fullText, playerNames: event.playerNames, teamNames: event.teamNames)
+        if let primary = event.playerNames.first, isStreakEvent(event, fullText: fullText) {
+            linkifyStreakGameCount(&attr, in: fullText, playerName: primary)
+        }
+        return attr
+    }
+
+    /// Decide whether an event is "streak-shaped" — catches both the Streak
+    /// category (Tier 1 detectors + PELT) and historical-scan streak events
+    /// (category "historical" but headline mentions a streak/heater/stretch).
+    /// Gating on these keywords avoids linkifying game-counts in unrelated
+    /// milestone/record events where the number doesn't map to a "last N games"
+    /// view.
+    private func isStreakEvent(_ event: NotableEvent, fullText: String) -> Bool {
+        if event.category == "Streak" { return true }
+        let lower = fullText.lowercased()
+        return lower.contains("streak") || lower.contains("heater") || lower.contains("stretch")
+    }
+
+    /// Find the FIRST "N game" / "N games" / "N-game" span in a streak headline
+    /// and link it to a `{player} last N games` query. In-place mutation on the
+    /// caller's AttributedString so any existing player/team links are preserved.
+    private func linkifyStreakGameCount(_ attr: inout AttributedString, in source: String, playerName: String) {
+        // Match a number followed by optional "straight"/"consecutive"/"career" filler,
+        // then "game" optionally pluralized. The whitelist keeps us from
+        // matching things like "15 home games" that aren't streak-relevant.
+        // Word boundary at the end prevents matching "gamer".
+        guard let regex = try? NSRegularExpression(
+            pattern: #"\b(\d+)(?:[\s-](?:straight|consecutive|career))?[\s-]games?\b"#
+        ) else { return }
+        let ns = source as NSString
+        let match = regex.firstMatch(in: source, range: NSRange(location: 0, length: ns.length))
+        guard let match = match, match.numberOfRanges >= 2 else { return }
+        let spanNS = match.range(at: 0)
+        let numNS = match.range(at: 1)
+        let spanText = ns.substring(with: spanNS)
+        let gameCount = ns.substring(with: numNS)
+
+        // Convert the NSRange to an AttributedString range by locating the span
+        // in the attributed text (AttributedString doesn't share indices with String).
+        guard let range = attr.range(of: spanText) else { return }
+
+        let query = "\(playerName) last \(gameCount) games"
+        if let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {
+            attr[range].link = URL(string: "statchat://query/\(encoded)")
+            attr[range].foregroundColor = deepBlue
         }
     }
 

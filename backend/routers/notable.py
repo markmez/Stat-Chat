@@ -511,6 +511,12 @@ def _merge_player_events(conn, group, player_name, game_date):
             stat_order.append(key)
         by_stat[key].append(e)
 
+    # Push "_other" (comp/historical sentences without a clear stat anchor)
+    # to the end. They often start "that was the longest..." and rely on a
+    # preceding sentence to establish the subject — if they come first the
+    # pronoun has no antecedent.
+    stat_order.sort(key=lambda s: 1 if s == "_other" else 0)
+
     sentences = []
     for stat in stat_order:
         events = by_stat[stat]
