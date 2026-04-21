@@ -762,8 +762,66 @@ def detect_hr_streaks(conn, season, latest_date, min_games=4):
     return events
 
 
+def _pitching_streak_context(conn, pid, season, streak_len, condition_sql, min_context_len):
+    """Compute MLB + team "first since X" context for a pitching-shape streak.
+
+    streak_len: current active streak length (N consecutive starts matching).
+    condition_sql: per-start SQL fragment like 'earned_runs = 0 AND ip_outs >= 15'.
+    min_context_len: suppress context below this bar (common short streaks
+    aren't historically interesting).
+
+    Returns a trailing-context string or empty. Follows same rules as
+    _rarity_context_combined: MLB always shown when meaningful, team
+    appended only if team gap is 6+ years deeper than MLB.
+    """
+    if streak_len < min_context_len:
+        return ""
+    from services.historical_scans import _find_last_consecutive_start_streak
+    # MLB
+    mlb = _find_last_consecutive_start_streak(conn, pid, season, streak_len, condition_sql)
+    # Team
+    team_codes = []
+    franchise_name = None
+    try:
+        row = conn.execute("SELECT team FROM players WHERE player_id = ?", (pid,)).fetchone()
+        if row and row[0]:
+            primary = row[0].split("/")[0].strip()
+            from services.franchise import get_franchise_codes, get_franchise_name
+            team_codes = get_franchise_codes(primary)
+            franchise_name = get_franchise_name(primary)
+    except Exception:
+        pass
+    team_match = (
+        _find_last_consecutive_start_streak(conn, pid, season, streak_len, condition_sql, team_codes=team_codes)
+        if team_codes else None
+    )
+
+    parts = []
+    if mlb:
+        gap_mlb = season - mlb["season"]
+        if gap_mlb >= 2:
+            parts.append(f"the first since {mlb['name']} in {mlb['season']}")
+    if team_match and franchise_name:
+        gap_team = season - team_match["season"]
+        gap_mlb = (season - mlb["season"]) if mlb else 9999
+        if gap_team - gap_mlb >= 6:
+            parts.append(f"the first {franchise_name} pitcher to do it since {team_match['name']} in {team_match['season']}")
+    elif not mlb and franchise_name:
+        # No MLB match found at all within lookback — just fire team if it has one
+        if team_match:
+            parts.append(f"the first {franchise_name} pitcher to do it since {team_match['name']} in {team_match['season']}")
+
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0] + "."
+    return " — and ".join(parts) + "."
+
+
 def detect_pitching_streaks(conn, season, latest_date):
-    """Find active pitching dominance streaks (scoreless starts, quality starts)."""
+    """Find active pitching dominance streaks (scoreless starts, quality starts,
+    consecutive 10+ K starts). Adds MLB + team-since historical context when
+    the streak is long enough to be noteworthy."""
     events = []
 
     # Get starters who pitched on or near the latest date
@@ -798,8 +856,15 @@ def detect_pitching_streaks(conn, season, latest_date):
             last_ip = f"{(last[1] or 0) // 3}.{(last[1] or 0) % 3}"
             last_so = last[4] or 0
             game_line = f"{name} threw {last_ip} scoreless IP with {last_so} K and "
+            headline = f"{game_line}now has {scoreless} consecutive scoreless starts."
+            # Historical context only when the streak is rare enough (5+)
+            ctx = _pitching_streak_context(conn, pid, season, scoreless,
+                                           "earned_runs = 0 AND ip_outs >= 15",
+                                           min_context_len=5)
+            if ctx:
+                headline = headline.rstrip(".") + f" — {ctx}"
             events.append({
-                "headline": f"{game_line}now has {scoreless} consecutive scoreless starts.",
+                "headline": headline,
                 "detail": "",
                 "category": "Streak",
                 "game_date": starts[0][0],
@@ -825,14 +890,51 @@ def detect_pitching_streaks(conn, season, latest_date):
             last_er = last[2] or 0
             last_so = last[4] or 0
             game_line = f"{name} went {last_ip} IP, {last_er} ER, {last_so} K and "
+            headline = f"{game_line}now has {qs} consecutive quality starts (6+ IP, ≤3 ER)."
+            ctx = _pitching_streak_context(conn, pid, season, qs,
+                                           "ip_outs >= 18 AND earned_runs <= 3",
+                                           min_context_len=6)
+            if ctx:
+                headline = headline.rstrip(".") + f" — {ctx}"
             events.append({
-                "headline": f"{game_line}now has {qs} consecutive quality starts (6+ IP, ≤3 ER).",
+                "headline": headline,
                 "detail": "",
                 "category": "Streak",
                 "game_date": starts[0][0],
                 "player_names": [name],
                 "team_names": [],
                 "detection_type": "qs_streak",
+                "priority": 1,
+            })
+
+        # 10+ K consecutive starts (new shape — stat-twitter-y)
+        k10 = 0
+        for game_date, ip_outs, er, ip_text, so in starts:
+            if (so or 0) >= 10:
+                k10 += 1
+            else:
+                break
+
+        if k10 >= 3:
+            name = _player_name(conn, pid)
+            last = starts[0]
+            last_ip = f"{(last[1] or 0) // 3}.{(last[1] or 0) % 3}"
+            last_so = last[4] or 0
+            game_line = f"{name} struck out {last_so} in {last_ip} innings and "
+            headline = f"{game_line}now has {k10} consecutive 10+ strikeout starts."
+            ctx = _pitching_streak_context(conn, pid, season, k10,
+                                           "strikeouts >= 10",
+                                           min_context_len=3)
+            if ctx:
+                headline = headline.rstrip(".") + f" — {ctx}"
+            events.append({
+                "headline": headline,
+                "detail": "",
+                "category": "Streak",
+                "game_date": starts[0][0],
+                "player_names": [name],
+                "team_names": [],
+                "detection_type": "k10_streak",
                 "priority": 1,
             })
 

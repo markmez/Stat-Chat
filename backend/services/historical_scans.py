@@ -303,6 +303,108 @@ def check_if_historic_moments_rebuild_needed(conn, latest_date):
     return False
 
 
+# ---------------------------------------------------------------------------
+# Pitching-shape helpers: find the last pitcher to have a consecutive run of
+# N+ starts meeting some condition. Uses gaps-and-islands pattern.
+# ---------------------------------------------------------------------------
+
+def _find_last_consecutive_start_streak(conn, exclude_pid, season, min_length,
+                                         condition_sql, team_codes=None):
+    """Return {name, season} for the most recent pitcher (excluding
+    exclude_pid) who had a consecutive run of min_length+ starts meeting
+    condition_sql within a single season. Iterates seasons backwards.
+
+    condition_sql: SQL fragment evaluated per start (e.g. "earned_runs = 0
+    AND ip_outs >= 15" for scoreless, or "strikeouts >= 10" for 10+K).
+    team_codes: optional franchise filter; when set, lookback is 100yrs.
+    """
+    lookback = 101 if team_codes else 26
+    tf_join = ""
+    tf_where = ""
+    tf_params = []
+    if team_codes:
+        placeholders = " OR ".join(["('/' || ss.team || '/') LIKE ?"] * len(team_codes))
+        tf_join = "JOIN season_pitching_stats ss ON ss.player_id = sub.player_id AND ss.season = sub.season"
+        tf_where = f"AND ({placeholders})"
+        tf_params = [f"%/{c}/%" for c in team_codes]
+
+    for check_season in range(season - 1, season - lookback, -1):
+        row = conn.execute(f"""
+            SELECT p.name, sub.season
+            FROM (
+                SELECT player_id, season, run_id, COUNT(*) as streak_len
+                FROM (
+                    SELECT player_id, season,
+                           SUM(CASE WHEN ({condition_sql}) THEN 0 ELSE 1 END)
+                               OVER (PARTITION BY player_id ORDER BY date
+                                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as run_id,
+                           ({condition_sql}) as in_streak
+                    FROM game_pitching_logs
+                    WHERE is_start = 1 AND season = ?
+                ) labeled
+                WHERE in_streak = 1
+                GROUP BY player_id, season, run_id
+                HAVING streak_len >= ?
+            ) sub
+            JOIN players p ON p.player_id = sub.player_id
+            {tf_join}
+            WHERE sub.player_id != ?
+            {tf_where}
+            LIMIT 1
+        """, [check_season, min_length, exclude_pid] + tf_params).fetchone()
+
+        if row:
+            return {"name": row[0], "season": row[1]}
+
+    return None
+
+
+def _find_last_opening_streak(conn, exclude_pid, season, min_length,
+                               condition_sql, team_codes=None):
+    """Return {name, season} for the most recent pitcher who OPENED a season
+    with min_length+ starts all meeting condition_sql. Streak must start
+    from their first start of the season."""
+    lookback = 101 if team_codes else 26
+    tf_join = ""
+    tf_where = ""
+    tf_params = []
+    if team_codes:
+        placeholders = " OR ".join(["('/' || ss.team || '/') LIKE ?"] * len(team_codes))
+        tf_join = "JOIN season_pitching_stats ss ON ss.player_id = sub.player_id AND ss.season = sub.season"
+        tf_where = f"AND ({placeholders})"
+        tf_params = [f"%/{c}/%" for c in team_codes]
+
+    for check_season in range(season - 1, season - lookback, -1):
+        row = conn.execute(f"""
+            SELECT p.name, sub.season
+            FROM (
+                SELECT player_id, season, COUNT(*) as streak_len
+                FROM (
+                    SELECT player_id, season,
+                           ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY date) as start_rank,
+                           SUM(CASE WHEN ({condition_sql}) THEN 0 ELSE 1 END)
+                               OVER (PARTITION BY player_id ORDER BY date
+                                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as broken
+                    FROM game_pitching_logs
+                    WHERE is_start = 1 AND season = ?
+                ) labeled
+                WHERE broken = 0  -- no breaks yet (from start of season)
+                GROUP BY player_id, season
+                HAVING streak_len >= ?
+            ) sub
+            JOIN players p ON p.player_id = sub.player_id
+            {tf_join}
+            WHERE sub.player_id != ?
+            {tf_where}
+            LIMIT 1
+        """, [check_season, min_length, exclude_pid] + tf_params).fetchone()
+
+        if row:
+            return {"name": row[0], "season": row[1]}
+
+    return None
+
+
 def _format_ordinal(n):
     """Convert 1 → '1st', 2 → '2nd', 3 → '3rd', 4+ → 'Nth'."""
     if 10 <= n % 100 <= 20:
@@ -536,6 +638,32 @@ def scan_pitching_start_of_season(conn, season, latest_date):
             total_k = sum(s[0] or 0 for s in starts)
             ip = f"{total_outs // 3}.{total_outs % 3}"
 
+            # Historical context: when did anyone last open a season with N+
+            # consecutive scoreless starts? Include team-since if deeper.
+            mlb_open = _find_last_opening_streak(
+                conn, pid, season, num_starts,
+                "earned_runs = 0 AND ip_outs >= 15",
+            )
+            team_open = None
+            team_codes = []
+            franchise_display_name = None
+            try:
+                t_row = conn.execute(
+                    "SELECT team FROM players WHERE player_id = ?", (pid,)
+                ).fetchone()
+                if t_row and t_row[0]:
+                    primary = t_row[0].split("/")[0].strip()
+                    from services.franchise import get_franchise_codes, get_franchise_name
+                    team_codes = get_franchise_codes(primary)
+                    franchise_display_name = get_franchise_name(primary)
+                    team_open = _find_last_opening_streak(
+                        conn, pid, season, num_starts,
+                        "earned_runs = 0 AND ip_outs >= 15",
+                        team_codes=team_codes,
+                    )
+            except Exception:
+                pass
+
             facts.append({
                 "type": "scoreless_first_n_starts",
                 "player": name,
@@ -544,6 +672,9 @@ def scan_pitching_start_of_season(conn, season, latest_date):
                 "starts": num_starts,
                 "ip": ip,
                 "k": total_k,
+                "mlb_match": mlb_open,
+                "team_match": team_open,
+                "franchise_name": franchise_display_name,
             })
 
     return facts
@@ -1399,6 +1530,23 @@ def template_facts(conn, facts, season, latest_date):
             game_intro = f"{player} went {game_line}" if game_line else f"{player}"
 
             headline = f"{game_intro}, and has now thrown {starts} consecutive scoreless starts to open the season ({ip} IP, {k} K, 0 ER)."
+
+            # MLB + team historical context for "first to open a season with N+"
+            mlb_match = f.get("mlb_match")
+            team_match = f.get("team_match")
+            franchise_name = f.get("franchise_name")
+            ctx_parts = []
+            if mlb_match and (season - mlb_match["season"]) >= 2:
+                ctx_parts.append(f"the first pitcher to do that since {mlb_match['name']} in {mlb_match['season']}")
+            if team_match and franchise_name:
+                gap_team = season - team_match["season"]
+                gap_mlb = (season - mlb_match["season"]) if mlb_match else 9999
+                if gap_team - gap_mlb >= 6:
+                    ctx_parts.append(f"the first {franchise_name} pitcher to do it since {team_match['name']} in {team_match['season']}")
+            elif not mlb_match and team_match and franchise_name:
+                ctx_parts.append(f"the first {franchise_name} pitcher to do it since {team_match['name']} in {team_match['season']}")
+            if ctx_parts:
+                headline = headline.rstrip(".") + " — " + " — and ".join(ctx_parts) + "."
 
         elif f["type"] == "team_fewest_er":
             er = f["er"]
