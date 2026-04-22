@@ -149,6 +149,14 @@ struct PlayerCardView: View {
                                             }
                                             .buttonStyle(.plain)
                                         }
+                                        // Negro Leagues tag — flagged from backend when any of the
+                                        // player's seasons were with one of the seven recognized
+                                        // Negro Leagues (1920-1948).
+                                        if card.isNegroLeagues {
+                                            Text("\u{00A0}\u{00B7} Negro Leagues")
+                                                .foregroundStyle(.secondary)
+                                                .italic()
+                                        }
                                     }
                                     .font(.system(.subheadline, design: .rounded))
 

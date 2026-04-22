@@ -123,6 +123,11 @@ struct PlayerCard: Sendable {
     let gameLogs: [GameLogDisplay]
     let pitchingGameLogs: [PitchingGameLogDisplay]
     let achievements: PlayerAchievements?
+    // Surfaced from backend player_info.is_negro_leagues. Drives the
+    // "Negro Leagues" tag rendered next to team name on retired-player
+    // cards (Josh Gibson, Cool Papa Bell, etc.) so users can contextualize
+    // the stats — different competition, smaller samples, separate record book.
+    var isNegroLeagues: Bool = false
 }
 
 struct GameLogDisplay: Sendable, Identifiable {
@@ -840,7 +845,8 @@ enum PlayerCardService {
             pitchingCareerHomeAwaySplits: pitchingCareerHomeAway,
             gameLogs: gameLogs,
             pitchingGameLogs: pitchingGameLogs,
-            achievements: achievements
+            achievements: achievements,
+            isNegroLeagues: info?.is_negro_leagues ?? false
         )
     }
 

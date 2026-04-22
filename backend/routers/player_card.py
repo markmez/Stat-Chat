@@ -45,6 +45,11 @@ class PlayerInfo(BaseModel):
     bats: Optional[str] = None
     throws: Optional[str] = None
     positions: Optional[str] = None
+    # True if any of this player's seasons were with one of the seven Negro
+    # Leagues (1920-1948) MLB officially recognized as major leagues. iOS
+    # surfaces this next to team name so users can contextualize stats from
+    # that era (smaller samples, different competition, separate record book).
+    is_negro_leagues: bool = False
 
 
 class BattingSeason(BaseModel):
@@ -486,20 +491,36 @@ def _resolve_player_name(conn: sqlite3.Connection, name: str) -> str:
 def _fetch_player_info(conn: sqlite3.Connection, name: str) -> Optional[PlayerInfo]:
     cur = conn.cursor()
     cur.execute(
-        "SELECT name, team, birthdate, bats, throws, positions FROM players "
+        "SELECT player_id, name, team, birthdate, bats, throws, positions FROM players "
         "WHERE name = ? LIMIT 1",
         (_sanitize(name),),
     )
     row = cur.fetchone()
     if not row:
         return None
+    pid = row[0]
+
+    # Check Negro Leagues — pull the player's per-season team strings and
+    # ask the franchise module if any stint was with an NL team. Cheap query
+    # because we already filter to one player_id.
+    from services.franchise import is_negro_leagues_player
+    team_history: list[str] = []
+    for tbl in ("season_batting_stats", "season_pitching_stats"):
+        try:
+            cur.execute(f"SELECT team FROM {tbl} WHERE player_id = ?", (pid,))
+            team_history.extend(t for (t,) in cur.fetchall() if t)
+        except Exception:
+            pass
+    is_nl = is_negro_leagues_player(team_history)
+
     return PlayerInfo(
-        name=row[0],
-        team=row[1] or "",
-        birthdate=row[2] if row[2] else None,
-        bats=row[3] if row[3] else None,
-        throws=row[4] if row[4] else None,
-        positions=row[5] if row[5] else None,
+        name=row[1],
+        team=row[2] or "",
+        birthdate=row[3] if row[3] else None,
+        bats=row[4] if row[4] else None,
+        throws=row[5] if row[5] else None,
+        positions=row[6] if row[6] else None,
+        is_negro_leagues=is_nl,
     )
 
 

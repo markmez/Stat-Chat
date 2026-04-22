@@ -100,3 +100,74 @@ def get_canonical_code(code: str) -> str:
     returns the single current-city code (e.g. "PHA" → "OAK", "MON" → "WAS").
     """
     return FRANCHISE_CANONICAL.get(code, code)
+
+
+# ---------------------------------------------------------------------------
+# Negro Leagues identification
+# ---------------------------------------------------------------------------
+# In 2020 MLB officially elevated 7 Negro Leagues (1920-1948) to major-league
+# status. Retrosheet stores their team codes alongside AL/NL teams. We surface
+# this on player profiles so users can distinguish Josh Gibson's stats (Negro
+# Leagues, smaller sample, different competition context) from contemporary
+# AL/NL hitters.
+#
+# Identification strategy: any team code that ONLY appears in seasons 1920-
+# 1948 and never in 1949+ is a Negro Leagues team. Cached at module load
+# from a single SQL query — refreshes when the process restarts.
+
+import sqlite3 as _sqlite3
+import os as _os
+
+_NL_TEAM_CODES_CACHE: set | None = None
+
+
+def _negro_leagues_team_codes(db_path: str | None = None) -> set:
+    """Lazy-load + cache the set of Retrosheet team codes that only appear
+    in 1920-1948 (the official Negro Leagues major-league era). Multi-team
+    seasons (e.g. 'BIR/CAG') are split — a player counts as NL if ANY of
+    their team-stints during this window is to a NL-only team."""
+    global _NL_TEAM_CODES_CACHE
+    if _NL_TEAM_CODES_CACHE is not None:
+        return _NL_TEAM_CODES_CACHE
+    db = db_path or _os.environ.get("DB_PATH", "/data/baseball_stats_full.db")
+    codes: set = set()
+    try:
+        conn = _sqlite3.connect(db, timeout=10)
+        cur = conn.execute("""
+            SELECT DISTINCT team FROM season_batting_stats
+            WHERE season BETWEEN 1920 AND 1948
+              AND team NOT IN (SELECT DISTINCT team FROM season_batting_stats WHERE season >= 1949)
+        """)
+        for (team,) in cur.fetchall():
+            for t in (team or "").split("/"):
+                if t:
+                    codes.add(t)
+        conn.close()
+    except Exception:
+        # If DB isn't reachable yet, return empty — caller should treat as
+        # "no Negro Leagues teams known" and try again later.
+        return set()
+    _NL_TEAM_CODES_CACHE = codes
+    return codes
+
+
+def is_negro_leagues_team(code: str, db_path: str | None = None) -> bool:
+    """Whether a Retrosheet team code refers to a Negro Leagues team."""
+    if not code:
+        return False
+    return code in _negro_leagues_team_codes(db_path)
+
+
+def is_negro_leagues_player(player_team_history: list[str],
+                            db_path: str | None = None) -> bool:
+    """Given a player's per-season team strings (which may contain '/'),
+    return True if ANY stint was with a Negro Leagues team. Used in the
+    player_card builder to flag profiles that need a contextual marker."""
+    nl_codes = _negro_leagues_team_codes(db_path)
+    if not nl_codes:
+        return False
+    for season_team in player_team_history:
+        for t in (season_team or "").split("/"):
+            if t in nl_codes:
+                return True
+    return False

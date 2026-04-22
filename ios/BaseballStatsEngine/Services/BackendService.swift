@@ -228,6 +228,7 @@ final class BackendService: Sendable {
         let bats: String?
         let `throws`: String?
         let positions: String?
+        let is_negro_leagues: Bool?
     }
 
     struct BattingSeasonData: Decodable, Sendable {
