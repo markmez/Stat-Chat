@@ -1,5 +1,5 @@
 [Unit]
-Description=StatChat Backend API (worker timeout 300s — AI insight tool-use loops)
+Description=StatChat Backend API (worker timeout 300s — AI insight tool-use loops, team_game_results live)
 After=network.target
 
 [Service]
