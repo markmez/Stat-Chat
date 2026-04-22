@@ -159,9 +159,16 @@ def _is_temporally_plausible(cursor, player_id, season):
     """, (player_id, player_id))
     row = cursor.fetchone()
     if row and row[0]:
-        return (season - row[0]) < 15
+        return (season - row[0]) < 5
     # No stats yet — could be a newly created entry, allow match
     return True
+
+
+def _get_stored_team(cursor, player_id):
+    """Get the team currently stored in the players table for this ID."""
+    cursor.execute("SELECT team FROM players WHERE player_id = ?", (player_id,))
+    row = cursor.fetchone()
+    return row[0] if row else None
 
 
 def find_or_create_player(cursor, player_info, team_abbrev, season):
@@ -174,19 +181,47 @@ def find_or_create_player(cursor, player_info, team_abbrev, season):
     ascii_name = _strip_accents(full_name)
 
     # Try exact name match first (including accent-insensitive)
+    # When multiple matches exist, prefer the most recently active player
     cursor.execute("SELECT player_id, name FROM players WHERE name = ? OR name = ?",
                    (full_name, ascii_name))
     rows = cursor.fetchall()
-    for row in rows:
-        if _is_temporally_plausible(cursor, row[0], season):
-            # Update name to MSF version (may have accents/Jr.) and team
-            if row[1] != full_name:
-                cursor.execute("UPDATE players SET name = ?, team = ? WHERE player_id = ?",
-                               (full_name, retro_team(team_abbrev), row[0]))
+    plausible_exact = [(r[0], r[1]) for r in rows if _is_temporally_plausible(cursor, r[0], season)]
+    if plausible_exact:
+        if len(plausible_exact) > 1:
+            # Tiebreak 1: prefer player whose stored team matches the incoming team
+            retro_team_code = retro_team(team_abbrev)
+            team_matches = [(pid, pname) for pid, pname in plausible_exact
+                           if _get_stored_team(cursor, pid) == retro_team_code]
+            if len(team_matches) == 1:
+                plausible_exact = team_matches
             else:
-                cursor.execute("UPDATE players SET team = ? WHERE player_id = ?",
-                               (retro_team(team_abbrev), row[0]))
-            return row[0]
+                # Tiebreak 2: most recently active
+                best = None
+                best_season = -1
+                for pid, pname in plausible_exact:
+                    cursor.execute("""
+                        SELECT MAX(season) FROM (
+                            SELECT MAX(season) as season FROM season_batting_stats WHERE player_id = ?
+                            UNION ALL
+                            SELECT MAX(season) FROM season_pitching_stats WHERE player_id = ?
+                        )
+                    """, (pid, pid))
+                    last = cursor.fetchone()
+                    last_season = last[0] if last and last[0] else 0
+                    if last_season > best_season:
+                        best_season = last_season
+                        best = (pid, pname)
+                if best:
+                    plausible_exact = [best]
+
+        pid, pname = plausible_exact[0]
+        if pname != full_name:
+            cursor.execute("UPDATE players SET name = ?, team = ? WHERE player_id = ?",
+                           (full_name, retro_team(team_abbrev), pid))
+        else:
+            cursor.execute("UPDATE players SET team = ? WHERE player_id = ?",
+                           (retro_team(team_abbrev), pid))
+        return pid
 
     # Try last name + first initial match (with temporal check)
     cursor.execute("SELECT player_id, name FROM players WHERE name LIKE ?",
@@ -448,6 +483,16 @@ def pull_game_logs(conn, season_str, full_refresh=False):
     season_year = detect_season(season_str)
     print(f"  Pulling game logs for {season_str}...")
 
+    # Migrate: add stolen_bases/caught_stealing if missing
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(game_batting_logs)").fetchall()}
+    if "stolen_bases" not in cols:
+        conn.execute("ALTER TABLE game_batting_logs ADD COLUMN stolen_bases INTEGER DEFAULT 0")
+        print("    Added stolen_bases column to game_batting_logs")
+    if "caught_stealing" not in cols:
+        conn.execute("ALTER TABLE game_batting_logs ADD COLUMN caught_stealing INTEGER DEFAULT 0")
+        print("    Added caught_stealing column to game_batting_logs")
+    conn.commit()
+
     game_dates = get_game_dates(season_str)
     if not game_dates:
         print("    No game dates found")
@@ -482,6 +527,8 @@ def pull_game_logs(conn, season_str, full_refresh=False):
     # return games that store under the same date (e.g., 2026-03-27 due to UTC offset).
     player_date_game_num = {}
 
+    dates_with_data = []  # Track which dates actually returned game logs
+
     for i, gdate in enumerate(game_dates):
         time.sleep(2)  # Rate limit courtesy
         try:
@@ -492,6 +539,8 @@ def pull_game_logs(conn, season_str, full_refresh=False):
         if not data:
             continue
         logs = data.get("gamelogs", [])
+        if logs:
+            dates_with_data.append(gdate)
 
         for entry in logs:
             player = entry.get("player", {})
@@ -515,6 +564,10 @@ def pull_game_logs(conn, season_str, full_refresh=False):
             bat = all_stats.get("batting", {})
             if bat and (safe_int(bat.get("atBats")) > 0 or safe_int(bat.get("batterWalks")) > 0 or safe_int(bat.get("hitByPitch")) > 0):
                 pid = find_or_create_player(cursor, player, team_abbrev, season_year)
+                # Debug: log matching for players we know are problematic
+                _debug_name = f"{player.get('firstName','')} {player.get('lastName','')}"
+                if 'ramírez' in _debug_name.lower() and 'josé' in _debug_name.lower():
+                    print(f"    DEBUG: {_debug_name} ({team_abbrev}) → {pid} on {game_date}")
 
                 # Determine game number for doubleheaders
                 pkey = (pid, game_date)
@@ -530,6 +583,8 @@ def pull_game_logs(conn, season_str, full_refresh=False):
                 so = safe_int(bat.get("batterStrikeouts"))
                 hbp = safe_int(bat.get("hitByPitch"))
                 sf = safe_int(bat.get("batterSacrificeFlies", 0))
+                sb = safe_int(bat.get("stolenBases"))
+                cs = safe_int(bat.get("caughtBaseSteals"))
                 pa, avg, obp, slg, ops, _, _ = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so)
 
                 cursor.execute("""
@@ -537,15 +592,15 @@ def pull_game_logs(conn, season_str, full_refresh=False):
                     (player_id, season, date, game_number, opponent, vishome,
                      plate_appearances, at_bats,
                      hits, doubles, triples, home_runs, runs, rbi, walks, strikeouts,
-                     hit_by_pitch, sacrifice_flies,
+                     hit_by_pitch, sacrifice_flies, stolen_bases, caught_stealing,
                      batting_avg, obp, slg, ops)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     pid, season_year, game_date, game_num, retro_team(opponent), vishome,
                     pa, ab, h, doubles, triples, hr,
                     safe_int(bat.get("runs")),
                     safe_int(bat.get("runsBattedIn")),
-                    bb, so, hbp, sf, avg, obp, slg, ops,
+                    bb, so, hbp, sf, sb, cs, avg, obp, slg, ops,
                 ))
                 bat_count += 1
 
@@ -598,13 +653,220 @@ def pull_game_logs(conn, season_str, full_refresh=False):
 
         conn.commit()
 
-    # Record the last date we pulled so next run can be incremental
-    if game_dates:
-        last_date = f"{game_dates[-1][:4]}-{game_dates[-1][4:6]}-{game_dates[-1][6:8]}"
+    # Record the last date that actually returned data (not just attempted)
+    # This prevents skipping dates that MSF hasn't published yet
+    if dates_with_data:
+        last_date = f"{dates_with_data[-1][:4]}-{dates_with_data[-1][4:6]}-{dates_with_data[-1][6:8]}"
         _set_last_game_date_pulled(conn, season_year, last_date)
 
     print(f"    Loaded {bat_count} batting + {pitch_count} pitching game logs across {len(game_dates)} days")
+
+    # Check play-by-play availability for yesterday AND today
+    # Overnight runs (after midnight UTC) need yesterday's date to catch last night's games
+    from datetime import date as _date, timedelta as _td
+    for check_date in [_date.today() - _td(days=1), _date.today()]:
+        check_gdate = check_date.strftime("%Y%m%d")
+        check_has_gamelogs = check_gdate in dates_with_data
+        try:
+            pbp_data = msf_get(f"{season_str}/date/{check_gdate}/games.json")
+            if pbp_data and pbp_data.get("games"):
+                games = pbp_data["games"]
+                completed = sum(1 for g in games if g.get("schedule", {}).get("playedStatus") == "COMPLETED")
+                in_progress = sum(1 for g in games if g.get("schedule", {}).get("playedStatus") == "LIVE")
+                if check_has_gamelogs:
+                    print(f"    PBP CHECK ({check_gdate}): {len(games)} games ({completed} completed, {in_progress} live) — game logs ALSO available")
+                else:
+                    print(f"    PBP CHECK ({check_gdate}): {len(games)} games ({completed} completed, {in_progress} live) — game logs NOT yet available")
+                    if completed > 0:
+                        print(f"    >>> PLAY-BY-PLAY AVAILABLE BEFORE GAME LOGS — could derive game stats for faster detection")
+            else:
+                print(f"    PBP CHECK ({check_gdate}): no games data from MSF")
+        except Exception as e:
+            print(f"    PBP CHECK ({check_gdate}): failed ({e})")
+
     return bat_count, pitch_count
+
+
+def pull_team_game_results(conn, season_str):
+    """Pull per-team per-game results from MSF games.json.
+
+    Stores TWO rows per game (one per team) for symmetric querying — a
+    "Yankees record" lookup is just `WHERE team = 'NYA'`, and temporal
+    joins to player game logs key on (team, date) cleanly. Computes
+    cumulative `wins_after` / `losses_after` per team in a second pass
+    using a window-function-style running sum.
+    """
+    season_year = detect_season(season_str)
+    print(f"  Pulling team game results for {season_str}...")
+
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS team_game_results (
+            date TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            game_number INTEGER NOT NULL DEFAULT 0,
+            team TEXT NOT NULL,
+            opponent TEXT NOT NULL,
+            is_home INTEGER NOT NULL,
+            team_runs INTEGER NOT NULL,
+            opp_runs INTEGER NOT NULL,
+            result TEXT NOT NULL,
+            innings INTEGER DEFAULT 9,
+            start_time_utc TEXT,
+            attendance INTEGER,
+            duration_min INTEGER,
+            venue TEXT,
+            weather TEXT,
+            wins_after INTEGER,
+            losses_after INTEGER,
+            PRIMARY KEY (date, game_number, team)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tgr_team_season ON team_game_results(team, season)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tgr_date ON team_game_results(date)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tgr_team_date ON team_game_results(team, date)")
+    conn.commit()
+
+    data = msf_get(f"{season_str}/games.json")
+    if not data:
+        print("    No games returned from MSF")
+        return 0
+    games = data.get("games", [])
+
+    # Per-team per-date game-number tracking for doubleheader ordering.
+    # MSF returns games in schedule order; if two games share a date+team
+    # we increment the counter so the second gets game_number=1.
+    team_date_count = {}
+    inserted = 0
+    for game in games:
+        sched = game.get("schedule", {})
+        score = game.get("score", {}) or {}
+        if sched.get("playedStatus") != "COMPLETED":
+            continue
+
+        start = sched.get("startTime", "")
+        if not start:
+            continue
+        # Convert UTC to local Eastern date for MLB-official date alignment
+        # (00:00-05:59 UTC = previous evening Eastern).
+        try:
+            dt = datetime.strptime(start[:19], "%Y-%m-%dT%H:%M:%S")
+            if dt.hour < 6:
+                dt = dt - timedelta(days=1)
+            game_date = dt.strftime("%Y-%m-%d")
+        except Exception:
+            continue
+
+        away_msf = sched.get("awayTeam", {}).get("abbreviation", "")
+        home_msf = sched.get("homeTeam", {}).get("abbreviation", "")
+        if not away_msf or not home_msf:
+            continue
+        away_team = retro_team(away_msf)
+        home_team = retro_team(home_msf)
+
+        away_runs = safe_int(score.get("awayScoreTotal"))
+        home_runs = safe_int(score.get("homeScoreTotal"))
+
+        innings_played = len(score.get("innings", [])) or 9
+
+        venue = (sched.get("venue") or {}).get("name") or None
+        attendance = safe_int(sched.get("attendance")) or None
+        weather_obj = sched.get("weather") or {}
+        if isinstance(weather_obj, dict) and weather_obj:
+            # Compact weather string: "Cloudy, 68F, wind 10 mph SE"
+            parts = []
+            if weather_obj.get("type"):
+                parts.append(str(weather_obj["type"]))
+            temp = weather_obj.get("temperature", {})
+            if isinstance(temp, dict) and temp.get("fahrenheit") is not None:
+                parts.append(f"{temp['fahrenheit']}F")
+            wind = weather_obj.get("wind", {})
+            if isinstance(wind, dict) and wind.get("speed", {}).get("milesPerHour") is not None:
+                w = f"wind {wind['speed']['milesPerHour']} mph"
+                if wind.get("direction", {}).get("label"):
+                    w += f" {wind['direction']['label']}"
+                parts.append(w)
+            weather = ", ".join(parts) if parts else None
+        else:
+            weather = None
+
+        ended = sched.get("endedTime", "")
+        duration_min = None
+        if ended and start:
+            try:
+                t1 = datetime.strptime(start[:19], "%Y-%m-%dT%H:%M:%S")
+                t2 = datetime.strptime(ended[:19], "%Y-%m-%dT%H:%M:%S")
+                duration_min = int((t2 - t1).total_seconds() / 60)
+                if duration_min < 30 or duration_min > 600:  # sanity bounds
+                    duration_min = None
+            except Exception:
+                pass
+
+        # Doubleheader ordering: increment per (date, team)
+        key_away = (game_date, away_team)
+        key_home = (game_date, home_team)
+        away_game_num = team_date_count.get(key_away, 0)
+        home_game_num = team_date_count.get(key_home, 0)
+        team_date_count[key_away] = away_game_num + 1
+        team_date_count[key_home] = home_game_num + 1
+
+        # Two rows per game
+        for team, opponent, is_home, t_runs, o_runs, gnum in (
+            (away_team, home_team, 0, away_runs, home_runs, away_game_num),
+            (home_team, away_team, 1, home_runs, away_runs, home_game_num),
+        ):
+            if t_runs > o_runs:
+                result = "W"
+            elif t_runs < o_runs:
+                result = "L"
+            else:
+                result = "T"
+            cursor.execute("""
+                INSERT OR REPLACE INTO team_game_results
+                (date, season, game_number, team, opponent, is_home,
+                 team_runs, opp_runs, result, innings,
+                 start_time_utc, attendance, duration_min, venue, weather)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (game_date, season_year, gnum, team, opponent, is_home,
+                  t_runs, o_runs, result, innings_played,
+                  start[:19] + "Z" if start else None,
+                  attendance, duration_min, venue, weather))
+            inserted += 1
+
+    conn.commit()
+
+    # Phase 2: compute cumulative wins_after / losses_after per team.
+    # Done in a single pass using row_number windowing — cheap and lets us
+    # backfill running totals every refresh in case games were corrected.
+    cursor.execute("""
+        WITH running AS (
+            SELECT date, game_number, team,
+                   SUM(CASE WHEN result = 'W' THEN 1 ELSE 0 END)
+                       OVER (PARTITION BY team, season ORDER BY date, game_number
+                             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+                       AS wa,
+                   SUM(CASE WHEN result = 'L' THEN 1 ELSE 0 END)
+                       OVER (PARTITION BY team, season ORDER BY date, game_number
+                             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+                       AS la
+            FROM team_game_results
+            WHERE season = ?
+        )
+        UPDATE team_game_results
+        SET wins_after = (SELECT wa FROM running r
+                          WHERE r.date = team_game_results.date
+                            AND r.game_number = team_game_results.game_number
+                            AND r.team = team_game_results.team),
+            losses_after = (SELECT la FROM running r
+                            WHERE r.date = team_game_results.date
+                              AND r.game_number = team_game_results.game_number
+                              AND r.team = team_game_results.team)
+        WHERE season = ?
+    """, (season_year, season_year))
+    conn.commit()
+
+    print(f"    Loaded {inserted} team-game rows ({inserted // 2} games)")
+    return inserted
 
 
 def pull_player_info(conn, season_str):
@@ -1498,12 +1760,18 @@ def main():
     try:
         t0 = time.time()
         season_year = detect_season(args.season)
+        print(f"  Season year: {season_year}, full_refresh: {args.full_refresh}")
         # Player info comes from stats responses (players.json requires higher tier)
         pull_season_batting(conn, args.season)
         compute_league_averages_and_ops_plus(conn, season_year)
         pull_season_pitching(conn, args.season)
         compute_pitching_league_averages(conn, season_year)
         pull_game_logs(conn, args.season, full_refresh=args.full_refresh)
+
+        # Team-level game results (scores, W/L, innings, attendance, weather).
+        # Cheap: one MSF endpoint, ~15 seconds. Powers "team record" /
+        # "yesterday's score" queries and Phase 2 temporal joins.
+        pull_team_game_results(conn, args.season)
 
         # Compute home/away splits from game logs
         compute_batting_home_away_splits(conn, season_year)
@@ -1515,23 +1783,25 @@ def main():
         # Update prominence columns for iOS disambiguation
         print("\nUpdating player prominence columns...")
         cursor = conn.cursor()
-        try:
-            cursor.execute("""
-                UPDATE players SET
-                    career_games = COALESCE((SELECT SUM(s.games) FROM season_batting_stats s WHERE s.player_id = players.player_id), 0) +
-                                   COALESCE((SELECT SUM(sp.games) FROM season_pitching_stats sp WHERE sp.player_id = players.player_id), 0),
-                    last_season = MAX(
-                        COALESCE((SELECT MAX(s.season) FROM season_batting_stats s WHERE s.player_id = players.player_id), 0),
-                        COALESCE((SELECT MAX(sp.season) FROM season_pitching_stats sp WHERE sp.player_id = players.player_id), 0)
-                    )
-            """)
-            conn.commit()
-            print(f"  Updated {cursor.rowcount} players")
-        except sqlite3.OperationalError as e:
-            if "no such column" in str(e):
-                print(f"  Skipping prominence update (columns not in deployed DB): {e}")
-            else:
-                raise
+        # Ensure columns exist (migration)
+        cols = {row[1] for row in cursor.execute("PRAGMA table_info(players)").fetchall()}
+        if "career_games" not in cols:
+            cursor.execute("ALTER TABLE players ADD COLUMN career_games INTEGER DEFAULT 0")
+            print("  Added career_games column")
+        if "last_season" not in cols:
+            cursor.execute("ALTER TABLE players ADD COLUMN last_season INTEGER DEFAULT 0")
+            print("  Added last_season column")
+        cursor.execute("""
+            UPDATE players SET
+                career_games = COALESCE((SELECT SUM(s.games) FROM season_batting_stats s WHERE s.player_id = players.player_id), 0) +
+                               COALESCE((SELECT SUM(sp.games) FROM season_pitching_stats sp WHERE sp.player_id = players.player_id), 0),
+                last_season = MAX(
+                    COALESCE((SELECT MAX(s.season) FROM season_batting_stats s WHERE s.player_id = players.player_id), 0),
+                    COALESCE((SELECT MAX(sp.season) FROM season_pitching_stats sp WHERE sp.player_id = players.player_id), 0)
+                )
+        """)
+        conn.commit()
+        print(f"  Updated {cursor.rowcount} players")
 
         record_last_update(conn, args.season)
         conn.close()
@@ -1583,4 +1853,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        print(f"FATAL ERROR: {e}")
+        traceback.print_exc()
+        sys.exit(1)
