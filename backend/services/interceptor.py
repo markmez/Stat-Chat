@@ -386,6 +386,27 @@ def try_intercept(question: str):
         if response:
             return response
 
+    # Team game score — "Yankees score yesterday", "did the Mets win last night",
+    # "Dodgers vs Padres tonight". Must come before parse_team_record because
+    # "Yankees score yesterday" doesn't contain "record" and could match it.
+    team_score = nm.parse_team_game_score(trimmed)
+    if team_score:
+        response = rb.build_team_game_score(
+            team_score["team_code"],
+            team_score.get("opponent_code"),
+            team_score["date_keyword"],
+        )
+        if response:
+            return response
+
+    # Team record — "Yankees record", "how are the Mets doing"
+    team_record = nm.parse_team_record(trimmed)
+    if team_record:
+        response = rb.build_team_record(
+            team_record["team_code"], team_record["season"])
+        if response:
+            return response
+
     # Team total — "how many HR did the Yankees hit?"
     team_total = nm.parse_team_total(trimmed)
     if team_total:

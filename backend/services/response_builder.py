@@ -4033,6 +4033,150 @@ def build_pitching_team_stats(team_code: str, stat_info: Optional[StatInfo] = No
 # 37. build_team_total
 # ===================================================================
 
+def build_team_record(team_code: str, season: int) -> Optional[str]:
+    """Team season W-L from team_game_results.
+
+    Examples returned:
+      "The Yankees are 13-9 in 2026 (.591), tied for 8th in MLB."
+      "The Brewers finished 97-65 in 2025 (.599)."
+    """
+    conn = _get_db()
+    try:
+        full_name = _team_full_name(team_code)
+        nickname = _team_nickname(team_code)
+        cur = conn.cursor()
+
+        # Latest row per team gives final record (or in-season current)
+        cur.execute("""
+            SELECT MAX(wins_after), MAX(losses_after), COUNT(*),
+                   MAX(date) as last_game_date
+            FROM team_game_results
+            WHERE team = ? AND season = ?
+        """, (team_code, season))
+        row = cur.fetchone()
+        if not row or row[0] is None:
+            return f"No game results recorded for the {full_name} in {season}."
+        wins, losses, games_played, last_game_date = row
+        pct_val = wins / max(wins + losses, 1)
+        pct_str = f".{int(round(pct_val * 1000)):03d}"
+
+        # Determine if season is over (compare to current calendar year)
+        from datetime import date as _date
+        current_year = _date.today().year
+        is_in_season = season == current_year
+        verb = "are" if is_in_season else "finished"
+
+        # MLB rank for context (in-season only — final standings already
+        # convey that through game count)
+        rank_clause = ""
+        if is_in_season:
+            cur.execute("""
+                SELECT team, MAX(wins_after) AS w, MAX(losses_after) AS l
+                FROM team_game_results
+                WHERE season = ?
+                GROUP BY team
+                ORDER BY w * 1.0 / NULLIF(w + l, 0) DESC
+            """, (season,))
+            standings = cur.fetchall()
+            for i, (t, w, l) in enumerate(standings, 1):
+                if t == team_code:
+                    suffix = "st" if i % 10 == 1 and i % 100 != 11 else \
+                             "nd" if i % 10 == 2 and i % 100 != 12 else \
+                             "rd" if i % 10 == 3 and i % 100 != 13 else "th"
+                    rank_clause = f", {i}{suffix} in MLB"
+                    break
+
+        return (f"The **{full_name}** {verb} **{wins}-{losses}** in {season} "
+                f"({pct_str}){rank_clause}.\n\n"
+                f"[SUGGEST]{nickname} home runs leaders[/SUGGEST]\n"
+                f"[SUGGEST]{nickname} batting leaders[/SUGGEST]\n"
+                f"[SUGGEST]{nickname} ERA leaders[/SUGGEST]")
+    finally:
+        conn.close()
+
+
+def build_team_game_score(team_code: str, opponent_code: Optional[str],
+                          date_keyword: str) -> Optional[str]:
+    """Single-game score lookup from team_game_results.
+
+    date_keyword: 'yesterday', 'last night', 'tonight', 'today',
+    'last_game' (most recent regardless of date), or a YYYY-MM-DD string.
+    """
+    conn = _get_db()
+    try:
+        full_name = _team_full_name(team_code)
+        nickname = _team_nickname(team_code)
+        cur = conn.cursor()
+
+        # Resolve target date
+        from datetime import date as _date, timedelta as _td
+        today = _date.today()
+        if date_keyword in ("yesterday", "last night"):
+            target_date = (today - _td(days=1)).isoformat()
+        elif date_keyword in ("tonight", "today"):
+            target_date = today.isoformat()
+        elif date_keyword == "last_game":
+            target_date = None  # find most recent
+        elif len(date_keyword) == 10 and date_keyword[4] == "-":
+            target_date = date_keyword
+        else:
+            target_date = None
+
+        opponent_filter = ""
+        params = [team_code]
+        if opponent_code:
+            opponent_filter = " AND opponent = ?"
+            params.append(opponent_code)
+
+        if target_date:
+            params.append(target_date)
+            cur.execute(f"""
+                SELECT date, team, opponent, is_home, team_runs, opp_runs,
+                       result, innings, game_number
+                FROM team_game_results
+                WHERE team = ?{opponent_filter} AND date = ?
+                ORDER BY game_number ASC
+            """, tuple(params))
+        else:
+            cur.execute(f"""
+                SELECT date, team, opponent, is_home, team_runs, opp_runs,
+                       result, innings, game_number
+                FROM team_game_results
+                WHERE team = ?{opponent_filter}
+                ORDER BY date DESC, game_number DESC
+                LIMIT 1
+            """, tuple(params))
+        rows = cur.fetchall()
+
+        if not rows:
+            opp_phrase = f" vs the {_team_full_name(opponent_code)}" if opponent_code else ""
+            if target_date:
+                return f"No {full_name} game{opp_phrase} found on {target_date}."
+            return f"No recent {full_name} game found{opp_phrase}."
+
+        sentences = []
+        for date_s, team, opp, is_home, t_runs, o_runs, result, innings, gnum in rows:
+            opp_full = _team_full_name(opp)
+            home_away = "at home" if is_home else "on the road"
+            extras = "" if (innings or 9) <= 9 else f" in {innings} innings"
+            verb = {"W": "beat", "L": "lost to", "T": "tied"}.get(result, "played")
+            score = f"{t_runs}-{o_runs}" if result != "L" else f"{o_runs}-{t_runs}"
+            game_label = ""
+            if gnum and any(r[8] for r in rows):  # doubleheader
+                game_label = f" (game {gnum + 1})"
+            sentences.append(
+                f"The **{full_name}** {verb} the **{opp_full}** "
+                f"**{score}**{game_label} {home_away} on {date_s}{extras}."
+            )
+
+        body = " ".join(sentences)
+        return (f"{body}\n\n"
+                f"[SUGGEST]{nickname} record[/SUGGEST]\n"
+                f"[SUGGEST]{nickname} home runs leaders[/SUGGEST]")
+    finally:
+        conn.close()
+
+
 def build_team_total(team_code: str, stat_info: StatInfo, season: int) -> Optional[str]:
     """Team aggregate total: 'The Yankees hit 234 home runs in 2024.'"""
     conn = _get_db()

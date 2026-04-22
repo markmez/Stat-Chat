@@ -2438,6 +2438,98 @@ def parse_team_ranking(input_str: str) -> Optional[dict]:
     return {"stat": stat, "season": season}
 
 
+def parse_team_record(input_str: str) -> Optional[dict]:
+    """Detect team W-L record queries.
+
+    Triggers: "Yankees record", "what's the Mets record", "how are the Cubs
+    doing", "Dodgers W-L", "Phillies wins this season".
+
+    Returns {"team_code": str, "season": int} or None.
+    """
+    lower = input_str.strip().lower()
+
+    team_code = match_team(lower)
+    if not team_code:
+        return None
+
+    if _has_player_name(lower):
+        return None
+
+    # Trigger words/phrases. Be specific to avoid hijacking other team queries.
+    record_triggers = [
+        " record", "w-l", "w/l", "win-loss", "wins and losses",
+        "how are the", "how have the", "how did the",
+        "are the", " standing", " standings",
+    ]
+    # Bare "wins" / "losses" only counts if no other stat keyword present.
+    has_record_trigger = any(t in lower for t in record_triggers)
+    if not has_record_trigger:
+        # Fall back to bare "wins"/"losses" — but only when the team is the
+        # subject (avoids "most home runs in Yankees wins" kind of queries).
+        if not re.search(r"\b(wins|losses)\b", lower):
+            return None
+        # Reject if a non-W/L stat is also mentioned (avoids "Mets HR in wins")
+        if match_stat(lower) not in (None, "wins", "losses"):
+            return None
+
+    season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
+    return {"team_code": team_code, "season": season}
+
+
+def parse_team_game_score(input_str: str) -> Optional[dict]:
+    """Detect single-game score lookup queries.
+
+    Triggers: "Yankees score yesterday", "did the Mets win last night",
+    "what was the Dodgers game tonight", "Yankees vs Red Sox last night".
+
+    Returns {"team_code": str, "opponent_code": str|None, "date_keyword": str}
+    where date_keyword is one of: 'yesterday', 'last night', 'tonight',
+    'today', or a specific YYYY-MM-DD date.
+    """
+    lower = input_str.strip().lower()
+
+    team_code = match_team(lower)
+    if not team_code:
+        return None
+
+    if _has_player_name(lower):
+        return None
+
+    # Date keyword required — otherwise this is just a generic team query.
+    date_kw = None
+    for kw in ("yesterday", "last night", "tonight", "today"):
+        if kw in lower:
+            date_kw = kw
+            break
+    # Also accept explicit dates like "april 19" or "2026-04-19"
+    if date_kw is None:
+        m = re.search(r"\b(20\d{2})-(\d{2})-(\d{2})\b", lower)
+        if m:
+            date_kw = m.group(0)
+    if date_kw is None:
+        # Score-context triggers without a date: "what was the score of the
+        # last yankees game", "did the mets win". Only accept if no
+        # ambiguity with broader stats queries.
+        score_triggers = [" score", " win ", " won ", " lost ", " win?", " won?"]
+        if not any(t in lower for t in score_triggers):
+            return None
+        date_kw = "last_game"  # most recent game by this team
+
+    # Optional opponent (for "Yankees vs Red Sox" style)
+    opponent_code = None
+    vs_match = re.search(r"\b(?:vs\.?|versus|against)\b", lower)
+    if vs_match:
+        # Try to match a SECOND team in the input (after the first team match)
+        rest = lower[vs_match.end():]
+        opponent_code = match_team(rest)
+
+    return {
+        "team_code": team_code,
+        "opponent_code": opponent_code,
+        "date_keyword": date_kw,
+    }
+
+
 def parse_single_game_extreme(input_str: str) -> Optional[dict]:
     """Detect per-game extreme queries: 'most K in one game', 'most HR in a single game'.
     Returns dict with stat, season, is_pitching, position."""
