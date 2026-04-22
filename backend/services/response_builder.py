@@ -15,6 +15,7 @@ Builder functions (38 total):
          consecutive streaks, team stats, team totals, team rankings
 """
 
+import json
 import os
 import re
 import sqlite3
@@ -5443,3 +5444,78 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
         return "\n".join(parts)
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Perfect games — hand-curated JSON list. Zero Claude cost.
+# ---------------------------------------------------------------------------
+
+_PERFECT_GAMES_JSON = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                   "data", "perfect_games.json")
+# MLB all-time: 21 modern regular season + Larsen WS + 2 pre-1900 = 24 (matches
+# notable_events.py _TOTAL_PERFECT_GAMES_MLB).
+_TOTAL_PERFECT_GAMES_MLB = 24
+
+
+def _load_perfect_games_list():
+    try:
+        with open(_PERFECT_GAMES_JSON) as f:
+            games = json.load(f)
+    except Exception:
+        return []
+    games.sort(key=lambda g: g.get("date", ""))
+    return games
+
+
+def build_perfect_games(filter_dict: dict) -> Optional[str]:
+    """Format a perfect-games response from the curated JSON list."""
+    mode = filter_dict.get("mode")
+    games = _load_perfect_games_list()
+    if not games:
+        return None
+
+    if mode == "count":
+        return (f"There have been **{_TOTAL_PERFECT_GAMES_MLB} perfect games** in MLB history "
+                f"(21 modern regular season + Don Larsen's 1956 World Series + 2 pre-1900)."
+                f"\n\n[SUGGEST]most recent perfect game[/SUGGEST]"
+                f"\n[SUGGEST]perfect games since 2010[/SUGGEST]"
+                f"\n[SUGGEST]all perfect games[/SUGGEST]")
+
+    if mode == "latest":
+        g = games[-1]
+        return (f"The most recent MLB perfect game was **{g['player']}** on "
+                f"{g['date']} against the {g['opponent']}."
+                f"\n\n[SUGGEST]all perfect games[/SUGGEST]"
+                f"\n[SUGGEST]how many perfect games in MLB history[/SUGGEST]"
+                f"\n[SUGGEST]perfect games since 2010[/SUGGEST]")
+
+    if mode == "since":
+        year = filter_dict["year"]
+        filtered = [g for g in games if int(g["date"][:4]) >= year]
+        title = f"**MLB Perfect Games Since {year}**"
+        empty_msg = f"No MLB perfect games since {year}."
+    elif mode == "in":
+        year = filter_dict["year"]
+        filtered = [g for g in games if int(g["date"][:4]) == year]
+        title = f"**MLB Perfect Games in {year}**"
+        empty_msg = f"No MLB perfect games in {year}."
+    else:  # "all"
+        filtered = games
+        title = "**MLB Perfect Games (Modern Era)**"
+        empty_msg = None
+
+    if not filtered:
+        return (f"{empty_msg}"
+                f"\n\n[SUGGEST]all perfect games[/SUGGEST]"
+                f"\n[SUGGEST]most recent perfect game[/SUGGEST]"
+                f"\n[SUGGEST]how many perfect games in MLB history[/SUGGEST]")
+
+    parts = [title, "[LEADERBOARD]", "HEADER: Perfect Game"]
+    for i, g in enumerate(filtered):
+        parts.append(f"ROW {i+1}. {g['player']} ({g['date']}) — vs {g['opponent']}")
+    parts.append("[/LEADERBOARD]")
+    parts.append(f"\n_Modern-era list. {_TOTAL_PERFECT_GAMES_MLB} total in MLB history including 2 pre-1900._")
+    parts.append("\n[SUGGEST]most recent perfect game[/SUGGEST]")
+    parts.append("[SUGGEST]how many perfect games in MLB history[/SUGGEST]")
+    parts.append("[SUGGEST]perfect games since 2010[/SUGGEST]")
+    return "\n".join(parts)

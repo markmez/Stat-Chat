@@ -175,6 +175,15 @@ def try_intercept(question: str):
         # Fall through to other parsers if query_engine couldn't handle it
         # (rare — usually means the stat itself wasn't recognized)
 
+    # 0a-perfect. Perfect games — hand-curated JSON list. Must come before the
+    # leaderboard/threshold parsers so "perfect games since 2010" doesn't get
+    # parsed as a threshold query on "games".
+    pg = nm.parse_perfect_games(trimmed)
+    if pg:
+        response = rb.build_perfect_games(pg)
+        if response:
+            return response
+
     # 0b. Matchup — "Judge vs Verlander" (batter vs pitcher)
     matchup = nm.parse_matchup(trimmed)
     if matchup:

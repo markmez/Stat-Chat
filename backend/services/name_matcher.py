@@ -2844,4 +2844,51 @@ def parse_catch_all_player_stat(input_str: str) -> Optional[dict]:
     is_career = contains_word("career", lower)
     season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
     return {"name": name, "stat": stat, "season": season, "is_career": is_career}
+
+
+def parse_perfect_games(input_str: str) -> Optional[dict]:
+    """Detect perfect-games queries. Answered from a hand-curated JSON list.
+
+    Returns one of:
+      {"mode": "all"}                — full list
+      {"mode": "since", "year": Y}   — games from year Y onward
+      {"mode": "in", "year": Y}      — single year
+      {"mode": "latest"}             — most recent one
+      {"mode": "count"}              — just the total count
+    Or None.
+    """
+    lower = input_str.strip().lower().rstrip("?.!")
+    # Require the literal phrase "perfect game(s)"
+    if not re.search(r'\bperfect\s+games?\b', lower):
+        return None
+    # Exclude queries that add a player name or other narrow qualifier we can't
+    # answer from the flat list (e.g., "has Verlander thrown a perfect game").
+    # If a player name is present, bail out and let another parser or Claude take it.
+    if _has_player_name(lower):
+        return None
+
+    # "most recent" / "last" / "latest"
+    if re.search(r'\b(most\s+recent|latest|last)\b', lower):
+        return {"mode": "latest"}
+
+    # "how many"
+    if re.search(r'\bhow\s+many\b', lower):
+        return {"mode": "count"}
+
+    # "since YYYY"
+    m = re.search(r'\bsince\s+(\d{4})\b', lower)
+    if m:
+        return {"mode": "since", "year": int(m.group(1))}
+
+    # "in YYYY"
+    m = re.search(r'\bin\s+(\d{4})\b', lower)
+    if m:
+        return {"mode": "in", "year": int(m.group(1))}
+
+    # "all", "ever", "all time", "all-time", "in history"
+    if re.search(r'\b(all|ever|all[-\s]?time|in\s+history)\b', lower):
+        return {"mode": "all"}
+
+    # Bare "perfect games" — default to all-time list
+    return {"mode": "all"}
 # v2 - force reimport

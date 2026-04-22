@@ -70,7 +70,7 @@ Available for seasons 1969 and later.
 - wrc_plus (INTEGER) — NULL (not available from this data source)
 
 ### home_away_splits
-Home and away batting splits aggregated from game logs. Available for seasons 2016-2025 only.
+Home and away batting splits aggregated from game logs. Available from 1920 to present.
 - player_id (TEXT) — references players table
 - season (INTEGER) — year
 - split (TEXT) — "home" or "away"
@@ -82,7 +82,7 @@ Home and away batting splits aggregated from game logs. Available for seasons 20
 - For home/away queries, JOIN with home_away_splits using split = 'home' or split = 'away'
 
 ### game_batting_logs
-Available for seasons 2016-2025 only (recent data). NOT available for historical seasons before 2016.
+Per-game batting logs. Available from 1920 to present.
 - player_id (TEXT) — references players table
 - season (INTEGER) — year
 - date (TEXT) — game date in YYYY-MM-DD format
@@ -215,7 +215,7 @@ Per-season aggregated pitching stats from Retrosheet pitching.csv.
 - era_plus (INTEGER) — ERA+ (ERA adjusted for league average). 100 = league average, >100 is above average. Computed as 100 * league_ERA / player_ERA. No park factors.
 
 ### game_pitching_logs
-Per-game pitching logs from Retrosheet pitching.csv. Available for seasons 2016-2025 only.
+Per-game pitching logs from Retrosheet pitching.csv. Available from 1920 to present.
 - player_id (TEXT) — references players table
 - season (INTEGER) — year
 - date (TEXT) — game date in YYYY-MM-DD format
@@ -244,7 +244,7 @@ How batters performed against each pitcher, broken down by batter handedness. Fr
 - For pitching platoon queries, use split = 'vs_LHB' or 'vs_RHB'. Note: these are BATTER hand, not pitcher hand.
 
 ### pitching_home_away_splits
-Home and away pitching splits aggregated from game logs. Available for seasons 2016-2025 only.
+Home and away pitching splits aggregated from game logs. Available from 1920 to present.
 - player_id (TEXT) — references players table
 - season (INTEGER) — year
 - split (TEXT) — "home" or "away"
@@ -350,15 +350,14 @@ Current form for each pitcher-season — the tail slice with the lowest ERA (opt
 - Season pitching stats from 1898 to present (aggregated from Retrosheet pitching.csv)
 - OPS+ for every batter-season, ERA+ for every pitcher-season (league-adjusted, no park factors — 100 = average)
 - League-wide batting averages (league_averages table) and pitching averages (league_pitching_averages table)
-- Game-level batting logs and pitching logs for 2016-2025 ONLY (not available for historical seasons)
+- Game-level batting logs and pitching logs from 1920 to present
 - Batting platoon splits (vs LHP/RHP) and pitching platoon splits (vs LHB/RHB) from 1969 to present
-- Home/away splits for both batting and pitching — 2016-2025 ONLY (derived from game logs)
-- Precomputed batting streaks — 2016-2025 ONLY (streaks, streaks_sensitive, streaks_sliding tables)
-- Precomputed pitching streaks — 2016-2025 ONLY (pitching_streaks, pitching_streaks_sensitive, pitching_streaks_sliding tables)
-- Current form for batters and pitchers — 2016-2025 ONLY (current_form, pitching_current_form tables)
+- Home/away splits for both batting and pitching from 1920 to present (derived from game logs)
+- Precomputed batting streaks for the CURRENT and PRIOR season only (streaks, streaks_sensitive, streaks_sliding tables) — for historical streak queries, compute from game_batting_logs directly
+- Precomputed pitching streaks for the CURRENT and PRIOR season only (pitching_streaks, pitching_streaks_sensitive, pitching_streaks_sliding tables) — for historical streak queries, compute from game_pitching_logs directly
+- Current form for batters and pitchers — CURRENT and PRIOR season only (current_form, pitching_current_form tables)
 - Per-position fielding stats (season_fielding_stats table) from 1898 to present — games, innings, putouts, assists, errors, DP, PB, fielding %
 - Note: wRC+ and WAR columns exist but are NULL. Use ops_plus for league-adjusted offense instead.
-- IMPORTANT: For pre-2016 queries, only use season_batting_stats, season_pitching_stats, season_fielding_stats, platoon_splits (1969+), pitching_platoon_splits (1969+), league_averages, and league_pitching_averages. Do NOT query game logs, home/away splits, streaks, or current form tables for pre-2016 seasons — they will return no data.
 
 ## Pitcher Detection
 - The `players.positions` field is sorted by games played DESC (primary position first).
