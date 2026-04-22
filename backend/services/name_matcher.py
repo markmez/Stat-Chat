@@ -819,15 +819,24 @@ _TEAM_CONTEXT_FIXED = {
     # but supporting only recent seasons would mislead users for any
     # historical query, so it's all-or-nothing.
 
-    # Day / night
+    # Day / night — match with or without leading "in"/"during" so phrasings
+    # like "most day game home runs" work alongside "in day games".
     "in day games": TeamContextFilter(
-        "Day Games", "tgr.daynight = 'day'", (), ["in day games", "day games"]),
+        "Day Games", "tgr.daynight = 'day'", (), ["in day games"]),
     "during day games": TeamContextFilter(
         "Day Games", "tgr.daynight = 'day'", (), ["during day games"]),
+    "day games": TeamContextFilter(
+        "Day Games", "tgr.daynight = 'day'", (), ["day games"]),
+    "day game": TeamContextFilter(
+        "Day Games", "tgr.daynight = 'day'", (), ["day game"]),
     "in night games": TeamContextFilter(
-        "Night Games", "tgr.daynight = 'night'", (), ["in night games", "night games"]),
+        "Night Games", "tgr.daynight = 'night'", (), ["in night games"]),
     "during night games": TeamContextFilter(
         "Night Games", "tgr.daynight = 'night'", (), ["during night games"]),
+    "night games": TeamContextFilter(
+        "Night Games", "tgr.daynight = 'night'", (), ["night games"]),
+    "night game": TeamContextFilter(
+        "Night Games", "tgr.daynight = 'night'", (), ["night game"]),
 
     # Weather (free-text match — reasonable hits across MSF + Retrosheet rows)
     "in rain games": TeamContextFilter(

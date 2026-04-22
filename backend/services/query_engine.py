@@ -3730,8 +3730,15 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
 
     is_pitching = plan.is_pitching
     table = "game_pitching_logs" if is_pitching else "game_batting_logs"
-    season = plan.season or date.today().year
     tc = plan.team_context
+    # Scope: explicit season > "all_time" (no filter) > default to current year
+    is_all_time = plan.scope == "all_time" or plan.scope == "career"
+    if plan.season:
+        season = plan.season
+    elif is_all_time:
+        season = None
+    else:
+        season = date.today().year
 
     # Stat aggregation expressions. Rate stats compute from raw components;
     # counting stats are simple SUMs.
@@ -3812,11 +3819,13 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     )
 
     base_filter = (
-        "g.season = ? "
-        "AND COALESCE(tgr.gametype, 'regular') = 'regular' "
+        "COALESCE(tgr.gametype, 'regular') = 'regular' "
         f"AND ({tc.sql_clause})"
     )
-    params = [season] + list(tc.sql_params)
+    params = list(tc.sql_params)
+    if season is not None:
+        base_filter = "g.season = ? AND " + base_filter
+        params = [season] + params
 
     # Optional team filter
     team_join = ""
@@ -3858,11 +3867,12 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         return f"Could not run team-context query: {e}"
     rows = cur.fetchall()
 
-    season_label = str(season)
+    season_label = "All-Time" if season is None else str(season)
     if not rows:
+        scope_phrase = season_label if season is None else f"in {season_label}"
         return (
             f"No players found with **{plan.stat.display_name}** "
-            f"({tc.label}) in {season_label}."
+            f"({tc.label}) {scope_phrase}."
         )
 
     title = (
