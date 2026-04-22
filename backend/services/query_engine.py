@@ -577,6 +577,20 @@ def decompose(question: str) -> QueryPlan:
     plan.original_question = question.strip()
     lower = question.strip().lower()
 
+    # --- Early team-context detection ---
+    # Team-game-context phrases ("in extra innings", "when team had won 40
+    # games") contain words that ARE stat aliases ("innings", "won"). If we
+    # let match_stat run first it'd misidentify the stat. Detect + strip the
+    # phrase from `lower` here so all subsequent parsing sees a clean query.
+    plan.team_context = _detect_team_context(lower)
+    if plan.team_context:
+        for phrase in plan.team_context.consumed_phrases:
+            if phrase in lower:
+                lower = lower.replace(phrase, " ")
+                _add_consumed(plan, phrase)
+        # Collapse extra whitespace introduced by the strip
+        lower = " ".join(lower.split())
+
     # --- Early detection: stat definitions ---
     # "what is OPS", "explain BABIP", "define ERA" — not a DB query
     definition_triggers = ["what is ", "what's ", "explain ", "define ", "what does ", "how is ", "how do you calculate"]
@@ -1068,14 +1082,10 @@ def decompose(question: str) -> QueryPlan:
     if plan.split_context:
         for phrase in plan.split_context.consumed_phrases:
             _add_consumed(plan, phrase)
-
-    # Team-game-context filter (joins to team_game_results). Composes with
-    # any existing stat threshold / leaderboard query type — the filter just
-    # narrows the underlying game-log set.
-    plan.team_context = _detect_team_context(lower)
-    if plan.team_context:
-        for phrase in plan.team_context.consumed_phrases:
-            _add_consumed(plan, phrase)
+    # team_context detection happens early in decompose() so its consumed
+    # phrases are stripped before match_stat runs — avoiding mismatches
+    # where "innings" / "won" inside the context phrase were being read
+    # as stat keywords.
 
     # Bats filter
     bats_patterns = [

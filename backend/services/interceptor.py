@@ -154,6 +154,27 @@ def try_intercept(question: str):
         except Exception as e:
             logger.warning("tonight_preview_error error=%s", e)
 
+    # 0a-team-context. Team-game-context filters ("in extra innings", "in day
+    # games", "when team had won 40 games"). These compose with stat queries
+    # via query_engine — but if we let the simple parsers below run first,
+    # they mismatch on phrase words: "innings" hits IP, "won at least N games"
+    # hits wins. Detect team_context EARLY and force-route to query_engine,
+    # which decompose() handles natively.
+    if nm._detect_team_context(lower) is not None:
+        from services.query_engine import decompose, execute as qe_execute
+        try:
+            plan = decompose(trimmed)
+        except Exception as e:
+            logger.error("query_engine_decompose_error question=%r error=%s", trimmed, e)
+            plan = None
+        if plan and plan.is_valid:
+            response = qe_execute(plan)
+            if response:
+                logger.info("query_engine_handled_team_context question=%r", trimmed)
+                return response
+        # Fall through to other parsers if query_engine couldn't handle it
+        # (rare — usually means the stat itself wasn't recognized)
+
     # 0b. Matchup — "Judge vs Verlander" (batter vs pitcher)
     matchup = nm.parse_matchup(trimmed)
     if matchup:
