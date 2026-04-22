@@ -3911,10 +3911,13 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     # the stat branch); rate stats use the subset-aware qualifier.
     if is_rate:
         from .qualification import min_pa_subset, min_ip_outs_subset
+        _since_year = season_range[0] if season_range else None
         if is_pitching:
-            min_qual = min_ip_outs_subset(conn, season, tc.sql_clause, tc.sql_params)
+            min_qual = min_ip_outs_subset(conn, season, tc.sql_clause, tc.sql_params,
+                                          since_year=_since_year)
         else:
-            min_qual = min_pa_subset(conn, season, tc.sql_clause, tc.sql_params)
+            min_qual = min_pa_subset(conn, season, tc.sql_clause, tc.sql_params,
+                                     since_year=_since_year)
     params += [min_qual, plan.limit]
 
     cur = conn.cursor()
@@ -3952,6 +3955,20 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
                                qual, is_rate=False)
         parts.append(f"ROW {name}: {val_str}, {qual}, {games_n}")
     parts.append("[/LEADERBOARD]")
+
+    # Suggestion pills — offer obvious follow-ups for the same filter
+    stat_lower = plan.stat.display_name.lower()
+    pills = []
+    if season is not None:
+        pills.append(f"{stat_lower} {tc.label.lower()} all time")
+        if plan.team_code is None:
+            pills.append(f"{stat_lower} all {season} leaders")
+    elif season is None and season_range is None:
+        pills.append(f"{stat_lower} {tc.label.lower()} {date.today().year}")
+        pills.append(f"all-time {stat_lower} leaders")
+    else:
+        pills.append(f"{stat_lower} {tc.label.lower()} all time")
+    parts.append("\n" + "\n".join(f"[SUGGEST]{p}[/SUGGEST]" for p in pills[:3]))
     return "\n".join(parts)
 
 

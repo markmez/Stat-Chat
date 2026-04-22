@@ -11,6 +11,7 @@ query_engine.py):
 """
 
 import sqlite3
+from datetime import date
 from typing import Optional, Tuple
 
 # Career rate-stat thresholds — must stay in sync with _career_rate_formulas
@@ -69,14 +70,24 @@ def subset_fraction(conn: sqlite3.Connection, subset_clause: str,
 
 
 def min_pa_subset(conn: sqlite3.Connection, season: Optional[int],
-                  subset_clause: str, subset_params: tuple) -> int:
+                  subset_clause: str, subset_params: tuple,
+                  since_year: Optional[int] = None) -> int:
     """Minimum PA for a team-context subset query.
 
     Single-season: scale min_pa(season) by subset fraction.
     All-time: scale CAREER_MIN_AB by subset fraction.
+    Since-year (range): per-season qualifier × year span × subset fraction × 0.5
+        (the 0.5 participation factor reflects that players don't play every
+        game and don't stay on one team for the entire window — a strict
+        per-game qualifier produces empty leaderboards otherwise).
     Always floored at 30.
     """
     fraction = subset_fraction(conn, subset_clause, subset_params, season)
+    if since_year is not None:
+        years = max(1, date.today().year - since_year + 1)
+        # Use the most recent year's full-season qualifier as the per-year base
+        per_year = min_pa(conn, date.today().year)
+        return max(30, int(per_year * years * fraction * 0.5))
     if season is None:
         base = CAREER_MIN_AB
     else:
@@ -85,14 +96,18 @@ def min_pa_subset(conn: sqlite3.Connection, season: Optional[int],
 
 
 def min_ip_outs_subset(conn: sqlite3.Connection, season: Optional[int],
-                       subset_clause: str, subset_params: tuple) -> int:
+                       subset_clause: str, subset_params: tuple,
+                       since_year: Optional[int] = None) -> int:
     """Minimum ip_outs for a team-context subset query.
 
-    Single-season: scale min_ip_outs(season) by subset fraction.
-    All-time: scale CAREER_MIN_OUTS by subset fraction.
-    Always floored at 30.
+    See min_pa_subset for scope handling. Pitchers have a similar 0.5
+    participation factor for since-year queries.
     """
     fraction = subset_fraction(conn, subset_clause, subset_params, season)
+    if since_year is not None:
+        years = max(1, date.today().year - since_year + 1)
+        per_year = min_ip_outs(conn, date.today().year)
+        return max(30, int(per_year * years * fraction * 0.5))
     if season is None:
         base = CAREER_MIN_OUTS
     else:
