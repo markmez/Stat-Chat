@@ -159,13 +159,14 @@ def backfill_season(conn, season, ballpark_lookup=None):
     try:
         zf = download_retrosheet_zip(season)
     except Exception as e:
-        print(f"  {season}: download failed ({e})")
-        return 0, 0
+        raise RuntimeError(f"{season}: download failed ({e})")
 
+    namelist = zf.namelist()
     rows = list(_read_gameinfo_rows(zf))
     if not rows:
-        print(f"  {season}: no gameinfo.csv")
-        return 0, 0
+        raise RuntimeError(
+            f"{season}: no gameinfo rows extracted. ZIP contains: {namelist[:10]}"
+        )
 
     # Wipe existing rows for this season — keeps backfill idempotent and
     # ensures stale data from a prior partial run is replaced.
