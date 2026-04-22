@@ -91,6 +91,26 @@ Available for seasons 2016-2025 only (recent data). NOT available for historical
 - plate_appearances, at_bats, hits, doubles, triples, home_runs, runs, rbi, walks, strikeouts (INTEGER)
 - batting_avg, obp, slg, ops (REAL) — per-game rates
 
+### team_game_results
+Per-team per-game results. **Two rows per game** — one from each team's perspective — so "Yankees record" is a clean `WHERE team = 'NYA'` lookup. Available for 2025-2026 from MySportsFeeds.
+- date (TEXT) — game date YYYY-MM-DD
+- season (INTEGER) — year
+- game_number (INTEGER) — 0/1 for doubleheaders, 0 otherwise
+- team (TEXT) — Retrosheet team abbreviation, this row's team
+- opponent (TEXT) — opposing team abbreviation
+- is_home (INTEGER) — 1 if `team` was home, 0 if visiting
+- team_runs, opp_runs (INTEGER) — final score
+- result (TEXT) — 'W', 'L', or 'T'
+- innings (INTEGER) — total innings played (9 normally, 10+ for extras)
+- start_time_utc (TEXT) — ISO datetime for day/night derivation
+- attendance (INTEGER, nullable)
+- duration_min (INTEGER, nullable) — game length in minutes
+- venue (TEXT, nullable)
+- weather (TEXT, nullable) — compact string e.g. "Cloudy, 68F, wind 10 mph SE"; null for indoor stadiums or older games
+- wins_after, losses_after (INTEGER) — team's cumulative W-L AFTER this game; subtract the result for record GOING INTO the game
+
+For "team had won at least 40 games at the time" filters, JOIN player game logs to team_game_results on (team, date) and filter on `wins_after - (CASE WHEN result='W' THEN 1 ELSE 0 END) >= 40` — that's the W count BEFORE the game. Player game logs don't store team directly; derive via JOIN to team_game_results on `tgr.date = gbl.date AND tgr.opponent = gbl.opponent AND tgr.is_home = (CASE WHEN gbl.vishome='H' THEN 1 ELSE 0 END)`.
+
 ### league_averages
 Per-season league-wide batting averages, computed from all players in season_batting_stats.
 - season (INTEGER, primary key) — year
