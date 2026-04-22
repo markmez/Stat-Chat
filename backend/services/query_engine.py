@@ -3765,10 +3765,10 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         }
         if stat_col in rate_exprs:
             stat_expr, qual_expr, qual_label = rate_exprs[stat_col]
-            # Lower the qualification threshold than a full-season leaderboard —
-            # team-context subsets are inherently smaller (extra-innings games
-            # might be 15% of a season; record-based filters even fewer).
-            min_qual = 15
+            # Use the canonical qualification rule scaled by subset fraction.
+            # Single-season: 3.1 × team games × (subset fraction).
+            # All-time: 5000 AB × subset fraction. Floor 30 always.
+            from .qualification import min_pa_subset
             sort_asc = False
             is_rate = True
         else:
@@ -3792,9 +3792,9 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         }
         if stat_col in rate_exprs_p:
             stat_expr, qual_expr, qual_label = rate_exprs_p[stat_col]
-            # ~5 IP minimum (15 outs) — smaller than season qualification because
-            # the team-context subset is narrower.
-            min_qual = 15
+            # Same canonical-rule scaling as batting: 1 IP × team games × subset
+            # fraction for season; 1000 IP × subset fraction for all-time.
+            from .qualification import min_ip_outs_subset
             sort_asc = True  # lower is better
             is_rate = True
         else:
@@ -3858,6 +3858,15 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         f"ORDER BY metric {sort_order} "
         f"LIMIT ?"
     )
+    # Compute the qualification threshold from the canonical rule, scaled by
+    # subset fraction. Counting stats keep min_qual=1 (set above when picking
+    # the stat branch); rate stats use the subset-aware qualifier.
+    if is_rate:
+        from .qualification import min_pa_subset, min_ip_outs_subset
+        if is_pitching:
+            min_qual = min_ip_outs_subset(conn, season, tc.sql_clause, tc.sql_params)
+        else:
+            min_qual = min_pa_subset(conn, season, tc.sql_clause, tc.sql_params)
     params += [min_qual, plan.limit]
 
     cur = conn.cursor()
