@@ -272,8 +272,12 @@ def backfill_season(conn, season, ballpark_lookup=None):
         games += 1
     conn.commit()
 
-    # Compute cumulative wins_after / losses_after for the season — same
-    # window-function pass as the live MSF pipeline.
+    # Compute cumulative wins_after / losses_after for REGULAR season only.
+    # Playoff games (divisionseries, lcs, wildcard, worldseries, allstar)
+    # stay NULL — their wins_after isn't meaningful for "season record"
+    # queries and including them inflated the totals (e.g. 2024 Dodgers
+    # were showing 109-69 instead of 98-64 because playoff wins were
+    # being summed in).
     cursor.execute("""
         WITH running AS (
             SELECT date, game_number, team,
@@ -286,7 +290,7 @@ def backfill_season(conn, season, ballpark_lookup=None):
                              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
                        AS la
             FROM team_game_results
-            WHERE season = ?
+            WHERE season = ? AND gametype = 'regular'
         )
         UPDATE team_game_results
         SET wins_after = (SELECT wa FROM running r
@@ -297,7 +301,7 @@ def backfill_season(conn, season, ballpark_lookup=None):
                             WHERE r.date = team_game_results.date
                               AND r.game_number = team_game_results.game_number
                               AND r.team = team_game_results.team)
-        WHERE season = ?
+        WHERE season = ? AND gametype = 'regular'
     """, (season, season))
     conn.commit()
 

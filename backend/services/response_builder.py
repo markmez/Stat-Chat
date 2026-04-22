@@ -4046,12 +4046,15 @@ def build_team_record(team_code: str, season: int) -> Optional[str]:
         nickname = _team_nickname(team_code)
         cur = conn.cursor()
 
-        # Latest row per team gives final record (or in-season current)
+        # Latest row per team gives final record (or in-season current).
+        # Restrict to regular season — playoff games would inflate the W-L
+        # totals (and "Yankees record" almost always means regular season).
         cur.execute("""
             SELECT MAX(wins_after), MAX(losses_after), COUNT(*),
                    MAX(date) as last_game_date
             FROM team_game_results
             WHERE team = ? AND season = ?
+              AND COALESCE(gametype, 'regular') = 'regular'
         """, (team_code, season))
         row = cur.fetchone()
         if not row or row[0] is None:
@@ -4074,6 +4077,7 @@ def build_team_record(team_code: str, season: int) -> Optional[str]:
                 SELECT team, MAX(wins_after) AS w, MAX(losses_after) AS l
                 FROM team_game_results
                 WHERE season = ?
+                  AND COALESCE(gametype, 'regular') = 'regular'
                 GROUP BY team
                 ORDER BY w * 1.0 / NULLIF(w + l, 0) DESC
             """, (season,))

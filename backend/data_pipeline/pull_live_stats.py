@@ -869,7 +869,7 @@ def pull_team_game_results(conn, season_str):
                              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
                        AS la
             FROM team_game_results
-            WHERE season = ?
+            WHERE season = ? AND COALESCE(gametype, 'regular') = 'regular'
         )
         UPDATE team_game_results
         SET wins_after = (SELECT wa FROM running r
@@ -880,7 +880,7 @@ def pull_team_game_results(conn, season_str):
                             WHERE r.date = team_game_results.date
                               AND r.game_number = team_game_results.game_number
                               AND r.team = team_game_results.team)
-        WHERE season = ?
+        WHERE season = ? AND COALESCE(gametype, 'regular') = 'regular'
     """, (season_year, season_year))
     conn.commit()
 
