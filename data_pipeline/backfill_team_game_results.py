@@ -24,7 +24,7 @@ import zipfile
 import requests
 
 # Download URLs match pull_stats.py for consistency.
-RETROSHEET_SEASON_URL = "https://www.retrosheet.org/downloads/csvfiles/{year}data.zip"
+RETROSHEET_SEASON_URL = "https://www.retrosheet.org/downloads/{year}/{year}csvs.zip"
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
 
 
