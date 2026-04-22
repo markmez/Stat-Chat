@@ -2515,13 +2515,22 @@ def parse_team_game_score(input_str: str) -> Optional[dict]:
             return None
         date_kw = "last_game"  # most recent game by this team
 
-    # Optional opponent (for "Yankees vs Red Sox" style)
+    # Optional opponent (for "Yankees vs Red Sox" style). Split on the vs
+    # marker and re-match each half — match_team scans the full string and
+    # may pick the most-specific name regardless of position, so we need
+    # explicit pre/post split to assign subject vs opponent correctly.
     opponent_code = None
     vs_match = re.search(r"\b(?:vs\.?|versus|against)\b", lower)
     if vs_match:
-        # Try to match a SECOND team in the input (after the first team match)
-        rest = lower[vs_match.end():]
-        opponent_code = match_team(rest)
+        pre = lower[:vs_match.start()]
+        post = lower[vs_match.end():]
+        pre_team = match_team(pre)
+        post_team = match_team(post)
+        if pre_team and post_team and pre_team != post_team:
+            team_code = pre_team
+            opponent_code = post_team
+        elif post_team and post_team != team_code:
+            opponent_code = post_team
 
     return {
         "team_code": team_code,

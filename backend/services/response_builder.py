@@ -4108,9 +4108,11 @@ def build_team_game_score(team_code: str, opponent_code: Optional[str],
         nickname = _team_nickname(team_code)
         cur = conn.cursor()
 
-        # Resolve target date
-        from datetime import date as _date, timedelta as _td
-        today = _date.today()
+        # Resolve target date — use Eastern time since baseball "yesterday"
+        # is the previous calendar day in ET, regardless of server timezone.
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        et_now = _dt.now(_tz(_td(hours=-4)))  # EDT during baseball season
+        today = et_now.date()
         if date_keyword in ("yesterday", "last night"):
             target_date = (today - _td(days=1)).isoformat()
         elif date_keyword in ("tonight", "today"):
