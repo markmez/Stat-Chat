@@ -791,6 +791,131 @@ def _detect_pitcher_role(lower: str) -> Optional[str]:
 
 
 @dataclass(frozen=True)
+class TeamContextFilter:
+    """A team-game-context filter for JOIN against team_game_results.
+
+    Unlike SplitContext (which routes to a specialized split table), this
+    filter applies to per-game aggregates derived from game_batting_logs /
+    game_pitching_logs JOINed to team_game_results on (date, opponent,
+    is_home). Examples: "in extra innings", "in day games", "in rain
+    games", "when team had won at least 40 games at the time".
+
+    sql_clause: extra WHERE fragment referencing the `tgr` alias.
+                 Use `?` placeholders matched by sql_params.
+    """
+    label: str
+    sql_clause: str
+    sql_params: tuple
+    consumed_phrases: list
+
+
+# Fixed-phrase team-context filters. Parametric ones ("team had won 40+
+# games") are detected separately in _detect_team_context.
+_TEAM_CONTEXT_FIXED = {
+    # Game shape
+    "in extra innings": TeamContextFilter(
+        "Extra-Innings Games", "tgr.innings >= 10", (), ["in extra innings"]),
+    "extra inning games": TeamContextFilter(
+        "Extra-Innings Games", "tgr.innings >= 10", (), ["extra inning games", "extra-inning games"]),
+    "extra innings games": TeamContextFilter(
+        "Extra-Innings Games", "tgr.innings >= 10", (), ["extra innings games", "extra-innings games"]),
+
+    # Day / night
+    "in day games": TeamContextFilter(
+        "Day Games", "tgr.daynight = 'day'", (), ["in day games", "day games"]),
+    "during day games": TeamContextFilter(
+        "Day Games", "tgr.daynight = 'day'", (), ["during day games"]),
+    "in night games": TeamContextFilter(
+        "Night Games", "tgr.daynight = 'night'", (), ["in night games", "night games"]),
+    "during night games": TeamContextFilter(
+        "Night Games", "tgr.daynight = 'night'", (), ["during night games"]),
+
+    # Weather (free-text match — reasonable hits across MSF + Retrosheet rows)
+    "in rain games": TeamContextFilter(
+        "Rain Games", "LOWER(tgr.weather) LIKE '%rain%'", (), ["in rain games", "in the rain"]),
+    "in cold weather": TeamContextFilter(
+        "Cold Weather", "tgr.weather IS NOT NULL AND CAST(SUBSTR(tgr.weather, INSTR(tgr.weather, ',')+1) AS INTEGER) > 0 AND CAST(SUBSTR(tgr.weather, INSTR(tgr.weather, ',')+1) AS INTEGER) < 50",
+        (), ["in cold weather", "cold weather games"]),
+    "in hot weather": TeamContextFilter(
+        "Hot Weather", "tgr.weather IS NOT NULL AND CAST(SUBSTR(tgr.weather, INSTR(tgr.weather, ',')+1) AS INTEGER) >= 85",
+        (), ["in hot weather", "hot weather games"]),
+
+    # Team record context (uses wins_before/losses_before computed inline)
+    "with team above .500": TeamContextFilter(
+        "Team Above .500",
+        "(tgr.wins_after - CASE WHEN tgr.result='W' THEN 1 ELSE 0 END) > "
+        "(tgr.losses_after - CASE WHEN tgr.result='L' THEN 1 ELSE 0 END)",
+        (), ["with team above .500", "team above .500"]),
+    "with a winning record": TeamContextFilter(
+        "Team Above .500",
+        "(tgr.wins_after - CASE WHEN tgr.result='W' THEN 1 ELSE 0 END) > "
+        "(tgr.losses_after - CASE WHEN tgr.result='L' THEN 1 ELSE 0 END)",
+        (), ["with a winning record", "while team was winning"]),
+    "with team below .500": TeamContextFilter(
+        "Team Below .500",
+        "(tgr.wins_after - CASE WHEN tgr.result='W' THEN 1 ELSE 0 END) < "
+        "(tgr.losses_after - CASE WHEN tgr.result='L' THEN 1 ELSE 0 END)",
+        (), ["with team below .500", "team below .500"]),
+    "with a losing record": TeamContextFilter(
+        "Team Below .500",
+        "(tgr.wins_after - CASE WHEN tgr.result='W' THEN 1 ELSE 0 END) < "
+        "(tgr.losses_after - CASE WHEN tgr.result='L' THEN 1 ELSE 0 END)",
+        (), ["with a losing record", "while team was losing"]),
+}
+
+
+def _detect_team_context(lower: str) -> Optional[TeamContextFilter]:
+    """Detect a team-game-context filter in the query. Checks fixed phrases
+    first, then parametric patterns like "team had won at least N games".
+
+    Returns a TeamContextFilter or None.
+    """
+    # Fixed phrases — longest match wins to avoid partial overlaps
+    for phrase in sorted(_TEAM_CONTEXT_FIXED.keys(), key=len, reverse=True):
+        if phrase in lower:
+            return _TEAM_CONTEXT_FIXED[phrase]
+
+    # Parametric: "team had won at least N games" / "after team won N" /
+    # "when team had won X"
+    win_threshold_patterns = [
+        r"team\s+had\s+won\s+at\s+least\s+(\d+)\s+games?",
+        r"after\s+(?:the\s+)?team\s+(?:had\s+)?won\s+(\d+)\s+games?",
+        r"when\s+(?:the\s+)?team\s+(?:had\s+)?won\s+(\d+)\s+games?",
+        r"team\s+(?:had\s+)?won\s+(\d+)\+\s+games?",
+        r"team\s+with\s+(\d+)\+\s+wins",
+    ]
+    for pat in win_threshold_patterns:
+        m = re.search(pat, lower)
+        if m:
+            n = int(m.group(1))
+            return TeamContextFilter(
+                label=f"Team Had Won {n}+",
+                sql_clause="(tgr.wins_after - CASE WHEN tgr.result='W' THEN 1 ELSE 0 END) >= ?",
+                sql_params=(n,),
+                consumed_phrases=[m.group(0)],
+            )
+
+    # Symmetric "team had lost at least N"
+    loss_threshold_patterns = [
+        r"team\s+had\s+lost\s+at\s+least\s+(\d+)\s+games?",
+        r"after\s+(?:the\s+)?team\s+(?:had\s+)?lost\s+(\d+)\s+games?",
+        r"when\s+(?:the\s+)?team\s+(?:had\s+)?lost\s+(\d+)\s+games?",
+    ]
+    for pat in loss_threshold_patterns:
+        m = re.search(pat, lower)
+        if m:
+            n = int(m.group(1))
+            return TeamContextFilter(
+                label=f"Team Had Lost {n}+",
+                sql_clause="(tgr.losses_after - CASE WHEN tgr.result='L' THEN 1 ELSE 0 END) >= ?",
+                sql_params=(n,),
+                consumed_phrases=[m.group(0)],
+            )
+
+    return None
+
+
+@dataclass(frozen=True)
 class SplitContext:
     """Describes a split-table filter for leaderboard queries."""
     table: str           # e.g. "count_batting_splits"
