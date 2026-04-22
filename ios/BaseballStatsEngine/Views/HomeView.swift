@@ -155,7 +155,7 @@ struct HomeView: View {
                         .padding(.top, 2)
 
                     TextField("", text: $questionText, prompt:
-                        Text("Ask any baseball player stat question")
+                        Text("Ask any baseball stat question")
                             .foregroundColor(Color(.label).opacity(0.33)),
                         axis: .vertical
                     )
