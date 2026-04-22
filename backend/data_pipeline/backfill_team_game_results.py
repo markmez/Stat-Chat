@@ -14,15 +14,51 @@ Or via admin endpoint per-season for chunked runs without HTTP timeouts.
 """
 
 import argparse
+import csv
+import io
 import os
 import sqlite3
 import sys
+import zipfile
 
-import pandas as pd
+import requests
 
-# pull_stats lives in the same directory
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pull_stats import download_retrosheet_zip, read_csv_from_zip
+# Download URLs match pull_stats.py for consistency.
+RETROSHEET_SEASON_URL = "https://www.retrosheet.org/downloads/csvfiles/{year}data.zip"
+CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+
+
+def _ensure_cache_dir():
+    os.makedirs(CACHE_DIR, exist_ok=True)
+
+
+def download_retrosheet_zip(season):
+    """Download a Retrosheet season ZIP and return a ZipFile. Cached on disk
+    after first download. Standalone copy of pull_stats.download_retrosheet_zip
+    so this script doesn't depend on pandas being installed."""
+    _ensure_cache_dir()
+    cache_path = os.path.join(CACHE_DIR, f"retrosheet_{season}.zip")
+    if not os.path.exists(cache_path):
+        url = RETROSHEET_SEASON_URL.format(year=season)
+        resp = requests.get(url, timeout=120)
+        resp.raise_for_status()
+        with open(cache_path, "wb") as f:
+            f.write(resp.content)
+    return zipfile.ZipFile(cache_path)
+
+
+def _read_gameinfo_rows(zf):
+    """Yield dicts for each row of {season}gameinfo.csv inside the ZIP."""
+    for name in zf.namelist():
+        if "gameinfo" in name.lower():
+            with zf.open(name) as raw:
+                # Wrap binary stream in TextIOWrapper for csv module
+                text = io.TextIOWrapper(raw, encoding="utf-8", newline="")
+                reader = csv.DictReader(text)
+                for row in reader:
+                    yield row
+            return
+    return
 
 
 def ensure_table(conn):
@@ -126,8 +162,8 @@ def backfill_season(conn, season, ballpark_lookup=None):
         print(f"  {season}: download failed ({e})")
         return 0, 0
 
-    df = read_csv_from_zip(zf, "gameinfo")
-    if df is None or df.empty:
+    rows = list(_read_gameinfo_rows(zf))
+    if not rows:
         print(f"  {season}: no gameinfo.csv")
         return 0, 0
 
@@ -139,7 +175,7 @@ def backfill_season(conn, season, ballpark_lookup=None):
     games = 0
     # Per-team game-number tracking for doubleheaders. Retrosheet's
     # `number` column is 0 for single, 1 / 2 for doubleheader halves.
-    for _, row in df.iterrows():
+    for row in rows:
         date = _fmt_date(row.get("date"))
         if not date:
             continue
@@ -257,22 +293,24 @@ def load_ballpark_lookup(conn=None):
 
     Returns dict {code: full_name} or empty dict if biodata isn't cached.
     """
-    cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
-    biodata_path = os.path.join(cache_dir, "biodata.zip")
+    biodata_path = os.path.join(CACHE_DIR, "biodata.zip")
     if not os.path.exists(biodata_path):
         return {}
     try:
-        import zipfile
         zf = zipfile.ZipFile(biodata_path)
         for name in zf.namelist():
             if "ballpark" in name.lower():
-                with zf.open(name) as f:
-                    df = pd.read_csv(f)
-                # Common column names: parkid + name (varies)
-                code_col = next((c for c in df.columns if c.lower() in ("parkid", "park.id", "id")), None)
-                name_col = next((c for c in df.columns if "name" in c.lower()), None)
-                if code_col and name_col:
-                    return dict(zip(df[code_col].astype(str), df[name_col].astype(str)))
+                with zf.open(name) as raw:
+                    text = io.TextIOWrapper(raw, encoding="utf-8", newline="")
+                    reader = csv.DictReader(text)
+                    fieldnames = reader.fieldnames or []
+                    code_col = next(
+                        (c for c in fieldnames if c.lower() in ("parkid", "park.id", "id")), None)
+                    name_col = next(
+                        (c for c in fieldnames if "name" in c.lower()), None)
+                    if not (code_col and name_col):
+                        return {}
+                    return {row[code_col]: row[name_col] for row in reader if row.get(code_col)}
         return {}
     except Exception:
         return {}
