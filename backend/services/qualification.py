@@ -50,17 +50,19 @@ def subset_fraction(conn: sqlite3.Connection, subset_clause: str,
     games are ~37% of MLB games, so the day-game qualifier is 37% of the
     full-season / career rule). Returns a value in (0, 1].
     """
+    # Alias the table as `tgr` because subset_clause references `tgr.*`
+    # (matching the JOIN alias in _execute_team_context_leaderboard).
     season_filter = ""
     season_params = ()
     if season is not None:
-        season_filter = " AND season = ?"
+        season_filter = " AND tgr.season = ?"
         season_params = (season,)
-    base_filter = "COALESCE(gametype, 'regular') = 'regular'" + season_filter
+    base_filter = "COALESCE(tgr.gametype, 'regular') = 'regular'" + season_filter
     total = conn.execute(
-        f"SELECT COUNT(*) FROM team_game_results WHERE {base_filter}",
+        f"SELECT COUNT(*) FROM team_game_results tgr WHERE {base_filter}",
         season_params).fetchone()[0] or 1
     matched = conn.execute(
-        f"SELECT COUNT(*) FROM team_game_results "
+        f"SELECT COUNT(*) FROM team_game_results tgr "
         f"WHERE {base_filter} AND ({subset_clause})",
         season_params + tuple(subset_params)).fetchone()[0] or 0
     return max(matched / total, 0.001)  # tiny floor avoids divide-by-zero downstream
