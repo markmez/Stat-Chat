@@ -722,6 +722,13 @@ def pull_team_game_results(conn, season_str):
             PRIMARY KEY (date, game_number, team)
         )
     """)
+    # Migration: add daynight + gametype columns if running against an older
+    # schema (table existed before the Retrosheet backfill landed).
+    cols = {row[1] for row in cursor.execute("PRAGMA table_info(team_game_results)").fetchall()}
+    if "daynight" not in cols:
+        cursor.execute("ALTER TABLE team_game_results ADD COLUMN daynight TEXT")
+    if "gametype" not in cols:
+        cursor.execute("ALTER TABLE team_game_results ADD COLUMN gametype TEXT")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tgr_team_season ON team_game_results(team, season)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tgr_date ON team_game_results(date)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tgr_team_date ON team_game_results(team, date)")
@@ -821,16 +828,28 @@ def pull_team_game_results(conn, season_str):
                 result = "L"
             else:
                 result = "T"
+            # Day/night from local hour (start_time UTC → ET roughly):
+            # games starting before 17:00 local are day, otherwise night.
+            daynight = None
+            try:
+                hour_utc = int(start[11:13])
+                # Approximate: subtract 4 (EDT) for a rough local hour
+                local_hour = (hour_utc - 4) % 24
+                daynight = "day" if 6 <= local_hour < 17 else "night"
+            except Exception:
+                pass
             cursor.execute("""
                 INSERT OR REPLACE INTO team_game_results
                 (date, season, game_number, team, opponent, is_home,
                  team_runs, opp_runs, result, innings,
-                 start_time_utc, attendance, duration_min, venue, weather)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 start_time_utc, attendance, duration_min, venue, weather,
+                 daynight, gametype)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (game_date, season_year, gnum, team, opponent, is_home,
                   t_runs, o_runs, result, innings_played,
                   start[:19] + "Z" if start else None,
-                  attendance, duration_min, venue, weather))
+                  attendance, duration_min, venue, weather,
+                  daynight, "regular"))
             inserted += 1
 
     conn.commit()

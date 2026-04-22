@@ -118,6 +118,55 @@ async def backfill_team_game_results(
         raise HTTPException(500, str(e))
 
 
+@router.post("/backfill-historical-team-game-results")
+async def backfill_historical_team_game_results(
+    start: int = 1898,
+    end: int = 2024,
+    authorization: str | None = Header(None),
+):
+    """Run Retrosheet gameinfo.csv backfill into team_game_results for a
+    season range. Default 1898-2024 (the full Retrosheet coverage).
+
+    Per-season Retrosheet ZIPs (~5MB each) get downloaded to the local
+    cache on the server if not already present. ~127 seasons × 5MB = 635MB
+    cache after a full run.
+
+    Wraps the standalone script in `data_pipeline/backfill_team_game_results.py`
+    so the same code path is reachable via API or CLI.
+
+    Use a smaller range (e.g. start=2024&end=2024) for quick tests; full
+    backfill takes a while because of download + extraction per season.
+    """
+    verify_admin(authorization)
+    try:
+        from data_pipeline.backfill_team_game_results import (
+            backfill_season, ensure_table, load_ballpark_lookup
+        )
+        conn = sqlite3.connect(DB_PATH, timeout=120)
+        conn.execute("PRAGMA journal_mode=WAL")
+        ensure_table(conn)
+        ballpark_lookup = load_ballpark_lookup()
+        per_season = []
+        try:
+            for season in range(start, end + 1):
+                inserted, games = backfill_season(conn, season, ballpark_lookup)
+                if games:
+                    per_season.append({"season": season, "games": games, "rows": inserted})
+        finally:
+            conn.close()
+        return {
+            "status": "ok",
+            "range": f"{start}-{end}",
+            "seasons_loaded": len(per_season),
+            "total_games": sum(s["games"] for s in per_season),
+            "total_rows": sum(s["rows"] for s in per_season),
+            "per_season": per_season,
+        }
+    except Exception as e:
+        import traceback
+        raise HTTPException(500, f"{e}\n{traceback.format_exc()}")
+
+
 @router.post("/kill-pipeline")
 async def kill_pipeline(
     authorization: str | None = Header(None),
