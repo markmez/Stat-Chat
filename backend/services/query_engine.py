@@ -3827,18 +3827,50 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         base_filter = "g.season = ? AND " + base_filter
         params = [season] + params
 
-    # Optional team filter
-    team_join = ""
+    # Always JOIN to season_*_stats so position / league / rookie / pitcher_role
+    # filters work. Tiny cost (one extra equi-join), pays for full filter
+    # composition.
+    ss_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+    ss_join = (
+        f"JOIN {ss_table} ss "
+        f"ON ss.player_id = g.player_id AND ss.season = g.season "
+    )
+    ss_prefix = "ss"
+
+    # Compose remaining filters using the standard helpers
     if plan.team_code:
-        # Constrain BOTH the player's team (via season_*_stats) and the
-        # team_game_results row to the same franchise.
-        ss_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
-        team_join = (
-            f"JOIN {ss_table} ss "
-            f"ON ss.player_id = g.player_id AND ss.season = g.season "
-        )
         base_filter += " AND ss.team = ? AND tgr.team = ?"
         params += [plan.team_code, plan.team_code]
+
+    if plan.league:
+        from .response_builder import _league_team_clause
+        base_filter += f" AND {_league_team_clause(plan.league, ss_prefix)}"
+
+    if plan.rookie:
+        from .response_builder import _rookie_filter
+        base_filter += f" AND {_rookie_filter(ss_prefix, is_pitching)[5:]}"  # strip leading ' AND '
+
+    if plan.position and not is_pitching:
+        from .response_builder import _position_filter
+        base_filter += f" AND {_position_filter(plan.position, ss_prefix, f'{ss_prefix}.season')[5:]}"
+
+    if plan.pitcher_role == "starter":
+        base_filter += f" AND {ss_prefix}.games_started > {ss_prefix}.games / 2"
+    elif plan.pitcher_role == "reliever":
+        base_filter += f" AND {ss_prefix}.games_started <= {ss_prefix}.games / 2"
+
+    if plan.bats:
+        base_filter += " AND p.bats = ?"
+        params.append(plan.bats)
+    if plan.throws:
+        base_filter += " AND p.throws = ?"
+        params.append(plan.throws)
+    if plan.age_max:
+        base_filter += f" AND ({ss_prefix}.season - CAST(SUBSTR(p.birthdate, 1, 4) AS INT)) < ? AND p.birthdate IS NOT NULL"
+        params.append(plan.age_max)
+    if plan.age_min:
+        base_filter += f" AND ({ss_prefix}.season - CAST(SUBSTR(p.birthdate, 1, 4) AS INT)) > ? AND p.birthdate IS NOT NULL"
+        params.append(plan.age_min)
 
     sort_order = "ASC" if sort_asc else "DESC"
     sort_label = "lowest" if sort_asc else "highest"
@@ -3849,7 +3881,7 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         f"({qual_expr}) AS qual, "
         f"COUNT(*) AS games_n "
         f"FROM {table} g "
-        f"{team_join}"
+        f"{ss_join}"
         f"{join_clause} "
         f"JOIN players p ON p.player_id = g.player_id "
         f"WHERE {base_filter} "
