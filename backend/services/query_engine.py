@@ -1108,11 +1108,15 @@ def decompose(question: str) -> QueryPlan:
         # Plurals as standalone nouns
         ("lefties", "L"), ("righties", "R"), ("switch-hitters", "B"),
     ]
-    for pattern, bats_val in bats_patterns:
-        if pattern in lower:
-            plan.bats = bats_val
-            _add_consumed(plan, pattern)
-            break
+    # Skip bats detection in pitching context — "lefty starters" should set
+    # throws=L, not bats=L. Without this guard the bats parser greedily
+    # consumed "lefty" before the throws parser had a chance.
+    if not plan.is_pitching:
+        for pattern, bats_val in bats_patterns:
+            if pattern in lower:
+                plan.bats = bats_val
+                _add_consumed(plan, pattern)
+                break
 
     # Throws filter (pitchers)
     throws_patterns = [
@@ -1123,6 +1127,14 @@ def decompose(question: str) -> QueryPlan:
         # "right-handed pitchers" / "left-handed pitchers" with the s
         ("left-handed pitchers", "L"), ("left handed pitchers", "L"),
         ("right-handed pitchers", "R"), ("right handed pitchers", "R"),
+        # Pitcher role variants: starter / reliever / closer / southpaw
+        ("lefty starter", "L"), ("lefty starters", "L"),
+        ("righty starter", "R"), ("righty starters", "R"),
+        ("lefty reliever", "L"), ("lefty relievers", "L"),
+        ("righty reliever", "R"), ("righty relievers", "R"),
+        ("lefty closer", "L"), ("lefty closers", "L"),
+        ("righty closer", "R"), ("righty closers", "R"),
+        ("southpaw", "L"), ("southpaws", "L"),
     ]
     for pattern, throws_val in throws_patterns:
         if pattern in lower:
