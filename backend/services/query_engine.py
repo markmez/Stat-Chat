@@ -3758,7 +3758,10 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         }
         if stat_col in rate_exprs:
             stat_expr, qual_expr, qual_label = rate_exprs[stat_col]
-            min_qual = 50  # min AB / PA for rate stat leaderboards
+            # Lower the qualification threshold than a full-season leaderboard —
+            # team-context subsets are inherently smaller (extra-innings games
+            # might be 15% of a season; record-based filters even fewer).
+            min_qual = 15
             sort_asc = False
             is_rate = True
         else:
@@ -3775,14 +3778,16 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     else:
         # Pitching stats
         rate_exprs_p = {
-            "earned_run_avg": ("CAST(SUM(g.earned_runs) AS REAL) * 27 / NULLIF(SUM(g.ip_outs), 0)",
-                               "SUM(g.ip_outs)", "Outs"),
+            "era": ("CAST(SUM(g.earned_runs) AS REAL) * 27 / NULLIF(SUM(g.ip_outs), 0)",
+                    "SUM(g.ip_outs)", "Outs"),
             "whip": ("CAST(SUM(g.hits + g.walks) AS REAL) * 3 / NULLIF(SUM(g.ip_outs), 0)",
                      "SUM(g.ip_outs)", "Outs"),
         }
         if stat_col in rate_exprs_p:
             stat_expr, qual_expr, qual_label = rate_exprs_p[stat_col]
-            min_qual = 30  # 10 IP minimum (30 outs)
+            # ~5 IP minimum (15 outs) — smaller than season qualification because
+            # the team-context subset is narrower.
+            min_qual = 15
             sort_asc = True  # lower is better
             is_rate = True
         else:
