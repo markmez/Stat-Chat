@@ -812,13 +812,12 @@ class TeamContextFilter:
 # Fixed-phrase team-context filters. Parametric ones ("team had won 40+
 # games") are detected separately in _detect_team_context.
 _TEAM_CONTEXT_FIXED = {
-    # Game shape
-    "in extra innings": TeamContextFilter(
-        "Extra-Innings Games", "tgr.innings >= 10", (), ["in extra innings"]),
-    "extra inning games": TeamContextFilter(
-        "Extra-Innings Games", "tgr.innings >= 10", (), ["extra inning games", "extra-inning games"]),
-    "extra innings games": TeamContextFilter(
-        "Extra-Innings Games", "tgr.innings >= 10", (), ["extra innings games", "extra-innings games"]),
+    # NOTE: "extra innings" filter removed — Retrosheet's gameinfo.csv stores
+    # SCHEDULED innings (always 9), not actual final-inning counts. To
+    # support this we'd need plays.csv (not currently loaded). MSF data
+    # for 2025+ does have actual innings via score.innings[] array length,
+    # but supporting only recent seasons would mislead users for any
+    # historical query, so it's all-or-nothing.
 
     # Day / night
     "in day games": TeamContextFilter(
