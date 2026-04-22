@@ -681,6 +681,10 @@ async def get_notable_events(limit: int = QueryParam(50, le=200)):
     from itertools import groupby
     for game_date, group in groupby(filtered, key=lambda e: e["game_date"]):
         bucket = list(group)
+        # Suppress OTD-only dates: OTD is supplemental, not a standalone day.
+        # Once any other event type fires for the date, OTD will interleave in.
+        if all(e["_type"] == "on_this_date" for e in bucket):
+            continue
         # Round-robin by type: pick one from each type in rotation
         by_type = {}
         for e in bucket:
