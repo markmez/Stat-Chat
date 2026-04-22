@@ -130,25 +130,37 @@ def _negro_leagues_team_codes(db_path: str | None = None) -> set:
     if _NL_TEAM_CODES_CACHE is not None:
         return _NL_TEAM_CODES_CACHE
     db = db_path or _os.environ.get("DB_PATH", "/data/baseball_stats_full.db")
-    codes: set = set()
     try:
         conn = _sqlite3.connect(db, timeout=10)
-        cur = conn.execute("""
-            SELECT DISTINCT team FROM season_batting_stats
-            WHERE season BETWEEN 1920 AND 1948
-              AND team NOT IN (SELECT DISTINCT team FROM season_batting_stats WHERE season >= 1949)
-        """)
-        for (team,) in cur.fetchall():
+        # Pass 1: every single team code that ever appeared in 1949+
+        # (after AL/NL integration). Multi-team strings get split first so
+        # 'NYA/BOS' contributes both NYA and BOS to the modern set.
+        modern: set = set()
+        for (team,) in conn.execute(
+            "SELECT DISTINCT team FROM season_batting_stats WHERE season >= 1949"
+        ):
             for t in (team or "").split("/"):
                 if t:
-                    codes.add(t)
+                    modern.add(t)
+
+        # Pass 2: every code from 1920-1948 that does NOT appear in modern.
+        # Splitting first keeps us from accidentally classifying NYA as
+        # Negro Leagues just because some 1947 player was traded between
+        # NYA and a Negro Leagues team in a single-season multi-stint.
+        nl_codes: set = set()
+        for (team,) in conn.execute(
+            "SELECT DISTINCT team FROM season_batting_stats WHERE season BETWEEN 1920 AND 1948"
+        ):
+            for t in (team or "").split("/"):
+                if t and t not in modern:
+                    nl_codes.add(t)
         conn.close()
     except Exception:
         # If DB isn't reachable yet, return empty — caller should treat as
         # "no Negro Leagues teams known" and try again later.
         return set()
-    _NL_TEAM_CODES_CACHE = codes
-    return codes
+    _NL_TEAM_CODES_CACHE = nl_codes
+    return nl_codes
 
 
 def is_negro_leagues_team(code: str, db_path: str | None = None) -> bool:
