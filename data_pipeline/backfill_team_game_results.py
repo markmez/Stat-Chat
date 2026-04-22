@@ -25,7 +25,22 @@ import requests
 
 # Download URLs match pull_stats.py for consistency.
 RETROSHEET_SEASON_URL = "https://www.retrosheet.org/downloads/{year}/{year}csvs.zip"
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+
+
+def _resolve_cache_dir():
+    """Pick a writable cache location.
+
+    Production (Lightsail) has ProtectSystem=strict — only /data is
+    writable. Local dev uses the .cache next to this script.
+    """
+    if os.environ.get("RETROSHEET_CACHE_DIR"):
+        return os.environ["RETROSHEET_CACHE_DIR"]
+    if os.path.isdir("/data") and os.access("/data", os.W_OK):
+        return "/data/retrosheet_cache"
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+
+
+CACHE_DIR = _resolve_cache_dir()
 
 
 def _ensure_cache_dir():
