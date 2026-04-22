@@ -687,6 +687,188 @@ def pull_game_logs(conn, season_str, full_refresh=False):
     return bat_count, pitch_count
 
 
+def pull_team_game_results(conn, season_str):
+    """Pull per-team per-game results from MSF games.json.
+
+    Stores TWO rows per game (one per team) for symmetric querying — a
+    "Yankees record" lookup is just `WHERE team = 'NYA'`, and temporal
+    joins to player game logs key on (team, date) cleanly. Computes
+    cumulative `wins_after` / `losses_after` per team in a second pass
+    using a window-function-style running sum.
+    """
+    season_year = detect_season(season_str)
+    print(f"  Pulling team game results for {season_str}...")
+
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS team_game_results (
+            date TEXT NOT NULL,
+            season INTEGER NOT NULL,
+            game_number INTEGER NOT NULL DEFAULT 0,
+            team TEXT NOT NULL,
+            opponent TEXT NOT NULL,
+            is_home INTEGER NOT NULL,
+            team_runs INTEGER NOT NULL,
+            opp_runs INTEGER NOT NULL,
+            result TEXT NOT NULL,
+            innings INTEGER DEFAULT 9,
+            start_time_utc TEXT,
+            attendance INTEGER,
+            duration_min INTEGER,
+            venue TEXT,
+            weather TEXT,
+            wins_after INTEGER,
+            losses_after INTEGER,
+            PRIMARY KEY (date, game_number, team)
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tgr_team_season ON team_game_results(team, season)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tgr_date ON team_game_results(date)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tgr_team_date ON team_game_results(team, date)")
+    conn.commit()
+
+    data = msf_get(f"{season_str}/games.json")
+    if not data:
+        print("    No games returned from MSF")
+        return 0
+    games = data.get("games", [])
+
+    # Per-team per-date game-number tracking for doubleheader ordering.
+    # MSF returns games in schedule order; if two games share a date+team
+    # we increment the counter so the second gets game_number=1.
+    team_date_count = {}
+    inserted = 0
+    for game in games:
+        sched = game.get("schedule", {})
+        score = game.get("score", {}) or {}
+        if sched.get("playedStatus") != "COMPLETED":
+            continue
+
+        start = sched.get("startTime", "")
+        if not start:
+            continue
+        # Convert UTC to local Eastern date for MLB-official date alignment
+        # (00:00-05:59 UTC = previous evening Eastern).
+        try:
+            dt = datetime.strptime(start[:19], "%Y-%m-%dT%H:%M:%S")
+            if dt.hour < 6:
+                dt = dt - timedelta(days=1)
+            game_date = dt.strftime("%Y-%m-%d")
+        except Exception:
+            continue
+
+        away_msf = sched.get("awayTeam", {}).get("abbreviation", "")
+        home_msf = sched.get("homeTeam", {}).get("abbreviation", "")
+        if not away_msf or not home_msf:
+            continue
+        away_team = retro_team(away_msf)
+        home_team = retro_team(home_msf)
+
+        away_runs = safe_int(score.get("awayScoreTotal"))
+        home_runs = safe_int(score.get("homeScoreTotal"))
+
+        innings_played = len(score.get("innings", [])) or 9
+
+        venue = (sched.get("venue") or {}).get("name") or None
+        attendance = safe_int(sched.get("attendance")) or None
+        weather_obj = sched.get("weather") or {}
+        if isinstance(weather_obj, dict) and weather_obj:
+            # Compact weather string: "Cloudy, 68F, wind 10 mph SE"
+            parts = []
+            if weather_obj.get("type"):
+                parts.append(str(weather_obj["type"]))
+            temp = weather_obj.get("temperature", {})
+            if isinstance(temp, dict) and temp.get("fahrenheit") is not None:
+                parts.append(f"{temp['fahrenheit']}F")
+            wind = weather_obj.get("wind", {})
+            if isinstance(wind, dict) and wind.get("speed", {}).get("milesPerHour") is not None:
+                w = f"wind {wind['speed']['milesPerHour']} mph"
+                if wind.get("direction", {}).get("label"):
+                    w += f" {wind['direction']['label']}"
+                parts.append(w)
+            weather = ", ".join(parts) if parts else None
+        else:
+            weather = None
+
+        ended = sched.get("endedTime", "")
+        duration_min = None
+        if ended and start:
+            try:
+                t1 = datetime.strptime(start[:19], "%Y-%m-%dT%H:%M:%S")
+                t2 = datetime.strptime(ended[:19], "%Y-%m-%dT%H:%M:%S")
+                duration_min = int((t2 - t1).total_seconds() / 60)
+                if duration_min < 30 or duration_min > 600:  # sanity bounds
+                    duration_min = None
+            except Exception:
+                pass
+
+        # Doubleheader ordering: increment per (date, team)
+        key_away = (game_date, away_team)
+        key_home = (game_date, home_team)
+        away_game_num = team_date_count.get(key_away, 0)
+        home_game_num = team_date_count.get(key_home, 0)
+        team_date_count[key_away] = away_game_num + 1
+        team_date_count[key_home] = home_game_num + 1
+
+        # Two rows per game
+        for team, opponent, is_home, t_runs, o_runs, gnum in (
+            (away_team, home_team, 0, away_runs, home_runs, away_game_num),
+            (home_team, away_team, 1, home_runs, away_runs, home_game_num),
+        ):
+            if t_runs > o_runs:
+                result = "W"
+            elif t_runs < o_runs:
+                result = "L"
+            else:
+                result = "T"
+            cursor.execute("""
+                INSERT OR REPLACE INTO team_game_results
+                (date, season, game_number, team, opponent, is_home,
+                 team_runs, opp_runs, result, innings,
+                 start_time_utc, attendance, duration_min, venue, weather)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (game_date, season_year, gnum, team, opponent, is_home,
+                  t_runs, o_runs, result, innings_played,
+                  start[:19] + "Z" if start else None,
+                  attendance, duration_min, venue, weather))
+            inserted += 1
+
+    conn.commit()
+
+    # Phase 2: compute cumulative wins_after / losses_after per team.
+    # Done in a single pass using row_number windowing — cheap and lets us
+    # backfill running totals every refresh in case games were corrected.
+    cursor.execute("""
+        WITH running AS (
+            SELECT date, game_number, team,
+                   SUM(CASE WHEN result = 'W' THEN 1 ELSE 0 END)
+                       OVER (PARTITION BY team, season ORDER BY date, game_number
+                             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+                       AS wa,
+                   SUM(CASE WHEN result = 'L' THEN 1 ELSE 0 END)
+                       OVER (PARTITION BY team, season ORDER BY date, game_number
+                             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+                       AS la
+            FROM team_game_results
+            WHERE season = ?
+        )
+        UPDATE team_game_results
+        SET wins_after = (SELECT wa FROM running r
+                          WHERE r.date = team_game_results.date
+                            AND r.game_number = team_game_results.game_number
+                            AND r.team = team_game_results.team),
+            losses_after = (SELECT la FROM running r
+                            WHERE r.date = team_game_results.date
+                              AND r.game_number = team_game_results.game_number
+                              AND r.team = team_game_results.team)
+        WHERE season = ?
+    """, (season_year, season_year))
+    conn.commit()
+
+    print(f"    Loaded {inserted} team-game rows ({inserted // 2} games)")
+    return inserted
+
+
 def pull_player_info(conn, season_str):
     """Pull/update player biographical info from MySportsFeeds."""
     print(f"  Pulling player info for {season_str}...")
@@ -1585,6 +1767,11 @@ def main():
         pull_season_pitching(conn, args.season)
         compute_pitching_league_averages(conn, season_year)
         pull_game_logs(conn, args.season, full_refresh=args.full_refresh)
+
+        # Team-level game results (scores, W/L, innings, attendance, weather).
+        # Cheap: one MSF endpoint, ~15 seconds. Powers "team record" /
+        # "yesterday's score" queries and Phase 2 temporal joins.
+        pull_team_game_results(conn, args.season)
 
         # Compute home/away splits from game logs
         compute_batting_home_away_splits(conn, season_year)

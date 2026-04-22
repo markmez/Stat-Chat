@@ -89,6 +89,35 @@ async def refresh_live_data(
         raise HTTPException(500, str(e))
 
 
+@router.post("/backfill-team-game-results")
+async def backfill_team_game_results(
+    season: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Populate team_game_results for a single season from MSF games.json.
+
+    Faster than running a full pipeline — hits one MSF endpoint, ~15
+    seconds per season. Used to seed the table for prior seasons or to
+    repair if data drifts. Pass season as "2025-regular" / "2026-regular".
+    """
+    verify_admin(authorization)
+    if not season:
+        season = f"{date.today().year}-regular"
+    if season.isdigit() and len(season) == 4:
+        season = f"{season}-regular"
+
+    try:
+        from data_pipeline.pull_live_stats import pull_team_game_results
+        conn = sqlite3.connect(DB_PATH, timeout=30)
+        try:
+            count = pull_team_game_results(conn, season)
+        finally:
+            conn.close()
+        return {"status": "ok", "season": season, "rows_inserted": count}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/kill-pipeline")
 async def kill_pipeline(
     authorization: str | None = Header(None),
