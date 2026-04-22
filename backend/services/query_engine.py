@@ -1105,6 +1105,8 @@ def decompose(question: str) -> QueryPlan:
         ("lefty batter", "L"), ("lefty hitter", "L"), ("lefty", "L"),
         ("righty batters", "R"), ("righty hitters", "R"),
         ("righty batter", "R"), ("righty hitter", "R"), ("righty", "R"),
+        # Plurals as standalone nouns
+        ("lefties", "L"), ("righties", "R"), ("switch-hitters", "B"),
     ]
     for pattern, bats_val in bats_patterns:
         if pattern in lower:
@@ -3731,14 +3733,25 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     is_pitching = plan.is_pitching
     table = "game_pitching_logs" if is_pitching else "game_batting_logs"
     tc = plan.team_context
-    # Scope: explicit season > "all_time" (no filter) > default to current year
-    is_all_time = plan.scope == "all_time" or plan.scope == "career"
+    # Scope handling — mirrors the conventions used elsewhere:
+    #   explicit plan.season → that year only
+    #   "all_time" / "career" → no season filter
+    #   "since_YYYY" → plan.since_year through current year (range)
+    #   default → current year
+    is_all_time = plan.scope in ("all_time", "career")
+    is_since = plan.scope and plan.scope.startswith("since_") and plan.since_year
     if plan.season:
         season = plan.season
+        season_range = None
     elif is_all_time:
         season = None
+        season_range = None
+    elif is_since:
+        season = None
+        season_range = (plan.since_year, date.today().year)
     else:
         season = date.today().year
+        season_range = None
 
     # Stat aggregation expressions. Rate stats compute from raw components;
     # counting stats are simple SUMs.
@@ -3826,6 +3839,9 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     if season is not None:
         base_filter = "g.season = ? AND " + base_filter
         params = [season] + params
+    elif season_range is not None:
+        base_filter = "g.season BETWEEN ? AND ? AND " + base_filter
+        params = [season_range[0], season_range[1]] + params
 
     # Always JOIN to season_*_stats so position / league / rookie / pitcher_role
     # filters work. Tiny cost (one extra equi-join), pays for full filter
@@ -3908,9 +3924,14 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         return f"Could not run team-context query: {e}"
     rows = cur.fetchall()
 
-    season_label = "All-Time" if season is None else str(season)
+    if season is not None:
+        season_label = str(season)
+    elif season_range is not None:
+        season_label = f"Since {season_range[0]}"
+    else:
+        season_label = "All-Time"
     if not rows:
-        scope_phrase = season_label if season is None else f"in {season_label}"
+        scope_phrase = season_label if (season is None and season_range is None) else f"in {season_label}"
         return (
             f"No players found with **{plan.stat.display_name}** "
             f"({tc.label}) {scope_phrase}."
