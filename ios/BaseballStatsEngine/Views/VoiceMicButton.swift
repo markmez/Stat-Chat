@@ -24,7 +24,7 @@ struct VoiceMicButton: View {
             .accessibilityLabel("Stop recording")
         } else {
             Button {
-                Task {
+                Task { @MainActor in
                     if voice.authStatus == .notDetermined {
                         await voice.requestAuthorization()
                     }

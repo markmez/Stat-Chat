@@ -22,19 +22,29 @@ final class VoiceInputService {
     private var contextualStrings: [String] = []
 
     func requestAuthorization() async {
-        let speechStatus = await withCheckedContinuation { cont in
-            SFSpeechRecognizer.requestAuthorization { cont.resume(returning: $0) }
+        // Speech recognition permission. Apple's API delivers the callback
+        // on an arbitrary thread; we dispatch back to main before resuming
+        // the continuation so any subsequent @Observable mutation happens
+        // on the main actor.
+        let speechStatus: SFSpeechRecognizerAuthorizationStatus = await withCheckedContinuation { cont in
+            SFSpeechRecognizer.requestAuthorization { status in
+                DispatchQueue.main.async {
+                    cont.resume(returning: status)
+                }
+            }
         }
         authStatus = speechStatus
 
-        // Use the older AVAudioSession API for mic permission on all iOS
-        // versions — iOS 17's AVAudioApplication path was crashing in
-        // testing. The deprecated API still works on iOS 17+.
-        micGranted = await withCheckedContinuation { cont in
+        // Microphone permission via the (deprecated-but-functional) older API.
+        // iOS 17's AVAudioApplication path crashed in testing.
+        let granted: Bool = await withCheckedContinuation { cont in
             AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                cont.resume(returning: granted)
+                DispatchQueue.main.async {
+                    cont.resume(returning: granted)
+                }
             }
         }
+        micGranted = granted
     }
 
     func startRecording() {
