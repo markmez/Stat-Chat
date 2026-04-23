@@ -28,7 +28,7 @@ struct VoiceMicButton: View {
                     if voice.authStatus == .notDetermined {
                         await voice.requestAuthorization()
                     }
-                    guard voice.authStatus == .authorized else { return }
+                    guard voice.authStatus == .authorized, voice.micGranted else { return }
                     onStart?()
                     voice.startRecording()
                 }

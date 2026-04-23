@@ -8,6 +8,7 @@ final class VoiceInputService {
     private(set) var isRecording = false
     private(set) var transcript = ""
     private(set) var authStatus: SFSpeechRecognizerAuthorizationStatus = .notDetermined
+    private(set) var micGranted: Bool = false
     private(set) var errorMessage: String?
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
@@ -28,9 +29,9 @@ final class VoiceInputService {
 
         // Microphone permission — iOS 17 API path when available
         if #available(iOS 17.0, *) {
-            _ = await AVAudioApplication.requestRecordPermission()
+            micGranted = await AVAudioApplication.requestRecordPermission()
         } else {
-            _ = await withCheckedContinuation { cont in
+            micGranted = await withCheckedContinuation { cont in
                 AVAudioSession.sharedInstance().requestRecordPermission { cont.resume(returning: $0) }
             }
         }
@@ -38,6 +39,14 @@ final class VoiceInputService {
 
     func startRecording() {
         guard !isRecording else { return }
+        guard authStatus == .authorized else {
+            errorMessage = "Speech recognition not authorized"
+            return
+        }
+        guard micGranted else {
+            errorMessage = "Microphone access not granted"
+            return
+        }
         errorMessage = nil
         transcript = ""
 
@@ -77,6 +86,16 @@ final class VoiceInputService {
 
         let inputNode = audioEngine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
+
+        // Defensive: installTap crashes the app with an assertion failure
+        // if format has 0 channels or 0 sample rate (can happen if mic
+        // permission was just granted and the audio system hasn't finished
+        // wiring up the input node yet).
+        guard format.channelCount > 0, format.sampleRate > 0 else {
+            errorMessage = "Audio input not available — try again"
+            teardown()
+            return
+        }
 
         inputNode.removeTap(onBus: 0)
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
