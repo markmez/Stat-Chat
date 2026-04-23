@@ -19,6 +19,7 @@ struct TeamCardView: View {
     @FocusState private var isSearchFocused: Bool
     @State private var searchTeamCode: String? = nil
     @State private var searchQuestion: String? = nil
+    @State private var searchInputMethod: String = "keyboard"
     @State private var voice = VoiceInputService()
     @State private var voiceUsedThisQuery: Bool = false
 
@@ -192,7 +193,7 @@ struct TeamCardView: View {
             get: { searchQuestion != nil },
             set: { if !$0 { searchQuestion = nil } }
         )) {
-            ResultsView(initialQuestion: searchQuestion ?? "", navigationPath: $navigationPath)
+            ResultsView(initialQuestion: searchQuestion ?? "", initialInputMethod: searchInputMethod, navigationPath: $navigationPath)
         }
         .task {
             AnalyticsService.trackTeamCardView(code: teamCode)
@@ -234,20 +235,9 @@ struct TeamCardView: View {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         if voice.isRecording { voice.stopRecording() }
-        let submittedViaVoice = voiceUsedThisQuery
+        let inputMethod = voiceUsedThisQuery ? "mic" : "keyboard"
         voiceUsedThisQuery = false
         searchText = ""
-
-        if submittedViaVoice {
-            let deviceId = AppState.deviceId
-            Task.detached {
-                await BackendService().logClientEvent(
-                    eventType: "voice_input",
-                    context: ["query_text": trimmed, "source": "team_card"],
-                    deviceId: deviceId
-                )
-            }
-        }
 
         switch PlayerNameMatcher.resolveSearch(trimmed, history: appState) {
         case .player(let name, _):
@@ -255,6 +245,7 @@ struct TeamCardView: View {
         case .team(let code):
             searchTeamCode = code
         case .question(let query):
+            searchInputMethod = inputMethod
             searchQuestion = query
         }
     }

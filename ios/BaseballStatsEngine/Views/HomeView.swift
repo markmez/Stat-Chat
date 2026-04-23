@@ -9,7 +9,7 @@ private struct ScrollOffsetKey: PreferenceKey {
 }
 
 // Shared navigation destination types
-struct ResultsDestination: Hashable { let question: String }
+struct ResultsDestination: Hashable { let question: String; var inputMethod: String = "keyboard" }
 struct PlayerCardDestination: Hashable { let name: String; var alternatives: [String] = []; var source: String = "link" }
 struct TeamCardDestination: Hashable { let code: String }
 
@@ -38,7 +38,7 @@ struct HomeView: View {
         NavigationStack(path: $path) {
             mainContent
                 .navigationDestination(for: ResultsDestination.self) { dest in
-                    ResultsView(initialQuestion: dest.question, navigationPath: $path)
+                    ResultsView(initialQuestion: dest.question, initialInputMethod: dest.inputMethod, navigationPath: $path)
                 }
                 .navigationDestination(for: PlayerCardDestination.self) { dest in
                     PlayerCardView(playerName: dest.name, alternatives: dest.alternatives, source: dest.source, navigationPath: $path)
@@ -550,20 +550,9 @@ struct HomeView: View {
         let trimmed = questionText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         if voice.isRecording { voice.stopRecording() }
-        let submittedViaVoice = voiceUsedThisQuery
+        let inputMethod = voiceUsedThisQuery ? "mic" : "keyboard"
         voiceUsedThisQuery = false
         questionText = ""
-
-        if submittedViaVoice {
-            let deviceId = AppState.deviceId
-            Task.detached {
-                await BackendService().logClientEvent(
-                    eventType: "voice_input",
-                    context: ["query_text": trimmed, "length": trimmed.count],
-                    deviceId: deviceId
-                )
-            }
-        }
 
         switch PlayerNameMatcher.resolveSearch(trimmed, history: appState) {
         case .player(let name, let alternatives):
@@ -572,7 +561,7 @@ struct HomeView: View {
         case .team(let code):
             path.append(TeamCardDestination(code: code))
         case .question(let query):
-            path.append(ResultsDestination(question: query))
+            path.append(ResultsDestination(question: query, inputMethod: inputMethod))
         }
     }
 

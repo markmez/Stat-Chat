@@ -34,6 +34,7 @@ final class BackendService: Sendable {
         question: String,
         deviceId: String,
         history: [(String, String)],
+        inputMethod: String = "keyboard",
         onChunk: @escaping @MainActor @Sendable (String) -> Void
     ) async throws -> QueryResult {
         let url = baseURL.appendingPathComponent("query")
@@ -51,6 +52,7 @@ final class BackendService: Sendable {
             "question": question,
             "device_id": deviceId,
             "history": historyPayload,
+            "input_method": inputMethod,
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

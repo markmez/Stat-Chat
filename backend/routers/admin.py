@@ -2348,7 +2348,8 @@ async def dashboard(
                GROUP_CONCAT(DISTINCT q1.response_type) as types,
                (SELECT q2.client_context FROM query_log AS q2
                 WHERE q2.query_text = q1.query_text AND q2.client_context IS NOT NULL
-                ORDER BY q2.timestamp DESC LIMIT 1) AS latest_context
+                ORDER BY q2.timestamp DESC LIMIT 1) AS latest_context,
+               GROUP_CONCAT(DISTINCT COALESCE(q1.input_method, 'keyboard')) as input_methods
         FROM query_log AS q1
         WHERE 1=1{date_filter.replace('timestamp', 'q1.timestamp')}
         GROUP BY q1.query_text
@@ -2415,7 +2416,7 @@ async def dashboard(
 
     # Build query rows
     query_rows = ""
-    for text, cnt, last_seen, types, latest_context in queries:
+    for text, cnt, last_seen, types, latest_context, input_methods in queries:
         # Convert UTC timestamp to Eastern
         ts_display = _to_eastern(last_seen) if last_seen else ""
         # Build type badges (intercepting clicks so the row doesn't also expand)
@@ -2424,6 +2425,12 @@ async def dashboard(
             f'<span class="badge {t.replace(" ", "-")}" onclick="event.stopPropagation(); filterBy(\'{t}\')">{t}</span>'
             for t in type_list
         )
+        # Input method badges (mic / keyboard). Show only mic visibly to keep
+        # the column clean — keyboard is the silent default.
+        method_list = sorted({m.strip() for m in (input_methods or "keyboard").split(",") if m.strip()})
+        method_badges = ""
+        if "mic" in method_list:
+            method_badges = '<span class="badge mic" title="Submitted via voice input">mic</span>'
         escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         raw_ts = last_seen or ""
         types_attr = ",".join(type_list)
@@ -2452,7 +2459,7 @@ async def dashboard(
         <tr class="{row_class}" data-count="{cnt}" data-ts="{raw_ts}" data-types="{types_attr}" data-context="{context_attr}">
             <td class="query-text">{chevron}{escaped}</td>
             <td class="count">{cnt}</td>
-            <td class="types">{type_badges}</td>
+            <td class="types">{type_badges} {method_badges}</td>
             <td class="timestamp">{ts_display}</td>
         </tr>"""
 
@@ -2676,6 +2683,7 @@ async def dashboard(
   .badge.evt-leader-change {{ background: #fff7ed; color: #9a3412; }}
   .badge.haiku {{ background: #dbeafe; color: #1A40B3; }}
   .badge.sonnet {{ background: #f3e8ff; color: #6b21a8; }}
+  .badge.mic {{ background: #ffedd5; color: #9a3412; }}
   .breakdown {{ margin-bottom: 24px; }}
   .breakdown table {{ max-width: 500px; }}
   .breakdown td, .breakdown th {{ padding: 8px 12px; }}

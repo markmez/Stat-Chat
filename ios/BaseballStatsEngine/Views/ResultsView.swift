@@ -12,6 +12,7 @@ struct ResultsView: View {
     @State private var voice = VoiceInputService()
     @State private var voiceUsedThisQuery: Bool = false
     let initialQuestion: String
+    var initialInputMethod: String = "keyboard"
     @Binding var navigationPath: NavigationPath
 
     private let deepBlue = Color.brandDeepBlue
@@ -230,7 +231,7 @@ struct ResultsView: View {
         }
         .onAppear {
             if appState.messages.isEmpty && !initialQuestion.isEmpty {
-                appState.sendQuestion(initialQuestion)
+                appState.sendQuestion(initialQuestion, inputMethod: initialInputMethod)
             }
         }
         .onDisappear {
@@ -262,20 +263,9 @@ struct ResultsView: View {
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !appState.isLoading else { return }
         if voice.isRecording { voice.stopRecording() }
-        let submittedViaVoice = voiceUsedThisQuery
+        let inputMethod = voiceUsedThisQuery ? "mic" : "keyboard"
         voiceUsedThisQuery = false
         inputText = ""
-
-        if submittedViaVoice {
-            let deviceId = AppState.deviceId
-            Task.detached {
-                await BackendService().logClientEvent(
-                    eventType: "voice_input",
-                    context: ["query_text": trimmed, "source": "results_followup"],
-                    deviceId: deviceId
-                )
-            }
-        }
 
         // Follow-ups should go to the backend for rewriting, not through resolveSearch
         // which can incorrectly match player names (e.g., "career?" → Carter, "De La Cruz" → Bryan).
@@ -288,7 +278,7 @@ struct ResultsView: View {
         let isFollowUpPhrase = followUpPrefixes.contains(where: { lower.hasPrefix($0) })
         let wordCount = trimmed.split(separator: " ").count
         if wordCount <= 2 || isFollowUpPhrase {
-            appState.sendQuestion(trimmed, isFollowUp: true)
+            appState.sendQuestion(trimmed, isFollowUp: true, inputMethod: inputMethod)
             return
         }
 
@@ -300,7 +290,7 @@ struct ResultsView: View {
         case .team(let code):
             selectedTeamCode = code
         case .question(let query):
-            appState.sendQuestion(query, isFollowUp: true)
+            appState.sendQuestion(query, isFollowUp: true, inputMethod: inputMethod)
         }
     }
 }

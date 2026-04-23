@@ -607,12 +607,13 @@ class QueryRequest(BaseModel):
     device_id: str
     history: list[dict] = []  # [{role: "user"|"assistant", content: "..."}]
     contextual: bool = False  # True when iOS sends an enriched contextual follow-up prompt
+    input_method: str = "keyboard"  # "keyboard" (default) or "mic"
 
 
 @router.post("/query")
 async def query(req: QueryRequest):
     return StreamingResponse(
-        _stream(req.question, req.device_id, req.history, req.contextual),
+        _stream(req.question, req.device_id, req.history, req.contextual, req.input_method),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -943,7 +944,7 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
     return None
 
 
-async def _stream(question: str, device_id: str, history: list[dict], contextual: bool = False):
+async def _stream(question: str, device_id: str, history: list[dict], contextual: bool = False, input_method: str = "keyboard"):
     """Core pipeline: quota check → route → SQL → execute → stream answer."""
     original_question = question  # Before any rewriting
 
@@ -973,7 +974,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             return
         yield event({"type": "done"})
         increment_count(device_id)
-        log_query(question, device_id, "sonnet")
+        log_query(question, device_id, "sonnet", input_method=input_method)
         return
 
     # 2. Follow-up rewrite — try local patterns BEFORE interceptor so short
@@ -1002,7 +1003,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 done_event["rewritten_query"] = local_rewrite
                 yield event(done_event)
                 increment_count(device_id)
-                log_query(local_rewrite, device_id, "query engine", is_followup=True, original_query=original_question)
+                log_query(local_rewrite, device_id, "query engine", is_followup=True, original_query=original_question, input_method=input_method)
                 return
             # Local rewrite didn't intercept — use it as the question for the rest of pipeline
             question = local_rewrite
@@ -1036,7 +1037,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                         done_event["rewritten_query"] = rewritten_query
                     yield event(done_event)
                     increment_count(device_id)
-                    log_query(rewritten, device_id, "intercepted", is_followup=True, original_query=original_question)
+                    log_query(rewritten, device_id, "intercepted", is_followup=True, original_query=original_question, input_method=input_method)
                     return
             # Use rewritten question for the rest of the pipeline
             question = rewritten
@@ -1052,7 +1053,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             # Analytical follow-ups don't get rewritten queries in history
             yield event({"type": "done"})
             increment_count(device_id)
-            log_query(question, device_id, "sonnet")
+            log_query(question, device_id, "sonnet", input_method=input_method)
             return
 
     # 2b. Insight query detection — check before interceptor
@@ -1125,7 +1126,8 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         if not no_count:
             increment_count(device_id)
         log_query(question, device_id, "query engine",
-                  is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None)
+                  is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
+                  input_method=input_method)
         return
 
     # Haiku SQL fallback — skip for insight queries (need insight engine)
@@ -1154,7 +1156,8 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         yield event(done_event)
         increment_count(device_id)
         log_query(question, device_id, "haiku",
-                  is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None)
+                  is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
+                  input_method=input_method)
         return
 
     # 4. Insight engine — multi-step Sonnet reasoning for complex queries
@@ -1185,7 +1188,8 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             yield event(done_event)
             increment_count(device_id)
             log_query(question, device_id, "sonnet",
-                      is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None)
+                      is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
+                      input_method=input_method)
             return
     except Exception as e:
         import traceback as _tb
@@ -1237,4 +1241,5 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     yield event(done_event)
     increment_count(device_id)
     log_query(question, device_id, "sonnet",
-              is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None)
+              is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
+              input_method=input_method)

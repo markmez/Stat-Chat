@@ -86,7 +86,7 @@ final class AppState: SearchHistoryTracking {
         PlayerNameMatcher.load()
     }
 
-    func sendQuestion(_ question: String, isFollowUp: Bool = false) {
+    func sendQuestion(_ question: String, isFollowUp: Bool = false, inputMethod: String = "keyboard") {
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -218,7 +218,8 @@ final class AppState: SearchHistoryTracking {
                 let result = try await backendService.ask(
                     question: trimmed,
                     deviceId: Self.deviceId,
-                    history: historyForBackend
+                    history: historyForBackend,
+                    inputMethod: inputMethod
                 ) { [self] chunk in
                     guard !Task.isCancelled, streamingIndex < messages.count else { return }
                     streamingBuffer += chunk

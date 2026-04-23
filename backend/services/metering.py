@@ -63,8 +63,10 @@ def init_metering_db() -> None:
 
 
 def log_query(query_text: str, device_id: str, response_type: str,
-              is_followup: bool = False, original_query: str = None) -> None:
-    """Log a query with its response type. response_type: 'intercepted', 'haiku', 'sonnet'."""
+              is_followup: bool = False, original_query: str = None,
+              input_method: str = "keyboard") -> None:
+    """Log a query with its response type. response_type: 'intercepted', 'haiku', 'sonnet'.
+    input_method: 'keyboard' (default), 'mic', or 'mic+keyboard'."""
     conn = sqlite3.connect(METERING_DB_PATH)
     # Add followup columns if they don't exist yet
     try:
@@ -75,9 +77,13 @@ def log_query(query_text: str, device_id: str, response_type: str,
         conn.execute("ALTER TABLE query_log ADD COLUMN original_query TEXT")
     except Exception:
         pass
+    try:
+        conn.execute("ALTER TABLE query_log ADD COLUMN input_method TEXT DEFAULT 'keyboard'")
+    except Exception:
+        pass
     conn.execute(
-        "INSERT INTO query_log (query_text, device_id, response_type, timestamp, is_followup, original_query) VALUES (?, ?, ?, ?, ?, ?)",
-        (query_text, device_id, response_type, _now_iso(), 1 if is_followup else 0, original_query),
+        "INSERT INTO query_log (query_text, device_id, response_type, timestamp, is_followup, original_query, input_method) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (query_text, device_id, response_type, _now_iso(), 1 if is_followup else 0, original_query, input_method),
     )
     conn.commit()
     conn.close()
