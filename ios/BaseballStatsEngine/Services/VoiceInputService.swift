@@ -27,12 +27,12 @@ final class VoiceInputService {
         }
         authStatus = speechStatus
 
-        // Microphone permission — iOS 17 API path when available
-        if #available(iOS 17.0, *) {
-            micGranted = await AVAudioApplication.requestRecordPermission()
-        } else {
-            micGranted = await withCheckedContinuation { cont in
-                AVAudioSession.sharedInstance().requestRecordPermission { cont.resume(returning: $0) }
+        // Use the older AVAudioSession API for mic permission on all iOS
+        // versions — iOS 17's AVAudioApplication path was crashing in
+        // testing. The deprecated API still works on iOS 17+.
+        micGranted = await withCheckedContinuation { cont in
+            AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                cont.resume(returning: granted)
             }
         }
     }
