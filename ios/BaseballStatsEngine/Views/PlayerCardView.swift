@@ -44,6 +44,8 @@ struct PlayerCardView: View {
     @FocusState private var isSearchFocused: Bool
     @State private var searchPlayerName: String? = nil
     @State private var searchQuestion: String? = nil
+    @State private var voice = VoiceInputService()
+    @State private var voiceUsedThisQuery: Bool = false
 
     private let deepBlue = Color.brandDeepBlue
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
@@ -374,37 +376,16 @@ struct PlayerCardView: View {
             .frame(height: 16)
 
             VStack(spacing: 6) {
-                // Search input
-                HStack(spacing: 12) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(lightBlue)
-
-                    TextField("", text: $searchText, prompt:
-                        Text("Search player stats or ask a question")
-                            .foregroundColor(Color(.label).opacity(0.33))
-                    )
-                    .font(.system(.body, design: .rounded))
-                    .foregroundStyle(.primary)
-                    .focused($isSearchFocused)
-                    .autocorrectionDisabled(true)
-                    .textInputAutocapitalization(.never)
-                    .submitLabel(.search)
-                    .onSubmit { submitSearch() }
-
-                    if !searchText.isEmpty {
-                        Button(action: submitSearch) {
-                            Image(systemName: "arrow.right.circle.fill")
-                                .font(.system(size: 22))
-                                .foregroundStyle(lightBlue)
-                        }
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
-                .shadow(color: deepBlue.opacity(0.12), radius: 12, y: 4)
-                .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
+                InlineSearchBar(
+                    text: $searchText,
+                    placeholder: "Ask any baseball stat question",
+                    isFocused: $isSearchFocused,
+                    voice: voice,
+                    voiceUsedThisQuery: $voiceUsedThisQuery,
+                    onSubmit: submitSearch,
+                    tint: lightBlue,
+                    deepBlue: deepBlue
+                )
                 .padding(.horizontal, 16)
             }
             .padding(.bottom, 6)
@@ -415,7 +396,21 @@ struct PlayerCardView: View {
     private func submitSearch() {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if voice.isRecording { voice.stopRecording() }
+        let submittedViaVoice = voiceUsedThisQuery
+        voiceUsedThisQuery = false
         searchText = ""
+
+        if submittedViaVoice {
+            let deviceId = AppState.deviceId
+            Task.detached {
+                await BackendService().logClientEvent(
+                    eventType: "voice_input",
+                    context: ["query_text": trimmed, "source": "player_card"],
+                    deviceId: deviceId
+                )
+            }
+        }
 
         switch PlayerNameMatcher.resolveSearch(trimmed, history: appState) {
         case .player(let name, _):

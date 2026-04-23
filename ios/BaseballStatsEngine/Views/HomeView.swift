@@ -25,6 +25,9 @@ struct HomeView: View {
     @State private var drawerTab: DrawerTab = .notable
     @State private var lastLeftHome: Date?
     @State private var feedRefreshTrigger: Bool = false
+    @State private var voice = VoiceInputService()
+    @State private var voiceUsedThisQuery: Bool = false
+    @Environment(\.colorScheme) private var colorScheme
     private enum DrawerTab: Int, CaseIterable { case notable = 0, leaders = 1, history = 2 }
 
     private let deepBlue = Color.brandDeepBlue
@@ -147,48 +150,57 @@ struct HomeView: View {
                 }
                 .padding(.bottom, 36)
 
-                // Search field
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(lightBlue)
-                        .padding(.top, 2)
+                // Search field — text at top with submit, mic at bottom-right
+                ZStack(alignment: .bottomTrailing) {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(lightBlue)
+                            .padding(.top, 2)
 
-                    TextField("", text: $questionText, prompt:
-                        Text("Ask any baseball stat question")
-                            .foregroundColor(Color(.label).opacity(0.33)),
-                        axis: .vertical
-                    )
-                    .font(.system(.body, design: .rounded))
-                    .foregroundStyle(.primary)
-                    .padding(.leading, -3)
-                    .lineLimit(1...3)
-                    .focused($isInputFocused)
-                    .autocorrectionDisabled(true)
-                    .textInputAutocapitalization(.never)
-                    .submitLabel(.search)
-                    .onSubmit { submitQuestion() }
-                    .onChange(of: questionText) { _, newValue in
-                        if newValue.contains("\n") {
-                            questionText = newValue.replacingOccurrences(of: "\n", with: "")
-                            submitQuestion()
+                        ZStack(alignment: .topLeading) {
+                            if questionText.isEmpty {
+                                Text("Ask any baseball stat question")
+                                    .font(.system(.body, design: .rounded))
+                                    .foregroundColor(Color(.label).opacity(0.33))
+                                    .allowsHitTesting(false)
+                            }
+                            ExclusionTextView(
+                                text: $questionText,
+                                placeholder: "Ask any baseball stat question",
+                                exclusionSize: CGSize(width: 50, height: 44),
+                                onSubmit: submitQuestion
+                            )
+                        }
+                        .padding(.leading, -3)
+
+                        if !questionText.isEmpty && !voice.isRecording {
+                            Button(action: submitQuestion) {
+                                Image(systemName: "arrow.right.circle.fill")
+                                    .font(.system(size: 24))
+                                    .foregroundStyle(lightBlue)
+                                    .frame(width: 32, height: 32)
+                            }
+                            .padding(.top, 2)
                         }
                     }
+                    .padding(.leading, 18)
+                    .padding(.trailing, 12)
+                    .padding(.top, 14)
+                    .padding(.bottom, 14)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .frame(height: 120, alignment: .topLeading)
 
-                    if !questionText.isEmpty {
-                        Button {
-                            submitQuestion()
-                        } label: {
-                            Image(systemName: "arrow.right.circle.fill")
-                                .font(.system(size: 24))
-                                .foregroundStyle(lightBlue)
-                        }
-                        .padding(.top, 2)
+                    // Mic at bottom-right
+                    VoiceMicButton(voice: voice, tint: lightBlue) {
+                        voiceUsedThisQuery = true
                     }
+                    .padding(.trailing, 12)
+                    .padding(.bottom, 10)
                 }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
-                .frame(minHeight: 120, alignment: .top)
+                .onChange(of: voice.transcript) { _, new in
+                    if !new.isEmpty { questionText = new }
+                }
                 .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
                 .shadow(color: deepBlue.opacity(0.12), radius: 12, y: 4)
                 .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
@@ -537,7 +549,21 @@ struct HomeView: View {
     private func submitQuestion() {
         let trimmed = questionText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if voice.isRecording { voice.stopRecording() }
+        let submittedViaVoice = voiceUsedThisQuery
+        voiceUsedThisQuery = false
         questionText = ""
+
+        if submittedViaVoice {
+            let deviceId = AppState.deviceId
+            Task.detached {
+                await BackendService().logClientEvent(
+                    eventType: "voice_input",
+                    context: ["query_text": trimmed, "length": trimmed.count],
+                    deviceId: deviceId
+                )
+            }
+        }
 
         switch PlayerNameMatcher.resolveSearch(trimmed, history: appState) {
         case .player(let name, let alternatives):
@@ -549,4 +575,5 @@ struct HomeView: View {
             path.append(ResultsDestination(question: query))
         }
     }
+
 }

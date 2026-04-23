@@ -9,6 +9,8 @@ struct ResultsView: View {
     @State private var selectedPlayerName: String? = nil
     @State private var selectedTeamCode: String? = nil
     @State private var drilldownQuery: String? = nil
+    @State private var voice = VoiceInputService()
+    @State private var voiceUsedThisQuery: Bool = false
     let initialQuestion: String
     @Binding var navigationPath: NavigationPath
 
@@ -240,38 +242,17 @@ struct ResultsView: View {
 
     private var inputAndSuggestions: some View {
         VStack(spacing: 10) {
-            HStack(spacing: 12) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(lightBlue)
-
-                TextField("", text: $inputText, prompt:
-                    Text("Ask a follow-up or a new question")
-                        .foregroundColor(Color(.label).opacity(0.33))
-                )
-                .font(.system(.body, design: .rounded))
-                .foregroundStyle(.primary)
-                .focused($isInputFocused)
-                .autocorrectionDisabled(true)
-                .textInputAutocapitalization(.never)
-                .submitLabel(.search)
-                .onSubmit { sendQuestion() }
-
-                if !inputText.isEmpty {
-                    Button(action: sendQuestion) {
-                        Image(systemName: "arrow.right.circle.fill")
-                            .font(.system(size: 22))
-                            .foregroundStyle(lightBlue)
-                    }
-                }
-            }
+            InlineSearchBar(
+                text: $inputText,
+                placeholder: "Ask a follow-up or a new question",
+                isFocused: $isInputFocused,
+                voice: voice,
+                voiceUsedThisQuery: $voiceUsedThisQuery,
+                onSubmit: sendQuestion,
+                tint: lightBlue,
+                deepBlue: deepBlue
+            )
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
-            .shadow(color: deepBlue.opacity(0.12), radius: 12, y: 4)
-            .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
-            .padding(.horizontal, 16)
-
         }
         .padding(.top, 10)
         .padding(.bottom, 6)
@@ -280,7 +261,21 @@ struct ResultsView: View {
     private func sendQuestion() {
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !appState.isLoading else { return }
+        if voice.isRecording { voice.stopRecording() }
+        let submittedViaVoice = voiceUsedThisQuery
+        voiceUsedThisQuery = false
         inputText = ""
+
+        if submittedViaVoice {
+            let deviceId = AppState.deviceId
+            Task.detached {
+                await BackendService().logClientEvent(
+                    eventType: "voice_input",
+                    context: ["query_text": trimmed, "source": "results_followup"],
+                    deviceId: deviceId
+                )
+            }
+        }
 
         // Follow-ups should go to the backend for rewriting, not through resolveSearch
         // which can incorrectly match player names (e.g., "career?" → Carter, "De La Cruz" → Bryan).

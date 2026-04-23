@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 63;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -32,6 +32,7 @@
 		4CA955D91619F5ACE90AB744 /* StatLeadersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AF208FB6E5AA6F5443097C5 /* StatLeadersView.swift */; };
 		5015BF091371068EA3F0C963 /* PlayerCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B51AB0AF7813417184FAF96B /* PlayerCardView.swift */; };
 		544EBC4B31BC8B80788EE870 /* LoadingIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CBC668CB3B717109518A293 /* LoadingIndicator.swift */; };
+		5AE79F28D7721D636BF38A2B /* InlineSearchBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 016D46FD3FB4E8B21D371755 /* InlineSearchBar.swift */; };
 		5CCE38BE8D7080E8700D1E0B /* LeaderboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 797994603DE35696E898BBDA /* LeaderboardView.swift */; };
 		64280373B64CE7D4706B86E0 /* NotableEventsFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 262D29E44C5E2CBFC7226DB3 /* NotableEventsFeed.swift */; };
 		6B88067E643A4E86CA80F3E5 /* BackendService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4799F2E0A3FC480D16A23C9F /* BackendService.swift */; };
@@ -42,23 +43,28 @@
 		7980858E751450598B53AA57 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A161890890E908E9407731BF /* Assets.xcassets */; };
 		7BB97C5EF392F16371B99621 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E27B973CF2B1F2C0AA67E7 /* SettingsView.swift */; };
 		7D8C7E36E07C12B7988BC18D /* AnalyticsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DB639422C8087E5F65B68F8 /* AnalyticsService.swift */; };
+		9034A4197C7F0F598C9F414E /* VoiceMicButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7166BDA893F376193FB1BECA /* VoiceMicButton.swift */; };
 		9FA34A551A1BB60CF2DCADBB /* StatGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C78343C60140872060772B21 /* StatGridView.swift */; };
 		ADDD8C0C367AE8A5F619DBF1 /* SQLSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 485259BB61F2E56F43AA82C1 /* SQLSanitizer.swift */; };
 		BCD80DF57F31A72D219E38F0 /* PlayerCardService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAD8EDD4EE7274139F6B565D /* PlayerCardService.swift */; };
+		BE10A8DA1C19465E2E338495 /* ExclusionTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A36655C93EC927DC93DC2AD /* ExclusionTextView.swift */; };
 		BE54E2C20003B4AF94BE524E /* BaseballStatsEngineApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D73591CB340996782549D6F /* BaseballStatsEngineApp.swift */; };
 		C3F79295CCAFADF7A2760CA1 /* PromptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E985281B8BE082A2E1958F3 /* PromptStore.swift */; };
 		C6AFE0FAA7DB998AE525AE05 /* AnimatedPlaceholder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CB091836D4207BE27DEBA70 /* AnimatedPlaceholder.swift */; };
 		E17E07E988FADCAC1978B82C /* Mixpanel in Frameworks */ = {isa = PBXBuildFile; productRef = 8F97E5A574D1CD85A9EF3AE8 /* Mixpanel */; };
 		ED2340E24B3B18EEB77319F1 /* StoreKitService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16D3173C9E4FCC57E81C6897 /* StoreKitService.swift */; };
 		F1227A844E80C4AEF7A632A1 /* SwipeBackGesture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46EE2001B470FD5EC03920D6 /* SwipeBackGesture.swift */; };
+		F2584B2D7FC768E5C8D7E5C2 /* VoiceInputService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B841E3891DA11F3A5C632B /* VoiceInputService.swift */; };
 		F41238CACD8719488CD332C1 /* baseball_stats.db in Resources */ = {isa = PBXBuildFile; fileRef = FB9F66CC0E8964519268C478 /* baseball_stats.db */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		016D46FD3FB4E8B21D371755 /* InlineSearchBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineSearchBar.swift; sourceTree = "<group>"; };
 		0D73591CB340996782549D6F /* BaseballStatsEngineApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BaseballStatsEngineApp.swift; sourceTree = "<group>"; };
 		10EA680000C9537C1C20EC2A /* Message.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Message.swift; sourceTree = "<group>"; };
 		12ED36FBBADEE2968B59C872 /* StatGridParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatGridParser.swift; sourceTree = "<group>"; };
 		16D3173C9E4FCC57E81C6897 /* StoreKitService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitService.swift; sourceTree = "<group>"; };
+		1A36655C93EC927DC93DC2AD /* ExclusionTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExclusionTextView.swift; sourceTree = "<group>"; };
 		1AF208FB6E5AA6F5443097C5 /* StatLeadersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatLeadersView.swift; sourceTree = "<group>"; };
 		262D29E44C5E2CBFC7226DB3 /* NotableEventsFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotableEventsFeed.swift; sourceTree = "<group>"; };
 		322E2B73CF90D427F012E146 /* PlayerNameExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerNameExtractor.swift; sourceTree = "<group>"; };
@@ -75,12 +81,13 @@
 		68E27B973CF2B1F2C0AA67E7 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		694155992A032023CEC3C780 /* suggestions_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = suggestions_config.json; sourceTree = "<group>"; };
 		6B50FD15492CCE031A905488 /* stat_config.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = stat_config.json; sourceTree = "<group>"; };
-		6BB3CC48A319FDD80408F09F /* StatChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StatChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6BB3CC48A319FDD80408F09F /* StatChat.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = StatChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7166BDA893F376193FB1BECA /* VoiceMicButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceMicButton.swift; sourceTree = "<group>"; };
 		72B1E47AF8FDA520F93D8DF4 /* SearchHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchHistoryView.swift; sourceTree = "<group>"; };
 		797994603DE35696E898BBDA /* LeaderboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LeaderboardView.swift; sourceTree = "<group>"; };
 		7CB091836D4207BE27DEBA70 /* AnimatedPlaceholder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimatedPlaceholder.swift; sourceTree = "<group>"; };
 		7E985281B8BE082A2E1958F3 /* PromptStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptStore.swift; sourceTree = "<group>"; };
-		8A33F22FD3998B78C251B18E /* StatChat.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = StatChat.storekit; sourceTree = "<group>"; };
+		8A33F22FD3998B78C251B18E /* StatChat.storekit */ = {isa = PBXFileReference; path = StatChat.storekit; sourceTree = "<group>"; };
 		8CBC668CB3B717109518A293 /* LoadingIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadingIndicator.swift; sourceTree = "<group>"; };
 		94B9C740E67CB61B571A0B35 /* DatabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseService.swift; sourceTree = "<group>"; };
 		9969BA1D8D7549F7CE5DBD54 /* SuggestionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionEngine.swift; sourceTree = "<group>"; };
@@ -89,6 +96,7 @@
 		A161890890E908E9407731BF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A8FF902D3F734697580E64F8 /* PlayerNameMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerNameMatcher.swift; sourceTree = "<group>"; };
 		AB57F6E3B57D2CBE150BEEE9 /* SuggestionPillsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionPillsView.swift; sourceTree = "<group>"; };
+		B2B841E3891DA11F3A5C632B /* VoiceInputService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputService.swift; sourceTree = "<group>"; };
 		B51AB0AF7813417184FAF96B /* PlayerCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerCardView.swift; sourceTree = "<group>"; };
 		C78343C60140872060772B21 /* StatGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatGridView.swift; sourceTree = "<group>"; };
 		CA55681F9D544F06DD447C1E /* FTUEView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FTUEView.swift; sourceTree = "<group>"; };
@@ -99,7 +107,7 @@
 		ECFC73592230A429A6330F03 /* LaunchAnimationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAnimationView.swift; sourceTree = "<group>"; };
 		F91684173936C656325701F4 /* DrawerScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerScrollView.swift; sourceTree = "<group>"; };
 		FAD8EDD4EE7274139F6B565D /* PlayerCardService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerCardService.swift; sourceTree = "<group>"; };
-		FB9F66CC0E8964519268C478 /* baseball_stats.db */ = {isa = PBXFileReference; lastKnownFileType = file; path = baseball_stats.db; sourceTree = "<group>"; };
+		FB9F66CC0E8964519268C478 /* baseball_stats.db */ = {isa = PBXFileReference; path = baseball_stats.db; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -190,6 +198,7 @@
 				12ED36FBBADEE2968B59C872 /* StatGridParser.swift */,
 				16D3173C9E4FCC57E81C6897 /* StoreKitService.swift */,
 				9969BA1D8D7549F7CE5DBD54 /* SuggestionEngine.swift */,
+				B2B841E3891DA11F3A5C632B /* VoiceInputService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -199,9 +208,11 @@
 			children = (
 				7CB091836D4207BE27DEBA70 /* AnimatedPlaceholder.swift */,
 				F91684173936C656325701F4 /* DrawerScrollView.swift */,
+				1A36655C93EC927DC93DC2AD /* ExclusionTextView.swift */,
 				CA55681F9D544F06DD447C1E /* FTUEView.swift */,
 				447E5C4457E59F25A95A0B8C /* GameLogsResultView.swift */,
 				6788FF565D12FAFC3C30AD38 /* HomeView.swift */,
+				016D46FD3FB4E8B21D371755 /* InlineSearchBar.swift */,
 				ECFC73592230A429A6330F03 /* LaunchAnimationView.swift */,
 				797994603DE35696E898BBDA /* LeaderboardView.swift */,
 				8CBC668CB3B717109518A293 /* LoadingIndicator.swift */,
@@ -218,6 +229,7 @@
 				46EE2001B470FD5EC03920D6 /* SwipeBackGesture.swift */,
 				E5808AF2D60EBEB36D9CE0A5 /* TeamCardView.swift */,
 				36B9C2759808557FEAF8E1A1 /* UpdateBannerView.swift */,
+				7166BDA893F376193FB1BECA /* VoiceMicButton.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -253,6 +265,11 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					8C87DC28F1F6A74C47C2E93E = {
+						DevelopmentTeam = "";
+					};
+				};
 			};
 			buildConfigurationList = 565CC3B177DF8EAB07B64990 /* Build configuration list for PBXProject "StatChat" */;
 			compatibilityVersion = "Xcode 14.0";
@@ -267,6 +284,7 @@
 			packageReferences = (
 				5F875A8453A358B6F3A59810 /* XCRemoteSwiftPackageReference "mixpanel-swift" */,
 			);
+			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -304,9 +322,11 @@
 				05A32FA42E8285F0B1BF05DB /* BrandColors.swift in Sources */,
 				725F4CA20FCDCC9874494AA9 /* DatabaseService.swift in Sources */,
 				775D2818E5A1C587FCFE659B /* DrawerScrollView.swift in Sources */,
+				BE10A8DA1C19465E2E338495 /* ExclusionTextView.swift in Sources */,
 				286335C24816EB8ECBD96E60 /* FTUEView.swift in Sources */,
 				711A5DC1A43508AAAB114448 /* GameLogsResultView.swift in Sources */,
 				27359D246F5CF799D5EF74CA /* HomeView.swift in Sources */,
+				5AE79F28D7721D636BF38A2B /* InlineSearchBar.swift in Sources */,
 				27E8F31F18C8C0D76DE297ED /* LaunchAnimationView.swift in Sources */,
 				5CCE38BE8D7080E8700D1E0B /* LeaderboardView.swift in Sources */,
 				544EBC4B31BC8B80788EE870 /* LoadingIndicator.swift in Sources */,
@@ -334,6 +354,8 @@
 				F1227A844E80C4AEF7A632A1 /* SwipeBackGesture.swift in Sources */,
 				10E6361803A8FEA7A449A733 /* TeamCardView.swift in Sources */,
 				3632B9540EDBB47A6B0FE611 /* UpdateBannerView.swift in Sources */,
+				F2584B2D7FC768E5C8D7E5C2 /* VoiceInputService.swift in Sources */,
+				9034A4197C7F0F598C9F414E /* VoiceMicButton.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -346,9 +368,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 2;
-				DEVELOPMENT_TEAM = J6N4D23R9N;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "StatChat needs microphone access to record your voice when you tap the mic to ask a question.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "StatChat uses speech recognition to let you ask baseball questions by voice.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_BackgroundColor = LaunchBackground;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -362,10 +386,6 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.secondsignalapps.statchat;
 				PRODUCT_NAME = StatChat;
 				SDKROOT = iphoneos;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
@@ -377,9 +397,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CURRENT_PROJECT_VERSION = 2;
-				DEVELOPMENT_TEAM = J6N4D23R9N;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "StatChat needs microphone access to record your voice when you tap the mic to ask a question.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "StatChat uses speech recognition to let you ask baseball questions by voice.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_BackgroundColor = LaunchBackground;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -393,10 +415,6 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.secondsignalapps.statchat;
 				PRODUCT_NAME = StatChat;
 				SDKROOT = iphoneos;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
