@@ -14,12 +14,19 @@ struct VoiceMicButton: View {
             Button {
                 voice.stopRecording()
             } label: {
-                Image(systemName: "stop.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 32, height: 32)
-                    .background(Color.red, in: Circle())
-                    .symbolEffect(.pulse, options: .repeating, value: voice.isRecording)
+                ZStack {
+                    Circle()
+                        .stroke(tint.opacity(0.6), lineWidth: 2)
+                        .scaleEffect(voice.isRecording ? 1.25 : 1.0)
+                        .opacity(voice.isRecording ? 0 : 0.8)
+                        .animation(.easeOut(duration: 1.1).repeatForever(autoreverses: false), value: voice.isRecording)
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(tint)
+                        .frame(width: 32, height: 32)
+                        .background(colorScheme == .dark ? Color(.systemGray5) : Color(.tertiarySystemFill), in: Circle())
+                }
+                .frame(width: 32, height: 32)
             }
             .accessibilityLabel("Stop recording")
         } else {

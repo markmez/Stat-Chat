@@ -42,7 +42,7 @@ struct InlineSearchBar: View {
                 }
             }
 
-            if !text.isEmpty && !voice.isRecording {
+            if !text.isEmpty {
                 Button(action: onSubmit) {
                     Image(systemName: "arrow.right.circle.fill")
                         .font(.system(size: 22))

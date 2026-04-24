@@ -174,7 +174,7 @@ struct HomeView: View {
                         }
                         .padding(.leading, -3)
 
-                        if !questionText.isEmpty && !voice.isRecording {
+                        if !questionText.isEmpty {
                             Button(action: submitQuestion) {
                                 Image(systemName: "arrow.right.circle.fill")
                                     .font(.system(size: 24))

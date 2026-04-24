@@ -15,6 +15,8 @@ final class VoiceInputService {
     private let audioEngine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
+    private var silenceTimer: Timer?
+    private let silenceTimeout: TimeInterval = 5.0
 
     // Player-name context hints for recognizer. Built lazily on first use from
     // PlayerNameMatcher.sortedNames — helps recognition accuracy on names like
@@ -128,12 +130,14 @@ final class VoiceInputService {
         }
 
         isRecording = true
+        resetSilenceTimer()
 
         task = recognizer?.recognitionTask(with: req) { [weak self] result, error in
             guard let self else { return }
             Task { @MainActor in
                 if let result {
                     self.transcript = result.bestTranscription.formattedString
+                    self.resetSilenceTimer()
                 }
                 if let error {
                     self.errorMessage = error.localizedDescription
@@ -146,9 +150,20 @@ final class VoiceInputService {
         }
     }
 
+    private func resetSilenceTimer() {
+        silenceTimer?.invalidate()
+        silenceTimer = Timer.scheduledTimer(withTimeInterval: silenceTimeout, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.stopRecording()
+            }
+        }
+    }
+
     func stopRecording() {
         guard isRecording else { return }
         isRecording = false
+        silenceTimer?.invalidate()
+        silenceTimer = nil
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
         request?.endAudio()
