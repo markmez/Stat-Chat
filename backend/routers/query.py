@@ -824,6 +824,59 @@ _NUM_WORDS = {
 }
 
 
+# Follow-up phrasings that mean "show me more of that list"
+_MORE_PHRASES = {
+    "what else", "who else", "anyone else", "anybody else",
+    "any more", "any more players", "any others", "any other players",
+    "show me more", "show more", "give me more", "give me some more",
+    "more", "more players", "keep going", "tell me more",
+    "next few", "next ones", "next", "the rest",
+}
+
+
+def _get_last_assistant_response(history: list[dict]) -> Optional[str]:
+    """Return the text of the most recent assistant message, or None."""
+    for msg in reversed(history):
+        if msg.get("role") == "assistant":
+            c = msg.get("content")
+            if isinstance(c, str):
+                return c
+    return None
+
+
+def _parse_list_state(assistant_text: Optional[str]) -> Optional[dict]:
+    """Parse a [LIST_STATE:...] trailer from a prior assistant response.
+    Returns {'state': 'complete'} or {'state': 'truncated', 'limit': N} or None."""
+    if not assistant_text:
+        return None
+    m = _re.search(r'\[LIST_STATE:truncated:(\d+)\]', assistant_text)
+    if m:
+        return {"state": "truncated", "limit": int(m.group(1))}
+    if "[LIST_STATE:complete]" in assistant_text:
+        return {"state": "complete"}
+    return None
+
+
+def _local_followup_canned(question: str, history: list[dict]) -> Optional[str]:
+    """Intercept follow-ups that deserve a canned response rather than a new
+    query. Currently only handles 'what else?' / 'who else?' on a list that
+    we know is already complete — replies 'That's the full list' without
+    re-running anything."""
+    clean = question.strip().lower().rstrip('?.!')
+    # Strip common prefixes
+    for prefix in ["how about ", "what about ", "and ", "so ", "um "]:
+        if clean.startswith(prefix):
+            clean = clean[len(prefix):].strip()
+            break
+    if clean not in _MORE_PHRASES:
+        return None
+    state = _parse_list_state(_get_last_assistant_response(history))
+    if state and state["state"] == "complete":
+        return ("That's the full list — those are all the players who qualify.\n\n"
+                "_Want to search for something else? Try one of the suggestions below._")
+    return None
+
+
 def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]:
     """Try to rewrite a follow-up question locally without calling Haiku.
     Returns the rewritten standalone query, or None to fall through to Haiku.
@@ -849,6 +902,19 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
         if clean.startswith(prefix):
             clean = clean[len(prefix):]
             break
+
+    # --- Pattern 0: "what else" / "who else" on a truncated list ---
+    # (The "complete" case is handled upstream by _local_followup_canned,
+    # which returns a canned response without re-querying.)
+    if clean in _MORE_PHRASES:
+        state = _parse_list_state(_get_last_assistant_response(history))
+        if state and state["state"] == "truncated":
+            prior_limit = state["limit"]
+            new_limit = max(prior_limit * 2, 25)  # at least double, floor of 25
+            prior_q = ctx["query"]
+            # Strip any existing "top N" prefix from prior query
+            prior_q = _re.sub(r'^\s*(?:top|best)\s+\d+\s+', '', prior_q, flags=_re.IGNORECASE).strip()
+            return f"top {new_limit} {prior_q}"
 
     # --- Pattern 1: Player swap ---
     # "what about Soto", "and Soto?", "how about Ohtani", "and his?"
@@ -1196,6 +1262,18 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     # follow-ups like "what about Soto" get rewritten, not intercepted as-is.
     rewritten_query: str | None = None
     if history and len(question.split()) < 10:
+        # 2a. Canned responses for follow-ups that don't need a new query
+        # (e.g., "what else?" on a list we already know is complete).
+        canned = _local_followup_canned(question, history)
+        if canned is not None:
+            logger.info("followup_canned question=%r", question)
+            yield event({"type": "text", "text": canned})
+            yield event({"type": "done", "intercepted": True})
+            increment_count(device_id)
+            log_query(question, device_id, "query engine", is_followup=True,
+                      original_query=original_question, input_method=input_method)
+            return
+
         local_rewrite = _local_followup_rewrite(question, history)
         if local_rewrite is None:
             ctx = _extract_prior_context(history)

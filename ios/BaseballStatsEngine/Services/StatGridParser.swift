@@ -56,7 +56,15 @@ enum StatGridParser {
 
     static func parse(_ content: String, isStreaming: Bool) -> [Segment] {
         var segments: [Segment] = []
-        var remaining = content
+        // Strip internal list-state markers before display. These are used by
+        // the backend follow-up rewriter ("what else?" handling) and must
+        // stay in the stored message content (so they're sent back with
+        // history) but never render visibly.
+        var remaining = content.replacingOccurrences(
+            of: #"\[LIST_STATE:[^\]]+\]"#,
+            with: "",
+            options: .regularExpression
+        )
 
         while true {
             // Find the nearest opening tag of any type

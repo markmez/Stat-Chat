@@ -3196,6 +3196,34 @@ def build_pitching_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
         conn.close()
 
 
+# Wrap build_leaderboard so every successful list response carries a
+# `[LIST_STATE:truncated:N]` trailer. Used by the follow-up rewriter to
+# answer "what else?" by re-running with a larger limit. Added here
+# instead of inside the function because there are 8+ return paths in
+# build_leaderboard that all produce lists.
+def _append_truncated_marker(fn):
+    import functools
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        if isinstance(result, str) and "[LEADERBOARD]" in result and "[LIST_STATE:" not in result:
+            # Resolve limit from kwargs first, then positional (build_leaderboard
+            # has limit as the 3rd positional arg).
+            limit = kwargs.get('limit')
+            if limit is None and len(args) >= 3:
+                candidate = args[2]
+                if isinstance(candidate, int):
+                    limit = candidate
+            if limit is None:
+                limit = 10  # default
+            result = result + f"\n[LIST_STATE:truncated:{limit}]"
+        return result
+    return wrapper
+
+
+build_leaderboard = _append_truncated_marker(build_leaderboard)
+
+
 # ===================================================================
 # 27. build_threshold
 # ===================================================================
@@ -3274,6 +3302,11 @@ def build_threshold(stat_info: StatInfo, threshold: float, comparison: str,
         else:
             parts.append(f"[SUGGEST]{threshold_display}+ {stat_name} in {season} (AL)[/SUGGEST]")
             parts.append(f"[SUGGEST]{threshold_display}+ {stat_name} in {season} (NL)[/SUGGEST]")
+
+        # Threshold queries have no SQL LIMIT — the list is always the complete
+        # set of matching rows. Marker lets the follow-up rewriter answer
+        # "what else?" / "who else?" with "that's everyone".
+        parts.append("[LIST_STATE:complete]")
 
         return "\n".join(parts)
     finally:
