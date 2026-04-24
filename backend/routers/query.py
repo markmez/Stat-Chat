@@ -795,9 +795,39 @@ def _extract_prior_context(history: list[dict]) -> dict:
     return ctx
 
 
+_TIME_SCOPE_PATTERN = _re.compile(
+    r'\b(?:all[- ]?time|career|career stats|lifetime|since \d{4}|in history|'
+    r'this season|this year|last season|last year|'
+    r'this decade|last decade|in the last decade|'
+    r'last \d+ (?:seasons?|years?|games?|game)|past \d+ (?:seasons?|years?|games?|game)|'
+    r'over (?:the )?last \d+ (?:seasons?|years?|games?|game)|'
+    r'20[012]\d[-–]20[012]\d|20[012]\d)\b',
+    flags=_re.IGNORECASE,
+)
+
+def _strip_time_scope(query: str) -> str:
+    """Remove any existing time/scope reference from a query so we can
+    substitute a new one. Used when the follow-up pivots the time dimension
+    (career ↔ season ↔ year range ↔ last N games)."""
+    cleaned = _TIME_SCOPE_PATTERN.sub('', query)
+    return _re.sub(r'\s+', ' ', cleaned).strip()
+
+
+# Word-to-int for "two years ago" style phrases
+_NUM_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+}
+
+
 def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]:
     """Try to rewrite a follow-up question locally without calling Haiku.
-    Returns the rewritten standalone query, or None to fall through to Haiku."""
+    Returns the rewritten standalone query, or None to fall through to Haiku.
+
+    Design: mutates `ctx["query"]` (the prior standalone query) along ONE
+    dimension at a time, preserving other dimensions. E.g. if prior was
+    'Judge HRs career', 'what about vs 4-seamers' → 'Judge HRs career vs 4-seamers';
+    'what about last 3 seasons' → 'Judge HRs last 3 seasons' (career stripped)."""
     lower = question.strip().lower()
     ctx = _extract_prior_context(history)
 
@@ -808,36 +838,27 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
     stat = ctx["stat"]
     season = ctx["season"]
 
+    # Prefix-stripped form for modifier matching. Pattern 1 (swap) still uses
+    # raw `lower` since its regex captures "what about X" explicitly.
+    clean = lower.rstrip('?.').strip()
+    for prefix in ["how about ", "what about ", "and about ", "and ", "how did ", "what did "]:
+        if clean.startswith(prefix):
+            clean = clean[len(prefix):]
+            break
+
     # --- Pattern 1: Player swap ---
     # "what about Soto", "and Soto?", "how about Ohtani", "and his?"
     swap_match = _re.match(
         r'^(?:what about|how about|and|how did|what did)\s+(.+?)[\?\.]?$', lower)
     if swap_match:
         name_text = swap_match.group(1).strip().rstrip('?.')
-        # Skip if it's a year ("what about 2023?")
+        # (Year swaps like "what about 2023" and time phrases like "what about
+        # last year" are handled later via the shared `clean` form in Pattern 7.
+        # That path strips only the time dimension from the prior query,
+        # preserving splits and other modifiers — unlike rebuilding from
+        # player+stat+year which would lose them.)
         if _re.match(r'^20[012]\d$', name_text):
-            # Year swap
-            if player and stat:
-                return f"{player} {stat} {name_text}"
-            elif player:
-                return f"{player} {name_text}"
-            return None
-        # Relative time phrase ("what about last year", "how about this season")
-        # — substitute the time reference into the prior query deterministically
-        # so Haiku never has to interpret it.
-        time_phrases = {
-            "this year": "this season", "this season": "this season",
-            "last year": "last season", "last season": "last season",
-        }
-        if name_text in time_phrases:
-            target = time_phrases[name_text]
-            cleaned = _re.sub(
-                r'\b(?:all[- ]?time|career|since \d{4}|in history|this season|this year|last season|last year|20[012]\d)\b',
-                '', ctx["query"], flags=_re.IGNORECASE
-            ).strip()
-            cleaned = _re.sub(r'\s+', ' ', cleaned)
-            if cleaned:
-                return f"{cleaned} {target}"
+            pass  # fall through to Pattern 7
         # Skip if it's a stat ("and his RBI?", "what about strikeouts?")
         name_text_clean = name_text.replace("his ", "").replace("her ", "")
         stat_match = _nm.match_stat(name_text_clean)
@@ -858,43 +879,89 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
             return ctx["query"].replace(player, new_player)
 
     # --- Pattern 2: Career ---
-    if lower in ("career", "career?", "career stats", "career stats?"):
-        if player:
-            if stat:
-                return f"{player} career {stat}"
-            return f"{player} career stats"
-        # Fallback: strip year from prior query, insert "career"
-        # e.g., "Soto OPS 2025" → "Soto career OPS"
-        if ctx["query"]:
-            prior = _re.sub(r'\b20[012]\d\b', '', ctx["query"]).strip()
-            prior = _re.sub(r'\b(?:this season|this year|last season|last year)\b', '', prior).strip()
-            if prior:
-                # Insert "career" after first word (likely the player name)
-                words = prior.split()
-                if len(words) >= 2:
-                    return f"{words[0]} career {' '.join(words[1:])}"
-                return f"{prior} career stats"
+    # "career", "for his career", "over her career", "lifetime", "all-time", etc.
+    career_phrases = {
+        "career", "career stats", "for his career", "for her career",
+        "for their career", "in his career", "in her career", "in their career",
+        "over his career", "over her career", "over their career",
+        "for his whole career", "for her whole career",
+        "lifetime", "all-time", "all time", "alltime",
+        "his career", "her career", "their career",
+    }
+    if clean in career_phrases:
+        cleaned = _strip_time_scope(ctx["query"])
+        if cleaned:
+            return f"{cleaned} career"
 
-    # --- Pattern 3: Splits pivot ---
-    # "vs lefties", "vs righties", "at home", "on the road", "away"
+    # --- Pattern 3: Splits pivot (handedness, home/away, pitch type, RISP, day/night, postseason) ---
+    # Map of phrase → canonical split suffix. Additive to the prior query
+    # (unlike time scope, these stack: career + vs lefties + in the playoffs).
     splits_patterns = {
+        # Handedness (platoon)
         "vs lefties": "vs lefties", "against lefties": "vs lefties",
         "vs left": "vs lefties", "against left": "vs lefties",
+        "vs left-handers": "vs lefties", "against left-handers": "vs lefties",
+        "vs lhp": "vs lefties", "against lhp": "vs lefties",
         "vs righties": "vs righties", "against righties": "vs righties",
         "vs right": "vs righties", "against right": "vs righties",
-        "at home": "home vs away", "home": "home vs away",
-        "on the road": "home vs away", "away": "home vs away",
+        "vs right-handers": "vs righties", "against right-handers": "vs righties",
+        "vs rhp": "vs righties", "against rhp": "vs righties",
+        # Home/away
+        "at home": "at home", "home": "at home",
+        "on the road": "on the road", "away": "on the road",
+        "in road games": "on the road", "road games": "on the road",
+        # Day/night
+        "in day games": "in day games", "day games": "in day games", "during the day": "in day games",
+        "in night games": "at night", "at night": "at night", "night games": "at night",
+        # RISP / clutch
+        "with risp": "with RISP", "risp": "with RISP",
+        "with runners in scoring position": "with RISP",
+        "runners in scoring position": "with RISP",
+        "in the clutch": "in clutch", "in clutch": "in clutch",
+        # Postseason
+        "in the playoffs": "in the playoffs", "the playoffs": "in the playoffs", "playoffs": "in the playoffs",
+        "in the postseason": "in the postseason", "postseason": "in the postseason", "the postseason": "in the postseason",
+        "in the world series": "in the World Series", "world series": "in the World Series",
+        # Pitch types
+        "vs fastballs": "vs fastballs", "against fastballs": "vs fastballs",
+        "vs 4-seamers": "vs 4-seamers", "against 4-seamers": "vs 4-seamers",
+        "vs four-seamers": "vs 4-seamers", "against four-seamers": "vs 4-seamers",
+        "vs sinkers": "vs sinkers", "against sinkers": "vs sinkers",
+        "vs sliders": "vs sliders", "against sliders": "vs sliders",
+        "vs curves": "vs curveballs", "against curves": "vs curveballs",
+        "vs curveballs": "vs curveballs", "against curveballs": "vs curveballs",
+        "vs changeups": "vs changeups", "against changeups": "vs changeups",
+        "vs cutters": "vs cutters", "against cutters": "vs cutters",
+        "vs splitters": "vs splitters", "against splitters": "vs splitters",
+        "vs sweepers": "vs sweepers", "against sweepers": "vs sweepers",
+        "vs knuckleballs": "vs knuckleballs", "against knuckleballs": "vs knuckleballs",
     }
-    clean = lower.rstrip('?.').strip()
-    # Strip leading "how about" / "what about"
-    for prefix in ["how about ", "what about ", "and "]:
-        if clean.startswith(prefix):
-            clean = clean[len(prefix):]
-    if clean in splits_patterns and player:
+    if clean in splits_patterns:
+        # Additive: append split to prior query (don't strip anything unless the
+        # same split dimension was already present — which we approximate by
+        # removing any prior "vs X" / "at home" / "in the playoffs" / etc.)
         split = splits_patterns[clean]
-        season_part = f" {season}" if season else ""
-        stat_part = f" {stat}" if stat else ""
-        return f"{player}{stat_part} {split}{season_part}"
+        # Remove any previously-applied split of the same rough category
+        base = ctx["query"]
+        # If adding a handedness split, strip any prior handedness split
+        handedness = {"vs lefties", "vs righties"}
+        homeaway = {"at home", "on the road"}
+        daynight = {"in day games", "at night"}
+        risp_clutch = {"with RISP", "in clutch"}
+        postseason = {"in the playoffs", "in the postseason", "in the World Series"}
+        pitch_types = {v for k, v in splits_patterns.items() if v.startswith("vs ") and v not in handedness}
+        category = None
+        if split in handedness: category = handedness
+        elif split in homeaway: category = homeaway
+        elif split in daynight: category = daynight
+        elif split in risp_clutch: category = risp_clutch
+        elif split in postseason: category = postseason
+        elif split in pitch_types: category = pitch_types
+        if category:
+            for existing in category:
+                base = _re.sub(r'\b' + _re.escape(existing) + r'\b', '', base, flags=_re.IGNORECASE)
+            base = _re.sub(r'\s+', ' ', base).strip()
+        return f"{base} {split}".strip()
 
     # --- Pattern 4: Comparison ---
     # "compare him to Ohtani", "compare to Soto", "him vs Ohtani"
@@ -930,34 +997,125 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
         # Append league to the prior query
         return f"{query} {league}"
 
-    # --- Pattern 7: Time range modifier ---
-    # "since 2010", "in 2023", "last 10 years", "this season", "last season"
-    time_match = _re.match(r'^(?:since|after)\s+(20[012]\d)[\?\.]?$', lower)
-    if time_match:
-        year = time_match.group(1)
-        query = ctx["query"]
-        # Replace any existing time reference or append
-        cleaned = _re.sub(r'\b(?:all[- ]?time|career|since \d{4}|in history)\b', '', query).strip()
-        return f"{cleaned} since {year}"
+    # --- Pattern 6.5: Compound split + time ---
+    # e.g. "against changeups in the last 3 seasons", "vs lefties this year",
+    # "at home over the last 5 games". We parse the split prefix, then check
+    # the remainder for a known time phrase.
+    _time_suffix_patterns = [
+        (r'^(?:in\s+)?(?:the\s+)?(?:last|past)\s+(\d+)\s+games?$',
+         lambda m: f"last {m.group(1)} games"),
+        (r'^(?:in\s+)?(?:the\s+)?(?:last|past)\s+(\d+)\s+(?:seasons?|years?)$',
+         lambda m: f"last {m.group(1)} seasons"),
+        (r'^(?:in|for)\s+(20[012]\d)$', lambda m: m.group(1)),
+        (r'^since\s+(20[012]\d)$', lambda m: f"since {m.group(1)}"),
+        (r'^(?:in\s+)?(this\s+(?:season|year))$',
+         lambda m: "this season"),
+        (r'^(?:in\s+)?(last\s+(?:season|year))$',
+         lambda m: "last season"),
+        (r'^(?:in\s+)?(this|last)\s+decade$',
+         lambda m: None),  # handled separately
+    ]
+    # Try splitting clean into (split_phrase) + (time_phrase). Split keys are
+    # the keys of splits_patterns; iterate longest-first to avoid premature
+    # matches ("vs left" before "vs left-handers").
+    for split_key in sorted(splits_patterns.keys(), key=len, reverse=True):
+        if clean.startswith(split_key + " "):
+            remainder = clean[len(split_key):].strip()
+            for pat, builder in _time_suffix_patterns:
+                m = _re.match(pat, remainder)
+                if not m:
+                    continue
+                time_suffix = builder(m)
+                if not time_suffix:
+                    continue
+                split = splits_patterns[split_key]
+                # Strip time scope from prior, strip same-category split, then append both
+                base = _strip_time_scope(ctx["query"])
+                # Remove any same-category split from base
+                handedness = {"vs lefties", "vs righties"}
+                homeaway = {"at home", "on the road"}
+                daynight = {"in day games", "at night"}
+                risp_clutch = {"with RISP", "in clutch"}
+                postseason_set = {"in the playoffs", "in the postseason", "in the World Series"}
+                pitch_types = {v for k, v in splits_patterns.items() if v.startswith("vs ") and v not in handedness}
+                cat = None
+                if split in handedness: cat = handedness
+                elif split in homeaway: cat = homeaway
+                elif split in daynight: cat = daynight
+                elif split in risp_clutch: cat = risp_clutch
+                elif split in postseason_set: cat = postseason_set
+                elif split in pitch_types: cat = pitch_types
+                if cat:
+                    for existing in cat:
+                        base = _re.sub(r'\b' + _re.escape(existing) + r'\b', '', base, flags=_re.IGNORECASE)
+                    base = _re.sub(r'\s+', ' ', base).strip()
+                return f"{base} {split} {time_suffix}".strip()
+            break  # found a split prefix but no matching time suffix — fall through
 
-    time_match2 = _re.match(r'^(?:in|for)\s+(20[012]\d)[\?\.]?$', lower)
-    if time_match2:
-        year = time_match2.group(1)
-        query = ctx["query"]
-        cleaned = _re.sub(r'\b(?:all[- ]?time|career|since \d{4}|in history|this season|last season|\d{4})\b', '', query).strip()
-        return f"{cleaned} {year}"
+    # --- Pattern 7: Time scope pivots (mutually-exclusive with career/ranges) ---
+    # All strip any existing time scope from prior query and append the new one.
 
-    if lower in ("this season", "this year"):
-        query = ctx["query"]
-        cleaned = _re.sub(r'\b(?:all[- ]?time|career|since \d{4}|in history|last season|last year|this year|\d{4})\b', '', query, flags=_re.IGNORECASE).strip()
-        cleaned = _re.sub(r'\s+', ' ', cleaned)
-        return f"{cleaned} this season"
+    # "since 2010", "after 2010"
+    m = _re.match(r'^(?:since|after)\s+(20[012]\d)$', clean)
+    if m:
+        cleaned = _strip_time_scope(ctx["query"])
+        return f"{cleaned} since {m.group(1)}".strip()
 
-    if lower in ("last season", "last year"):
-        query = ctx["query"]
-        cleaned = _re.sub(r'\b(?:all[- ]?time|career|since \d{4}|in history|this season|this year|last year|\d{4})\b', '', query, flags=_re.IGNORECASE).strip()
-        cleaned = _re.sub(r'\s+', ' ', cleaned)
-        return f"{cleaned} last season"
+    # "in 2023", "for 2023", bare "2023"
+    m = _re.match(r'^(?:in|for)?\s*(20[012]\d)$', clean)
+    if m and clean in (m.group(1), f"in {m.group(1)}", f"for {m.group(1)}"):
+        cleaned = _strip_time_scope(ctx["query"])
+        return f"{cleaned} {m.group(1)}".strip()
+
+    # "this season" / "this year"
+    if clean in ("this season", "this year"):
+        cleaned = _strip_time_scope(ctx["query"])
+        return f"{cleaned} this season".strip()
+
+    # "last season" / "last year"
+    if clean in ("last season", "last year"):
+        cleaned = _strip_time_scope(ctx["query"])
+        return f"{cleaned} last season".strip()
+
+    # --- Pattern 8: "last N games" / "over the last 4 games" / "past 5 games" ---
+    m = _re.match(r'^(?:over\s+)?(?:the\s+)?(?:last|past)\s+(\d+)\s+games?$', clean)
+    if m:
+        n = m.group(1)
+        cleaned = _strip_time_scope(ctx["query"])
+        return f"{cleaned} last {n} games".strip()
+
+    # --- Pattern 9: "last N seasons" / "last N years" / "over the last 3 seasons" ---
+    m = _re.match(r'^(?:over\s+)?(?:the\s+)?(?:last|past)\s+(\d+)\s+(?:seasons?|years?)$', clean)
+    if m:
+        n = m.group(1)
+        cleaned = _strip_time_scope(ctx["query"])
+        return f"{cleaned} last {n} seasons".strip()
+
+    # --- Pattern 10: "N years ago" / "two years ago" ---
+    m = _re.match(r'^(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\s+ago$', clean)
+    if m:
+        n_raw = m.group(1)
+        n = int(n_raw) if n_raw.isdigit() else _NUM_WORDS.get(n_raw, 1)
+        from datetime import date as _date
+        target_year = _date.today().year - n
+        cleaned = _strip_time_scope(ctx["query"])
+        return f"{cleaned} {target_year}".strip()
+
+    # --- Pattern 11: "this decade" / "last decade" ---
+    if clean in ("this decade", "in this decade", "in the current decade"):
+        from datetime import date as _date
+        current = _date.today().year
+        start = (current // 10) * 10
+        cleaned = _strip_time_scope(ctx["query"])
+        return f"{cleaned} since {start}".strip()
+
+    if clean in ("last decade", "in the last decade", "the last decade", "in the previous decade"):
+        from datetime import date as _date
+        current = _date.today().year
+        start = (current // 10) * 10 - 10
+        end = start + 9
+        cleaned = _strip_time_scope(ctx["query"])
+        return f"{cleaned} {start}-{end}".strip()
 
     return None
 
