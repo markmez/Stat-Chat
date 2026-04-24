@@ -822,6 +822,22 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
             elif player:
                 return f"{player} {name_text}"
             return None
+        # Relative time phrase ("what about last year", "how about this season")
+        # — substitute the time reference into the prior query deterministically
+        # so Haiku never has to interpret it.
+        time_phrases = {
+            "this year": "this season", "this season": "this season",
+            "last year": "last season", "last season": "last season",
+        }
+        if name_text in time_phrases:
+            target = time_phrases[name_text]
+            cleaned = _re.sub(
+                r'\b(?:all[- ]?time|career|since \d{4}|in history|this season|this year|last season|last year|20[012]\d)\b',
+                '', ctx["query"], flags=_re.IGNORECASE
+            ).strip()
+            cleaned = _re.sub(r'\s+', ' ', cleaned)
+            if cleaned:
+                return f"{cleaned} {target}"
         # Skip if it's a stat ("and his RBI?", "what about strikeouts?")
         name_text_clean = name_text.replace("his ", "").replace("her ", "")
         stat_match = _nm.match_stat(name_text_clean)
@@ -933,12 +949,14 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
 
     if lower in ("this season", "this year"):
         query = ctx["query"]
-        cleaned = _re.sub(r'\b(?:all[- ]?time|career|since \d{4}|in history|last season|\d{4})\b', '', query).strip()
+        cleaned = _re.sub(r'\b(?:all[- ]?time|career|since \d{4}|in history|last season|last year|this year|\d{4})\b', '', query, flags=_re.IGNORECASE).strip()
+        cleaned = _re.sub(r'\s+', ' ', cleaned)
         return f"{cleaned} this season"
 
     if lower in ("last season", "last year"):
         query = ctx["query"]
-        cleaned = _re.sub(r'\b(?:all[- ]?time|career|since \d{4}|in history|this season|\d{4})\b', '', query).strip()
+        cleaned = _re.sub(r'\b(?:all[- ]?time|career|since \d{4}|in history|this season|this year|last year|\d{4})\b', '', query, flags=_re.IGNORECASE).strip()
+        cleaned = _re.sub(r'\s+', ' ', cleaned)
         return f"{cleaned} last season"
 
     return None
