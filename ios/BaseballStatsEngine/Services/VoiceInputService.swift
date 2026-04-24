@@ -111,9 +111,12 @@ final class VoiceInputService {
         }
 
         inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            self?.request?.append(buffer)
-        }
+        // The tap callback runs on AVAudioEngine's realtime audio thread.
+        // We CANNOT capture `self` here (Swift 6 strict concurrency
+        // would mark the closure as MainActor-isolated and crash the
+        // app at runtime when the audio thread invokes it). Capture the
+        // request directly via a nonisolated helper.
+        Self._installTap(on: inputNode, bufferSize: 1024, format: format, request: req)
 
         audioEngine.prepare()
         do {
@@ -157,5 +160,21 @@ final class VoiceInputService {
         request = nil
         task = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    /// Install an audio buffer tap from a non-isolated context. Required
+    /// because AVAudioEngine invokes the buffer callback on a realtime
+    /// audio thread; a closure declared inside this @MainActor class
+    /// would inherit MainActor isolation and crash with
+    /// `_swift_task_checkIsolatedSwift` when the audio thread invokes it.
+    nonisolated private static func _installTap(
+        on inputNode: AVAudioInputNode,
+        bufferSize: AVAudioFrameCount,
+        format: AVAudioFormat,
+        request: SFSpeechAudioBufferRecognitionRequest
+    ) {
+        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: format) { buffer, _ in
+            request.append(buffer)
+        }
     }
 }
