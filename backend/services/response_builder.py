@@ -3196,32 +3196,25 @@ def build_pitching_leaderboard(stat_info: StatInfo, scope: str, limit: int = 10,
         conn.close()
 
 
-# Wrap build_leaderboard so every successful list response carries a
+# Wrap list builders so every successful leaderboard response carries a
 # `[LIST_STATE:truncated:N]` trailer. Used by the follow-up rewriter to
 # answer "what else?" by re-running with a larger limit. Added here
-# instead of inside the function because there are 8+ return paths in
-# build_leaderboard that all produce lists.
-def _append_truncated_marker(fn):
+# instead of inside each function because each has many return paths.
+def _append_truncated_marker(default_limit: int = 10):
     import functools
-    @functools.wraps(fn)
-    def wrapper(*args, **kwargs):
-        result = fn(*args, **kwargs)
-        if isinstance(result, str) and "[LEADERBOARD]" in result and "[LIST_STATE:" not in result:
-            # Resolve limit from kwargs first, then positional (build_leaderboard
-            # has limit as the 3rd positional arg).
-            limit = kwargs.get('limit')
-            if limit is None and len(args) >= 3:
-                candidate = args[2]
-                if isinstance(candidate, int):
-                    limit = candidate
-            if limit is None:
-                limit = 10  # default
-            result = result + f"\n[LIST_STATE:truncated:{limit}]"
-        return result
-    return wrapper
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            result = fn(*args, **kwargs)
+            if isinstance(result, str) and "[LEADERBOARD]" in result and "[LIST_STATE:" not in result:
+                limit = kwargs.get('limit', default_limit)
+                result = result + f"\n[LIST_STATE:truncated:{limit}]"
+            return result
+        return wrapper
+    return decorator
 
 
-build_leaderboard = _append_truncated_marker(build_leaderboard)
+build_leaderboard = _append_truncated_marker(10)(build_leaderboard)
 
 
 # ===================================================================
@@ -5551,4 +5544,32 @@ def build_perfect_games(filter_dict: dict) -> Optional[str]:
     parts.append("\n[SUGGEST]most recent perfect game[/SUGGEST]")
     parts.append("[SUGGEST]how many perfect games in MLB history[/SUGGEST]")
     parts.append("[SUGGEST]perfect games since 2010[/SUGGEST]")
+    parts.append("[LIST_STATE:complete]")
     return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Apply list-state markers to other leaderboard-style builders
+# ---------------------------------------------------------------------------
+# Truncated (LIMIT-based) — "what else?" can expand by re-running with
+# a larger limit. Defaults encoded in each signature.
+build_pitching_leaderboard = _append_truncated_marker(10)(build_pitching_leaderboard)
+build_platoon_leaderboard = _append_truncated_marker(50)(build_platoon_leaderboard)
+build_filtered_leaderboard = _append_truncated_marker(10)(build_filtered_leaderboard)
+
+
+# Complete (no LIMIT) — "what else?" gets a canned "that's the full list".
+def _append_complete_marker(fn):
+    import functools
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        if isinstance(result, str) and "[LEADERBOARD]" in result and "[LIST_STATE:" not in result:
+            result = result + "\n[LIST_STATE:complete]"
+        return result
+    return wrapper
+
+
+build_all_time_threshold = _append_complete_marker(build_all_time_threshold)
+build_multi_threshold = _append_complete_marker(build_multi_threshold)
+build_all_time_multi_threshold = _append_complete_marker(build_all_time_multi_threshold)
