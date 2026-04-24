@@ -773,10 +773,13 @@ def _extract_prior_context(history: list[dict]) -> dict:
     if player:
         ctx["player"] = player
 
-    # Extract stat keyword — check common stat words in the prior query
+    # Extract stat keyword — check common stat words in the prior query.
+    # Also record the matched phrase (ctx["stat_phrase"]) so we can do
+    # surgical string substitution on follow-up stat swaps without losing
+    # other dimensions (splits, scope, etc.) from the prior query.
     lower_q = q.lower()
     stat_keywords = [
-        ("home runs", "home runs"), ("hr", "home runs"), ("homers", "home runs"),
+        ("home runs", "home runs"), ("homers", "home runs"), ("hr", "home runs"),
         ("rbi", "RBI"), ("runs batted in", "RBI"),
         ("batting average", "batting average"), ("avg", "batting average"),
         ("ops", "OPS"), ("obp", "OBP"), ("slg", "SLG"),
@@ -788,8 +791,9 @@ def _extract_prior_context(history: list[dict]) -> dict:
         ("saves", "saves"), ("innings pitched", "innings pitched"),
     ]
     for keyword, canonical in stat_keywords:
-        if keyword in lower_q:
+        if _re.search(r'\b' + _re.escape(keyword) + r'\b', lower_q):
             ctx["stat"] = canonical
+            ctx["stat_phrase"] = keyword  # as it appears in the prior query
             break
 
     return ctx
@@ -863,6 +867,14 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
         name_text_clean = name_text.replace("his ", "").replace("her ", "")
         stat_match = _nm.match_stat(name_text_clean)
         if stat_match and player:
+            # Preserve other dimensions (splits, scope, etc.) by substituting
+            # the old stat phrase in the prior query. Fall back to rebuild if
+            # we can't identify the old stat phrase.
+            prior_stat_phrase = ctx.get("stat_phrase")
+            if prior_stat_phrase and _re.search(r'\b' + _re.escape(prior_stat_phrase) + r'\b',
+                                                ctx["query"], flags=_re.IGNORECASE):
+                return _re.sub(r'\b' + _re.escape(prior_stat_phrase) + r'\b',
+                               name_text_clean, ctx["query"], flags=_re.IGNORECASE, count=1)
             season_part = f" {season}" if season else ""
             return f"{player} {name_text_clean}{season_part}"
         # Try as a player name — use prominence first for multi-player names like "De La Cruz"
@@ -902,10 +914,14 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
         "vs left": "vs lefties", "against left": "vs lefties",
         "vs left-handers": "vs lefties", "against left-handers": "vs lefties",
         "vs lhp": "vs lefties", "against lhp": "vs lefties",
+        "facing lefties": "vs lefties", "facing left-handers": "vs lefties",
+        "facing lhp": "vs lefties",
         "vs righties": "vs righties", "against righties": "vs righties",
         "vs right": "vs righties", "against right": "vs righties",
         "vs right-handers": "vs righties", "against right-handers": "vs righties",
         "vs rhp": "vs righties", "against rhp": "vs righties",
+        "facing righties": "vs righties", "facing right-handers": "vs righties",
+        "facing rhp": "vs righties",
         # Home/away
         "at home": "at home", "home": "at home",
         "on the road": "on the road", "away": "on the road",
@@ -1001,56 +1017,77 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
     # e.g. "against changeups in the last 3 seasons", "vs lefties this year",
     # "at home over the last 5 games". We parse the split prefix, then check
     # the remainder for a known time phrase.
+    def _n_from_match(raw: str) -> int:
+        return int(raw) if raw.isdigit() else _NUM_WORDS.get(raw, 1)
     _time_suffix_patterns = [
-        (r'^(?:in\s+)?(?:the\s+)?(?:last|past)\s+(\d+)\s+games?$',
-         lambda m: f"last {m.group(1)} games"),
-        (r'^(?:in\s+)?(?:the\s+)?(?:last|past)\s+(\d+)\s+(?:seasons?|years?)$',
-         lambda m: f"last {m.group(1)} seasons"),
+        (r'^(?:in\s+)?(?:the\s+)?(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+games?$',
+         lambda m: f"last {_n_from_match(m.group(1))} games"),
+        (r'^(?:in\s+)?(?:the\s+)?(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:seasons?|years?)$',
+         lambda m: f"last {_n_from_match(m.group(1))} seasons"),
         (r'^(?:in|for)\s+(20[012]\d)$', lambda m: m.group(1)),
         (r'^since\s+(20[012]\d)$', lambda m: f"since {m.group(1)}"),
         (r'^(?:in\s+)?(this\s+(?:season|year))$',
          lambda m: "this season"),
         (r'^(?:in\s+)?(last\s+(?:season|year))$',
          lambda m: "last season"),
-        (r'^(?:in\s+)?(this|last)\s+decade$',
-         lambda m: None),  # handled separately
     ]
-    # Try splitting clean into (split_phrase) + (time_phrase). Split keys are
-    # the keys of splits_patterns; iterate longest-first to avoid premature
-    # matches ("vs left" before "vs left-handers").
-    for split_key in sorted(splits_patterns.keys(), key=len, reverse=True):
+    # Try splitting clean into (split_phrase) + (time_phrase) in EITHER order.
+    # Split keys iterated longest-first to avoid premature matches
+    # ("vs left" before "vs left-handers").
+    _sorted_splits = sorted(splits_patterns.keys(), key=len, reverse=True)
+    _compound_match = None
+    # Pass 1: split at start, time at end — "against changeups in the last 3 seasons"
+    for split_key in _sorted_splits:
         if clean.startswith(split_key + " "):
             remainder = clean[len(split_key):].strip()
             for pat, builder in _time_suffix_patterns:
                 m = _re.match(pat, remainder)
-                if not m:
-                    continue
-                time_suffix = builder(m)
-                if not time_suffix:
-                    continue
-                split = splits_patterns[split_key]
-                # Strip time scope from prior, strip same-category split, then append both
-                base = _strip_time_scope(ctx["query"])
-                # Remove any same-category split from base
-                handedness = {"vs lefties", "vs righties"}
-                homeaway = {"at home", "on the road"}
-                daynight = {"in day games", "at night"}
-                risp_clutch = {"with RISP", "in clutch"}
-                postseason_set = {"in the playoffs", "in the postseason", "in the World Series"}
-                pitch_types = {v for k, v in splits_patterns.items() if v.startswith("vs ") and v not in handedness}
-                cat = None
-                if split in handedness: cat = handedness
-                elif split in homeaway: cat = homeaway
-                elif split in daynight: cat = daynight
-                elif split in risp_clutch: cat = risp_clutch
-                elif split in postseason_set: cat = postseason_set
-                elif split in pitch_types: cat = pitch_types
-                if cat:
-                    for existing in cat:
-                        base = _re.sub(r'\b' + _re.escape(existing) + r'\b', '', base, flags=_re.IGNORECASE)
-                    base = _re.sub(r'\s+', ' ', base).strip()
-                return f"{base} {split} {time_suffix}".strip()
-            break  # found a split prefix but no matching time suffix — fall through
+                if m:
+                    ts = builder(m)
+                    if ts:
+                        _compound_match = (split_key, ts)
+                        break
+            if _compound_match:
+                break
+            break  # found split prefix, no matching time — don't try other splits
+    # Pass 2: time at start, split at end — "in the last 3 seasons against changeups"
+    if not _compound_match:
+        for split_key in _sorted_splits:
+            if clean.endswith(" " + split_key):
+                prefix_text = clean[:-len(split_key)].strip()
+                for pat, builder in _time_suffix_patterns:
+                    m = _re.match(pat, prefix_text)
+                    if m:
+                        ts = builder(m)
+                        if ts:
+                            _compound_match = (split_key, ts)
+                            break
+                if _compound_match:
+                    break
+                break
+    if _compound_match:
+        split_key, time_suffix = _compound_match
+        split = splits_patterns[split_key]
+        # Strip time scope from prior, strip same-category split, then append both
+        base = _strip_time_scope(ctx["query"])
+        handedness = {"vs lefties", "vs righties"}
+        homeaway = {"at home", "on the road"}
+        daynight = {"in day games", "at night"}
+        risp_clutch = {"with RISP", "in clutch"}
+        postseason_set = {"in the playoffs", "in the postseason", "in the World Series"}
+        pitch_types = {v for k, v in splits_patterns.items() if v.startswith("vs ") and v not in handedness}
+        cat = None
+        if split in handedness: cat = handedness
+        elif split in homeaway: cat = homeaway
+        elif split in daynight: cat = daynight
+        elif split in risp_clutch: cat = risp_clutch
+        elif split in postseason_set: cat = postseason_set
+        elif split in pitch_types: cat = pitch_types
+        if cat:
+            for existing in cat:
+                base = _re.sub(r'\b' + _re.escape(existing) + r'\b', '', base, flags=_re.IGNORECASE)
+            base = _re.sub(r'\s+', ' ', base).strip()
+        return f"{base} {split} {time_suffix}".strip()
 
     # --- Pattern 7: Time scope pivots (mutually-exclusive with career/ranges) ---
     # All strip any existing time scope from prior query and append the new one.
@@ -1078,16 +1115,18 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
         return f"{cleaned} last season".strip()
 
     # --- Pattern 8: "last N games" / "over the last 4 games" / "past 5 games" ---
-    m = _re.match(r'^(?:over\s+)?(?:the\s+)?(?:last|past)\s+(\d+)\s+games?$', clean)
+    m = _re.match(r'^(?:over\s+)?(?:the\s+)?(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+games?$', clean)
     if m:
-        n = m.group(1)
+        n_raw = m.group(1)
+        n = int(n_raw) if n_raw.isdigit() else _NUM_WORDS.get(n_raw, 1)
         cleaned = _strip_time_scope(ctx["query"])
         return f"{cleaned} last {n} games".strip()
 
     # --- Pattern 9: "last N seasons" / "last N years" / "over the last 3 seasons" ---
-    m = _re.match(r'^(?:over\s+)?(?:the\s+)?(?:last|past)\s+(\d+)\s+(?:seasons?|years?)$', clean)
+    m = _re.match(r'^(?:over\s+)?(?:the\s+)?(?:last|past)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:seasons?|years?)$', clean)
     if m:
-        n = m.group(1)
+        n_raw = m.group(1)
+        n = int(n_raw) if n_raw.isdigit() else _NUM_WORDS.get(n_raw, 1)
         cleaned = _strip_time_scope(ctx["query"])
         return f"{cleaned} last {n} seasons".strip()
 
