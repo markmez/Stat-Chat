@@ -8,36 +8,20 @@ struct VoiceMicButton: View {
     let tint: Color
     var onStart: (() -> Void)? = nil
     @Environment(\.colorScheme) private var colorScheme
-    @State private var ringPulse: Bool = false
 
     var body: some View {
         if voice.isRecording {
             Button {
                 voice.stopRecording()
             } label: {
-                ZStack {
-                    Circle()
-                        .stroke(tint.opacity(0.7), lineWidth: 2)
-                        .scaleEffect(ringPulse ? 1.5 : 1.0)
-                        .opacity(ringPulse ? 0 : 0.9)
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(tint)
-                        .frame(width: 32, height: 32)
-                        .background(colorScheme == .dark ? Color(.systemGray5) : Color(.tertiarySystemFill), in: Circle())
-                }
-                .frame(width: 32, height: 32)
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .symbolEffect(.pulse, options: .repeating, isActive: voice.isRecording)
+                    .frame(width: 32, height: 32)
+                    .background(colorScheme == .dark ? Color(.systemGray5) : Color(.tertiarySystemFill), in: Circle())
             }
             .accessibilityLabel("Stop recording")
-            .onAppear {
-                ringPulse = false
-                withAnimation(.easeOut(duration: 1.2).repeatForever(autoreverses: false)) {
-                    ringPulse = true
-                }
-            }
-            .onDisappear {
-                ringPulse = false
-            }
         } else {
             Button {
                 Task { @MainActor in

@@ -99,7 +99,7 @@ struct HomeView: View {
                     } label: {
                         Image(systemName: "gearshape")
                             .font(.system(size: 17))
-                            .foregroundStyle(.primary.opacity(0.7))
+                            .foregroundStyle(Color.brandLightBlue)
                     }
                 }
                 .padding(.horizontal, 24)
@@ -179,7 +179,7 @@ struct HomeView: View {
                                 Image(systemName: "arrow.right.circle.fill")
                                     .font(.system(size: 24))
                                     .foregroundStyle(lightBlue)
-                                    .frame(width: 32, height: 32)
+                                    .frame(width: 32, height: 32, alignment: .top)
                             }
                             .padding(.top, 2)
                         }
@@ -527,7 +527,7 @@ struct HomeView: View {
                         .foregroundStyle(.quaternary)
                     Text("Resets \(formatter.string(from: resetDate))")
                         .font(.system(.caption2, design: .rounded))
-                        .foregroundStyle(.quaternary)
+                        .foregroundStyle(.secondary)
                 }
             } else {
                 Text("0 free searches remaining · Resets \(formatter.string(from: resetDate))")

@@ -65,12 +65,49 @@ final class VoiceInputService {
         errorMessage = nil
         transcript = ""
 
-        // Build contextualStrings once. Keep under ~100 per Apple guidance.
+        // Build contextualStrings once — passed to SFSpeechRecognizer as
+        // hints for terms likely to be spoken. Significantly improves
+        // accuracy on baseball-specific names the generic recognizer
+        // mangles (Acuña, Semien, Ohtani, etc.). Apple recommends staying
+        // under ~100 entries.
         if contextualStrings.isEmpty {
-            // Start with top player names (first in sortedNames = longest names;
-            // not prominence-ordered, but that's the current source of truth).
-            // Also include common team names + core stats to improve recognition.
-            let playerNames = Array(PlayerNameMatcher.sortedNames.prefix(60))
+            // 70 current MLB stars — picked by award count since 2020 (MVPs,
+            // Cy Youngs, All-Stars, Silver Sluggers, Gold Gloves) then
+            // filtered to names worth optimizing for recognition: foreign
+            // origin, accented, unusual spelling, or compound surnames.
+            // Common English names (Trout, Judge, Harper, Freeman, etc.)
+            // are excluded because the default recognizer handles them.
+            let currentStars = [
+                "Shohei Ohtani", "Juan Soto", "Mookie Betts", "Vladimir Guerrero Jr.",
+                "Fernando Tatís Jr.", "Marcus Semien", "Ronald Acuña Jr.", "Nolan Arenado",
+                "Bobby Witt Jr.", "Julio Rodríguez", "José Ramírez", "Manny Machado",
+                "Steven Kwan", "Corey Seager", "Salvador Perez", "Pete Alonso",
+                "Teoscar Hernández", "Rafael Devers", "Corbin Burnes", "Luis Arraez",
+                "Yordan Alvarez", "Jose Altuve", "Tarik Skubal", "Kyle Schwarber",
+                "Ketel Marte", "Randy Arozarena", "Andrés Giménez", "William Contreras",
+                "Dansby Swanson", "Paul Goldschmidt", "Xander Bogaerts", "Paul Skenes",
+                "Brent Rooker", "Carlos Rodón", "Francisco Lindor", "Alejandro Kirk",
+                "Clayton Kershaw", "Jazz Chisholm", "Byron Buxton", "Adley Rutschman",
+                "Gunnar Henderson", "Emmanuel Clase", "Luis Robert Jr.", "Adolis García",
+                "Nick Castellanos", "Ozzie Albies", "J.T. Realmuto", "Freddy Peralta",
+                "Nico Hoerner", "Ke'Bryan Hayes", "Mauricio Dubón", "Elly De La Cruz",
+                "Jacob deGrom", "Garrett Crochet", "Wilyer Abreu", "Anthony Santander",
+                "Marcell Ozuna", "Yandy Díaz", "Luis Castillo", "Yoshinobu Yamamoto",
+                "Roki Sasaki", "Sandy Alcantara", "Edwin Díaz", "Bo Bichette",
+                "Carlos Correa", "Kodai Senga", "Yu Darvish", "Seiya Suzuki",
+                "Shōta Imanaga", "Cole Ragans",
+            ]
+            // 30 all-time legends — top historical award counts, same filter
+            let legends = [
+                "Babe Ruth", "Lou Gehrig", "Mickey Mantle", "Joe DiMaggio",
+                "Stan Musial", "Honus Wagner", "Sandy Koufax", "Pedro Martinez",
+                "Greg Maddux", "Ken Griffey Jr.", "Albert Pujols", "Cal Ripken Jr.",
+                "Tony Gwynn", "Roberto Clemente", "Mariano Rivera", "Ichiro Suzuki",
+                "Yogi Berra", "Iván Rodríguez", "Mike Piazza", "Yadier Molina",
+                "David Ortiz", "Carl Yastrzemski", "Vladimir Guerrero", "Roberto Alomar",
+                "Manny Ramirez", "Miguel Cabrera", "Luis Aparicio", "Carlton Fisk",
+                "Mark McGwire", "Hideki Matsui",
+            ]
             let teams = ["Yankees", "Red Sox", "Dodgers", "Mets", "Giants",
                          "Braves", "Cubs", "Cardinals", "Astros", "Rangers",
                          "Phillies", "Blue Jays", "Orioles", "Tigers", "Pirates",
@@ -79,7 +116,7 @@ final class VoiceInputService {
                          "Nationals", "Marlins", "Rays", "Brewers", "Reds"]
             let stats = ["OPS", "OPS plus", "ERA", "ERA plus", "WHIP", "RBI",
                          "strikeouts", "home runs", "batting average", "stolen bases"]
-            contextualStrings = playerNames + teams + stats
+            contextualStrings = currentStars + legends + teams + stats
         }
 
         let session = AVAudioSession.sharedInstance()
