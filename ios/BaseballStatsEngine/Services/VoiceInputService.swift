@@ -22,29 +22,32 @@ final class VoiceInputService {
     private var contextualStrings: [String] = []
 
     func requestAuthorization() async {
-        // Speech recognition permission. Apple's API delivers the callback
-        // on an arbitrary thread; we dispatch back to main before resuming
-        // the continuation so any subsequent @Observable mutation happens
-        // on the main actor.
-        let speechStatus: SFSpeechRecognizerAuthorizationStatus = await withCheckedContinuation { cont in
-            SFSpeechRecognizer.requestAuthorization { status in
-                DispatchQueue.main.async {
-                    cont.resume(returning: status)
-                }
-            }
-        }
-        authStatus = speechStatus
+        // Permission APIs deliver callbacks on background threads. Wrapping
+        // them via withCheckedContinuation inside a @MainActor function
+        // crashes under Swift 6 strict concurrency
+        // (`_swift_task_checkIsolatedSwift` assertion in __TCCAccessRequest
+        // callback) because the closure inherits MainActor isolation that
+        // Apple's API can't honor. Use non-isolated static helpers so the
+        // closures have no actor expectation; we hop back to the main
+        // actor automatically after each await.
+        authStatus = await Self._requestSpeechAuth()
+        micGranted = await Self._requestMicAuth()
+    }
 
-        // Microphone permission via the (deprecated-but-functional) older API.
-        // iOS 17's AVAudioApplication path crashed in testing.
-        let granted: Bool = await withCheckedContinuation { cont in
-            AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                DispatchQueue.main.async {
-                    cont.resume(returning: granted)
-                }
+    nonisolated private static func _requestSpeechAuth() async -> SFSpeechRecognizerAuthorizationStatus {
+        await withCheckedContinuation { cont in
+            SFSpeechRecognizer.requestAuthorization { status in
+                cont.resume(returning: status)
             }
         }
-        micGranted = granted
+    }
+
+    nonisolated private static func _requestMicAuth() async -> Bool {
+        await withCheckedContinuation { cont in
+            AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                cont.resume(returning: granted)
+            }
+        }
     }
 
     func startRecording() {
