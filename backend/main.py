@@ -116,6 +116,8 @@ app.include_router(team_card.router)
 app.include_router(client_event.router)
 from routers import leaders
 app.include_router(leaders.router)
+from routers import fireside
+app.include_router(fireside.router, prefix="/fireside")
 
 if __name__ == "__main__":
     import uvicorn
