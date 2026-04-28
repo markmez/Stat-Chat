@@ -2,9 +2,13 @@
 Fireside semantic search — one-shot embedding index builder.
 
 Pulls the Fireside catalog from Sanity, fetches each episode's WebVTT
-transcript (when present), builds an embedding-input string per episode
-(title + series + description + truncated transcript), embeds via
-OpenAI's text-embedding-3-small, and writes the result to a JSON file.
+transcript (when present), and produces TWO levels of embeddings:
+
+  - One per episode (title + series + description + truncated transcript).
+  - One per chapter (chapter title + transcript text within the chapter's
+    time range). Lets semantic search resolve "the part where they
+    talked about X" to a specific chapter when only one chapter matches,
+    or surface the whole episode when multiple chapters match.
 
 Output format (consumed by iOS):
     {
@@ -15,10 +19,17 @@ Output format (consumed by iOS):
             "<sanity _id>": {
                 "title": "...",
                 "series": "...",
-                "vector": [0.012, -0.034, ...]   // 1536 floats
-            },
-            ...
-        }
+                "vector": [0.012, -0.034, ...]
+            }
+        },
+        "chapters": [
+            {
+                "episode_id": "<sanity _id>",
+                "chapter_number": 1,
+                "title": "...",
+                "vector": [...]
+            }
+        ]
     }
 
 Usage:
@@ -41,6 +52,7 @@ import os
 import sys
 import urllib.parse
 import urllib.request
+from typing import List, Optional, Tuple
 
 try:
     from openai import OpenAI
@@ -68,9 +80,9 @@ SANITY_TOKEN = (
     "HULiLL0koTRFXnySnRCTClSHLTpjgs7TGj5b4A"
 )
 
-# Pull title + series + description + chapter titles + transcript URL.
-# Mirrors the iOS app's search-corpus query so the embedding text is
-# built from the same material the user sees in results.
+# Pull title + series + description + chapters (with timecodes) +
+# transcript URL. Chapter timecodes let us slice the VTT cues into
+# per-chapter chunks for chapter-level embeddings.
 GROQ_QUERY = """*[_type == "episode"]{
     _id,
     title,
@@ -78,7 +90,7 @@ GROQ_QUERY = """*[_type == "episode"]{
     "seriesTitle": series->title,
     "hosts": hosts[]->name,
     "guests": guests[]->name,
-    "chapters": chapters[]{title},
+    "chapters": chapters[]{chapterNumber, title, timeCodeIn, timeCodeOut},
     "transcriptURL": select(
       defined(transcriptFileURI) =>
         "https://dzvnta9wbxyyv.cloudfront.net/" + string::split(transcriptFileURI, "s3://fireside-poc-827207864714/")[1],
@@ -99,7 +111,7 @@ EMBEDDING_DIM = 1536
 TRANSCRIPT_CHAR_BUDGET = 18_000  # ~4500 tokens, leaves room for metadata
 
 
-def fetch_sanity_episodes() -> list[dict]:
+def fetch_sanity_episodes() -> List[dict]:
     encoded = urllib.parse.quote(GROQ_QUERY)
     url = f"{SANITY_API_BASE}?query={encoded}"
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {SANITY_TOKEN}"})
@@ -108,43 +120,82 @@ def fetch_sanity_episodes() -> list[dict]:
     return body.get("result", [])
 
 
-def fetch_vtt_text(json_url: str) -> str:
-    """Convert a transcript JSON URL to its VTT counterpart and return the
-    concatenated cue text. Empty string on failure (the embedding still
-    runs without transcript content)."""
+def parse_timecode(s: Optional[str]) -> Optional[float]:
+    """Parse 'HH:MM:SS.mmm' / 'MM:SS.mmm' / '12.34' to seconds. None on
+    failure. Mirrors the iOS-side parser."""
+    if not s:
+        return None
+    parts = s.split(":")
+    try:
+        if len(parts) == 1:
+            return float(parts[0])
+        if len(parts) == 2:
+            return float(parts[0]) * 60 + float(parts[1])
+        if len(parts) == 3:
+            return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+    except ValueError:
+        return None
+    return None
+
+
+def fetch_vtt_cues(json_url: str) -> List[Tuple[float, float, str]]:
+    """Convert a transcript JSON URL to its VTT counterpart and return a
+    list of (start_seconds, end_seconds, text) cues. Empty list on
+    failure."""
     if not json_url or not json_url.endswith(".json"):
-        return ""
+        return []
     vtt_url = json_url[:-5] + ".vtt"
     try:
         with urllib.request.urlopen(vtt_url, timeout=20) as resp:
             content = resp.read().decode("utf-8", errors="ignore")
     except Exception as e:
         print(f"  warn: failed to fetch VTT for {json_url}: {e}", file=sys.stderr)
-        return ""
+        return []
 
-    # Strip WebVTT structural lines, keep cue text only.
-    cue_lines: list[str] = []
-    for line in content.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped == "WEBVTT" or stripped.startswith("NOTE"):
-            continue
-        if "-->" in stripped:
-            continue
-        if stripped.isdigit():
-            continue
-        cue_lines.append(stripped)
+    cues: List[Tuple[float, float, str]] = []
+    lines = content.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if "-->" in line:
+            parts = line.split(" --> ")
+            if len(parts) == 2:
+                start = parse_timecode(parts[0])
+                end_part = parts[1].split(" ")[0]  # strip optional cue settings
+                end = parse_timecode(end_part)
+                if start is not None and end is not None:
+                    text_parts: List[str] = []
+                    i += 1
+                    while i < len(lines) and lines[i].strip():
+                        text_parts.append(lines[i].strip())
+                        i += 1
+                    if text_parts:
+                        cues.append((start, end, " ".join(text_parts)))
+        i += 1
+    return cues
 
-    return " ".join(cue_lines)
+
+def cues_concatenated(cues: List[Tuple[float, float, str]]) -> str:
+    return " ".join(text for _, _, text in cues)
 
 
-def build_embedding_text(ep: dict, transcript: str) -> str:
+def cues_within_range(
+    cues: List[Tuple[float, float, str]],
+    start: float,
+    end: float,
+) -> str:
+    """Concatenate cue text whose start_time falls in [start, end). The
+    chapter resolver uses the same logic; consistency keeps semantic
+    matches aligned with where the iOS app would deep-link."""
+    return " ".join(text for s, _, text in cues if start <= s < end)
+
+
+def build_episode_embedding_text(ep: dict, transcript: str) -> str:
     """Assemble the string sent to the embedder. Order matters less than
     inclusion — modern transformer embeddings weight the whole input,
     so we put descriptive metadata first and append the transcript
     until the char budget is hit."""
-    parts: list[str] = []
+    parts: List[str] = []
     if title := ep.get("title"):
         parts.append(f"Title: {title}")
     if series := ep.get("seriesTitle"):
@@ -160,8 +211,6 @@ def build_embedding_text(ep: dict, transcript: str) -> str:
     if chapter_titles:
         parts.append("Chapters: " + " | ".join(chapter_titles))
     if transcript:
-        # Truncate to char budget. Find a word boundary to avoid
-        # cutting mid-word (cleaner input for the embedder).
         if len(transcript) > TRANSCRIPT_CHAR_BUDGET:
             cut = transcript[:TRANSCRIPT_CHAR_BUDGET]
             last_space = cut.rfind(" ")
@@ -172,7 +221,36 @@ def build_embedding_text(ep: dict, transcript: str) -> str:
     return "\n\n".join(parts)
 
 
-def embed(client: OpenAI, text: str) -> list[float]:
+# Chapter embedding inputs are usually short (chapter title + a few
+# minutes of transcript), so we use a smaller budget per chapter to
+# keep average tokens reasonable. Long chapters still get plenty.
+CHAPTER_CHAR_BUDGET = 8_000
+
+
+def build_chapter_embedding_text(ep: dict, chapter: dict, chapter_transcript: str) -> str:
+    parts: List[str] = []
+    if title := ep.get("title"):
+        parts.append(f"Episode: {title}")
+    if series := ep.get("seriesTitle"):
+        parts.append(f"Series: {series}")
+    chapter_title = chapter.get("title") or ""
+    chapter_num = chapter.get("chapterNumber")
+    if chapter_num is not None:
+        parts.append(f"Chapter {chapter_num}: {chapter_title}")
+    elif chapter_title:
+        parts.append(f"Chapter: {chapter_title}")
+    if chapter_transcript:
+        if len(chapter_transcript) > CHAPTER_CHAR_BUDGET:
+            cut = chapter_transcript[:CHAPTER_CHAR_BUDGET]
+            last_space = cut.rfind(" ")
+            if last_space > 0:
+                cut = cut[:last_space]
+            chapter_transcript = cut
+        parts.append(f"Transcript: {chapter_transcript}")
+    return "\n\n".join(parts)
+
+
+def embed(client: OpenAI, text: str) -> List[float]:
     resp = client.embeddings.create(model=EMBEDDING_MODEL, input=text)
     return resp.data[0].embedding
 
@@ -213,7 +291,9 @@ def main() -> None:
     episodes = fetch_sanity_episodes()
     print(f"  {len(episodes)} episodes")
 
-    index: dict = {}
+    episode_index: dict = {}
+    chapter_index: List[dict] = []
+
     for i, ep in enumerate(episodes, 1):
         ep_id = ep.get("_id")
         title = ep.get("title", "(untitled)")
@@ -224,32 +304,61 @@ def main() -> None:
         print(f"  [{i}/{len(episodes)}] {title}")
 
         transcript_url = ep.get("transcriptURL")
-        transcript = fetch_vtt_text(transcript_url) if transcript_url else ""
-        text = build_embedding_text(ep, transcript)
+        cues = fetch_vtt_cues(transcript_url) if transcript_url else []
+        full_transcript = cues_concatenated(cues)
 
+        # Episode-level embedding — same as before
+        ep_text = build_episode_embedding_text(ep, full_transcript)
         try:
-            vector = embed(client, text)
+            ep_vector = embed(client, ep_text)
         except Exception as e:
-            print(f"    embed failed: {e}", file=sys.stderr)
+            print(f"    episode embed failed: {e}", file=sys.stderr)
             continue
-
-        index[ep_id] = {
+        episode_index[ep_id] = {
             "title": title,
             "series": ep.get("seriesTitle") or "",
-            "vector": vector,
+            "vector": ep_vector,
         }
+
+        # Chapter-level embeddings. Skip when there are no chapter
+        # timecodes (full episodes without chapter markers).
+        chapters = ep.get("chapters") or []
+        for chapter in chapters:
+            ch_num = chapter.get("chapterNumber")
+            ch_title = chapter.get("title") or ""
+            t_in = parse_timecode(chapter.get("timeCodeIn"))
+            t_out = parse_timecode(chapter.get("timeCodeOut"))
+            if t_in is None or t_out is None:
+                continue
+            ch_transcript = cues_within_range(cues, t_in, t_out) if cues else ""
+            ch_text = build_chapter_embedding_text(ep, chapter, ch_transcript)
+            try:
+                ch_vector = embed(client, ch_text)
+            except Exception as e:
+                print(f"    chapter {ch_num} embed failed: {e}", file=sys.stderr)
+                continue
+            chapter_index.append({
+                "episode_id": ep_id,
+                "chapter_number": ch_num if ch_num is not None else 0,
+                "title": ch_title,
+                "vector": ch_vector,
+            })
 
     output = {
         "model": EMBEDDING_MODEL,
         "dim": EMBEDDING_DIM,
         "generated_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "episodes": index,
+        "episodes": episode_index,
+        "chapters": chapter_index,
     }
 
     with open(args.output, "w") as f:
         json.dump(output, f)
     bytes_written = os.path.getsize(args.output)
-    print(f"\n✅ Wrote {len(index)} episodes ({bytes_written / 1024:.1f} KB) → {args.output}")
+    print(
+        f"\n✅ Wrote {len(episode_index)} episodes + {len(chapter_index)} chapters "
+        f"({bytes_written / 1024:.1f} KB) → {args.output}"
+    )
 
     if args.upload:
         upload_to_s3(args.output)
