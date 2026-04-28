@@ -19,13 +19,16 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 import anthropic
+from openai import OpenAI
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 MODEL = "claude-sonnet-4-6"
+EMBEDDING_MODEL = "text-embedding-3-small"
 
 
 # ---------------------------------------------------------------------------
@@ -248,3 +251,44 @@ def search_intent(req: SearchIntentRequest) -> SearchIntent:
     except Exception as e:
         log.error("fireside.search-intent: invalid tool input: %s — %s", tool_input, e)
         raise HTTPException(status_code=502, detail="LLM returned malformed intent") from e
+
+
+# ---------------------------------------------------------------------------
+# POST /fireside/embed — runtime query embedding for semantic search.
+# Pairs with a static embeddings.json (one per episode) hosted on the same
+# CloudFront as the transcripts — iOS computes cosine similarity locally.
+# Same isolation rule as /search-intent: never log Fireside data into
+# StatChat tables.
+# ---------------------------------------------------------------------------
+
+class EmbedRequest(BaseModel):
+    text: str
+
+
+class EmbedResponse(BaseModel):
+    vector: List[float]
+    model: str
+
+
+@router.post("/embed", response_model=EmbedResponse)
+def embed(req: EmbedRequest) -> EmbedResponse:
+    if not OPENAI_API_KEY:
+        log.error("fireside.embed: OPENAI_API_KEY not set")
+        raise HTTPException(status_code=503, detail="embed service not configured")
+
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is empty")
+
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    try:
+        resp = client.embeddings.create(model=EMBEDDING_MODEL, input=text)
+    except Exception as e:
+        log.error("fireside.embed: openai API error: %s", e)
+        raise HTTPException(status_code=502, detail="upstream embedding error") from e
+
+    if not resp.data or not resp.data[0].embedding:
+        log.error("fireside.embed: empty embedding response")
+        raise HTTPException(status_code=502, detail="empty embedding response")
+
+    return EmbedResponse(vector=resp.data[0].embedding, model=EMBEDDING_MODEL)
