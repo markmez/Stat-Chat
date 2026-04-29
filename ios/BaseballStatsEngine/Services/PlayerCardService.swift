@@ -934,8 +934,26 @@ enum PlayerCardService {
         ]
         return StatGridParser.StatGrid(
             headers: allHeaders,
-            rows: [StatGridParser.StatGrid.Row(label: "\(seasons.count) Seasons", values: values)]
+            rows: [StatGridParser.StatGrid.Row(label: careerRowLabel(seasonYears: seasons.map(\.year)), values: values)]
         )
+    }
+
+    /// Build the leftmost label for the career stats row. For retired players
+    /// (latest season precedes the current calendar year) the year span is
+    /// appended — e.g. "13 Seasons (1999–2011)" — so the timeframe is visible
+    /// at a glance without expanding the per-season list. Active players keep
+    /// the bare "13 Seasons" since the end year is open.
+    private static func careerRowLabel(seasonYears: [Int]) -> String {
+        let count = seasonYears.count
+        let base = "\(count) Season\(count == 1 ? "" : "s")"
+        guard let minY = seasonYears.min(), let maxY = seasonYears.max() else {
+            return base
+        }
+        let currentYear = Calendar.current.component(.year, from: Date())
+        if maxY < currentYear {
+            return "\(base) (\(minY)–\(maxY))"
+        }
+        return base
     }
 
     /// Build pitching career totals from an array of PitchingSeasonData.
@@ -998,7 +1016,7 @@ enum PlayerCardService {
         let displayValues = filterPitchingForDisplay(values)
         return StatGridParser.StatGrid(
             headers: pitchingHeaders,
-            rows: [StatGridParser.StatGrid.Row(label: "\(seasons.count) Seasons", values: displayValues)]
+            rows: [StatGridParser.StatGrid.Row(label: careerRowLabel(seasonYears: seasons.map(\.year)), values: displayValues)]
         )
     }
 
