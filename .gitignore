@@ -35,6 +35,7 @@ backend/metering.db
 data_pipeline/.cache/
 backend/data_pipeline/.cache/
 data_pipeline/pull_stats_fangraphs.py
+data_pipeline/embeddings.json
 ios/build/
 
 # One-off research / scratch

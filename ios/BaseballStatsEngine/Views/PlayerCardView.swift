@@ -839,7 +839,7 @@ struct PlayerCardView: View {
             let formattedDate = PlayerCardService.formatDateShort(formStartDate)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Hot Streak")
+                Text("Current Hot Streak")
                     .font(.system(.subheadline, design: .rounded, weight: .semibold))
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 20)
@@ -1448,7 +1448,7 @@ struct PlayerCardView: View {
                 : [.pace]
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Hot Streak")
+                Text("Current Hot Streak")
                     .font(.system(.subheadline, design: .rounded, weight: .semibold))
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 20)

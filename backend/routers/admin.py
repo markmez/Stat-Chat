@@ -597,6 +597,20 @@ async def rebuild_records(authorization: str | None = Header(None)):
     return {"status": "ok", "stdout": result.stdout, "stderr": result.stderr}
 
 
+@router.post("/rebuild-career-ranks")
+async def rebuild_career_ranks(authorization: str | None = Header(None)):
+    """Rebuild career_ranks and career_franchise_ranks tables.
+    Used by the player-card achievements section to avoid live SUM+rank queries."""
+    verify_admin(authorization)
+    import subprocess
+    result = subprocess.run(
+        ["python3", "data_pipeline/build_career_ranks.py", "--db", DB_PATH],
+        capture_output=True, text=True, timeout=300,
+        cwd=os.path.dirname(os.path.dirname(__file__))
+    )
+    return {"status": "ok", "stdout": result.stdout, "stderr": result.stderr}
+
+
 @router.post("/rebuild-prominence")
 async def rebuild_prominence(authorization: str | None = Header(None)):
     """Recompute prominence_score for all players."""

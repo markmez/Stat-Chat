@@ -48,5 +48,9 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # indexed teams-lookup + franchise grouping (was 2+ hours before the refactor).
 0 7 * * 2 statchat /opt/statchat/venv/bin/python /opt/statchat/repo/backend/data_pipeline/build_records.py --db /data/baseball_stats_full.db >> /data/refresh.log 2>&1
 
+# Weekly career ranks rebuild: Tuesday 3:30 AM ET (07:30 UTC).
+# Career ranks for active players move at most 1-2 ranks per week, so weekly is fine.
+30 7 * * 2 statchat /opt/statchat/venv/bin/python /opt/statchat/repo/backend/data_pipeline/build_career_ranks.py --db /data/baseball_stats_full.db >> /data/refresh.log 2>&1
+
 # Health monitor: every 5 min, pings Healthchecks.io if API + DB are up
 */5 * * * * statchat /opt/statchat/repo/deploy/healthcheck.sh

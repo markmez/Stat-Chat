@@ -85,10 +85,59 @@ def enable_wal_mode():
         print(f"Warning: could not enable WAL mode: {e}")
 
 
+def ensure_indexes():
+    """Idempotent index/table creation on startup.
+
+    - idx_players_name: defensive backstop for queries that filter on
+      players.name (team_card, stats router, Haiku SQL fallback).
+    - career_ranks / career_franchise_ranks: empty placeholders so
+      _build_achievements doesn't crash before build_career_ranks.py has run.
+      The builder atomically swaps populated tables into place.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_players_name ON players(name)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS career_ranks (
+                player_id TEXT NOT NULL,
+                side TEXT NOT NULL,
+                stat TEXT NOT NULL,
+                total REAL NOT NULL,
+                mlb_rank INTEGER NOT NULL,
+                PRIMARY KEY(player_id, side, stat)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS career_franchise_ranks (
+                player_id TEXT NOT NULL,
+                side TEXT NOT NULL,
+                stat TEXT NOT NULL,
+                franchise_code TEXT NOT NULL,
+                total REAL NOT NULL,
+                fran_rank INTEGER NOT NULL,
+                PRIMARY KEY(player_id, side, stat, franchise_code)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_career_ranks_lookup "
+            "ON career_ranks(player_id, side)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_career_franchise_ranks_lookup "
+            "ON career_franchise_ranks(player_id, side, franchise_code)"
+        )
+        conn.commit()
+        conn.close()
+        print("Indexes and placeholder tables ensured")
+    except Exception as e:
+        print(f"Warning: could not ensure indexes: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_db()
     enable_wal_mode()
+    ensure_indexes()
     init_metering_db()
     yield
 
