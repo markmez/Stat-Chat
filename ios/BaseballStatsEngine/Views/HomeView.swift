@@ -201,6 +201,19 @@ struct HomeView: View {
                 .onChange(of: voice.transcript) { _, new in
                     if !new.isEmpty { questionText = new }
                 }
+                .onChange(of: voice.isRecording) { wasRecording, isNow in
+                    // Hands-free auto-submit: if the mic closed because the
+                    // user trailed off (silence-stop), submit the transcript.
+                    // Manual stop / hard-cap / error don't auto-submit —
+                    // they leave the text in the field for review/edit.
+                    if wasRecording && !isNow && voice.lastStopReason == .silence {
+                        let text = voice.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !text.isEmpty {
+                            questionText = voice.transcript
+                            submitQuestion()
+                        }
+                    }
+                }
                 .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
                 .shadow(color: deepBlue.opacity(0.12), radius: 12, y: 4)
                 .shadow(color: .black.opacity(0.04), radius: 2, y: 1)

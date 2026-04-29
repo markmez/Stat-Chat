@@ -5,18 +5,32 @@ import AVFoundation
 @MainActor
 @Observable
 final class VoiceInputService {
+    /// Why the most recent recording stopped. Callers use this to decide
+    /// whether to auto-submit the transcript: only `.silence` should
+    /// auto-submit (the user trailed off — clear "I'm done" intent).
+    /// Manual stops mean "let me edit"; hard-cap stops mean truncation;
+    /// errors should never auto-submit.
+    enum StopReason { case manual, silence, hardCap, error }
+
     private(set) var isRecording = false
     private(set) var transcript = ""
     private(set) var authStatus: SFSpeechRecognizerAuthorizationStatus = .notDetermined
     private(set) var micGranted: Bool = false
     private(set) var errorMessage: String?
+    private(set) var lastStopReason: StopReason?
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private let audioEngine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var silenceTimer: Timer?
-    private let silenceTimeout: TimeInterval = 5.0
+    private var hardCapTimer: Timer?
+    /// Trail-off detection. 1.5s mirrors Apple's keyboard-dictation feel.
+    /// Started ONLY after the first partial result lands so the user can
+    /// take a beat to think before speaking without getting cut off.
+    private let silenceTimeout: TimeInterval = 1.5
+    /// Absolute cap so a stuck mic / forgotten session can't run forever.
+    private let hardCapTimeout: TimeInterval = 30.0
 
     // Player-name context hints for recognizer. Built lazily on first use from
     // PlayerNameMatcher.sortedNames — helps recognition accuracy on names like
@@ -167,7 +181,11 @@ final class VoiceInputService {
         }
 
         isRecording = true
-        resetSilenceTimer()
+        lastStopReason = nil
+        // Silence timer is NOT started here — only after the first partial
+        // result lands. Otherwise a thoughtful user pausing before they
+        // start speaking would get cut off after silenceTimeout seconds.
+        startHardCapTimer()
 
         task = recognizer?.recognitionTask(with: req) { [weak self] result, error in
             guard let self else { return }
@@ -178,10 +196,10 @@ final class VoiceInputService {
                 }
                 if let error {
                     self.errorMessage = error.localizedDescription
-                    self.stopRecording()
+                    self.stopRecording(reason: .error)
                 }
                 if result?.isFinal == true {
-                    self.stopRecording()
+                    self.stopRecording(reason: .silence)
                 }
             }
         }
@@ -191,16 +209,34 @@ final class VoiceInputService {
         silenceTimer?.invalidate()
         silenceTimer = Timer.scheduledTimer(withTimeInterval: silenceTimeout, repeats: false) { [weak self] _ in
             Task { @MainActor in
-                self?.stopRecording()
+                self?.stopRecording(reason: .silence)
             }
         }
     }
 
+    private func startHardCapTimer() {
+        hardCapTimer?.invalidate()
+        hardCapTimer = Timer.scheduledTimer(withTimeInterval: hardCapTimeout, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.stopRecording(reason: .hardCap)
+            }
+        }
+    }
+
+    /// Public stop (mic-button tap). Marks the stop as manual so callers
+    /// don't auto-submit the transcript — the user wants to review/edit.
     func stopRecording() {
+        stopRecording(reason: .manual)
+    }
+
+    private func stopRecording(reason: StopReason) {
         guard isRecording else { return }
         isRecording = false
+        lastStopReason = reason
         silenceTimer?.invalidate()
         silenceTimer = nil
+        hardCapTimer?.invalidate()
+        hardCapTimer = nil
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
         request?.endAudio()

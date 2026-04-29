@@ -57,6 +57,17 @@ struct InlineSearchBar: View {
         .onChange(of: voice.transcript) { _, new in
             if !new.isEmpty { text = new }
         }
+        .onChange(of: voice.isRecording) { wasRecording, isNow in
+            // Auto-submit on silence-stop (trailed off = "I'm done").
+            // Manual stop / hard-cap / error leave the text for review.
+            if wasRecording && !isNow && voice.lastStopReason == .silence {
+                let trimmed = voice.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    text = voice.transcript
+                    onSubmit()
+                }
+            }
+        }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
