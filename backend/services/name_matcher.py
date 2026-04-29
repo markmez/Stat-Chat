@@ -1400,6 +1400,10 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
     if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)\+?\s*[- ]?\s*hit\s+games?|\d+\+\s+\w+\s+games?', lower):
         return None
 
+    # Reject "first/last/past/previous/recent N games" — game-window query
+    if re.search(r'\b(first|last|past|previous|recent|opening|final)\s+\d+\s*games?\b', lower):
+        return None
+
     # Reject year-over-year comparisons — "Betts 2023 vs 2024" or "Soto last year vs this year"
     if re.search(r'20[012]\d\s*(?:vs\.?|versus|compared to|to)\s*20[012]\d', lower):
         return None
@@ -1504,6 +1508,12 @@ def parse_single_stat_lookup(input_str: str) -> Optional[dict]:
 
     # Reject "game logs" / "game log" — not a stat lookup
     if re.search(r'\bgame\s*logs?\b', lower):
+        return None
+
+    # Reject "first/last/past/previous/recent N games" — game-window query.
+    # Without this guard, "Stanton past 5 games" would silently match the
+    # "games" stat and return a season count, ignoring the qualifier.
+    if re.search(r'\b(first|last|past|previous|recent|opening|final)\s+\d+\s*games?\b', lower):
         return None
 
     # Reject platoon-filtered queries — handled by platoon parser
@@ -2763,8 +2773,8 @@ def parse_player_game_window(input_str: str) -> Optional[dict]:
     # Try to find player both with and without trailing 's' stripped from each word
     cleaned_no_s = re.sub(r'(\w+)s\b', r'\1', cleaned)
 
-    # Detect "first N games" or "last N games"
-    window_match = re.search(r'\b(first|last|opening|final)\s+(\d+)\s*games?\b', cleaned)
+    # Detect "first N games" or "last N games" (also "past", "previous", "recent")
+    window_match = re.search(r'\b(first|last|past|previous|recent|opening|final)\s+(\d+)\s*games?\b', cleaned)
     if not window_match:
         return None
 
@@ -2792,7 +2802,7 @@ def parse_player_game_window(input_str: str) -> Optional[dict]:
 
     # Detect stat (optional — None means show full stat line)
     # Strip the window phrase before matching to avoid "games" being matched as a stat
-    stat_text = re.sub(r'\b(first|last|opening|final)\s+\d+\s*games?\b', '', cleaned)
+    stat_text = re.sub(r'\b(first|last|past|previous|recent|opening|final)\s+\d+\s*games?\b', '', cleaned)
     stat = match_stat(stat_text)
     # "games" as a stat is almost never what the user means here
     if stat and stat.db_column == "games":
