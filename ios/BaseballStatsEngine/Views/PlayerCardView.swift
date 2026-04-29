@@ -880,7 +880,9 @@ struct PlayerCardView: View {
                             range: 1...Double(max(form.totalSeasonGames, 2)),
                             step: 1,
                             trackTint: deepBlue,
-                            isDisabled: form.totalSeasonGames < 2 || pitchingGameLogs == nil
+                            isDisabled: form.totalSeasonGames < 2 || pitchingGameLogs == nil,
+                            leftChipText: "\(formNumGames) games",
+                            rightChipText: PlayerCardView.statValue(in: formGrid, header: "ERA").map { "\($0) ERA" }
                         )
                         .padding(.horizontal, 14)
                     }
@@ -1488,7 +1490,9 @@ struct PlayerCardView: View {
                             range: 1...Double(max(form.totalSeasonGames, 2)),
                             step: 1,
                             trackTint: deepBlue,
-                            isDisabled: form.totalSeasonGames < 2 || gameLogs == nil
+                            isDisabled: form.totalSeasonGames < 2 || gameLogs == nil,
+                            leftChipText: "\(formNumGames) games",
+                            rightChipText: PlayerCardView.statValue(in: formGrid, header: "OPS").map { "\($0) OPS" }
                         )
                         .padding(.horizontal, 14)
                     }
@@ -1571,6 +1575,17 @@ struct PlayerCardView: View {
 
     /// Recompute form stats from game logs starting at a given game number.
     /// Falls back to precomputed data if game logs aren't loaded yet.
+    /// Look up a stat value from a parsed StatGrid by header name. Used by
+    /// the floating chip pair in PlainSlider to surface the headline stat
+    /// (OPS for batting, ERA for pitching) during slider drags.
+    static func statValue(in grid: StatGridParser.StatGrid, header: String) -> String? {
+        guard let idx = grid.headers.firstIndex(of: header),
+              let row = grid.rows.first,
+              idx < row.values.count else { return nil }
+        let v = row.values[idx]
+        return v.isEmpty || v == "--" ? nil : v
+    }
+
     private func recomputeFormStats(
         season: SeasonData, fromGameNumber: Int
     ) -> (grid: StatGridParser.StatGrid, numGames: Int, startDate: String) {
@@ -2687,73 +2702,149 @@ private struct PlainSlider: View {
     let step: Double
     var trackTint: Color = Color(red: 0.13, green: 0.36, blue: 0.79)  // matches deepBlue
     var isDisabled: Bool = false
+    /// Optional floating-chip pair shown above the thumb during active drag.
+    /// Pass both to enable; pass nil to hide the chip layer entirely.
+    var leftChipText: String? = nil
+    var rightChipText: String? = nil
+    /// Gradient for the chips. Defaults to a deepBlue → lightBlue gradient
+    /// matching the brand palette used elsewhere on the player card.
+    var chipGradient: LinearGradient = LinearGradient(
+        colors: [
+            Color(red: 0.45, green: 0.7, blue: 1.0),     // matches lightBlue
+            Color(red: 0.13, green: 0.36, blue: 0.79),   // matches deepBlue
+        ],
+        startPoint: .leading, endPoint: .trailing
+    )
 
     private let thumbSize: CGFloat = 22
     private let trackHeight: CGFloat = 4
+    private let chipHeight: CGFloat = 22
+    private let chipGap: CGFloat = 8           // vertical gap between chips and thumb top
 
     // nil = direction not yet decided for this drag; true = horizontal (slider);
     // false = vertical (scroll, ignore for the rest of this drag).
     @State private var horizontalLock: Bool? = nil
+    @State private var isActivelyDragging = false
+    @State private var chipPairWidth: CGFloat = 0
+
+    private var chipsEnabled: Bool { leftChipText != nil && rightChipText != nil }
+    /// Total view height — extend the frame upward to make room for chips
+    /// (they overflow above the slider track when shown).
+    private var totalHeight: CGFloat {
+        chipsEnabled ? thumbSize + chipGap + chipHeight : thumbSize
+    }
 
     var body: some View {
         GeometryReader { geo in
             let usable = max(0, geo.size.width - thumbSize)
-
-            ZStack(alignment: .leading) {
-                // Unfilled track
-                Capsule()
-                    .fill(Color(uiColor: .systemGray5))
-                    .frame(height: trackHeight)
-
-                // Filled portion — extend to thumb center
-                Capsule()
-                    .fill(trackTint)
-                    .frame(width: max(0, CGFloat(progress) * usable + thumbSize / 2), height: trackHeight)
-
-                // Thumb — fixed size, no press animation
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: thumbSize, height: thumbSize)
-                    .shadow(color: Color.black.opacity(0.18), radius: 2, x: 0, y: 1)
-                    .offset(x: CGFloat(progress) * usable)
-            }
-            .frame(height: thumbSize)
-            .contentShape(Rectangle())
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { drag in
-                        guard !isDisabled, usable > 0 else { return }
-                        let dx = abs(drag.translation.width)
-                        let dy = abs(drag.translation.height)
-                        // Wait for enough motion to decide direction. Don't
-                        // commit a value change while undecided — that would
-                        // jump the thumb on a vertical-scroll attempt.
-                        if horizontalLock == nil {
-                            if max(dx, dy) < 6 { return }
-                            horizontalLock = dx >= dy
-                        }
-                        guard horizontalLock == true else { return }
-                        let pct = max(0, min(1, (drag.location.x - thumbSize / 2) / usable))
-                        let span = range.upperBound - range.lowerBound
-                        let raw = range.lowerBound + Double(pct) * span
-                        let stepped = (raw / step).rounded() * step
-                        value = max(range.lowerBound, min(range.upperBound, stepped))
-                    }
-                    .onEnded { _ in
-                        horizontalLock = nil
-                    }
+            let thumbCenterX = CGFloat(progress) * usable + thumbSize / 2
+            // Clamp the chip-pair X so it stays within the slider's visible bounds.
+            let chipLeftX = min(
+                max(0, thumbCenterX - chipPairWidth / 2),
+                max(0, geo.size.width - chipPairWidth)
             )
-            .opacity(isDisabled ? 0.3 : 1)
+
+            ZStack(alignment: .bottomLeading) {
+                // Floating chip pair — only visible during active horizontal drag.
+                if chipsEnabled, let l = leftChipText, let r = rightChipText {
+                    HStack(spacing: 6) {
+                        chip(text: l)
+                        chip(text: r)
+                    }
+                    .fixedSize()
+                    .background(
+                        GeometryReader { gp in
+                            Color.clear.preference(
+                                key: ChipPairWidthKey.self, value: gp.size.width
+                            )
+                        }
+                    )
+                    .onPreferenceChange(ChipPairWidthKey.self) { chipPairWidth = $0 }
+                    .offset(x: chipLeftX, y: -(thumbSize + chipGap))
+                    .opacity(isActivelyDragging ? 1 : 0)
+                    .animation(.easeOut(duration: 0.15), value: isActivelyDragging)
+                    .allowsHitTesting(false)
+                }
+
+                // Slider stack — pinned to the bottom of the frame.
+                ZStack(alignment: .leading) {
+                    // Unfilled track
+                    Capsule()
+                        .fill(Color(uiColor: .systemGray5))
+                        .frame(height: trackHeight)
+
+                    // Filled portion — extend to thumb center
+                    Capsule()
+                        .fill(trackTint)
+                        .frame(width: max(0, CGFloat(progress) * usable + thumbSize / 2), height: trackHeight)
+
+                    // Thumb — fixed size, no press animation
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: thumbSize, height: thumbSize)
+                        .shadow(color: Color.black.opacity(0.18), radius: 2, x: 0, y: 1)
+                        .offset(x: CGFloat(progress) * usable)
+                }
+                .frame(height: thumbSize)
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { drag in
+                            guard !isDisabled, usable > 0 else { return }
+                            let dx = abs(drag.translation.width)
+                            let dy = abs(drag.translation.height)
+                            // Wait for enough motion to decide direction. Don't
+                            // commit a value change while undecided — that would
+                            // jump the thumb on a vertical-scroll attempt.
+                            if horizontalLock == nil {
+                                if max(dx, dy) < 6 { return }
+                                horizontalLock = dx >= dy
+                                if horizontalLock == true {
+                                    isActivelyDragging = true
+                                }
+                            }
+                            guard horizontalLock == true else { return }
+                            let pct = max(0, min(1, (drag.location.x - thumbSize / 2) / usable))
+                            let span = range.upperBound - range.lowerBound
+                            let raw = range.lowerBound + Double(pct) * span
+                            let stepped = (raw / step).rounded() * step
+                            value = max(range.lowerBound, min(range.upperBound, stepped))
+                        }
+                        .onEnded { _ in
+                            horizontalLock = nil
+                            isActivelyDragging = false
+                        }
+                )
+                .opacity(isDisabled ? 0.3 : 1)
+            }
+            .frame(height: totalHeight, alignment: .bottom)
         }
-        .frame(height: thumbSize)
+        .frame(height: totalHeight)
         // Suppress any inherited implicit animations from parent state changes.
         .animation(nil, value: value)
+    }
+
+    private func chip(text: String) -> some View {
+        Text(text)
+            .font(.system(.caption, design: .rounded, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 3)
+            .background(chipGradient, in: Capsule())
+            .shadow(color: Color.black.opacity(0.18), radius: 2, x: 0, y: 1)
     }
 
     private var progress: Double {
         let span = range.upperBound - range.lowerBound
         guard span > 0 else { return 0 }
         return min(1, max(0, (value - range.lowerBound) / span))
+    }
+}
+
+private struct ChipPairWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
