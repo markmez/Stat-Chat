@@ -870,19 +870,18 @@ struct PlayerCardView: View {
                         }
                         .padding(.horizontal, 14)
 
-                        Slider(
+                        PlainSlider(
                             value: Binding<Double>(
                                 get: { form.totalSeasonGames < 2 ? Double(max(form.totalSeasonGames, 2)) : Double(numGamesShown) },
                                 set: { newValue in
                                     pitchingFormSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
                                 }
                             ),
-                            in: 1...Double(max(form.totalSeasonGames, 2)),
-                            step: 1
+                            range: 1...Double(max(form.totalSeasonGames, 2)),
+                            step: 1,
+                            trackTint: deepBlue,
+                            isDisabled: form.totalSeasonGames < 2 || pitchingGameLogs == nil
                         )
-                        .tint(deepBlue)
-                        .disabled(form.totalSeasonGames < 2 || pitchingGameLogs == nil)
-                        .opacity(pitchingGameLogs != nil ? 1 : 0.3)
                         .padding(.horizontal, 14)
                     }
                     .task {
@@ -1479,19 +1478,18 @@ struct PlayerCardView: View {
                         }
                         .padding(.horizontal, 14)
 
-                        Slider(
+                        PlainSlider(
                             value: Binding<Double>(
                                 get: { form.totalSeasonGames < 2 ? Double(max(form.totalSeasonGames, 2)) : Double(numGamesShown) },
                                 set: { newValue in
                                     formSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
                                 }
                             ),
-                            in: 1...Double(max(form.totalSeasonGames, 2)),
-                            step: 1
+                            range: 1...Double(max(form.totalSeasonGames, 2)),
+                            step: 1,
+                            trackTint: deepBlue,
+                            isDisabled: form.totalSeasonGames < 2 || gameLogs == nil
                         )
-                        .tint(deepBlue)
-                        .disabled(form.totalSeasonGames < 2 || gameLogs == nil)
-                        .opacity(gameLogs != nil ? 1 : 0.3)
                         .padding(.horizontal, 14)
                     }
                     .task {
@@ -2671,6 +2669,71 @@ struct PlayerCardView: View {
             return PlayerCardService.teamDisplayName(teamStr)
         }
         return nil
+    }
+}
+
+// Replacement for SwiftUI's `Slider` for the Current Hot Streak control.
+// SwiftUI's slider is UIKit-backed and animates the thumb size on touch-down,
+// which Mark flagged as a wobble/transparency effect. This version uses a
+// fixed-size white thumb that doesn't change appearance during drag.
+private struct PlainSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    var trackTint: Color = Color(red: 0.13, green: 0.36, blue: 0.79)  // matches deepBlue
+    var isDisabled: Bool = false
+
+    private let thumbSize: CGFloat = 22
+    private let trackHeight: CGFloat = 4
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let progress = self.progress
+            let usable = max(0, width - thumbSize)
+
+            ZStack(alignment: .leading) {
+                // Unfilled track
+                Capsule()
+                    .fill(Color(uiColor: .systemGray5))
+                    .frame(height: trackHeight)
+
+                // Filled portion — extend to thumb center
+                Capsule()
+                    .fill(trackTint)
+                    .frame(width: max(0, CGFloat(progress) * usable + thumbSize / 2), height: trackHeight)
+
+                // Thumb — fixed size, no press animation
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: thumbSize, height: thumbSize)
+                    .shadow(color: Color.black.opacity(0.18), radius: 2, x: 0, y: 1)
+                    .offset(x: CGFloat(progress) * usable)
+            }
+            .frame(height: thumbSize)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { drag in
+                        guard !isDisabled, usable > 0 else { return }
+                        let pct = max(0, min(1, (drag.location.x - thumbSize / 2) / usable))
+                        let span = range.upperBound - range.lowerBound
+                        let raw = range.lowerBound + Double(pct) * span
+                        let stepped = (raw / step).rounded() * step
+                        value = max(range.lowerBound, min(range.upperBound, stepped))
+                    }
+            )
+            .opacity(isDisabled ? 0.3 : 1)
+        }
+        .frame(height: thumbSize)
+        // Suppress any inherited implicit animations from parent state changes.
+        .animation(nil, value: value)
+    }
+
+    private var progress: Double {
+        let span = range.upperBound - range.lowerBound
+        guard span > 0 else { return 0 }
+        return min(1, max(0, (value - range.lowerBound) / span))
     }
 }
 
