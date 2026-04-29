@@ -17,9 +17,17 @@ import sys
 import urllib.request
 from contextlib import asynccontextmanager
 
+_log_handlers = [logging.StreamHandler()]
+_api_log_path = os.getenv("API_LOG_PATH", "/data/api.log")
+if os.path.isdir(os.path.dirname(_api_log_path)):
+    from logging.handlers import RotatingFileHandler
+    _log_handlers.append(RotatingFileHandler(
+        _api_log_path, maxBytes=50_000_000, backupCount=3
+    ))
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    handlers=_log_handlers,
 )
 
 from fastapi import FastAPI

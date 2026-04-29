@@ -746,6 +746,31 @@ async def refresh_log(
         raise HTTPException(500, str(e))
 
 
+@router.get("/api-log")
+async def api_log(
+    lines: int = 200,
+    grep: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Read the last N lines of /data/api.log (gunicorn/app log).
+
+    Use ?grep=PATTERN to filter (case-sensitive substring). Returns up to
+    `lines` matching lines from the tail of the file. Useful for spot-checking
+    PLAYERCARD elapsed_ms during cron runs without SSH."""
+    verify_admin(authorization)
+    log_path = os.getenv("API_LOG_PATH", "/data/api.log")
+    if not os.path.exists(log_path):
+        return {"lines": [], "note": f"{log_path} does not exist yet"}
+    try:
+        with open(log_path) as f:
+            all_lines = f.readlines()
+        if grep:
+            all_lines = [l for l in all_lines if grep in l]
+        return {"lines": [l.rstrip() for l in all_lines[-lines:]]}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.get("/poll-timeline")
 async def poll_timeline(
     lines: int = 50,
