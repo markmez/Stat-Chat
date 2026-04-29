@@ -2676,6 +2676,11 @@ struct PlayerCardView: View {
 // SwiftUI's slider is UIKit-backed and animates the thumb size on touch-down,
 // which Mark flagged as a wobble/transparency effect. This version uses a
 // fixed-size white thumb that doesn't change appearance during drag.
+//
+// Gesture handling: uses `simultaneousGesture` so the parent ScrollView can
+// also receive the touch. Locks per-drag direction on first meaningful
+// movement — horizontal drags drive the slider, vertical drags pass through
+// to the ScrollView so the page can still scroll over the thumb.
 private struct PlainSlider: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
@@ -2686,11 +2691,13 @@ private struct PlainSlider: View {
     private let thumbSize: CGFloat = 22
     private let trackHeight: CGFloat = 4
 
+    // nil = direction not yet decided for this drag; true = horizontal (slider);
+    // false = vertical (scroll, ignore for the rest of this drag).
+    @State private var horizontalLock: Bool? = nil
+
     var body: some View {
         GeometryReader { geo in
-            let width = geo.size.width
-            let progress = self.progress
-            let usable = max(0, width - thumbSize)
+            let usable = max(0, geo.size.width - thumbSize)
 
             ZStack(alignment: .leading) {
                 // Unfilled track
@@ -2712,15 +2719,28 @@ private struct PlainSlider: View {
             }
             .frame(height: thumbSize)
             .contentShape(Rectangle())
-            .gesture(
+            .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { drag in
                         guard !isDisabled, usable > 0 else { return }
+                        let dx = abs(drag.translation.width)
+                        let dy = abs(drag.translation.height)
+                        // Wait for enough motion to decide direction. Don't
+                        // commit a value change while undecided — that would
+                        // jump the thumb on a vertical-scroll attempt.
+                        if horizontalLock == nil {
+                            if max(dx, dy) < 6 { return }
+                            horizontalLock = dx >= dy
+                        }
+                        guard horizontalLock == true else { return }
                         let pct = max(0, min(1, (drag.location.x - thumbSize / 2) / usable))
                         let span = range.upperBound - range.lowerBound
                         let raw = range.lowerBound + Double(pct) * span
                         let stepped = (raw / step).rounded() * step
                         value = max(range.lowerBound, min(range.upperBound, stepped))
+                    }
+                    .onEnded { _ in
+                        horizontalLock = nil
                     }
             )
             .opacity(isDisabled ? 0.3 : 1)
