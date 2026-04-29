@@ -1401,7 +1401,9 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
         return None
 
     # Reject "first/last/past/previous/recent N games" — game-window query
-    if re.search(r'\b(first|last|past|previous|recent|opening|final)\s+\d+\s*games?\b', lower):
+    # (includes spelled-out numbers for voice input)
+    _gw_num = r'(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|twenty|thirty|forty|fifty|sixty)'
+    if re.search(rf'\b(first|last|past|previous|recent|opening|final)\s+{_gw_num}\s*games?\b', lower):
         return None
 
     # Reject year-over-year comparisons — "Betts 2023 vs 2024" or "Soto last year vs this year"
@@ -1513,7 +1515,9 @@ def parse_single_stat_lookup(input_str: str) -> Optional[dict]:
     # Reject "first/last/past/previous/recent N games" — game-window query.
     # Without this guard, "Stanton past 5 games" would silently match the
     # "games" stat and return a season count, ignoring the qualifier.
-    if re.search(r'\b(first|last|past|previous|recent|opening|final)\s+\d+\s*games?\b', lower):
+    # Includes spelled-out numbers ("past five games") for voice input.
+    _gw_num = r'(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|twenty|thirty|forty|fifty|sixty)'
+    if re.search(rf'\b(first|last|past|previous|recent|opening|final)\s+{_gw_num}\s*games?\b', lower):
         return None
 
     # Reject platoon-filtered queries — handled by platoon parser
@@ -2772,6 +2776,25 @@ def parse_player_game_window(input_str: str) -> Optional[dict]:
     # Also handle bare possessive without apostrophe: "stantons seasons" → "stanton seasons"
     # Try to find player both with and without trailing 's' stripped from each word
     cleaned_no_s = re.sub(r'(\w+)s\b', r'\1', cleaned)
+
+    # Normalize spelled-out numbers ("past five games" → "past 5 games"). Voice
+    # recognition often produces words instead of digits.
+    _word_to_digit = {
+        "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+        "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+        "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14", "fifteen": "15",
+        "twenty": "20", "thirty": "30", "forty": "40", "fifty": "50", "sixty": "60",
+    }
+    cleaned = re.sub(
+        r'\b(' + '|'.join(_word_to_digit.keys()) + r')\b',
+        lambda m: _word_to_digit[m.group(1)],
+        cleaned,
+    )
+    cleaned_no_s = re.sub(
+        r'\b(' + '|'.join(_word_to_digit.keys()) + r')\b',
+        lambda m: _word_to_digit[m.group(1)],
+        cleaned_no_s,
+    )
 
     # Detect "first N games" or "last N games" (also "past", "previous", "recent")
     window_match = re.search(r'\b(first|last|past|previous|recent|opening|final)\s+(\d+)\s*games?\b', cleaned)
