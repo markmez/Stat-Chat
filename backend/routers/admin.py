@@ -733,36 +733,53 @@ async def backup_db(
     label: str = "manual",
     authorization: str | None = Header(None),
 ):
-    """Copy the volume DB up to S3 at a timestamped backup path. Used as
-    the rollback anchor before any structural change (player-id merge,
-    schema migration, etc.). The label is folded into the filename so
-    multiple same-day backups don't collide."""
+    """Snapshot the volume DB to a sibling backup file. Used as the
+    rollback anchor before any structural change (player-id merge,
+    schema migration, etc.). Uses SQLite's online .backup API so the
+    snapshot is consistent even with WAL writers active.
+
+    Backup file lives next to the DB at
+    /data/baseball_stats_full-backup-{ts}-{label}.db. To restore, stop
+    the service and `mv` the backup over baseball_stats_full.db.
+    (S3 backup deferred — current IAM policy only grants put on the
+    canonical bucket key.)"""
     verify_admin(authorization)
     if not os.path.exists(DB_PATH):
         raise HTTPException(404, f"DB not found at {DB_PATH}")
     from datetime import datetime
     safe_label = "".join(c if c.isalnum() or c in "-_" else "-" for c in label)[:64]
     ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-    # Backup filename in the bucket root (the IAM policy only grants put
-    # on the existing bucket root, not arbitrary prefixes).
-    s3_path = f"s3://stat-chat/baseball_stats_full-backup-{ts}-{safe_label}.db"
+    backup_path = os.path.join(
+        os.path.dirname(DB_PATH),
+        f"baseball_stats_full-backup-{ts}-{safe_label}.db",
+    )
     try:
-        result = await _run_subprocess(
-            ["aws", "s3", "cp", DB_PATH, s3_path],
-            timeout=600,
-        )
-        if result.returncode != 0:
-            raise HTTPException(500, f"aws s3 cp failed: {result.stderr}")
-        size_mb = os.path.getsize(DB_PATH) // 1_000_000
+        size_before = os.path.getsize(DB_PATH)
+        src = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=30)
+        try:
+            dst = sqlite3.connect(backup_path)
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            src.close()
+        size_mb_before = size_before // 1_000_000
+        size_mb_after = os.path.getsize(backup_path) // 1_000_000
         return {
             "status": "ok",
-            "s3_path": s3_path,
-            "size_mb": size_mb,
-            "stdout": result.stdout[-500:],
+            "backup_path": backup_path,
+            "size_mb_before": size_mb_before,
+            "size_mb_after": size_mb_after,
+            "restore_hint": f"sudo systemctl stop statchat && mv {backup_path} {DB_PATH} && sudo systemctl start statchat",
         }
-    except subprocess.TimeoutExpired:
-        raise HTTPException(504, "backup timed out after 10 min")
     except Exception as e:
+        # Clean up partial backup file if backup failed
+        if os.path.exists(backup_path):
+            try:
+                os.remove(backup_path)
+            except Exception:
+                pass
         raise HTTPException(500, str(e))
 
 
