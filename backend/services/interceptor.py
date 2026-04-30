@@ -345,6 +345,33 @@ def try_intercept(question: str):
         if response:
             return response
 
+    # 11a. First PA of game (batting only) — "Judge OPS in his first at bat"
+    fpa = nm.parse_first_pa(trimmed)
+    if fpa:
+        name, season = fpa["name"], fpa["season"]
+        if not nm.is_pitcher(name):
+            response = rb.build_first_pa_splits(name, season)
+            if response:
+                return response
+
+    # 11b. Pitcher inning splits — "Cole's 1st inning ERA", "Skubal in the 7th"
+    pi = nm.parse_pitching_inning(trimmed)
+    if pi:
+        name, inning, season = pi["name"], pi["inning"], pi["season"]
+        if nm.is_pitcher(name):
+            response = rb.build_pitching_inning_splits(name, inning, season)
+            if response:
+                return response
+
+    # 11c. Pitcher times-through-the-order — "Skubal 3rd time through"
+    tto = nm.parse_pitching_tto(trimmed)
+    if tto:
+        name, t, season = tto["name"], tto["tto"], tto["season"]
+        if nm.is_pitcher(name):
+            response = rb.build_pitching_tto_splits(name, t, season)
+            if response:
+                return response
+
     # 12. Month stats — "Judge in September"
     month = nm.parse_month_query(trimmed)
     if month:

@@ -1848,6 +1848,115 @@ def parse_count_splits(input_str: str) -> Optional[dict]:
     return {"name": name, "counts": counts, "season": season}
 
 
+# Word → digit lookup for ordinal matching across the next three parsers.
+# "first" through "tenth" — anything past tenth is rare enough we accept only digits.
+_ORDINAL_WORDS = {
+    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
+    "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
+}
+
+
+def parse_first_pa(input_str: str) -> Optional[dict]:
+    """Detect 'first PA / first AB of game' batting queries. Returns dict
+    with name, season — used to query first_pa_batting_splits."""
+    lower = input_str.strip().lower()
+
+    # Must reference "first" (or "1st") AND a PA-equivalent term.
+    # Acceptable: "first at bat", "first AB", "first plate appearance",
+    # "first PA", "1st at bat", "first time up".
+    triggers = [
+        "first at bat", "first at-bat", "first ab",
+        "first plate appearance", "first pa",
+        "first time up",
+        "1st at bat", "1st at-bat", "1st ab", "1st pa",
+    ]
+    if not any(t in lower for t in triggers):
+        return None
+
+    name = find_player_in_text(lower)
+    if not name:
+        return None
+
+    season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
+    return {"name": name, "season": season}
+
+
+def parse_pitching_inning(input_str: str) -> Optional[dict]:
+    """Detect 'Nth inning' pitcher queries. Returns dict with name, inning
+    (string "1".."9" or "10+"), season — used to query pitching_inning_splits.
+    """
+    lower = input_str.strip().lower()
+
+    inning: Optional[str] = None
+
+    # Word ordinals: "first inning", "seventh inning", etc.
+    for word, n in _ORDINAL_WORDS.items():
+        if re.search(rf'\b{word}\s+inning\b', lower):
+            inning = str(n) if n < 10 else "10+"
+            break
+
+    # Numeric ordinals: "1st inning", "7th inning", "10th inning"
+    if inning is None:
+        m = re.search(r'\b(\d+)(?:st|nd|rd|th)\s+inning\b', lower)
+        if m:
+            n = int(m.group(1))
+            inning = str(n) if n < 10 else "10+"
+
+    # Plain "inning N" / "inning 7" forms
+    if inning is None:
+        m = re.search(r'\binning\s+(\d+)\b', lower)
+        if m:
+            n = int(m.group(1))
+            inning = str(n) if n < 10 else "10+"
+
+    if inning is None:
+        return None
+
+    name = find_player_in_text(lower)
+    if not name:
+        return None
+
+    season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
+    return {"name": name, "inning": inning, "season": season}
+
+
+def parse_pitching_tto(input_str: str) -> Optional[dict]:
+    """Detect 'Nth time through the order' pitcher queries. Returns dict
+    with name, tto ("1"/"2"/"3"/"4+"), season — used to query
+    pitching_tto_splits."""
+    lower = input_str.strip().lower()
+
+    tto: Optional[str] = None
+
+    # Must reference "time through" or "times through" — otherwise things
+    # like "third inning" would falsely match the ordinal alone.
+    if "time through" not in lower and "times through" not in lower:
+        return None
+
+    # Word ordinals: "first time through", "third time through", etc.
+    for word, n in _ORDINAL_WORDS.items():
+        if re.search(rf'\b{word}\s+time(?:s)?\s+through\b', lower):
+            tto = str(n) if n < 4 else "4+"
+            break
+
+    # Numeric ordinals: "1st time through", "3rd time through", "4th time through"
+    if tto is None:
+        m = re.search(r'\b(\d+)(?:st|nd|rd|th)\s+time(?:s)?\s+through\b', lower)
+        if m:
+            n = int(m.group(1))
+            tto = str(n) if n < 4 else "4+"
+
+    if tto is None:
+        return None
+
+    name = find_player_in_text(lower)
+    if not name:
+        return None
+
+    season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
+    return {"name": name, "tto": tto, "season": season}
+
+
 def parse_month_query(input_str: str) -> Optional[dict]:
     """Detect month queries. Returns dict with player_name, month, season."""
     lower = input_str.strip().lower()

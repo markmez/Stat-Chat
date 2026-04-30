@@ -2390,6 +2390,160 @@ def build_pitching_risp_splits(name: str, season: int) -> Optional[str]:
 
 
 # ===================================================================
+# 19a. build_first_pa_splits — batter's stats restricted to first PA per game
+# ===================================================================
+
+def build_first_pa_splits(name: str, season: int) -> Optional[str]:
+    """Batting stats from each game's first PA (one row per player-season)."""
+    conn = _get_db()
+    try:
+        season = _resolve_season(conn, name, season)
+        display_name, _ = _get_player_info(conn, name)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT fps.plate_appearances, fps.at_bats, fps.hits, "
+            "fps.doubles, fps.triples, fps.home_runs, fps.rbi, "
+            "fps.walks, fps.strikeouts, "
+            "fps.batting_avg, fps.obp, fps.slg, fps.ops "
+            "FROM first_pa_batting_splits fps "
+            "JOIN players p ON fps.player_id = p.player_id "
+            "WHERE p.name = ? AND fps.season = ?",
+            (_sanitize(name), season),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+
+        headers = ["PA", "AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO",
+                   "AVG", "OBP", "SLG", "OPS"]
+        parts = []
+        parts.append(f"**{display_name}** — {season} First PA of Game\n")
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + ", ".join(headers))
+        values = _format_values(headers, [str(v) if v is not None else "" for v in row])
+        parts.append("ROW First PA: " + ", ".join(values))
+        parts.append("[/STATGRID]")
+        parts.append(f"\n[SUGGEST]{display_name} {season}[/SUGGEST]")
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
+# ===================================================================
+# 19b. build_pitching_inning_splits — pitcher stats by inning
+# ===================================================================
+
+def build_pitching_inning_splits(name: str, inning: Optional[str], season: int) -> Optional[str]:
+    """Pitching stats by inning. If inning is None, show all innings; if
+    a specific inning is given (e.g. "1" or "10+"), show that one row only."""
+    conn = _get_db()
+    try:
+        season = _resolve_season(conn, name, season, "season_pitching_stats", "sp")
+        display_name, _ = _get_player_info(conn, name)
+        cur = conn.cursor()
+        if inning:
+            cur.execute(
+                "SELECT pis.inning, pis.at_bats, pis.hits, "
+                "pis.doubles, pis.triples, pis.home_runs, "
+                "pis.walks, pis.strikeouts, "
+                "pis.batting_avg_against, pis.obp_against, pis.slg_against, pis.ops_against "
+                "FROM pitching_inning_splits pis "
+                "JOIN players p ON pis.player_id = p.player_id "
+                "WHERE p.name = ? AND pis.season = ? AND pis.inning = ?",
+                (_sanitize(name), season, inning),
+            )
+        else:
+            cur.execute(
+                "SELECT pis.inning, pis.at_bats, pis.hits, "
+                "pis.doubles, pis.triples, pis.home_runs, "
+                "pis.walks, pis.strikeouts, "
+                "pis.batting_avg_against, pis.obp_against, pis.slg_against, pis.ops_against "
+                "FROM pitching_inning_splits pis "
+                "JOIN players p ON pis.player_id = p.player_id "
+                "WHERE p.name = ? AND pis.season = ? "
+                "ORDER BY CAST(pis.inning AS INTEGER), pis.inning",
+                (_sanitize(name), season),
+            )
+        rows = cur.fetchall()
+        if not rows:
+            return None
+
+        headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO",
+                   "AVG", "OBP", "SLG", "OPS"]
+        title_inning = f" — Inning {inning}" if inning else " — By Inning"
+        parts = []
+        parts.append(f"**{display_name}** — {season} Pitching{title_inning}\n")
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + ", ".join(headers))
+        for row in rows:
+            inning_label = f"Inning {row[0]}"
+            values = _format_pitching_values(headers, [str(v) if v is not None else "" for v in row[1:]])
+            parts.append(f"ROW {inning_label}: " + ", ".join(values))
+        parts.append("[/STATGRID]")
+        parts.append(f"\n[SUGGEST]{display_name} {season}[/SUGGEST]")
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
+# ===================================================================
+# 19c. build_pitching_tto_splits — pitcher stats by times through the order
+# ===================================================================
+
+def build_pitching_tto_splits(name: str, tto: Optional[str], season: int) -> Optional[str]:
+    """Pitching stats by times-through-the-order. If tto is None, show all
+    rows; if specific (e.g. "3" or "4+"), show that one only."""
+    conn = _get_db()
+    try:
+        season = _resolve_season(conn, name, season, "season_pitching_stats", "sp")
+        display_name, _ = _get_player_info(conn, name)
+        cur = conn.cursor()
+        if tto:
+            cur.execute(
+                "SELECT pts.tto, pts.at_bats, pts.hits, "
+                "pts.doubles, pts.triples, pts.home_runs, "
+                "pts.walks, pts.strikeouts, "
+                "pts.batting_avg_against, pts.obp_against, pts.slg_against, pts.ops_against "
+                "FROM pitching_tto_splits pts "
+                "JOIN players p ON pts.player_id = p.player_id "
+                "WHERE p.name = ? AND pts.season = ? AND pts.tto = ?",
+                (_sanitize(name), season, tto),
+            )
+        else:
+            cur.execute(
+                "SELECT pts.tto, pts.at_bats, pts.hits, "
+                "pts.doubles, pts.triples, pts.home_runs, "
+                "pts.walks, pts.strikeouts, "
+                "pts.batting_avg_against, pts.obp_against, pts.slg_against, pts.ops_against "
+                "FROM pitching_tto_splits pts "
+                "JOIN players p ON pts.player_id = p.player_id "
+                "WHERE p.name = ? AND pts.season = ? "
+                "ORDER BY pts.tto",
+                (_sanitize(name), season),
+            )
+        rows = cur.fetchall()
+        if not rows:
+            return None
+
+        headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO",
+                   "AVG", "OBP", "SLG", "OPS"]
+        title_tto = f" — {tto} Time(s) Through Order" if tto else " — Times Through Order"
+        parts = []
+        parts.append(f"**{display_name}** — {season} Pitching{title_tto}\n")
+        parts.append("[STATGRID]")
+        parts.append("HEADER: " + ", ".join(headers))
+        for row in rows:
+            tto_label = f"{row[0]}x Through"
+            values = _format_pitching_values(headers, [str(v) if v is not None else "" for v in row[1:]])
+            parts.append(f"ROW {tto_label}: " + ", ".join(values))
+        parts.append("[/STATGRID]")
+        parts.append(f"\n[SUGGEST]{display_name} {season}[/SUGGEST]")
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
+# ===================================================================
 # 20. build_pitch_type_splits
 # ===================================================================
 
