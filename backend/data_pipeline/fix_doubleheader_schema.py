@@ -141,30 +141,52 @@ def check_integrity(conn):
     """).fetchone()
     latest_date = latest[0] if latest and latest[0] else "9999-99-99"
 
+    # Pre-aggregate both sides per (player_id, season) BEFORE joining. Joining
+    # season_batting_stats and game_batting_logs directly produces a Cartesian
+    # product for traded players (multiple per-team season rows × every game
+    # log), which inflates the SUM and falsely flags them. The CTEs collapse
+    # each side to a single per-player-season row first.
     mismatches = conn.execute("""
+        WITH season_totals AS (
+            SELECT player_id, season,
+                   SUM(plate_appearances) AS season_pa,
+                   SUM(hits)              AS season_h,
+                   SUM(home_runs)         AS season_hr,
+                   SUM(rbi)               AS season_rbi
+            FROM season_batting_stats
+            WHERE season >= 2026
+            GROUP BY player_id, season
+        ),
+        log_totals AS (
+            SELECT player_id, season,
+                   SUM(plate_appearances) AS log_pa,
+                   SUM(hits)              AS log_h,
+                   SUM(home_runs)         AS log_hr,
+                   SUM(rbi)               AS log_rbi
+            FROM game_batting_logs
+            WHERE season >= 2026
+            GROUP BY player_id, season
+        )
         SELECT p.name, s.season,
-               s.plate_appearances as season_pa,
-               COALESCE(SUM(g.plate_appearances), 0) as log_pa,
-               s.hits as season_h,
-               COALESCE(SUM(g.hits), 0) as log_h,
-               s.home_runs as season_hr,
-               COALESCE(SUM(g.home_runs), 0) as log_hr,
-               s.rbi as season_rbi,
-               COALESCE(SUM(g.rbi), 0) as log_rbi
-        FROM season_batting_stats s
+               s.season_pa,  COALESCE(l.log_pa, 0)  AS log_pa,
+               s.season_h,   COALESCE(l.log_h, 0)   AS log_h,
+               s.season_hr,  COALESCE(l.log_hr, 0)  AS log_hr,
+               s.season_rbi, COALESCE(l.log_rbi, 0) AS log_rbi
+        FROM season_totals s
         JOIN players p ON s.player_id = p.player_id
-        LEFT JOIN game_batting_logs g ON s.player_id = g.player_id AND s.season = g.season
-        WHERE s.season >= 2026 AND s.plate_appearances > 0
+        LEFT JOIN log_totals l ON s.player_id = l.player_id AND s.season = l.season
+        WHERE s.season_pa > 0
             AND s.player_id NOT IN (
                 SELECT DISTINCT player_id FROM game_batting_logs
                 WHERE date >= ? AND season >= 2026
             )
-        GROUP BY s.player_id, s.season
-        HAVING s.plate_appearances != COALESCE(SUM(g.plate_appearances), 0)
-            OR s.hits != COALESCE(SUM(g.hits), 0)
-            OR s.home_runs != COALESCE(SUM(g.home_runs), 0)
-            OR s.rbi != COALESCE(SUM(g.rbi), 0)
-        ORDER BY (s.plate_appearances - COALESCE(SUM(g.plate_appearances), 0)) DESC
+            AND (
+                s.season_pa  != COALESCE(l.log_pa, 0)
+                OR s.season_h   != COALESCE(l.log_h, 0)
+                OR s.season_hr  != COALESCE(l.log_hr, 0)
+                OR s.season_rbi != COALESCE(l.log_rbi, 0)
+            )
+        ORDER BY (s.season_pa - COALESCE(l.log_pa, 0)) DESC
         LIMIT 20
     """, (latest_date,)).fetchall()
 
