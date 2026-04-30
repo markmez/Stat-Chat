@@ -302,6 +302,32 @@ How batters performed against each pitcher with RISP vs Non-RISP. Available for 
 - plate_appearances, at_bats, hits, doubles, triples, home_runs, walks, strikeouts, hit_by_pitch, sacrifice_flies (INTEGER)
 - batting_avg_against, obp_against, slg_against, ops_against (REAL)
 
+### first_pa_batting_splits
+Batter performance restricted to each batter's FIRST plate appearance in each game ("first AB of the game"). Available for 2025-2026.
+- player_id (TEXT) — references players table
+- season (INTEGER) — year
+- plate_appearances, at_bats, hits, doubles, triples, home_runs, rbi, walks, strikeouts, hit_by_pitch, sacrifice_flies (INTEGER)
+- batting_avg, obp, slg, ops, iso, babip (REAL)
+One row per (player_id, season). Use this for queries like "Judge's OPS in his first AB" or "best leadoff PA hitters".
+
+### pitching_inning_splits
+Pitcher performance broken down by inning of the plate appearance. Available for 2025-2026.
+- player_id (TEXT) — references players table (the pitcher)
+- season (INTEGER) — year
+- inning (TEXT) — inning number as string: "1", "2", ..., "9", or "10+" for extras
+- plate_appearances, at_bats, hits, doubles, triples, home_runs, walks, strikeouts, hit_by_pitch, sacrifice_flies (INTEGER)
+- batting_avg_against, obp_against, slg_against, ops_against (REAL)
+Use this for queries like "Skubal's 1st-inning ERA" or "OPS against in the 7th inning".
+
+### pitching_tto_splits
+Pitcher performance broken down by times-through-the-order (TTO) — how many times each batter has faced this pitcher in the current game. Available for 2025-2026.
+- player_id (TEXT) — references players table (the pitcher)
+- season (INTEGER) — year
+- tto (TEXT) — "1", "2", "3", or "4+" (4+ rolls up extra encounters)
+- plate_appearances, at_bats, hits, doubles, triples, home_runs, walks, strikeouts, hit_by_pitch, sacrifice_flies (INTEGER)
+- batting_avg_against, obp_against, slg_against, ops_against (REAL)
+Use this for queries like "Skubal's OPS against 3rd time through the order" — a key analytic for starter durability.
+
 ### league_pitching_averages
 Per-season league-wide pitching averages.
 - season (INTEGER, primary key) — year
