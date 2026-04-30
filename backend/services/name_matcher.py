@@ -2073,8 +2073,24 @@ def parse_stat_definition(input_str: str) -> Optional[dict]:
     if not has_trigger:
         return None
 
-    # Reject if a player name is present
+    # Reject if the query has clear player-context markers — possessive
+    # pronouns ("his/her/their") or possessive name forms ("Judges OPS",
+    # "Judge's OPS") strongly imply a player-stat lookup, not a definition.
+    # Without this, queries like "what's Judges OPS in his first at bat of
+    # any game" match "what's" and then match_stat picks "G" out of "game".
+    if re.search(r'\b(his|her|their|whose)\b', lower):
+        return None
+    if re.search(r"\b\w+(?:'s|s')\s", lower):
+        return None
+
+    # Reject if a player name is present (also catches non-possessive forms)
     if _has_player_name(lower):
+        return None
+
+    # Reject overly long queries — real stat definitions are short ("what is
+    # OPS", "explain BABIP calculation"). 8+ word queries tend to be
+    # situational lookups that happen to contain a trigger phrase.
+    if len(lower.split()) > 8:
         return None
 
     # Try matching via stat_alias_map
