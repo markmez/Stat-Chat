@@ -573,7 +573,9 @@ async def redetect_events(
     import io, contextlib
     log_buffer = io.StringIO()
     with contextlib.redirect_stdout(log_buffer):
-        count = detect_all(DB_PATH)
+        # force=True so the manual recovery always runs, even if the
+        # got-data skip would otherwise short-circuit detection.
+        count = detect_all(DB_PATH, force=True)
     log_output = log_buffer.getvalue()
     return {
         "status": "ok",

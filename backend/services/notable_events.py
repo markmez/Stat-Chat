@@ -3528,11 +3528,15 @@ def is_detection_locked():
     return True
 
 
-def detect_all(db_path=None, season=None, from_poll=False):
+def detect_all(db_path=None, season=None, from_poll=False, force=False):
     """Run all detectors, insert results, prune old events.
 
     from_poll=True: called from the 15-min poll. Will skip if the daily
     pipeline is running (lock file present).
+
+    force=True: bypass the "no new data since last detection" skip.
+    Used by /admin/redetect for manual recovery — always re-runs detection
+    even when nothing has changed since the last successful run.
     """
     if from_poll and is_detection_locked():
         print("  Detection locked (daily pipeline running) — skipping")
@@ -3558,6 +3562,35 @@ def detect_all(db_path=None, season=None, from_poll=False):
         return 0
 
     print(f"  Latest game date: {latest_date}")
+
+    # Got-data skip: if nothing has changed in the underlying game logs
+    # since the last successful detection, the heavy pass would just
+    # re-derive the same events. Skip and let the next cron try again
+    # when MSF actually publishes new data. Cheap probe — the cron's
+    # pull_live_stats step always runs, so this only short-circuits the
+    # detection itself.
+    if not force:
+        last_date_row = conn.execute(
+            "SELECT value FROM data_freshness WHERE key = ?",
+            (f"last_detected_date_{season}",),
+        ).fetchone()
+        last_count_row = conn.execute(
+            "SELECT value FROM data_freshness WHERE key = ?",
+            (f"last_detected_count_{season}",),
+        ).fetchone()
+        current_count = conn.execute(
+            "SELECT COUNT(*) FROM game_batting_logs WHERE season = ?", (season,),
+        ).fetchone()[0] + conn.execute(
+            "SELECT COUNT(*) FROM game_pitching_logs WHERE season = ?", (season,),
+        ).fetchone()[0]
+        if (last_date_row and last_count_row
+                and last_date_row[0] == latest_date
+                and int(last_count_row[0]) == current_count):
+            print(f"  detect_all SKIP — no new data since last run "
+                  f"(latest={latest_date}, count={current_count}). "
+                  f"Pass force=True to override.")
+            conn.close()
+            return 0
 
     # Don't wipe old events — let them age out via the retention window.
     # INSERT OR IGNORE handles dedup (UNIQUE constraint on headline + date).
@@ -3861,6 +3894,27 @@ def detect_all(db_path=None, season=None, from_poll=False):
             conn = sqlite3.connect(db_path or DB_PATH)
     except Exception as e:
         print(f"  Historic moments rebuild check failed (non-fatal): {e}")
+
+    # Record that we successfully detected for this latest_date + row count.
+    # Next run's skip-check compares against these values to avoid re-detecting
+    # when nothing has changed.
+    try:
+        final_count = conn.execute(
+            "SELECT COUNT(*) FROM game_batting_logs WHERE season = ?", (season,),
+        ).fetchone()[0] + conn.execute(
+            "SELECT COUNT(*) FROM game_pitching_logs WHERE season = ?", (season,),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT OR REPLACE INTO data_freshness (key, value, season) VALUES (?, ?, ?)",
+            (f"last_detected_date_{season}", str(latest_date), str(season)),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO data_freshness (key, value, season) VALUES (?, ?, ?)",
+            (f"last_detected_count_{season}", str(final_count), str(season)),
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"  Warning: could not record detection markers: {e}")
 
     conn.close()
 

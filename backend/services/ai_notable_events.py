@@ -774,3 +774,41 @@ def generate_ai_insights(conn, season, latest_date, dry_run=False, preview=False
         pass
 
     return {"events": events, "inserted": inserted}
+
+
+def _cli():
+    """CLI entry — used by pull_live_stats to fire-and-forget AI insights
+    in a detached subprocess after the main pipeline completes. Keeps the
+    morning feed's rule-based detection on the cron critical path while
+    AI narrative generation runs in the background."""
+    import argparse
+    import sqlite3
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--db", required=True)
+    parser.add_argument("--season", type=int, required=True)
+    parser.add_argument("--latest-date", default=None,
+                        help="Override latest_date; defaults to MAX(date) in game logs")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+
+    conn = sqlite3.connect(args.db)
+    try:
+        if args.latest_date:
+            latest = args.latest_date
+        else:
+            from services.notable_events import _get_latest_date
+            latest = _get_latest_date(conn, args.season)
+        if not latest:
+            print(f"No latest_date for season {args.season}")
+            return
+        result = generate_ai_insights(conn, args.season, latest, dry_run=args.dry_run)
+        events = result.get("events", [])
+        print(f"AI insights: generated {len(events)} for {latest}")
+        if result.get("error"):
+            print(f"Error: {result['error']}")
+    finally:
+        conn.close()
+
+
+if __name__ == "__main__":
+    _cli()

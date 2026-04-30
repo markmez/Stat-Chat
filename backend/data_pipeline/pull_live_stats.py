@@ -1864,20 +1864,26 @@ def main():
         except Exception as e:
             print(f"Notable events detection failed: {e}")
 
-        # AI-powered insights (Sonnet, once per day)
-        print(f"\nGenerating AI insights...")
+        # AI-powered insights (Sonnet) — kicked off async in a detached
+        # subprocess so the rule-based feed events become visible to
+        # users as soon as the pipeline lock releases. AI narrative
+        # tends to take 5-15 min; the subprocess writes its results
+        # straight to notable_events when it completes. If it crashes,
+        # the rule-based feed is still correct.
+        print(f"\nKicking off AI insights (background)...")
         try:
-            from services.notable_events import _get_latest_date
-            from services.ai_notable_events import generate_ai_insights
-            ai_conn = sqlite3.connect(args.db)
-            latest = _get_latest_date(ai_conn, season_year)
-            if latest:
-                result = generate_ai_insights(ai_conn, season_year, latest, dry_run=False)
-                ai_events = result.get("events", [])
-                print(f"  AI insights: {len(ai_events)} generated")
-            ai_conn.close()
+            ai_log = "/data/ai_insights.log"
+            with open(ai_log, "ab") as logf:
+                subprocess.Popen(
+                    [sys.executable, "-m", "services.ai_notable_events",
+                     "--db", args.db, "--season", str(season_year)],
+                    stdout=logf, stderr=subprocess.STDOUT,
+                    close_fds=True, start_new_session=True,
+                    cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."),
+                )
+            print(f"  AI insights subprocess launched; output → {ai_log}")
         except Exception as e:
-            print(f"AI insights failed: {e}")
+            print(f"AI insights launch failed: {e}")
 
         elapsed = time.time() - t0
         print(f"\nDone in {elapsed:.1f}s")
