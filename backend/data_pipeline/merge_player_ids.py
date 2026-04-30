@@ -64,68 +64,99 @@ def _find_player_id_tables(conn):
     return sorted(tables)
 
 
-def _preflight_conflicts(conn, alias, canonical):
-    """Return list of (table, conflict_count) for tables where the merge
-    would violate a UNIQUE constraint due to overlapping rows. Empty list
-    means safe to merge."""
-    conflicts = []
+def _resolve_unique_overlaps(conn, alias, canonical, dry_run):
+    """For each UNIQUE-key conflict between alias and canonical, classify
+    as 'identical-duplicate' (delete alias's row, harmless) or 'mismatch'
+    (real data divergence — abort). Returns ([deletions_executed],
+    [mismatches]).
 
-    # season_batting_stats: UNIQUE(player_id, season)
-    n = conn.execute("""
-        SELECT COUNT(*) FROM season_batting_stats sa
-        JOIN season_batting_stats sc
-          ON sc.player_id = ? AND sc.season = sa.season
-        WHERE sa.player_id = ?
-    """, (canonical, alias)).fetchone()[0]
-    if n:
-        conflicts.append(("season_batting_stats", n))
+    Identical duplicates show up regularly during the MSF/Retrosheet
+    cutover: the same April 19 game line gets written under both ids
+    when the matcher flips mid-pull. Stats match byte-for-byte, the
+    alias row is pure redundancy.
+    """
+    deletions = []
+    mismatches = []
 
-    # season_pitching_stats: UNIQUE(player_id, season)
-    n = conn.execute("""
-        SELECT COUNT(*) FROM season_pitching_stats sa
-        JOIN season_pitching_stats sc
-          ON sc.player_id = ? AND sc.season = sa.season
-        WHERE sa.player_id = ?
-    """, (canonical, alias)).fetchone()[0]
-    if n:
-        conflicts.append(("season_pitching_stats", n))
+    def _compare_and_resolve(table, key_cols):
+        # Fetch all alias rows for this table.
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+        non_key_cols = [c for c in cols if c not in key_cols and c != "player_id"]
+        col_list = ", ".join(non_key_cols) if non_key_cols else "1"
 
-    # game_batting_logs: UNIQUE(player_id, season, date, game_number)
-    n = conn.execute("""
-        SELECT COUNT(*) FROM game_batting_logs ga
-        JOIN game_batting_logs gc
-          ON gc.player_id = ? AND gc.season = ga.season
-             AND gc.date = ga.date
-             AND COALESCE(gc.game_number, 0) = COALESCE(ga.game_number, 0)
-        WHERE ga.player_id = ?
-    """, (canonical, alias)).fetchone()[0]
-    if n:
-        conflicts.append(("game_batting_logs", n))
+        # Build a JOIN that surfaces (alias_row_values, canonical_row_values)
+        # for each conflicting unique key.
+        key_match = " AND ".join(
+            f"COALESCE(a.{k},0) = COALESCE(c.{k},0)" if k == "game_number"
+            else f"a.{k} = c.{k}"
+            for k in key_cols if k != "player_id"
+        )
+        sql = f"""
+            SELECT {", ".join(f"a.{k}" for k in key_cols if k != "player_id")},
+                   {", ".join(f"a.{c}" for c in non_key_cols) or "1"},
+                   {", ".join(f"c.{c}" for c in non_key_cols) or "1"}
+            FROM {table} a
+            JOIN {table} c ON c.player_id = ? AND {key_match}
+            WHERE a.player_id = ?
+        """
+        rows = conn.execute(sql, (canonical, alias)).fetchall()
+        kc = [k for k in key_cols if k != "player_id"]
+        for row in rows:
+            key_vals = row[:len(kc)]
+            n = len(non_key_cols) or 1
+            a_vals = row[len(kc):len(kc) + n]
+            c_vals = row[len(kc) + n:len(kc) + 2 * n]
+            if a_vals == c_vals:
+                # Identical duplicate — drop the alias's redundant row.
+                if not dry_run:
+                    where = " AND ".join(
+                        f"{k} IS ?" if v is None else f"{k} = ?"
+                        for k, v in zip(kc, key_vals)
+                    )
+                    params = [v for v in key_vals if v is not None]
+                    null_idx = [i for i, v in enumerate(key_vals) if v is None]
+                    # SQLite: `col IS NULL` instead of `col = NULL`
+                    delete_where = []
+                    delete_params = [alias]
+                    for k, v in zip(kc, key_vals):
+                        if v is None:
+                            delete_where.append(f"{k} IS NULL")
+                        else:
+                            delete_where.append(f"{k} = ?")
+                            delete_params.append(v)
+                    conn.execute(
+                        f"DELETE FROM {table} WHERE player_id = ? AND " +
+                        " AND ".join(delete_where),
+                        delete_params,
+                    )
+                deletions.append({
+                    "table": table,
+                    "key": dict(zip(kc, key_vals)),
+                    "stats_match": True,
+                })
+            else:
+                mismatches.append({
+                    "table": table,
+                    "key": dict(zip(kc, key_vals)),
+                    "alias_values": a_vals,
+                    "canonical_values": c_vals,
+                })
 
-    # game_pitching_logs: same shape
-    n = conn.execute("""
-        SELECT COUNT(*) FROM game_pitching_logs ga
-        JOIN game_pitching_logs gc
-          ON gc.player_id = ? AND gc.season = ga.season
-             AND gc.date = ga.date
-             AND COALESCE(gc.game_number, 0) = COALESCE(ga.game_number, 0)
-        WHERE ga.player_id = ?
-    """, (canonical, alias)).fetchone()[0]
-    if n:
-        conflicts.append(("game_pitching_logs", n))
+    _compare_and_resolve("season_batting_stats", ["player_id", "season"])
+    _compare_and_resolve("season_pitching_stats", ["player_id", "season"])
+    _compare_and_resolve(
+        "game_batting_logs", ["player_id", "season", "date", "game_number"]
+    )
+    _compare_and_resolve(
+        "game_pitching_logs", ["player_id", "season", "date", "game_number"]
+    )
 
-    return conflicts
+    return deletions, mismatches
 
 
 def _merge_one(conn, alias, canonical, reason, dry_run, tables):
     """Merge a single pair. Caller wraps in transaction."""
     summary = {"alias": alias, "canonical": canonical, "tables": {}}
-
-    conflicts = _preflight_conflicts(conn, alias, canonical)
-    if conflicts:
-        summary["error"] = "preflight conflicts"
-        summary["conflicts"] = conflicts
-        return summary
 
     # Verify both ids exist (canonical must exist; alias may already be merged)
     canon_exists = conn.execute(
@@ -141,6 +172,16 @@ def _merge_one(conn, alias, canonical, reason, dry_run, tables):
     if not alias_exists:
         summary["error"] = f"alias {alias!r} not found in players (already merged?)"
         return summary
+
+    # Resolve UNIQUE-key overlaps. Identical duplicates get dropped from
+    # the alias side; mismatches abort the pair.
+    deletions, mismatches = _resolve_unique_overlaps(conn, alias, canonical, dry_run)
+    if mismatches:
+        summary["error"] = "data mismatch on overlapping unique keys"
+        summary["mismatches"] = mismatches
+        return summary
+    if deletions:
+        summary["resolved_duplicates"] = len(deletions)
 
     # Per-table UPDATE pass
     for tbl in tables:
