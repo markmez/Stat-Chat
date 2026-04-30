@@ -783,6 +783,71 @@ async def backup_db(
         raise HTTPException(500, str(e))
 
 
+class MergePlayerIdsRequest(BaseModel):
+    pairs: list[list[str]]   # [[alias, canonical, reason], ...]
+    dry_run: bool = True
+
+
+@router.post("/merge-player-ids")
+async def merge_player_ids(
+    body: MergePlayerIdsRequest,
+    authorization: str | None = Header(None),
+):
+    """Run the player-id merge for an approved list of pairs. Defaults to
+    dry-run; pass dry_run=false to actually mutate. Each pair runs in
+    its own transaction. Conflict-checked before any UPDATE so a single
+    bad pair can't poison the rest.
+
+    After a successful (non-dry-run) merge, you should rebuild the
+    derived tables: career_ranks (POST /admin/rebuild-career-ranks),
+    records (POST /admin/rebuild-records), historical_streaks if used."""
+    verify_admin(authorization)
+    if not body.pairs:
+        raise HTTPException(400, "pairs list is empty")
+
+    # Run in-process — same DB file the API is using. That's fine because
+    # each pair is its own short transaction; long-running queries don't
+    # block since we're not holding any single transaction across pairs.
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from data_pipeline.merge_player_ids import merge
+
+    try:
+        results = merge(DB_PATH, body.pairs, dry_run=body.dry_run)
+        return {
+            "status": "ok",
+            "dry_run": body.dry_run,
+            "results": results,
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.delete("/delete-backup")
+async def delete_backup(
+    filename: str = "",
+    authorization: str | None = Header(None),
+):
+    """Delete a specific backup file created by /admin/backup-db.
+    Only filenames matching the backup pattern are accepted, so this
+    endpoint can't be misused to remove the live DB or anything else."""
+    verify_admin(authorization)
+    if not filename:
+        raise HTTPException(400, "filename required")
+    # Strict pattern match — only files created by /admin/backup-db.
+    import re
+    if not re.fullmatch(
+        r"baseball_stats_full-backup-\d{8}T\d{6}Z-[\w\-]+\.db",
+        filename,
+    ):
+        raise HTTPException(400, f"filename {filename!r} does not match backup pattern")
+    path = os.path.join(os.path.dirname(DB_PATH), filename)
+    if not os.path.exists(path):
+        raise HTTPException(404, f"no such backup: {path}")
+    size_mb = os.path.getsize(path) // 1_000_000
+    os.remove(path)
+    return {"status": "ok", "deleted": path, "freed_mb": size_mb}
+
+
 @router.get("/audit-split-ids")
 async def audit_split_ids(
     authorization: str | None = Header(None),
