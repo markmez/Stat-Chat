@@ -171,10 +171,25 @@ def _get_stored_team(cursor, player_id):
     return row[0] if row else None
 
 
+def _redirect_alias(cursor, pid):
+    """If `pid` is the alias id of a merged player, return the canonical id
+    instead. Belt-and-suspenders so future pulls always land on canonical
+    even if the matcher resolves to an alias id somehow."""
+    if not pid:
+        return pid
+    cursor.execute(
+        "SELECT canonical_id FROM player_id_aliases WHERE alias_id = ?", (pid,)
+    )
+    row = cursor.fetchone()
+    return row[0] if row else pid
+
+
 def find_or_create_player(cursor, player_info, team_abbrev, season):
     """Find existing player by name or create a new entry. Returns player_id.
     Uses accent-insensitive matching and temporal plausibility checks to avoid
-    mapping modern players to historical entries with the same name."""
+    mapping modern players to historical entries with the same name. Final
+    return is run through `_redirect_alias` so merged players always land on
+    their canonical id."""
     first = player_info.get("firstName", "")
     last = player_info.get("lastName", "")
     full_name = f"{first} {last}".strip()
@@ -221,7 +236,7 @@ def find_or_create_player(cursor, player_info, team_abbrev, season):
         else:
             cursor.execute("UPDATE players SET team = ? WHERE player_id = ?",
                            (retro_team(team_abbrev), pid))
-        return pid
+        return _redirect_alias(cursor, pid)
 
     # Try last name + first initial match (with temporal check)
     cursor.execute("SELECT player_id, name FROM players WHERE name LIKE ?",
@@ -231,7 +246,7 @@ def find_or_create_player(cursor, player_info, team_abbrev, season):
     if len(plausible) == 1:
         cursor.execute("UPDATE players SET team = ? WHERE player_id = ?",
                         (retro_team(team_abbrev), plausible[0][0]))
-        return plausible[0][0]
+        return _redirect_alias(cursor, plausible[0][0])
 
     # Create new player entry
     pid = build_player_id(player_info)
@@ -254,7 +269,7 @@ def find_or_create_player(cursor, player_info, team_abbrev, season):
         "INSERT OR IGNORE INTO players (player_id, name, team, positions, bats, throws) VALUES (?, ?, ?, ?, ?, ?)",
         (pid, full_name, retro_team(team_abbrev), position, bats, throws),
     )
-    return pid
+    return _redirect_alias(cursor, pid)
 
 
 def pull_season_batting(conn, season_str):
