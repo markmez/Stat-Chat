@@ -3735,9 +3735,14 @@ def detect_all(db_path=None, season=None, from_poll=False):
     except Exception as e:
         print(f"    Matchup previews failed: {e}")
 
-    # On This Date — historic moments from today's date in past years
+    # On This Date — historic moments from the LATEST GAME DATE's month-day
+    # in past years. Pre-fix this used calendar `date.today()`, which tagged
+    # OTD events with today's date even when the latest game was a day or
+    # two earlier — and the feed's "skip OTD-only days" filter then
+    # suppressed the entire OTD bucket. Anchoring on latest_date keeps OTD
+    # events on the same day as the game-action events they should accompany.
     print("  Running On This Date...")
-    otd_events = detect_on_this_date(conn, season, latest_date)
+    otd_events = detect_on_this_date(conn, season, latest_date, target_date=latest_date)
     events += otd_events
     print(f"    On This Date: {len(otd_events)} events")
 

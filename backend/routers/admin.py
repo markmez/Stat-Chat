@@ -822,6 +822,75 @@ async def merge_player_ids(
         raise HTTPException(500, str(e))
 
 
+@router.post("/backfill-otd")
+async def backfill_otd(
+    days: int = 14,
+    authorization: str | None = Header(None),
+):
+    """Generate On-This-Date events for each past `days` worth of dates that
+    already have game-action events but no OTD entries. Pre-bug fix, OTD
+    only landed on `date.today()`; this catches up the missing dates so the
+    feed shows OTD on the day the games happened, not just today.
+
+    Idempotent — uses the same INSERT OR IGNORE / dedup that detect_all uses,
+    so re-running won't create dupes."""
+    verify_admin(authorization)
+    from datetime import date, timedelta
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from services.notable_events import detect_on_this_date
+
+    conn = sqlite3.connect(DB_PATH, timeout=60)
+    try:
+        # Find recent dates that have events but no OTD entries.
+        rows = conn.execute("""
+            SELECT DISTINCT game_date FROM notable_events
+            WHERE game_date >= ?
+              AND detection_type != 'on_this_date'
+              AND game_date NOT IN (
+                  SELECT game_date FROM notable_events
+                  WHERE detection_type = 'on_this_date'
+              )
+            ORDER BY game_date DESC
+            LIMIT ?
+        """, ((date.today() - timedelta(days=days)).isoformat(), days)).fetchall()
+        target_dates = [r[0] for r in rows]
+        if not target_dates:
+            return {"status": "ok", "filled": 0, "dates": []}
+
+        season = int(target_dates[0][:4])
+        per_date = []
+        total_inserted = 0
+        for td in target_dates:
+            otd = detect_on_this_date(conn, season, td, target_date=td)
+            inserted = 0
+            for ev in otd:
+                # Mirror notable_events writeback semantics: INSERT OR IGNORE
+                # on (detection_type, game_date, headline) UNIQUE.
+                try:
+                    cur = conn.execute("""
+                        INSERT OR IGNORE INTO notable_events
+                          (detection_type, game_date, headline, detail, category,
+                           player_names, team_names, priority)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        ev["detection_type"], ev["game_date"], ev["headline"],
+                        ev.get("detail", ""), ev["category"],
+                        json.dumps(ev.get("player_names", [])),
+                        json.dumps(ev.get("team_names", [])),
+                        ev.get("priority", 3),
+                    ))
+                    if cur.rowcount > 0:
+                        inserted += 1
+                except sqlite3.OperationalError:
+                    pass  # column mismatch — skip this row
+            conn.commit()
+            per_date.append({"date": td, "generated": len(otd), "inserted": inserted})
+            total_inserted += inserted
+        return {"status": "ok", "filled": total_inserted, "dates": per_date}
+    finally:
+        conn.close()
+
+
 class RestoreDerivedRequest(BaseModel):
     backup_filename: str
     dry_run: bool = True
