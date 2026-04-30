@@ -874,12 +874,15 @@ async def restore_merged_derived_rows(
         "head_to_head", "deep_scan_cooldowns",
     ]
 
+    import logging
+    log = logging.getLogger("statchat.admin")
     conn = sqlite3.connect(DB_PATH, timeout=60)
     try:
-        # ATTACH doesn't take parameter binding for the path on all SQLite
-        # versions; inline the (already-validated) path. Path passed
-        # through the regex check above so it's safe to interpolate.
-        conn.execute(f"ATTACH DATABASE '{backup_path}' AS bak")
+        try:
+            conn.execute(f"ATTACH DATABASE '{backup_path}' AS bak")
+        except Exception as e:
+            log.exception("restore_merged_derived_rows ATTACH failed")
+            raise HTTPException(500, f"ATTACH failed: {e}")
         try:
             aliases = conn.execute(
                 "SELECT alias_id, canonical_id FROM player_id_aliases"
@@ -928,8 +931,16 @@ async def restore_merged_derived_rows(
             if not body.dry_run:
                 conn.commit()
             return {"status": "ok", "dry_run": body.dry_run, "results": results}
+        except HTTPException:
+            raise
+        except Exception as e:
+            log.exception("restore_merged_derived_rows body failed")
+            raise HTTPException(500, f"restore body: {e}")
         finally:
-            conn.execute("DETACH DATABASE bak")
+            try:
+                conn.execute("DETACH DATABASE bak")
+            except Exception:
+                pass
     finally:
         conn.close()
 
