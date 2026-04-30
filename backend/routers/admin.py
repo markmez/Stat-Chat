@@ -876,7 +876,10 @@ async def restore_merged_derived_rows(
 
     conn = sqlite3.connect(DB_PATH, timeout=60)
     try:
-        conn.execute(f"ATTACH DATABASE ? AS bak", (backup_path,))
+        # ATTACH doesn't take parameter binding for the path on all SQLite
+        # versions; inline the (already-validated) path. Path passed
+        # through the regex check above so it's safe to interpolate.
+        conn.execute(f"ATTACH DATABASE '{backup_path}' AS bak")
         try:
             aliases = conn.execute(
                 "SELECT alias_id, canonical_id FROM player_id_aliases"
