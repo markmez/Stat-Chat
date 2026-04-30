@@ -1175,9 +1175,20 @@ def detect_career_milestones(conn, season, latest_date):
 
     Only triggers when the player contributed to the milestone stat in
     their most recent game (e.g., hit a HR → show HR milestone proximity).
-    Capped at 5 away from milestone.
+    Capped at 5 away from milestone, except for the lower-tier milestones
+    in `_LOW_MILESTONE_TIGHT_THRESHOLDS` which fire at 1-away only — at
+    that level, "5 away" gets noisy because plenty of players approach
+    100 HR / 100 W in a season without it being headline-worthy.
     """
     events = []
+
+    # Lower-tier milestones where the 5-away "approaching" event reads as
+    # noise rather than newsworthy. Only fire when the player is exactly
+    # 1 away (or has just crossed). Keys are (col, milestone) tuples.
+    _LOW_MILESTONE_TIGHT_THRESHOLDS = {
+        ("home_runs", 100), ("home_runs", 200),
+        ("wins", 100), ("wins", 150),
+    }
 
     # Batting milestones: (career_col, game_log_col, milestones, label, action_template)
     # action_template: lambda(game_value) -> "hit 2 home runs"
@@ -1225,7 +1236,10 @@ def detect_career_milestones(conn, season, latest_date):
             game_date, stat_val = contributor_info[pid]
             for m in milestones:
                 remaining = m - total
-                if 1 <= remaining <= 5:
+                # Lower-tier milestones (100/200 HR, 100/150 W) only fire at
+                # 1-away to avoid noise; everything else uses the standard 5.
+                approach_max = 1 if (col, m) in _LOW_MILESTONE_TIGHT_THRESHOLDS else 5
+                if 1 <= remaining <= approach_max:
                     # Approaching milestone
                     action = action_fn(stat_val)
                     if col == "hits":
@@ -1325,7 +1339,11 @@ def detect_career_milestones(conn, season, latest_date):
             game_date, stat_val = contributor_info[pid]
             for m in milestones:
                 remaining = m - total
-                if 1 <= remaining <= 5:
+                # Same lower-tier tightening: 100 W and 150 W only fire at
+                # 1-away. (The set is shared with batting; pitching wins
+                # share the wins->100/150 entries.)
+                approach_max = 1 if (col, m) in _LOW_MILESTONE_TIGHT_THRESHOLDS else 5
+                if 1 <= remaining <= approach_max:
                     # Approaching milestone
                     action = action_fn(stat_val)
                     events.append({
@@ -1821,7 +1839,9 @@ def _pelt_streak_headline(name, num_games, quality, stats_phrase, mlb_comp, team
     num_games = int(num_games)
     if num_games < 15:
         if quality == "torrid":
-            opener = f"{name} has been torrid over his last {num_games} games"
+            # "has been torrid" reads as misuse of the adjective. "Torrid"
+            # naturally pairs with a noun ("torrid pace", "torrid stretch").
+            opener = f"{name} is on a torrid pace over his last {num_games} games"
         else:
             opener = f"{name} has been locked in over his last {num_games} games"
     else:
@@ -1832,13 +1852,17 @@ def _pelt_streak_headline(name, num_games, quality, stats_phrase, mlb_comp, team
 
     sentences = [f"{opener} — {stats_phrase}"]
 
+    # Comparisons are anchored on OPS (see _find_feed_pelt_comp). Naming the
+    # metric explicitly avoids vague antecedents like "Best such stretch" /
+    # "Longest by a Diamondback" that leave readers guessing what's being
+    # measured.
     if mlb_comp:
         sentences.append(
-            f"Best such stretch by any player since {mlb_comp['name']} in {mlb_comp['season']}"
+            f"Best OPS over such a stretch by any player since {mlb_comp['name']} in {mlb_comp['season']}"
         )
     if team_comp and franchise_name:
         sentences.append(
-            f"Longest by a {franchise_name} since {team_comp['name']} in {team_comp['season']}"
+            f"Best OPS by a {franchise_name} over such a stretch since {team_comp['name']} in {team_comp['season']}"
         )
 
     # Join: first sentence ends at em-dash phrase, rest are separate sentences.

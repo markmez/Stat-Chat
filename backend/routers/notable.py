@@ -103,10 +103,13 @@ _PRESENT_TO_PAST = {
 
 
 def _to_past_tense(text):
-    """Convert -ing verbs in a clause to past tense, when used as the main
-    action of a statement (not as a subordinate clause)."""
+    """Convert -ing verbs in a clause to past tense, but only when used as
+    the MAIN action (anchored at the start of the impact text). Participles
+    that appear mid-clause as continuations — e.g. "...his first 10-K game,
+    matching his season high" — must stay in -ing form so the joined
+    sentence reads correctly under a lead-in like "By striking out 10, ..."""
     for pres, past in _PRESENT_TO_PAST.items():
-        text = re.sub(rf"\b{pres}\b", past, text)
+        text = re.sub(rf"^(\s*){pres}\b", rf"\1{past}", text)
     return text
 
 
@@ -120,11 +123,13 @@ _REDUNDANT_PREFIX_PATTERNS = [
     # "That's his Nth career multi-HR games, passing X" — Schwarber-style
     re.compile(r"^That's his \d+(?:st|nd|rd|th) career [\w-]+(?: games)?,\s*", re.I),
     # "He went X-for-Y[ with anything], taking the lead" — strip stat line
-    # before a participle pivot (taking/passing/reaching/etc.)
-    re.compile(r"^He went \d+-for-\d+(?:\s+with[^,]+(?:,\s+\d+\s+\w+)*)?,\s*(?=taking|passing|reaching|tying|matching|joining|extending|setting|marking)", re.I),
-    re.compile(r"^He threw [\d.]+ (?:scoreless\s+)?(?:IP|innings)(?:\s+with[^,]+)?,\s*(?=taking|passing|reaching|tying|matching|joining|extending|setting|marking)", re.I),
+    # before a participle pivot. Past-tense forms (took/passed/etc.) included
+    # because rule-based detectors emit past tense; without that branch, a
+    # restated stat line survives ahead of the impact.
+    re.compile(r"^He went \d+-for-\d+(?:\s+with[^,]+(?:,\s+\d+\s+\w+)*)?,\s*(?=taking|passing|reaching|tying|matching|joining|extending|setting|marking|took|passed|reached|tied|matched|joined|extended|set\b|marked)", re.I),
+    re.compile(r"^He threw [\d.]+ (?:scoreless\s+)?(?:IP|innings)(?:\s+with[^,]+)?,\s*(?=taking|passing|reaching|tying|matching|joining|extending|setting|marking|took|passed|reached|tied|matched|joined|extended|set\b|marked)", re.I),
     # "He went 5.2 IP, 2 H, 0 ER, 8 K, W, taking the lead"
-    re.compile(r"^He went [\d.]+\s+IP[,\s\d\w]*?,\s*(?=taking|passing|reaching|tying|matching|joining)", re.I),
+    re.compile(r"^He went [\d.]+\s+IP[,\s\d\w]*?,\s*(?=taking|passing|reaching|tying|matching|joining|took|passed|reached|tied|matched|joined)", re.I),
     # "He picked up a win, and is now N away" — strip the "picked up a win, and "
     # because the lead-in already says "By picking up the win,"
     re.compile(r"^He (?:picked up a win|earned a win|notched a save|recorded a save|hit (?:a|\d+) (?:homer|home run|home runs)|drove in \d+ runs?|stole (?:a|\d+) base|collected \d+ hits?|struck out \d+),?\s+(?:and\s+)?", re.I),
@@ -138,6 +143,58 @@ _REDUNDANT_PREFIX_PATTERNS = [
     # qs_streak: "He went X.X IP, N ER, N K and " — keep "now has N consecutive..."
     re.compile(r"^He went [\d.]+ IP,\s*\d+\s*ER,\s*\d+\s*K and (?=now has)", re.I),
 ]
+
+
+# Detection types whose underlying fact is still ongoing as of latest_date.
+# When the impact narrates context for these, prefer present tense ("that's
+# the longest…") over past ("that was the longest…").
+_ACTIVE_STATE_DETECTION_TYPES = {
+    "hitting_streak", "on_base_streak", "hr_streak", "scoreless_streak",
+    "qs_streak", "current_form", "season_pace", "pace_home_runs",
+    "pace_home_runs_50", "pace_home_runs_60", "pace_home_runs_70", "pace_home_runs_80",
+    "pace_stolen_bases_50", "pace_stolen_bases_60", "pace_stolen_bases_70",
+}
+
+
+# After stripping prefixes and past-tensing connector verbs, run this pass
+# to clean up common AI-generated grammar slips that the verifier doesn't
+# catch (missing auxiliary "is", missing season qualifier, lone "now has X"
+# without subject pronoun).
+def _normalize_phrasings(text: str) -> str:
+    if not text:
+        return text
+    # "and on pace for N" without preceding "is" — common Sonnet slip.
+    # Pattern: word boundary, "and", whitespace, "on pace for", but only when
+    # not already preceded by "is".
+    text = re.sub(r"(?i)\band on pace for\b", "and is on pace for", text)
+    # "now has 9 homers" / "now has 4 HR" without subject pronoun.
+    if re.match(r"(?i)^now has\b", text):
+        text = "he " + text
+    # "on pace for N" without season qualifier — append "this season" so the
+    # timeframe is unambiguous. Skip if already qualified. The number group
+    # `[\d,]+` handles comma-grouped totals (1,000 hits) which a bare \d
+    # would chop at the comma.
+    has_qualifier = re.search(
+        r"(?i)on pace for\s+[\d,]+[\w\s\-]*?\b(this season|this year|by season's end|on the year|on the season)\b",
+        text,
+    )
+    if not has_qualifier and re.search(r"(?i)\bon pace for\s+\d", text):
+        # Find "on pace for N {optional unit}" and append "this season" before
+        # the next punctuation/clause boundary. The number regex
+        # `\d+(?:,\d+)*` matches integer/comma forms (54, 1,000) without
+        # eating a terminal sentence period that follows.
+        text = re.sub(
+            r"(?i)(on pace for\s+[\d,]+(?:\s+[a-z\-]+){0,3})(?=[\.,;:]|$| and | which )",
+            r"\1 this season",
+            text,
+            count=1,
+        )
+    # If the impact rides under a "By X-ing N, ..." lead-in (caller will join
+    # with comma) and the impact starts with "matched"/"tied"/"extended"/etc.,
+    # the participle form ("matching"/"tying"/"extending") reads better.
+    # Caller passes in via the `_continuation_form` helper below — leave text
+    # unchanged here (transform happens in the merge step).
+    return text
 
 
 # Past-tense verbs that the impact often starts with after stripping. We use
@@ -329,16 +386,25 @@ def _detect_stat_from_headline(headline):
     return None
 
 
-def _ensure_subject(text):
+def _ensure_subject(text, *, active_state: bool = False):
     """Ensure the impact text starts with a subject (he/that/it). If it starts
     with a bare verb or "is/has", prepend "he ". If it starts with a noun
-    phrase like 'the first', prepend "that was "."""
+    phrase like 'the first', prepend "that was " (or "that's" for active state).
+
+    `active_state=True` means the underlying fact is still ongoing (active
+    hitting/on-base streak, current pace, ranking that hasn't ended). Use
+    "that's" instead of "that was" so the tense matches reality.
+    """
     if not text:
         return text
     # Slash-line fragment like ".364/.533/.955 with 4 HR over 7 games" —
     # needs a subject + verb to stand alone.
     if re.match(r"^\.?\d+\s*/\s*\.?\d+\s*/\s*\.?\d+", text):
         return "he's hitting " + text
+    # Ordinal-rank starts like "18th-longest in the last 100+ years" or
+    # "5th most HR ever" — abrupt without a "It's the" intro.
+    if re.match(r"^\d+(?:st|nd|rd|th)[\s\-]", text, re.I):
+        return "It's the " + text[0].lower() + text[1:]
     first = text.split()[0].lower().rstrip(",.")
     # Already has a subject
     if first in ("he", "she", "they", "that", "this", "it"):
@@ -349,7 +415,8 @@ def _ensure_subject(text):
         first_clause = " ".join(text.split()[:10]).lower()
         if any(f" {v} " in f" {first_clause} " for v in ("is", "was", "has", "had", "are", "were")):
             return text[0].upper() + text[1:]
-        return "that was " + text[0].lower() + text[1:]
+        prefix = "that's " if active_state else "that was "
+        return prefix + text[0].lower() + text[1:]
     return text
 
 
@@ -399,8 +466,12 @@ def _format_impact(headline, player_name, detection_type, today_stats):
 
     # Strip any "He now has N career X, " or "He picked up a win, " restatement
     impact_text = _strip_redundant_prefix(impact_text)
-    # Past-tense the connector verbs
-    impact_text = _to_past_tense(impact_text)
+    active_state = detection_type in _ACTIVE_STATE_DETECTION_TYPES
+    # Past-tense the connector verbs (skip for active-state events to keep
+    # "matching X's run" rather than "matched X's run" when the streak lives).
+    if not active_state:
+        impact_text = _to_past_tense(impact_text)
+    impact_text = _normalize_phrasings(impact_text)
     impact_text = impact_text.strip()
     if not impact_text:
         return ""
@@ -416,7 +487,7 @@ def _format_impact(headline, player_name, detection_type, today_stats):
         lead_in = _lead_in_for_stat(stat_key, count)
 
     # Ensure the impact has a subject (he / that / it)
-    impact_text = _ensure_subject(impact_text)
+    impact_text = _ensure_subject(impact_text, active_state=active_state)
 
     if lead_in:
         # After comma, the impact should start lowercase
@@ -432,9 +503,14 @@ def _format_impact(headline, player_name, detection_type, today_stats):
     return sentence
 
 
-def _extract_raw_impact(headline, player_name):
+def _extract_raw_impact(headline, player_name, *, preserve_present_tense: bool = False):
     """Extract just the impact clause (no lead-in, no terminal period).
-    Used when combining multiple impacts under one shared lead-in."""
+    Used when combining multiple impacts under one shared lead-in.
+
+    `preserve_present_tense=True` skips the past-tense conversion — useful
+    for active-state events (current streaks, ongoing pace) where "matching
+    Aaron's run" reads better than "matched Aaron's run" because the streak
+    is still alive."""
     h = headline.strip()
     if "—" in h:
         impact_text = h.split("—", 1)[1].strip()
@@ -449,7 +525,9 @@ def _extract_raw_impact(headline, player_name):
         else:
             return ""
     impact_text = _strip_redundant_prefix(impact_text)
-    impact_text = _to_past_tense(impact_text)
+    if not preserve_present_tense:
+        impact_text = _to_past_tense(impact_text)
+    impact_text = _normalize_phrasings(impact_text)
     impact_text = impact_text.strip().rstrip(".!?,;: ")
     return impact_text
 
@@ -520,10 +598,20 @@ def _merge_player_events(conn, group, player_name, game_date):
     sentences = []
     for stat in stat_order:
         events = by_stat[stat]
+        # Detect whether ANY event in this group is active-state (active streak,
+        # ongoing pace). When yes, preserve present tense across the impacts so
+        # the prose says "that's the longest" / "matching X's run" instead of
+        # "that was the longest" / "matched X's run".
+        group_active_state = any(
+            e.get("_type", "") in _ACTIVE_STATE_DETECTION_TYPES for e in events
+        )
         # Extract raw impact for each event in this stat group
         raw_impacts = []
         for e in events:
-            impact = _extract_raw_impact(e["headline"], player_name)
+            impact = _extract_raw_impact(
+                e["headline"], player_name,
+                preserve_present_tense=group_active_state,
+            )
             if impact and impact not in raw_impacts:
                 raw_impacts.append(impact)
         # Drop impacts that are substrings of other impacts (e.g., bare slash
@@ -539,7 +627,7 @@ def _merge_player_events(conn, group, player_name, game_date):
             lead_in = _lead_in_for_stat(stat, count)
 
         # Combine impacts: first keeps its subject; rest get stripped and joined
-        first = _ensure_subject(raw_impacts[0])
+        first = _ensure_subject(raw_impacts[0], active_state=group_active_state)
         if len(raw_impacts) == 1:
             body = first
         elif len(raw_impacts) == 2:

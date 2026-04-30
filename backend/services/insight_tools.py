@@ -14,23 +14,62 @@ import sqlite3
 
 # ---------- Tool implementations ----------
 
+# Split-ID groups: these represent the SAME player whose career is split
+# across multiple player_id rows (Retrosheet vs MSF, parent/child name
+# overlap, etc.). When any tool needs a "career total" for a player_id in
+# one of these groups, it must aggregate across ALL ids in the group —
+# otherwise we get false "first career HR" claims for established veterans.
+#
+# Source: long-standing player ID issues catalogued in CLAUDE.md and
+# memory/baseball-stats.md. The proper fix is merging IDs in the players
+# table; this is the tactical workaround until that ships.
+_SPLIT_ID_GROUPS = [
+    # Bobby Witt Jr.: Jr. data under father's Retrosheet name 2022-24,
+    # then MSF assigned a fresh id for 2025-26.
+    {"wittb002", "wittjb001"},
+    # Jazz Chisholm Jr.: Retrosheet "Jazz Chisholm" through 2024,
+    # MSF "Jasrado Chisholm Jr." for 2025-26.
+    {"chisj001", "chishj001"},
+    # Ronald Acuña Jr.: Retrosheet "Ronald Acuna" through 2024,
+    # MSF "Ronald Acuña Jr." (with accent) for 2025-26.
+    {"acunr001", "acuñar001"},
+]
+_SPLIT_ID_LOOKUP = {pid: group for group in _SPLIT_ID_GROUPS for pid in group}
+
+
+def _aliased_player_ids(player_id: str) -> list:
+    """Return all player_ids that represent the same real-world player.
+    Always includes the input id; adds split-group siblings if any."""
+    group = _SPLIT_ID_LOOKUP.get(player_id)
+    if group:
+        return sorted(group)
+    return [player_id]
+
+
 def get_player_career_summary(conn: sqlite3.Connection, player_id: str) -> dict:
-    """Career totals + season count + debut year + current team."""
-    bat = conn.execute("""
+    """Career totals + season count + debut year + current team.
+
+    Aggregates across known split-id siblings (`_SPLIT_ID_GROUPS`) so
+    veteran players with fragmented ids return correct career totals.
+    """
+    ids = _aliased_player_ids(player_id)
+    placeholders = ",".join("?" * len(ids))
+
+    bat = conn.execute(f"""
         SELECT COALESCE(SUM(home_runs),0), COALESCE(SUM(hits),0),
                COALESCE(SUM(rbi),0), COALESCE(SUM(stolen_bases),0),
                COALESCE(SUM(runs),0), COALESCE(SUM(walks),0),
                COUNT(DISTINCT season), MIN(season), MAX(season)
-        FROM season_batting_stats WHERE player_id = ?
-    """, (player_id,)).fetchone()
+        FROM season_batting_stats WHERE player_id IN ({placeholders})
+    """, ids).fetchone()
 
-    pitch = conn.execute("""
+    pitch = conn.execute(f"""
         SELECT COALESCE(SUM(wins),0), COALESCE(SUM(losses),0),
                COALESCE(SUM(saves),0), COALESCE(SUM(strikeouts),0),
                COALESCE(SUM(games_started),0),
                COUNT(DISTINCT season), MIN(season), MAX(season)
-        FROM season_pitching_stats WHERE player_id = ?
-    """, (player_id,)).fetchone()
+        FROM season_pitching_stats WHERE player_id IN ({placeholders})
+    """, ids).fetchone()
 
     name_row = conn.execute(
         "SELECT name, team FROM players WHERE player_id = ?", (player_id,)
