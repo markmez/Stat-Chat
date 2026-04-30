@@ -743,7 +743,9 @@ async def backup_db(
     from datetime import datetime
     safe_label = "".join(c if c.isalnum() or c in "-_" else "-" for c in label)[:64]
     ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-    s3_path = f"s3://stat-chat/backups/baseball_stats_full-{ts}-{safe_label}.db"
+    # Backup filename in the bucket root (the IAM policy only grants put
+    # on the existing bucket root, not arbitrary prefixes).
+    s3_path = f"s3://stat-chat/baseball_stats_full-backup-{ts}-{safe_label}.db"
     try:
         result = await _run_subprocess(
             ["aws", "s3", "cp", DB_PATH, s3_path],
