@@ -130,6 +130,11 @@ _REDUNDANT_PREFIX_PATTERNS = [
     re.compile(r"^He threw [\d.]+ (?:scoreless\s+)?(?:IP|innings)(?:\s+with[^,]+)?,\s*(?=taking|passing|reaching|tying|matching|joining|extending|setting|marking|took|passed|reached|tied|matched|joined|extended|set\b|marked)", re.I),
     # "He went 5.2 IP, 2 H, 0 ER, 8 K, W, taking the lead"
     re.compile(r"^He went [\d.]+\s+IP[,\s\d\w]*?,\s*(?=taking|passing|reaching|tying|matching|joining|took|passed|reached|tied|matched|joined)", re.I),
+    # "He threw 5.2 IP, 2 ER, 9 K, taking the lead" — historical_scan
+    # output uses "threw" instead of "went". Same shape as the line above
+    # but with the alternate verb. Without this, multi-comma pitching stat
+    # lines from threw-formatted headlines survive ahead of the impact.
+    re.compile(r"^He threw [\d.]+\s+(?:IP|innings)[,\s\d\w]*?,\s*(?=taking|passing|reaching|tying|matching|joining|took|passed|reached|tied|matched|joined)", re.I),
     # "He picked up a win, and is now N away" — strip the "picked up a win, and "
     # because the lead-in already says "By picking up the win,"
     re.compile(r"^He (?:picked up a win|earned a win|notched a save|recorded a save|hit (?:a|\d+) (?:homer|home run|home runs)|drove in \d+ runs?|stole (?:a|\d+) base|collected \d+ hits?|struck out \d+),?\s+(?:and\s+)?", re.I),
