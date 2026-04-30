@@ -3571,11 +3571,11 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False):
     # detection itself.
     if not force:
         last_date_row = conn.execute(
-            "SELECT value FROM data_freshness WHERE key = ?",
+            "SELECT updated_at FROM data_freshness WHERE key = ?",
             (f"last_detected_date_{season}",),
         ).fetchone()
         last_count_row = conn.execute(
-            "SELECT value FROM data_freshness WHERE key = ?",
+            "SELECT updated_at FROM data_freshness WHERE key = ?",
             (f"last_detected_count_{season}",),
         ).fetchone()
         current_count = conn.execute(
@@ -3905,11 +3905,11 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False):
             "SELECT COUNT(*) FROM game_pitching_logs WHERE season = ?", (season,),
         ).fetchone()[0]
         conn.execute(
-            "INSERT OR REPLACE INTO data_freshness (key, value, season) VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO data_freshness (key, updated_at, season) VALUES (?, ?, ?)",
             (f"last_detected_date_{season}", str(latest_date), str(season)),
         )
         conn.execute(
-            "INSERT OR REPLACE INTO data_freshness (key, value, season) VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO data_freshness (key, updated_at, season) VALUES (?, ?, ?)",
             (f"last_detected_count_{season}", str(final_count), str(season)),
         )
         conn.commit()
