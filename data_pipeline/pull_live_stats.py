@@ -45,6 +45,28 @@ MSF_TO_RETRO_TEAM = {
     "MIA": "MIA", "OAK": "OAK",
 }
 
+# UTC offsets for each MLB venue during DST (which spans the entire MLB
+# regular season). Used to derive day/night from start_time_utc against the
+# home venue's local clock. ARI does not observe DST and is year-round -7
+# (matches PDT in summer). Both legacy and current Retrosheet codes are
+# included (ANA/LAA for Anaheim, OAK/ATH for Athletics).
+TEAM_TZ_OFFSET = {
+    # Eastern (UTC-4 during DST)
+    "NYA": -4, "NYN": -4, "BOS": -4, "BAL": -4, "WAS": -4,
+    "PHI": -4, "ATL": -4, "MIA": -4, "TBA": -4, "TOR": -4,
+    "PIT": -4, "CIN": -4, "DET": -4, "CLE": -4,
+    # Central (UTC-5 during DST)
+    "CHA": -5, "CHN": -5, "MIL": -5, "MIN": -5, "KCA": -5,
+    "SLN": -5, "HOU": -5, "TEX": -5,
+    # Mountain (UTC-6 during DST)
+    "COL": -6,
+    # Arizona — no DST, year-round UTC-7
+    "ARI": -7,
+    # Pacific (UTC-7 during DST)
+    "LAN": -7, "ANA": -7, "LAA": -7, "SDN": -7, "SFN": -7,
+    "SEA": -7, "OAK": -7, "ATH": -7,
+}
+
 
 def msf_get(endpoint, params=None):
     """Make an authenticated GET request to MySportsFeeds API."""
@@ -832,6 +854,18 @@ def pull_team_game_results(conn, season_str):
         team_date_count[key_away] = away_game_num + 1
         team_date_count[key_home] = home_game_num + 1
 
+        # Day/night from the home venue's local clock. Games starting before
+        # 17:00 (5 PM) local are "day". Falls back to ET (-4) if home_team
+        # isn't in TEAM_TZ_OFFSET — should never happen for real MLB games.
+        daynight = None
+        try:
+            hour_utc = int(start[11:13])
+            tz_offset = TEAM_TZ_OFFSET.get(home_team, -4)
+            local_hour = (hour_utc + tz_offset) % 24
+            daynight = "day" if 6 <= local_hour < 17 else "night"
+        except Exception:
+            pass
+
         # Two rows per game
         for team, opponent, is_home, t_runs, o_runs, gnum in (
             (away_team, home_team, 0, away_runs, home_runs, away_game_num),
@@ -843,16 +877,6 @@ def pull_team_game_results(conn, season_str):
                 result = "L"
             else:
                 result = "T"
-            # Day/night from local hour (start_time UTC → ET roughly):
-            # games starting before 17:00 local are day, otherwise night.
-            daynight = None
-            try:
-                hour_utc = int(start[11:13])
-                # Approximate: subtract 4 (EDT) for a rough local hour
-                local_hour = (hour_utc - 4) % 24
-                daynight = "day" if 6 <= local_hour < 17 else "night"
-            except Exception:
-                pass
             cursor.execute("""
                 INSERT OR REPLACE INTO team_game_results
                 (date, season, game_number, team, opponent, is_home,
