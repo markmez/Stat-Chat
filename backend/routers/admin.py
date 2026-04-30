@@ -822,6 +822,115 @@ async def merge_player_ids(
         raise HTTPException(500, str(e))
 
 
+class RestoreDerivedRequest(BaseModel):
+    backup_filename: str
+    dry_run: bool = True
+
+
+@router.post("/restore-merged-derived-rows")
+async def restore_merged_derived_rows(
+    body: RestoreDerivedRequest,
+    authorization: str | None = Header(None),
+):
+    """Recover the alias's derived rows that the merge deleted, by pulling
+    them from a backup file and re-inserting under the canonical id.
+
+    The merge deletes rows from "computed" tables (current_form, all
+    splits, streaks) on the assumption that they'll be regenerated from
+    game logs. That's TRUE for home_away/current_form/streaks (built
+    from game_*_logs by the pipeline), but FALSE for historical
+    platoon_splits which originally came from a Chadwick Bureau import
+    that runs only via pull_stats.py. Re-running pull_stats is a
+    rebuild-the-DB operation; surgically restoring from a fresh
+    pre-merge backup is the cheaper path.
+
+    For each pair in `player_id_aliases`, this endpoint reads the
+    backup's rows for the alias id and inserts copies under the
+    canonical id. Existing canonical rows are preserved (INSERT OR
+    IGNORE). Tables we restore are those listed in the merge script's
+    _COMPUTED_FROM_GAMELOGS set."""
+    verify_admin(authorization)
+    import re
+    if not re.fullmatch(
+        r"baseball_stats_full-backup-\d{8}T\d{6}Z-[\w\-]+\.db",
+        body.backup_filename,
+    ):
+        raise HTTPException(400, "filename does not match backup pattern")
+    backup_path = os.path.join(os.path.dirname(DB_PATH), body.backup_filename)
+    if not os.path.exists(backup_path):
+        raise HTTPException(404, f"no such backup: {backup_path}")
+
+    # Tables we DELETED in the merge — these are the ones that need
+    # restoration. Mirrors merge_player_ids._COMPUTED_FROM_GAMELOGS.
+    derived_tables = [
+        "current_form", "pitching_current_form",
+        "home_away_splits", "pitching_home_away_splits",
+        "platoon_splits", "pitching_platoon_splits",
+        "risp_batting_splits", "risp_pitching_splits",
+        "pitch_type_batting_splits", "pitch_type_pitching_splits",
+        "count_batting_splits", "count_pitching_splits",
+        "streaks", "streaks_sensitive", "streaks_sliding",
+        "pitching_streaks", "pitching_streaks_sensitive", "pitching_streaks_sliding",
+        "head_to_head", "deep_scan_cooldowns",
+    ]
+
+    conn = sqlite3.connect(DB_PATH, timeout=60)
+    try:
+        conn.execute(f"ATTACH DATABASE ? AS bak", (backup_path,))
+        try:
+            aliases = conn.execute(
+                "SELECT alias_id, canonical_id FROM player_id_aliases"
+            ).fetchall()
+            results = []
+            for alias_id, canonical_id in aliases:
+                pair_summary = {"alias": alias_id, "canonical": canonical_id, "tables": {}}
+                for tbl in derived_tables:
+                    # Verify table exists in BOTH live and backup
+                    try:
+                        col_info = conn.execute(f"PRAGMA bak.table_info({tbl})").fetchall()
+                    except sqlite3.OperationalError:
+                        continue
+                    if not col_info:
+                        continue
+                    cols = [r[1] for r in col_info]
+                    # SELECT cols from backup with player_id rewritten
+                    select_cols = ", ".join(
+                        f"'{canonical_id}' AS player_id" if c == "player_id"
+                        else c
+                        for c in cols
+                    )
+                    # Skip surrogate INTEGER PRIMARY KEY so live's autoincrement runs.
+                    surrogate = next(
+                        (r[1] for r in col_info if r[5] and r[2].upper() == "INTEGER"),
+                        None,
+                    )
+                    insert_cols = [c for c in cols if c != surrogate]
+                    insert_select = ", ".join(
+                        f"'{canonical_id}'" if c == "player_id" else c
+                        for c in insert_cols
+                    )
+
+                    count_sql = f"SELECT COUNT(*) FROM bak.{tbl} WHERE player_id = ?"
+                    n = conn.execute(count_sql, (alias_id,)).fetchone()[0]
+                    if not n:
+                        continue
+                    if not body.dry_run:
+                        conn.execute(
+                            f"INSERT OR IGNORE INTO {tbl} ({', '.join(insert_cols)}) "
+                            f"SELECT {insert_select} FROM bak.{tbl} WHERE player_id = ?",
+                            (alias_id,),
+                        )
+                    pair_summary["tables"][tbl] = n
+                results.append(pair_summary)
+            if not body.dry_run:
+                conn.commit()
+            return {"status": "ok", "dry_run": body.dry_run, "results": results}
+        finally:
+            conn.execute("DETACH DATABASE bak")
+    finally:
+        conn.close()
+
+
 @router.delete("/delete-backup")
 async def delete_backup(
     filename: str = "",
