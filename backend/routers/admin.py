@@ -750,13 +750,13 @@ async def backup_db(
             timeout=600,
         )
         if result.returncode != 0:
-            raise HTTPException(500, f"aws s3 cp failed: {result.stderr.decode(errors='replace')}")
+            raise HTTPException(500, f"aws s3 cp failed: {result.stderr}")
         size_mb = os.path.getsize(DB_PATH) // 1_000_000
         return {
             "status": "ok",
             "s3_path": s3_path,
             "size_mb": size_mb,
-            "stdout": result.stdout.decode(errors="replace")[-500:],
+            "stdout": result.stdout[-500:],
         }
     except subprocess.TimeoutExpired:
         raise HTTPException(504, "backup timed out after 10 min")
