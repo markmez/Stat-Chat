@@ -899,6 +899,10 @@ async def restore_merged_derived_rows(
                     if not col_info:
                         continue
                     cols = [r[1] for r in col_info]
+                    if "player_id" not in cols:
+                        # Some tables (e.g. head_to_head) use batter_id /
+                        # pitcher_id and aren't player_id-keyed; skip.
+                        continue
                     # SELECT cols from backup with player_id rewritten
                     select_cols = ", ".join(
                         f"'{canonical_id}' AS player_id" if c == "player_id"
