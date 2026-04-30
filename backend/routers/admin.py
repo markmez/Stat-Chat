@@ -728,6 +728,152 @@ async def redownload_db(
         raise HTTPException(500, str(e))
 
 
+@router.post("/backup-db")
+async def backup_db(
+    label: str = "manual",
+    authorization: str | None = Header(None),
+):
+    """Copy the volume DB up to S3 at a timestamped backup path. Used as
+    the rollback anchor before any structural change (player-id merge,
+    schema migration, etc.). The label is folded into the filename so
+    multiple same-day backups don't collide."""
+    verify_admin(authorization)
+    if not os.path.exists(DB_PATH):
+        raise HTTPException(404, f"DB not found at {DB_PATH}")
+    from datetime import datetime
+    safe_label = "".join(c if c.isalnum() or c in "-_" else "-" for c in label)[:64]
+    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    s3_path = f"s3://stat-chat/backups/baseball_stats_full-{ts}-{safe_label}.db"
+    try:
+        result = await _run_subprocess(
+            ["aws", "s3", "cp", DB_PATH, s3_path],
+            timeout=600,
+        )
+        if result.returncode != 0:
+            raise HTTPException(500, f"aws s3 cp failed: {result.stderr.decode(errors='replace')}")
+        size_mb = os.path.getsize(DB_PATH) // 1_000_000
+        return {
+            "status": "ok",
+            "s3_path": s3_path,
+            "size_mb": size_mb,
+            "stdout": result.stdout.decode(errors="replace")[-500:],
+        }
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "backup timed out after 10 min")
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/audit-split-ids")
+async def audit_split_ids(
+    authorization: str | None = Header(None),
+):
+    """Surface candidate split-id pairs — same real-world player whose
+    career is fragmented across two player_id rows.
+
+    Heuristics applied:
+      - Pre-2026 ("Name") + 2026 ("Name Jr." or accented variant) under
+        different ids — captures the MSF-rename Jrs.
+      - Same exact name under two ids with non-overlapping year ranges —
+        captures other format collisions.
+
+    Returns rows for human review; no DB changes happen here."""
+    verify_admin(authorization)
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        # Already-merged (alias-table) ids — skip these from candidates.
+        existing = {row[0] for row in conn.execute(
+            "SELECT alias_id FROM player_id_aliases"
+        ).fetchall()}
+        existing |= {row[0] for row in conn.execute(
+            "SELECT canonical_id FROM player_id_aliases"
+        ).fetchall()}
+
+        # Heuristic 1: Jr. name pattern (covers Witt/Vlad/Tatís/Acuña/etc.)
+        # `p2.name = p1.name || " Jr."` catches "Vladimir Guerrero" -> "Vladimir Guerrero Jr.".
+        # Accent variants need a separate normalization pass — see h2.
+        h1_rows = conn.execute("""
+            SELECT p1.player_id AS pre_id, p1.name AS pre_name,
+                   MIN(s1.season) AS pre_min, MAX(s1.season) AS pre_max,
+                   p2.player_id AS post_id, p2.name AS post_name,
+                   MIN(s2.season) AS post_min, MAX(s2.season) AS post_max
+            FROM players p1
+            JOIN season_batting_stats s1 ON s1.player_id = p1.player_id
+            JOIN players p2 ON (
+                p2.name = p1.name || ' Jr.'
+                OR p2.name = REPLACE(p1.name, 'Jazz ', 'Jasrado ') || ' Jr.'
+            )
+            JOIN season_batting_stats s2 ON s2.player_id = p2.player_id
+            WHERE p1.player_id != p2.player_id
+            GROUP BY p1.player_id, p2.player_id
+            HAVING MAX(s1.season) <= 2025 AND MIN(s2.season) >= 2025
+        """).fetchall()
+
+        # Heuristic 2: Accent-stripped name match across distinct ids.
+        # "Ronald Acuna" pre-2026 + "Ronald Acuña Jr." post-2026 etc.
+        # Approximation: lowercased ASCII compare via a Python-side filter.
+        all_pairs = conn.execute("""
+            SELECT p.player_id, p.name,
+                   MIN(s.season) AS first_yr, MAX(s.season) AS last_yr
+            FROM players p
+            JOIN season_batting_stats s ON s.player_id = p.player_id
+            GROUP BY p.player_id
+        """).fetchall()
+        # Bucket by ASCII-folded, lowercased, "Jr."-stripped name.
+        import unicodedata
+        def _key(name):
+            n = unicodedata.normalize("NFKD", name)
+            n = "".join(c for c in n if not unicodedata.combining(c))
+            n = n.lower().replace(" jr.", "").replace(" jr", "").strip()
+            return n
+        buckets = {}
+        for pid, name, first_yr, last_yr in all_pairs:
+            k = _key(name)
+            buckets.setdefault(k, []).append((pid, name, first_yr, last_yr))
+        h2_rows = []
+        for k, members in buckets.items():
+            if len(members) < 2:
+                continue
+            # Look for non-overlapping pairs where one ends ≤ 2025 and the
+            # other starts ≥ 2025 — same shape as h1 but accent-aware.
+            for a in members:
+                for b in members:
+                    if a[0] >= b[0]:
+                        continue  # avoid duplicates and self
+                    pre, post = (a, b) if a[3] <= b[2] else (b, a) if b[3] <= a[2] else (None, None)
+                    if pre is None:
+                        continue
+                    if pre[3] <= 2025 and post[2] >= 2025:
+                        h2_rows.append((
+                            pre[0], pre[1], pre[2], pre[3],
+                            post[0], post[1], post[2], post[3],
+                        ))
+
+        # Combine, dedupe, exclude already-aliased rows.
+        seen = set()
+        candidates = []
+        for r in list(h1_rows) + h2_rows:
+            pre_id, pre_name, pre_min, pre_max, post_id, post_name, post_min, post_max = r
+            key = (pre_id, post_id)
+            if key in seen:
+                continue
+            if pre_id in existing or post_id in existing:
+                continue
+            seen.add(key)
+            candidates.append({
+                "pre_id": pre_id,
+                "pre_name": pre_name,
+                "pre_years": f"{pre_min}-{pre_max}",
+                "post_id": post_id,
+                "post_name": post_name,
+                "post_years": f"{post_min}-{post_max}",
+            })
+        candidates.sort(key=lambda c: c["post_name"])
+        return {"count": len(candidates), "candidates": candidates}
+    finally:
+        conn.close()
+
+
 @router.get("/refresh-log")
 async def refresh_log(
     lines: int = 50,

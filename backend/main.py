@@ -101,6 +101,10 @@ def ensure_indexes():
     - career_ranks / career_franchise_ranks: empty placeholders so
       _build_achievements doesn't crash before build_career_ranks.py has run.
       The builder atomically swaps populated tables into place.
+    - player_id_aliases: persistent alias table for the player-id merge
+      project. Once populated, pull_live_stats consults it on every
+      pull so MSF data lands at the canonical id even when the matcher
+      would otherwise produce an alias id.
     """
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -124,6 +128,14 @@ def ensure_indexes():
                 total REAL NOT NULL,
                 fran_rank INTEGER NOT NULL,
                 PRIMARY KEY(player_id, side, stat, franchise_code)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS player_id_aliases (
+                alias_id TEXT PRIMARY KEY,
+                canonical_id TEXT NOT NULL,
+                reason TEXT,
+                created_at TEXT
             )
         """)
         conn.execute(
