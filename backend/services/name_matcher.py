@@ -405,6 +405,25 @@ def _lookup_last_threshold_year(name: str, stat: StatInfo, threshold: float) -> 
 # Prominence sorting
 # ---------------------------------------------------------------------------
 
+def _is_current_player(last_season: int, current_year: int, current_month: int) -> bool:
+    """Whether a player should be treated as 'current' for disambiguation.
+
+    Window is roughly 1 year + half a season — covers normal returners
+    plus injured players (Tommy John, etc.) who miss a full season:
+    - played this year or last year → current
+    - played 2 years ago AND we're still pre-August of this year → current
+    - otherwise → not current
+
+    Example: in April 2026, a player whose last_season is 2024 is still
+    "current" (likely returning from injury). By August 2026, they're not.
+    """
+    if last_season >= current_year - 1:
+        return True
+    if last_season == current_year - 2 and current_month <= 7:
+        return True
+    return False
+
+
 def _sort_by_prominence(names: list[str]) -> tuple[list[str], Optional[int]]:
     """Sort player names by pre-computed prominence_score from players table.
 
@@ -414,7 +433,9 @@ def _sort_by_prominence(names: list[str]) -> tuple[list[str], Optional[int]]:
     if len(names) <= 1:
         return (names, 0 if names else None)
 
-    current_year = _current_calendar_year()
+    today = date.today()
+    current_year = today.year
+    current_month = today.month
     infos: list[tuple[str, int, int]] = []
 
     try:
@@ -436,9 +457,12 @@ def _sort_by_prominence(names: list[str]) -> tuple[list[str], Optional[int]]:
         return (names, None)
 
     # Sort: current players first, then by prominence score descending
-    sorted_infos = sorted(infos, key=lambda x: (x[1] >= current_year - 1, x[2]), reverse=True)
+    sorted_infos = sorted(infos,
+                          key=lambda x: (_is_current_player(x[1], current_year, current_month), x[2]),
+                          reverse=True)
 
-    current_players = [i for i in sorted_infos if i[1] >= current_year - 1]
+    current_players = [i for i in sorted_infos
+                       if _is_current_player(i[1], current_year, current_month)]
     dominant_index: Optional[int] = None
     if len(current_players) == 1:
         dominant_index = 0

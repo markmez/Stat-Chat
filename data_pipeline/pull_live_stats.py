@@ -2004,6 +2004,58 @@ def main():
         conn.commit()
         print(f"  Updated {cursor.rowcount} players")
 
+        # prominence_score for disambiguation. TEMP TABLE pattern matches
+        # data_pipeline/compute_prominence.py — duplicated here so it runs
+        # automatically every refresh instead of as a separate manual step.
+        # Without this, injured players (Cole post-TJ) and offseason roster
+        # changes leave prominence stale and disambiguation picks the wrong
+        # player.
+        print("  Updating prominence_score...")
+        cursor.execute("""
+            CREATE TEMP TABLE IF NOT EXISTS _prom_bat AS
+            SELECT p.player_id, COALESCE(SUM(s.games), 0) AS score
+            FROM players p
+            LEFT JOIN season_batting_stats s ON s.player_id = p.player_id
+            GROUP BY p.player_id
+        """)
+        cursor.execute("""
+            CREATE TEMP TABLE IF NOT EXISTS _prom_pit AS
+            SELECT p.player_id,
+                   COALESCE(SUM(sp.games_started), 0) * 5
+                   + COALESCE(SUM(sp.saves), 0) * 3
+                   + COALESCE(SUM(CASE WHEN sp.games > sp.games_started
+                       THEN sp.games - sp.games_started ELSE 0 END), 0) AS score
+            FROM players p
+            LEFT JOIN season_pitching_stats sp ON sp.player_id = p.player_id
+            GROUP BY p.player_id
+        """)
+        cursor.execute("""
+            CREATE TEMP TABLE IF NOT EXISTS _prom_awd AS
+            SELECT p.player_id,
+                   COALESCE(SUM(CASE
+                       WHEN a.award IN ('MVP', 'CY', 'ROY', 'HOF') THEN 1000
+                       WHEN a.award IN ('ALL_STAR', 'GG', 'SS') THEN 500
+                       WHEN a.award IN ('WS_MVP', 'ALCS_MVP', 'NLCS_MVP') THEN 300
+                       ELSE 0
+                   END), 0) AS score
+            FROM players p
+            LEFT JOIN awards a ON a.player_id = p.player_id
+            GROUP BY p.player_id
+        """)
+        cursor.execute("""
+            UPDATE players SET prominence_score = (
+                SELECT COALESCE(b.score, 0) + COALESCE(pi.score, 0) + COALESCE(a.score, 0)
+                FROM _prom_bat b
+                LEFT JOIN _prom_pit pi ON pi.player_id = b.player_id
+                LEFT JOIN _prom_awd a ON a.player_id = b.player_id
+                WHERE b.player_id = players.player_id
+            )
+        """)
+        cursor.execute("DROP TABLE _prom_bat")
+        cursor.execute("DROP TABLE _prom_pit")
+        cursor.execute("DROP TABLE _prom_awd")
+        conn.commit()
+
         record_last_update(conn, args.season)
         conn.close()
 
