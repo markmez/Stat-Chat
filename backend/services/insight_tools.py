@@ -23,44 +23,24 @@ import sqlite3
 # Source: long-standing player ID issues catalogued in CLAUDE.md and
 # memory/baseball-stats.md. The proper fix is merging IDs in the players
 # table; this is the tactical workaround until that ships.
-# Each entry below was verified against the production DB on 2026-04-30 by
-# matching pre-2026 Retrosheet ids (under abbreviated/no-Jr name) to the
-# MSF "Jr." ids that start in 2026. False positives (player-name overlaps
-# that are actually different people, e.g., Tatis Sr. vs Jr.) were filtered
-# out by hand. Update this list when QA finds another Jr. veteran whose
-# career got fragmented.
-_SPLIT_ID_GROUPS = [
-    # Bobby Witt Jr.: 2022-25 stored under father's name, MSF id from 2026.
-    {"wittb002", "wittjb001"},
-    # Jazz Chisholm Jr.: Retrosheet "Jazz Chisholm" through 2025,
-    # MSF "Jasrado Chisholm Jr." from 2026.
-    {"chisj001", "chishj001"},
-    # Ronald Acuña Jr.: Retrosheet "Ronald Acuna" through 2025,
-    # MSF "Ronald Acuña Jr." (accented) from 2026.
-    {"acunr001", "acuñar001"},
-    # Vladimir Guerrero Jr.: Retrosheet "Vladimir Guerrero" 2019-25,
-    # MSF "Vladimir Guerrero Jr." from 2026. (Vlad Sr.'s id `guerv001`
-    # is intentionally NOT in this group — separate player.)
-    {"guerv002", "guerrv001"},
-    # Fernando Tatís Jr.: Retrosheet "Fernando Tatis" 2019-25 vs MSF
-    # "Fernando Tatis Jr." from 2026. (Sr.'s `tatif001` excluded.)
-    {"tatif002", "tatisf001"},
-    # Lance McCullers Jr.: Retrosheet "Lance McCullers" 2015-25 vs MSF
-    # "Lance McCullers Jr." from 2026. (Sr.'s `mccul001` excluded.)
-    {"mccul002", "mccull001"},
-    # Luis Robert Jr.: Retrosheet "Luis Robert" 2020-25 vs MSF
-    # "Luis Robert Jr." from 2026.
-    {"robel002", "roberl001"},
-    # Carl Edwards Jr.: Retrosheet "Carl Edwards" 2015-25 vs MSF
-    # "Carl Edwards Jr." from 2026.
-    {"edwac001", "edwarc001"},
-]
+# Tactical split-id alias workaround. Superseded 2026-04-30 by the data
+# merge in `data_pipeline/merge_player_ids.py` — the alias rows were
+# physically combined in the DB and `pull_live_stats.find_or_create_player`
+# now redirects via `player_id_aliases`. Kept here as defense-in-depth:
+# if a tool is called with an alias id that somehow survives, this still
+# unifies the lookup.
+_SPLIT_ID_GROUPS = []
 _SPLIT_ID_LOOKUP = {pid: group for group in _SPLIT_ID_GROUPS for pid in group}
 
 
 def _aliased_player_ids(player_id: str) -> list:
     """Return all player_ids that represent the same real-world player.
-    Always includes the input id; adds split-group siblings if any."""
+    Always includes the input id; adds split-group siblings if any.
+
+    Post-merge (2026-04-30) this almost always returns a single-element
+    list — the data is unified at the DB layer. Kept for defense in
+    depth so any future split-group additions need only update the
+    constant above."""
     group = _SPLIT_ID_LOOKUP.get(player_id)
     if group:
         return sorted(group)
