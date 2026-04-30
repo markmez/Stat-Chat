@@ -80,8 +80,18 @@ def _resolve_unique_overlaps(conn, alias, canonical, dry_run):
 
     def _compare_and_resolve(table, key_cols):
         # Fetch all alias rows for this table.
-        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-        non_key_cols = [c for c in cols if c not in key_cols and c != "player_id"]
+        # PRAGMA table_info row shape: (cid, name, type, notnull, dflt, pk).
+        # Surrogate INTEGER PRIMARY KEY columns (e.g. id AUTOINCREMENT) must
+        # be excluded from comparison — they're per-row unique by design and
+        # would falsely flag every duplicate as a mismatch.
+        col_info = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        cols = [r[1] for r in col_info]
+        surrogate_pks = {
+            r[1] for r in col_info
+            if r[5] and r[2].upper() == "INTEGER"  # pk=1, type=INTEGER
+        }
+        skip = set(key_cols) | {"player_id"} | surrogate_pks
+        non_key_cols = [c for c in cols if c not in skip]
         col_list = ", ".join(non_key_cols) if non_key_cols else "1"
 
         # Build a JOIN that surfaces (alias_row_values, canonical_row_values)
