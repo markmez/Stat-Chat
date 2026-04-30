@@ -169,16 +169,23 @@ async def backfill_historical_team_game_results(
 
 @router.post("/kill-pipeline")
 async def kill_pipeline(
+    min_age_seconds: int = 0,
     authorization: str | None = Header(None),
 ):
-    """Kill any stuck pull_live_stats.py process and clear the cron lock.
+    """Kill stuck pull_live_stats.py processes.
 
-    Use when a cron-invoked pipeline hangs (typically on an MSF call with no
-    timeout). The systemd service has PrivateTmp=true, so the lock file at
-    /tmp/statchat_pipeline.lock is in the cron's system /tmp and not visible
-    from here — but since the lock also has a 90-min stale threshold, the
-    next cron will clear it automatically once the process is dead. We just
-    need to kill the zombie.
+    With min_age_seconds=0 (default), kills every running pipeline — used
+    for direct manual recovery.
+
+    With min_age_seconds>0, only kills processes that have been running
+    longer than the threshold. Used by healthcheck.sh to leave a healthy
+    in-progress pipeline alone — a normal pipeline run takes 30-90 min, so
+    passing min_age_seconds=5400 (90 min) means we only kill genuinely
+    stuck processes.
+
+    Returns `running` (count of young processes that were left alive). If
+    `running > 0`, the caller should NOT trigger a fresh /admin/refresh —
+    the live one will finish on its own.
     """
     verify_admin(authorization)
 
@@ -186,24 +193,58 @@ async def kill_pipeline(
         ["pgrep", "-af", "pull_live_stats.py"],
         capture_output=True, text=True
     )
-    matches = [line for line in before.stdout.splitlines() if line.strip()]
+    all_lines = [line for line in before.stdout.splitlines() if line.strip()]
 
-    if not matches:
-        return {"status": "ok", "killed": 0, "message": "No stuck pipeline process found."}
+    if not all_lines:
+        return {"status": "ok", "killed": 0, "running": 0,
+                "message": "No pipeline process found."}
 
-    # SIGTERM first; fall back to SIGKILL for anything that ignores it.
-    subprocess.run(["pkill", "-TERM", "-f", "pull_live_stats.py"])
-    # Give TERM 3 seconds to take effect before escalating
+    to_kill = []
+    skipped = []
+    for line in all_lines:
+        parts = line.split(maxsplit=1)
+        if not parts:
+            continue
+        pid = parts[0]
+        try:
+            etime = subprocess.run(
+                ["ps", "-o", "etimes=", "-p", pid],
+                capture_output=True, text=True
+            )
+            age_seconds = int((etime.stdout or "").strip() or "0")
+        except Exception:
+            age_seconds = 0
+
+        if age_seconds < min_age_seconds:
+            skipped.append({"pid": pid, "age_seconds": age_seconds, "cmdline": line})
+        else:
+            to_kill.append({"pid": pid, "age_seconds": age_seconds, "cmdline": line})
+
+    if not to_kill:
+        return {
+            "status": "ok",
+            "killed": 0,
+            "running": len(skipped),
+            "skipped": skipped,
+            "message": f"All {len(skipped)} process(es) younger than min_age_seconds={min_age_seconds}; not killed.",
+        }
+
+    # SIGTERM first; SIGKILL for anything that ignores it.
+    for entry in to_kill:
+        subprocess.run(["kill", "-TERM", entry["pid"]], capture_output=True)
     import time as _time
     _time.sleep(3)
-    still = subprocess.run(["pgrep", "-f", "pull_live_stats.py"], capture_output=True, text=True)
-    if still.stdout.strip():
-        subprocess.run(["pkill", "-KILL", "-f", "pull_live_stats.py"])
+    for entry in to_kill:
+        still = subprocess.run(["kill", "-0", entry["pid"]], capture_output=True)
+        if still.returncode == 0:
+            subprocess.run(["kill", "-KILL", entry["pid"]], capture_output=True)
 
     return {
         "status": "ok",
-        "killed": len(matches),
-        "processes": matches,
+        "killed": len(to_kill),
+        "running": len(skipped),
+        "processes": [e["cmdline"] for e in to_kill],
+        "skipped": skipped,
     }
 
 

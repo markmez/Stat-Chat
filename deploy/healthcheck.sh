@@ -135,12 +135,32 @@ fi
 mark_recovery
 
 if [ "$DATA_STALE" -eq 1 ]; then
-    # Game logs aren't current. Pipeline may be hung.
-    # 1) Kill any stuck pull_live_stats process
-    # 2) Trigger /admin/refresh (fire-and-forget; curl gives up after 30s
-    #    but the subprocess on the server keeps running)
-    echo "[healthcheck] data stale (latest=$LATEST_GAME_DATE, expected>=$YESTERDAY_UTC) — kill+refresh" >&2
-    curl -fsS -m 30 -X POST "$API_BASE/admin/kill-pipeline" -H "$AUTH_HDR" > /dev/null 2>&1 || true
+    # Game logs aren't current. The pipeline could be:
+    #   (a) genuinely stuck — kill it and trigger fresh /admin/refresh
+    #   (b) running normally and just slow — leave it alone (a normal
+    #       pipeline run takes 30-90 min; freshness only updates on
+    #       completion, so it ALWAYS looks stale during a live run)
+    #
+    # Use min_age_seconds=5400 on kill-pipeline so processes younger
+    # than 90 min are left alive. The response's `running` count tells
+    # us how many young (in-progress) processes were preserved — if >0,
+    # we skip the /admin/refresh too, since a healthy pipeline is
+    # already running.
+    KILL_RESPONSE=$(curl -fsS -m 30 -X POST "$API_BASE/admin/kill-pipeline?min_age_seconds=5400" -H "$AUTH_HDR" 2>&1 || true)
+    KILLED=$(echo "$KILL_RESPONSE" | grep -oE '"killed":[0-9]+' | grep -oE '[0-9]+' | head -1 || echo 0)
+    RUNNING=$(echo "$KILL_RESPONSE" | grep -oE '"running":[0-9]+' | grep -oE '[0-9]+' | head -1 || echo 0)
+
+    if [ "${RUNNING:-0}" -gt 0 ]; then
+        # Young pipeline still working — DON'T trigger another refresh.
+        # Also clear our recovery marker so cooldown doesn't block a
+        # legitimate recovery later if this run ultimately fails.
+        echo "[healthcheck] data stale but young pipeline running (running=$RUNNING) — leaving alone" >&2
+        rm -f "$RECOVERY_MARKER"
+        ping_ok "stale ${STALE_FOR}s data=${LATEST_GAME_DATE} feed=${FEED_LATEST}; pipeline in progress, will let it finish"
+        exit 0
+    fi
+
+    echo "[healthcheck] data stale (latest=$LATEST_GAME_DATE, expected>=$YESTERDAY_UTC) — killed=$KILLED, refreshing" >&2
     curl -fsS -m 30 -X POST "$API_BASE/admin/refresh" -H "$AUTH_HDR" > /dev/null 2>&1 || true
 elif [ "$FEED_STALE" -eq 1 ]; then
     # Data is current but events weren't detected. /admin/redetect runs
