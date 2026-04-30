@@ -424,23 +424,29 @@ WHAT WEAK INSIGHTS LOOK LIKE — avoid:
 - Restating the same fact twice in one insight.
 - Stat-type mismatches (last year's AVG vs this year's HR count).
 - Unexplained other-player references. "Matching Riley" is noise unless you say who Riley is and why the comparison matters.
+- Vague rankings without the stat. "#4 all-time" / "5th-longest in MLB history" — the metric being ranked MUST appear in the same clause: "#4 all-time in HR streaks of this length", not just "#4 all-time".
+- Misuse of "just" as filler. "His first 4-hit game and just his 18th game as a Diamondback" — "just" implies a small accumulation context (e.g., "just 6 of his 80 career games"). For a single-event milestone, drop "just" entirely.
+- Restating the same achievement in different words. WRONG: "By hitting 2 home runs, he hit his first career home run, and his first multi-homer game in his young career and all 2 of his home runs this season came in this single game." Three ways to say "first 2 career HR." Pick ONE phrasing and move on.
+- Restating the box-score line as the impact. The stat line ("X went 8.0 IP, 3 H, 0 ER, 9 K, 2 BB") is shown above your text; do not paraphrase it as the insight. The insight must add NEW information (a comparison, anchor, or rarity).
 
 QUALITY THRESHOLD:
 - Find things RULES CAN'T FIND. Standard good performances are covered automatically.
 - A single slightly-off game after a hot start is NOT notable — normal regression.
-- For PITCHERS: bar is 8+ IP, or 10+ K, or unusual narrative. NOT a 6-IP/3-ER quality start.
+- For PITCHERS: bar is 8+ IP, or 10+ K, or unusual narrative. NOT a 6-IP/3-ER quality start. "Dominant" claims must be backed by 0 ER (or near-zero) AND high K count or 7+ IP — high-K with multiple ER is not dominant.
 - For BATTERS: 2-for-4 isn't notable without broader context.
 - If you can't articulate WHY beyond "he played well", skip.
 - NEVER write about a player having a bad game / struggling / slumping. The feed only celebrates positive performances. Exception: bad stat paired with unusual positive ("struck out 12 but hit 2 homers").
 
 STYLE RULES:
 - Do NOT pad sentences with empty context. A clean stat line speaks for itself.
+- Do NOT restate the box score as your impact text. The stat line is shown separately; your text must add a comparison, anchor, or context that isn't already visible in the numbers.
 - Career year/season count is interesting only at extremes (debut, 2nd year, 15+ year veteran).
 - 162-game pace projections: note as fact, don't editorialize about sustainability.
 - NEVER use dangling references — every stat must be introduced before being referenced ("the 5 steals" requires earlier mention).
 - Be explicit when comparing to prior periods ("on a similar pace to" or "already has X, took until August last year").
 - Over short spans (<20 games), use rate stats (".417 over 12 games") not cumulative ("25 hits in 12 games").
-- Never name another player without explaining who they are and why the comparison matters."""
+- Never name another player without explaining who they are and why the comparison matters.
+- Any RANKING claim ("Nth all-time", "Nth-longest", "best since X") MUST name the metric being ranked in the same clause. "His 5-game HR streak — 4th all-time at this point in a season" is fine; "His 5-game HR streak — #4 all-time" is not (4th in WHAT?)."""
 
 
 _VERIFIER_SYSTEM = """You verify baseball headlines against a data snapshot.

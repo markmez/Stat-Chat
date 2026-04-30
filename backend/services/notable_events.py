@@ -853,6 +853,153 @@ def detect_hr_streaks(conn, season, latest_date, min_games=4):
     return events
 
 
+def detect_streak_endings(conn, season, latest_date):
+    """Find significant streaks that ENDED today (player played + failed
+    to extend a streak that was at threshold coming in).
+
+    Thresholds (only the most marquee streaks — anything below is too
+    routine for an end-event):
+      - hitting streak: 30+
+      - on-base streak: 45+
+      - HR streak: 5+
+
+    For each ending event we count back from yesterday to compute the
+    final streak length, surface the player who broke it, and note the
+    historical context phrase so the feed has the same comp framing as
+    the active-streak events.
+    """
+    events = []
+
+    # All players who played on latest_date
+    players = conn.execute("""
+        SELECT DISTINCT player_id FROM game_batting_logs
+        WHERE season = ? AND date = ? AND at_bats > 0
+    """, (season, latest_date)).fetchall()
+
+    for (pid,) in players:
+        # Today's stats — used to detect "did not extend"
+        today_row = conn.execute("""
+            SELECT hits, COALESCE(walks, 0), COALESCE(hit_by_pitch, 0),
+                   COALESCE(home_runs, 0), at_bats
+            FROM game_batting_logs
+            WHERE player_id = ? AND season = ? AND date = ?
+        """, (pid, season, latest_date)).fetchone()
+        if not today_row:
+            continue
+        t_hits, t_walks, t_hbp, t_hr, t_ab = today_row
+
+        # Walk back from BEFORE today to compute prior streaks. Pull all
+        # qualifying games once, filter by date in Python.
+        prior_bat = conn.execute("""
+            SELECT date, hits, COALESCE(walks, 0), COALESCE(hit_by_pitch, 0),
+                   COALESCE(home_runs, 0), at_bats
+            FROM game_batting_logs
+            WHERE player_id = ? AND season = ? AND date < ?
+            ORDER BY date DESC
+        """, (pid, season, latest_date)).fetchall()
+
+        # 1) Hitting streak that ended today.
+        # Today's player must have had at_bats (so they had a shot to extend)
+        # AND today's hits == 0.
+        if t_ab > 0 and t_hits == 0:
+            streak = 0
+            for (_d, h, _bb, _hbp, _hr, ab) in prior_bat:
+                if ab <= 0:
+                    continue  # didn't bat — skip without breaking streak
+                if h > 0:
+                    streak += 1
+                else:
+                    break
+            if streak >= 30:
+                _append_streak_end_event(
+                    conn, events, pid, season, latest_date,
+                    streak=streak, label="hitting streak", condition_sql="hits > 0",
+                    detection_type="hitting_streak_ended",
+                )
+
+        # 2) On-base streak that ended today.
+        # Today's player must have had a chance to reach base (PA > 0) AND
+        # today's H + BB + HBP == 0. Approximate "PA > 0" via at_bats > 0
+        # OR walks > 0 OR hbp > 0 — same shape as detect_onbase_streaks.
+        had_pa_today = (t_ab > 0) or (t_walks > 0) or (t_hbp > 0)
+        if had_pa_today and (t_hits + t_walks + t_hbp) == 0:
+            streak = 0
+            for (_d, h, bb, hbp, _hr, ab) in prior_bat:
+                had_pa = (ab > 0) or (bb > 0) or (hbp > 0)
+                if not had_pa:
+                    continue
+                if (h + bb + hbp) > 0:
+                    streak += 1
+                else:
+                    break
+            if streak >= 45:
+                _append_streak_end_event(
+                    conn, events, pid, season, latest_date,
+                    streak=streak, label="on-base streak",
+                    condition_sql="(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
+                    detection_type="onbase_streak_ended",
+                    at_bat_filter="(at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)",
+                )
+
+        # 3) HR streak that ended today.
+        # Player batted (so they had a shot) and didn't homer.
+        if t_ab > 0 and t_hr == 0:
+            streak = 0
+            for (_d, _h, _bb, _hbp, hr, ab) in prior_bat:
+                if ab <= 0:
+                    continue
+                if hr > 0:
+                    streak += 1
+                else:
+                    break
+            if streak >= 5:
+                _append_streak_end_event(
+                    conn, events, pid, season, latest_date,
+                    streak=streak, label="HR streak", condition_sql="home_runs > 0",
+                    detection_type="hr_streak_ended",
+                )
+
+    return events
+
+
+def _append_streak_end_event(conn, events, pid, season, latest_date, *,
+                             streak, label, condition_sql, detection_type,
+                             at_bat_filter="at_bats > 0"):
+    """Build one streak-end event and append to events list."""
+    name = _player_name(conn, pid)
+    team = _player_team_display(conn, pid, season)
+    team_code = _player_team_code(conn, pid, season)
+    game_line, _ = _get_game_line(conn, pid, latest_date, season)
+
+    # Same historical-context machinery as the active-streak detectors.
+    # The "longest since X" framing reads cleanly past-tense for an
+    # ended streak: "The X-game streak was the longest since Y in Z."
+    context = _historical_context(
+        conn, streak, condition_sql,
+        exclude_season=season, exclude_player=pid,
+        at_bat_filter=at_bat_filter,
+        player_team=team_code,
+    )
+
+    intro = f"{name} went {game_line}" if game_line else name
+    headline = f"{intro}, ending his {streak}-game {label}"
+    if context:
+        headline += f" — {context.lower()}"
+    else:
+        headline += "."
+
+    events.append({
+        "headline": headline,
+        "detail": "",
+        "category": "Streak",
+        "game_date": latest_date,
+        "player_names": [name],
+        "team_names": [team] if team else [],
+        "detection_type": detection_type,
+        "priority": 1,
+    })
+
+
 def _pitching_streak_context(conn, pid, season, streak_len, condition_sql):
     """Compute MLB + team "first since X" context for a pitching-shape streak.
 
@@ -3447,6 +3594,7 @@ def detect_all(db_path=None, season=None, from_poll=False):
     events += detect_hitting_streaks(conn, season, latest_date, min_games=hit_streak_min)
     events += detect_onbase_streaks(conn, season, latest_date, min_games=onbase_streak_min)
     events += detect_hr_streaks(conn, season, latest_date, min_games=hr_streak_min)
+    events += detect_streak_endings(conn, season, latest_date)
     events += detect_pitching_streaks(conn, season, latest_date)
     events += detect_season_pace(conn, season, latest_date)
     t1_count = len(events)
