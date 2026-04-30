@@ -23,16 +23,37 @@ import sqlite3
 # Source: long-standing player ID issues catalogued in CLAUDE.md and
 # memory/baseball-stats.md. The proper fix is merging IDs in the players
 # table; this is the tactical workaround until that ships.
+# Each entry below was verified against the production DB on 2026-04-30 by
+# matching pre-2026 Retrosheet ids (under abbreviated/no-Jr name) to the
+# MSF "Jr." ids that start in 2026. False positives (player-name overlaps
+# that are actually different people, e.g., Tatis Sr. vs Jr.) were filtered
+# out by hand. Update this list when QA finds another Jr. veteran whose
+# career got fragmented.
 _SPLIT_ID_GROUPS = [
-    # Bobby Witt Jr.: Jr. data under father's Retrosheet name 2022-24,
-    # then MSF assigned a fresh id for 2025-26.
+    # Bobby Witt Jr.: 2022-25 stored under father's name, MSF id from 2026.
     {"wittb002", "wittjb001"},
-    # Jazz Chisholm Jr.: Retrosheet "Jazz Chisholm" through 2024,
-    # MSF "Jasrado Chisholm Jr." for 2025-26.
+    # Jazz Chisholm Jr.: Retrosheet "Jazz Chisholm" through 2025,
+    # MSF "Jasrado Chisholm Jr." from 2026.
     {"chisj001", "chishj001"},
-    # Ronald Acuña Jr.: Retrosheet "Ronald Acuna" through 2024,
-    # MSF "Ronald Acuña Jr." (with accent) for 2025-26.
+    # Ronald Acuña Jr.: Retrosheet "Ronald Acuna" through 2025,
+    # MSF "Ronald Acuña Jr." (accented) from 2026.
     {"acunr001", "acuñar001"},
+    # Vladimir Guerrero Jr.: Retrosheet "Vladimir Guerrero" 2019-25,
+    # MSF "Vladimir Guerrero Jr." from 2026. (Vlad Sr.'s id `guerv001`
+    # is intentionally NOT in this group — separate player.)
+    {"guerv002", "guerrv001"},
+    # Fernando Tatís Jr.: Retrosheet "Fernando Tatis" 2019-25 vs MSF
+    # "Fernando Tatis Jr." from 2026. (Sr.'s `tatif001` excluded.)
+    {"tatif002", "tatisf001"},
+    # Lance McCullers Jr.: Retrosheet "Lance McCullers" 2015-25 vs MSF
+    # "Lance McCullers Jr." from 2026. (Sr.'s `mccul001` excluded.)
+    {"mccul002", "mccull001"},
+    # Luis Robert Jr.: Retrosheet "Luis Robert" 2020-25 vs MSF
+    # "Luis Robert Jr." from 2026.
+    {"robel002", "roberl001"},
+    # Carl Edwards Jr.: Retrosheet "Carl Edwards" 2015-25 vs MSF
+    # "Carl Edwards Jr." from 2026.
+    {"edwac001", "edwarc001"},
 ]
 _SPLIT_ID_LOOKUP = {pid: group for group in _SPLIT_ID_GROUPS for pid in group}
 
@@ -106,6 +127,8 @@ def get_career_high(conn: sqlite3.Connection, player_id: str, stat: str, scope: 
 
     scope: 'game' or 'season'
     Returns the max value, when set (date/season), and how many times reached.
+    Aggregates across split-id siblings so career highs reflect the full
+    real-world career.
     """
     BAT_GAME_STATS = {"hits", "home_runs", "rbi", "runs", "stolen_bases",
                       "doubles", "triples", "walks"}
@@ -115,6 +138,9 @@ def get_career_high(conn: sqlite3.Connection, player_id: str, stat: str, scope: 
     PITCH_SEASON_STATS = {"wins", "saves", "strikeouts", "era", "innings_pitched",
                           "games_started"}
 
+    ids = _aliased_player_ids(player_id)
+    placeholders = ",".join("?" * len(ids))
+
     if scope == "game":
         if stat in BAT_GAME_STATS:
             table = "game_batting_logs"
@@ -123,19 +149,19 @@ def get_career_high(conn: sqlite3.Connection, player_id: str, stat: str, scope: 
         else:
             return {"error": f"Unknown game stat: {stat}"}
         max_row = conn.execute(
-            f"SELECT MAX({stat}) FROM {table} WHERE player_id = ?", (player_id,)
+            f"SELECT MAX({stat}) FROM {table} WHERE player_id IN ({placeholders})", ids
         ).fetchone()
         if not max_row or max_row[0] is None:
             return {"player_id": player_id, "stat": stat, "scope": scope,
                     "career_high": None, "times_reached": 0}
         max_val = max_row[0]
         first_set = conn.execute(
-            f"SELECT date, season FROM {table} WHERE player_id = ? AND {stat} = ? ORDER BY date ASC LIMIT 1",
-            (player_id, max_val)
+            f"SELECT date, season FROM {table} WHERE player_id IN ({placeholders}) AND {stat} = ? ORDER BY date ASC LIMIT 1",
+            ids + [max_val]
         ).fetchone()
         times = conn.execute(
-            f"SELECT COUNT(*) FROM {table} WHERE player_id = ? AND {stat} = ?",
-            (player_id, max_val)
+            f"SELECT COUNT(*) FROM {table} WHERE player_id IN ({placeholders}) AND {stat} = ?",
+            ids + [max_val]
         ).fetchone()[0]
         return {
             "player_id": player_id, "stat": stat, "scope": "game",
@@ -152,8 +178,8 @@ def get_career_high(conn: sqlite3.Connection, player_id: str, stat: str, scope: 
         else:
             return {"error": f"Unknown season stat: {stat}"}
         max_row = conn.execute(
-            f"SELECT MAX({stat}), season FROM {table} WHERE player_id = ?",
-            (player_id,)
+            f"SELECT MAX({stat}), season FROM {table} WHERE player_id IN ({placeholders})",
+            ids
         ).fetchone()
         if not max_row or max_row[0] is None:
             return {"player_id": player_id, "stat": stat, "scope": scope,
@@ -282,13 +308,15 @@ def get_career_threshold_count(conn: sqlite3.Connection, player_id: str,
     else:
         return {"error": f"Unknown stat: {stat}"}
 
+    ids = _aliased_player_ids(player_id)
+    placeholders = ",".join("?" * len(ids))
     row = conn.execute(f"""
         SELECT
           SUM(CASE WHEN {stat} >= ? THEN 1 ELSE 0 END) AS at_threshold,
           COUNT(*) AS total
         FROM {table}
-        WHERE player_id = ?{start_filter}
-    """, (threshold, player_id)).fetchone()
+        WHERE player_id IN ({placeholders}){start_filter}
+    """, [threshold, *ids]).fetchone()
 
     at = row[0] or 0
     total = row[1] or 0
