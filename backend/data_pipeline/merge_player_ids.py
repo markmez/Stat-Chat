@@ -152,6 +152,9 @@ def _resolve_unique_overlaps(conn, alias, canonical, dry_run):
                     "canonical_values": c_vals,
                 })
 
+    # All tables with UNIQUE constraints involving player_id need an
+    # overlap-resolution pass. Discovered via dry-run failures; if more
+    # surface, add them here.
     _compare_and_resolve("season_batting_stats", ["player_id", "season"])
     _compare_and_resolve("season_pitching_stats", ["player_id", "season"])
     _compare_and_resolve(
@@ -160,6 +163,8 @@ def _resolve_unique_overlaps(conn, alias, canonical, dry_run):
     _compare_and_resolve(
         "game_pitching_logs", ["player_id", "season", "date", "game_number"]
     )
+    _compare_and_resolve("current_form", ["player_id", "season"])
+    _compare_and_resolve("pitching_current_form", ["player_id", "season"])
 
     return deletions, mismatches
 
