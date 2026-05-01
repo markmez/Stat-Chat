@@ -701,8 +701,11 @@ def decompose(question: str) -> QueryPlan:
     elif any(t in lower for t in ["what team", "which team", "what teams", "which teams"]):
         plan.query_type = "team_ranking"
         _add_consumed(plan, "what which team teams")
-    # Bare "team [stat]" without specific team name → team ranking with alternate pill
-    elif re.search(r'\bteam\b', lower) and not plan.team_code:
+    # Bare "team [stat]" without specific team name → team ranking with alternate pill.
+    # Skip when a team-context filter is set (e.g. "on a team with a losing record"):
+    # that filter is the reason "team" appears in the query, and the intent is a
+    # player leaderboard filtered by team game context, not a team-level ranking.
+    elif re.search(r'\bteam\b', lower) and not plan.team_code and not plan.team_context:
         plan.query_type = "team_ranking"
         plan.has_team_context = True
         _add_consumed(plan, "team teams")
