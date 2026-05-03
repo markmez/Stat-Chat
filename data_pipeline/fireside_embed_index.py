@@ -1,45 +1,50 @@
 """
-Fireside semantic search — one-shot embedding index builder.
+Fireside semantic search — embedding index builder.
 
 Pulls the Fireside catalog from Sanity, fetches each episode's WebVTT
-transcript (when present), and produces TWO levels of embeddings:
+transcript (when present), and produces THREE levels of embeddings:
 
-  - One per episode (title + series + description + truncated transcript).
-  - One per chapter (chapter title + transcript text within the chapter's
-    time range). Lets semantic search resolve "the part where they
-    talked about X" to a specific chapter when only one chapter matches,
-    or surface the whole episode when multiple chapters match.
+  - Episode-level (title + series + description + truncated transcript)
+    and chapter-level (chapter title + transcript within chapter range)
+    bundled into a single `embeddings.json` for app-wide search.
+  - Per-episode CUE-level embeddings, one JSON file per episode, used
+    for in-episode search ("find the moment where they said X"). Each
+    VTT cue gets its own 1536d vector — time codes stay precise and
+    iOS can deep-link to the exact cue start.
 
-Output format (consumed by iOS):
+App-wide bundle format (consumed by iOS):
     {
         "model": "text-embedding-3-small",
         "dim": 1536,
         "generated_at": "2026-04-28T14:00:00Z",
-        "episodes": {
-            "<sanity _id>": {
-                "title": "...",
-                "series": "...",
-                "vector": [0.012, -0.034, ...]
-            }
-        },
-        "chapters": [
-            {
-                "episode_id": "<sanity _id>",
-                "chapter_number": 1,
-                "title": "...",
-                "vector": [...]
-            }
+        "episodes": {"<sanity _id>": {"title": "...", "series": "...", "vector": [...]}},
+        "chapters": [{"episode_id": "...", "chapter_number": 1, "title": "...", "vector": [...]}]
+    }
+
+Per-episode cue file format (one file per episode):
+    {
+        "model": "text-embedding-3-small",
+        "dim": 1536,
+        "episode_id": "...",
+        "generated_at": "...",
+        "cue_count": 750,
+        "cues": [
+            {"start": 12.5, "end": 15.3, "text": "...", "vector": [...]}
         ]
     }
 
 Usage:
     cd data_pipeline/
     OPENAI_API_KEY=sk-proj-... python fireside_embed_index.py \
-        --output ./embeddings.json
+        --output ./embeddings.json --episode-output-dir ./episode-embeddings
 
-    # Optional: also upload to S3 (requires AWS credentials configured)
+    # Optional: also upload everything to S3
     OPENAI_API_KEY=sk-proj-... python fireside_embed_index.py \
-        --output ./embeddings.json --upload
+        --output ./embeddings.json --episode-output-dir ./episode-embeddings --upload
+
+    # Skip per-episode cue embeddings (chapter-level only, faster):
+    OPENAI_API_KEY=sk-proj-... python fireside_embed_index.py \
+        --output ./embeddings.json --skip-cues
 
 This is a manual step — run when Sanity content changes (new episodes,
 edited descriptions, etc.). A future scheduled cron can replace this.
@@ -255,15 +260,72 @@ def embed(client: OpenAI, text: str) -> List[float]:
     return resp.data[0].embedding
 
 
+# OpenAI's embedding endpoint accepts up to 2048 inputs per request and up
+# to 8191 tokens per input. Cues are tiny (~12 words / ~17 tokens), so
+# batching ~500 per call keeps us well under the token budget AND the
+# per-request size limit while drastically cutting round trips. ~750
+# cues per episode → 2 calls per episode instead of 750.
+CUE_BATCH_SIZE = 500
+
+
+def embed_batch(client: OpenAI, texts: List[str]) -> List[List[float]]:
+    """Embed a batch of texts in a single API call. Preserves input
+    ordering (OpenAI returns embeddings in the same order)."""
+    if not texts:
+        return []
+    resp = client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
+    # The SDK returns data sorted by index already, but be explicit.
+    sorted_data = sorted(resp.data, key=lambda d: d.index)
+    return [d.embedding for d in sorted_data]
+
+
+def embed_cues_for_episode(
+    client: OpenAI,
+    cues: List[Tuple[float, float, str]],
+) -> List[dict]:
+    """Embed every cue in the episode using batch requests. Returns a
+    list of dicts ready for serialization. Cues with empty text are
+    skipped — embeddings on empty strings waste tokens and produce
+    near-meaningless vectors that pollute search."""
+    cleaned: List[Tuple[float, float, str]] = [
+        (s, e, t.strip()) for s, e, t in cues if t and t.strip()
+    ]
+    if not cleaned:
+        return []
+
+    out: List[dict] = []
+    for i in range(0, len(cleaned), CUE_BATCH_SIZE):
+        batch = cleaned[i : i + CUE_BATCH_SIZE]
+        texts = [t for _, _, t in batch]
+        try:
+            vectors = embed_batch(client, texts)
+        except Exception as e:
+            print(f"    cue batch {i // CUE_BATCH_SIZE} embed failed: {e}", file=sys.stderr)
+            # On a failed batch, skip this slice rather than aborting the
+            # whole episode — partial coverage is better than none.
+            continue
+        for (start, end, text), vector in zip(batch, vectors):
+            out.append({
+                "start": round(start, 3),
+                "end": round(end, 3),
+                "text": text,
+                "vector": vector,
+            })
+    return out
+
+
+S3_BUCKET = "fireside-poc-827207864714"
+S3_BUNDLE_KEY = f"s3://{S3_BUCKET}/search/embeddings.json"
+S3_EPISODE_PREFIX = f"s3://{S3_BUCKET}/search/episode-embeddings/"
+
+
 def upload_to_s3(local_path: str) -> None:
-    """Upload via aws CLI to s3://fireside-poc-827207864714/search/embeddings.json
-    so it's reachable at https://dzvnta9wbxyyv.cloudfront.net/search/embeddings.json
-    (same CloudFront the transcripts are served from)."""
+    """Upload the chapter+episode bundle to s3://.../search/embeddings.json,
+    reachable at https://dzvnta9wbxyyv.cloudfront.net/search/embeddings.json."""
     import subprocess
-    s3_key = "s3://fireside-poc-827207864714/search/embeddings.json"
-    print(f"\nUploading {local_path} → {s3_key}")
+    print(f"\nUploading {local_path} → {S3_BUNDLE_KEY}")
     cmd = [
-        "aws", "s3", "cp", local_path, s3_key,
+        "aws", "s3", "cp", local_path, S3_BUNDLE_KEY,
         "--content-type", "application/json",
         "--cache-control", "max-age=300",  # CloudFront caches 5 min
     ]
@@ -271,13 +333,61 @@ def upload_to_s3(local_path: str) -> None:
     if result.returncode != 0:
         print(f"S3 upload failed:\n{result.stderr}", file=sys.stderr)
         sys.exit(1)
-    print("✅ Uploaded.")
+    print("✅ Uploaded bundle.")
+
+
+def upload_episode_embeddings_to_s3(local_dir: str) -> None:
+    """Sync per-episode cue embedding files to s3://.../search/episode-embeddings/.
+    Each becomes reachable at https://dzvnta9wbxyyv.cloudfront.net/search/
+    episode-embeddings/{episodeId}.json. Uses `aws s3 sync` so unchanged
+    files don't re-upload on subsequent runs."""
+    import subprocess
+    print(f"\nSyncing {local_dir} → {S3_EPISODE_PREFIX}")
+    cmd = [
+        "aws", "s3", "sync", local_dir, S3_EPISODE_PREFIX,
+        "--content-type", "application/json",
+        "--cache-control", "max-age=300",
+        "--exclude", ".*",  # skip dotfiles
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"S3 episode sync failed:\n{result.stderr}", file=sys.stderr)
+        sys.exit(1)
+    print("✅ Synced episode embeddings.")
+
+
+def write_episode_cue_file(
+    episode_id: str,
+    cues_with_vectors: List[dict],
+    output_dir: str,
+) -> str:
+    """Write a per-episode cue-embedding JSON to disk. Filename is the
+    Sanity _id (URL-safe by convention). Returns the local path."""
+    os.makedirs(output_dir, exist_ok=True)
+    payload = {
+        "model": EMBEDDING_MODEL,
+        "dim": EMBEDDING_DIM,
+        "episode_id": episode_id,
+        "generated_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "cue_count": len(cues_with_vectors),
+        "cues": cues_with_vectors,
+    }
+    path = os.path.join(output_dir, f"{episode_id}.json")
+    with open(path, "w") as f:
+        json.dump(payload, f)
+    return path
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build Fireside embedding index")
-    parser.add_argument("--output", default="./embeddings.json", help="Output JSON path")
-    parser.add_argument("--upload", action="store_true", help="Upload to S3 after writing")
+    parser.add_argument("--output", default="./embeddings.json",
+                        help="Output JSON path for the chapter+episode bundle")
+    parser.add_argument("--episode-output-dir", default="./episode-embeddings",
+                        help="Directory for per-episode cue-embedding JSON files")
+    parser.add_argument("--skip-cues", action="store_true",
+                        help="Skip per-episode cue-level embeddings (chapter-level only)")
+    parser.add_argument("--upload", action="store_true",
+                        help="Upload bundle (and per-episode files unless --skip-cues) to S3")
     args = parser.parse_args()
 
     api_key = os.getenv("OPENAI_API_KEY")
@@ -293,6 +403,8 @@ def main() -> None:
 
     episode_index: dict = {}
     chapter_index: List[dict] = []
+    cue_files_written: List[str] = []
+    total_cues_embedded = 0
 
     for i, ep in enumerate(episodes, 1):
         ep_id = ep.get("_id")
@@ -344,6 +456,16 @@ def main() -> None:
                 "vector": ch_vector,
             })
 
+        # Per-episode cue-level embeddings — powers in-episode search.
+        # Skipped when transcript is missing or --skip-cues was passed.
+        if not args.skip_cues and cues:
+            cues_with_vectors = embed_cues_for_episode(client, cues)
+            if cues_with_vectors:
+                path = write_episode_cue_file(ep_id, cues_with_vectors, args.episode_output_dir)
+                cue_files_written.append(path)
+                total_cues_embedded += len(cues_with_vectors)
+                print(f"    {len(cues_with_vectors)} cue embeddings → {path}")
+
     output = {
         "model": EMBEDDING_MODEL,
         "dim": EMBEDDING_DIM,
@@ -359,9 +481,16 @@ def main() -> None:
         f"\n✅ Wrote {len(episode_index)} episodes + {len(chapter_index)} chapters "
         f"({bytes_written / 1024:.1f} KB) → {args.output}"
     )
+    if cue_files_written:
+        print(
+            f"✅ Wrote {len(cue_files_written)} per-episode cue files "
+            f"({total_cues_embedded} cues total) → {args.episode_output_dir}/"
+        )
 
     if args.upload:
         upload_to_s3(args.output)
+        if cue_files_written:
+            upload_episode_embeddings_to_s3(args.episode_output_dir)
 
 
 if __name__ == "__main__":
