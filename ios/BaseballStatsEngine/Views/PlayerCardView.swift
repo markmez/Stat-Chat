@@ -2842,7 +2842,7 @@ private struct PlainSlider: View {
 }
 
 private struct ChipPairWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+    nonisolated(unsafe) static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
     }
