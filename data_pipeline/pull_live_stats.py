@@ -982,6 +982,157 @@ def pull_player_info(conn, season_str):
     return count
 
 
+def reconcile_season_totals_from_game_logs(conn, season_year):
+    """Recompute season counting + rate stats from the game-log tables.
+
+    Why: MSF exposes season totals and daily game logs as separate endpoints.
+    They can lag each other by minutes-to-hours after a game completes — if
+    detection runs in that window, the events freeze with stale season totals
+    while per-game lines reference the just-loaded game. Symptom: "Judge now
+    has 13 HR" written into a feed event that describes the 14th HR. After
+    this runs, season totals are derived from the game logs we just ingested,
+    so the two are guaranteed consistent.
+
+    Only reconciles single-team season rows (the common case). Players with
+    multiple team rows in a season (mid-season trades) keep MSF's per-team
+    breakdown since game logs aren't team-keyed by date. That's <1% of rows
+    in practice.
+
+    Counting columns absent from game logs (intentional_walks, sacrifice_hits,
+    games_finished, complete_games, quality_starts, wild_pitches, balks) are
+    preserved from MSF. Rate stats (AVG/OBP/SLG/OPS/ISO/BABIP/ERA/WHIP/K/9/etc.)
+    are recomputed from the (possibly updated) counting stats. ops_plus,
+    era_plus, league are not touched."""
+    print(f"  Reconciling season totals from game logs for {season_year}...")
+    cursor = conn.cursor()
+
+    # --- Batting reconciliation ---
+    cursor.execute("""
+        SELECT player_id,
+               COUNT(*) AS games,
+               COALESCE(SUM(plate_appearances), 0) AS pa,
+               COALESCE(SUM(at_bats), 0) AS ab,
+               COALESCE(SUM(hits), 0) AS h,
+               COALESCE(SUM(doubles), 0) AS d,
+               COALESCE(SUM(triples), 0) AS t,
+               COALESCE(SUM(home_runs), 0) AS hr,
+               COALESCE(SUM(runs), 0) AS r,
+               COALESCE(SUM(rbi), 0) AS rbi,
+               COALESCE(SUM(walks), 0) AS bb,
+               COALESCE(SUM(strikeouts), 0) AS so,
+               COALESCE(SUM(hit_by_pitch), 0) AS hbp,
+               COALESCE(SUM(sacrifice_flies), 0) AS sf,
+               COALESCE(SUM(stolen_bases), 0) AS sb,
+               COALESCE(SUM(caught_stealing), 0) AS cs
+        FROM game_batting_logs
+        WHERE season = ?
+        GROUP BY player_id
+    """, (season_year,))
+    bat_sums = cursor.fetchall()
+
+    cursor.execute("""
+        SELECT player_id FROM season_batting_stats
+        WHERE season = ? GROUP BY player_id HAVING COUNT(*) = 1
+    """, (season_year,))
+    single_team_bat = {r[0] for r in cursor.fetchall()}
+
+    bat_updated = 0
+    for row in bat_sums:
+        pid, games, pa, ab, h, d, t, hr, r, rbi, bb, so, hbp, sf, sb, cs = row
+        if pid not in single_team_bat:
+            continue
+        avg = h / ab if ab else 0.0
+        obp_denom = ab + bb + hbp + sf
+        obp = (h + bb + hbp) / obp_denom if obp_denom else 0.0
+        singles = h - d - t - hr
+        tb = singles + 2 * d + 3 * t + 4 * hr
+        slg = tb / ab if ab else 0.0
+        ops = obp + slg
+        iso = slg - avg
+        babip_denom = ab - so - hr + sf
+        babip = (h - hr) / babip_denom if babip_denom else 0.0
+
+        cursor.execute("""
+            UPDATE season_batting_stats
+            SET games=?, plate_appearances=?, at_bats=?, hits=?,
+                doubles=?, triples=?, home_runs=?, runs=?, rbi=?,
+                walks=?, strikeouts=?, hit_by_pitch=?, sacrifice_flies=?,
+                stolen_bases=?, caught_stealing=?,
+                batting_avg=?, obp=?, slg=?, ops=?, iso=?, babip=?
+            WHERE player_id=? AND season=?
+        """, (games, pa, ab, h, d, t, hr, r, rbi, bb, so, hbp, sf, sb, cs,
+              round(avg, 3), round(obp, 3), round(slg, 3), round(ops, 3),
+              round(iso, 3), round(babip, 3),
+              pid, season_year))
+        if cursor.rowcount > 0:
+            bat_updated += 1
+
+    # --- Pitching reconciliation ---
+    cursor.execute("""
+        SELECT player_id,
+               COUNT(*) AS games,
+               COALESCE(SUM(is_start), 0) AS gs,
+               COALESCE(SUM(ip_outs), 0) AS ip_outs,
+               COALESCE(SUM(hits), 0) AS h,
+               COALESCE(SUM(runs), 0) AS r,
+               COALESCE(SUM(earned_runs), 0) AS er,
+               COALESCE(SUM(home_runs), 0) AS hr,
+               COALESCE(SUM(walks), 0) AS bb,
+               COALESCE(SUM(strikeouts), 0) AS so,
+               COALESCE(SUM(hit_by_pitch), 0) AS hbp,
+               COALESCE(SUM(batters_faced), 0) AS bf,
+               COALESCE(SUM(win), 0) AS wins,
+               COALESCE(SUM(loss), 0) AS losses,
+               COALESCE(SUM(save), 0) AS saves
+        FROM game_pitching_logs
+        WHERE season = ?
+        GROUP BY player_id
+    """, (season_year,))
+    pit_sums = cursor.fetchall()
+
+    cursor.execute("""
+        SELECT player_id FROM season_pitching_stats
+        WHERE season = ? GROUP BY player_id HAVING COUNT(*) = 1
+    """, (season_year,))
+    single_team_pit = {r[0] for r in cursor.fetchall()}
+
+    pit_updated = 0
+    for row in pit_sums:
+        (pid, games, gs, ip_outs, h, r, er, hr, bb, so, hbp, bf,
+         wins, losses, saves) = row
+        if pid not in single_team_pit:
+            continue
+        innings_str = f"{ip_outs // 3}.{ip_outs % 3}"
+        era = er * 27.0 / ip_outs if ip_outs else 0.0
+        whip = (h + bb) * 3.0 / ip_outs if ip_outs else 0.0
+        k_per_9 = so * 27.0 / ip_outs if ip_outs else 0.0
+        bb_per_9 = bb * 27.0 / ip_outs if ip_outs else 0.0
+        k_per_bb = (so / bb) if bb else 0.0
+        h_per_9 = h * 27.0 / ip_outs if ip_outs else 0.0
+        hr_per_9 = hr * 27.0 / ip_outs if ip_outs else 0.0
+
+        cursor.execute("""
+            UPDATE season_pitching_stats
+            SET games=?, games_started=?, ip_outs=?, innings_pitched=?,
+                hits=?, runs=?, earned_runs=?, home_runs=?,
+                walks=?, strikeouts=?, hit_by_pitch=?, batters_faced=?,
+                wins=?, losses=?, saves=?,
+                era=?, whip=?, k_per_9=?, bb_per_9=?, k_per_bb=?,
+                h_per_9=?, hr_per_9=?
+            WHERE player_id=? AND season=?
+        """, (games, gs, ip_outs, innings_str, h, r, er, hr, bb, so, hbp, bf,
+              wins, losses, saves,
+              round(era, 2), round(whip, 3), round(k_per_9, 2),
+              round(bb_per_9, 2), round(k_per_bb, 2),
+              round(h_per_9, 2), round(hr_per_9, 2),
+              pid, season_year))
+        if cursor.rowcount > 0:
+            pit_updated += 1
+
+    conn.commit()
+    print(f"    Reconciled {bat_updated} batter rows, {pit_updated} pitcher rows")
+
+
 def compute_batting_home_away_splits(conn, season_year):
     """Compute batting home/away splits from game logs for this season."""
     print(f"  Computing batting home/away splits for {season_year}...")
@@ -1968,6 +2119,13 @@ def main():
         pull_season_pitching(conn, args.season)
         compute_pitching_league_averages(conn, season_year)
         pull_game_logs(conn, args.season, full_refresh=args.full_refresh)
+
+        # Reconcile season totals from game logs. Eliminates the race where
+        # MSF's season-totals endpoint lags the daily game logs by minutes
+        # to hours after game completion. Must run AFTER pull_game_logs so
+        # game logs are the latest data, and BEFORE detect_all later in main()
+        # so events are computed against consistent totals.
+        reconcile_season_totals_from_game_logs(conn, season_year)
 
         # Team-level game results (scores, W/L, innings, attendance, weather).
         # Cheap: one MSF endpoint, ~15 seconds. Powers "team record" /
