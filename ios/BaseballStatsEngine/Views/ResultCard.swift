@@ -233,15 +233,20 @@ struct ResultCard: View {
                     Text("See also: ")
                         .foregroundStyle(.secondary)
                     ForEach(Array(queries.enumerated()), id: \.offset) { idx, q in
-                        if idx > 0 {
-                            Text(", ")
-                                .foregroundStyle(.secondary)
+                        // Pair each item with its trailing comma in an HStack so the
+                        // comma wraps together with the item it belongs to. Otherwise
+                        // a bare ", " can orphan to the start of a wrapped line.
+                        HStack(spacing: 0) {
+                            Button { tap(q) } label: {
+                                Text(q)
+                                    .foregroundStyle(deepBlue)
+                            }
+                            .buttonStyle(.plain)
+                            if idx < queries.count - 1 {
+                                Text(", ")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
-                        Button { tap(q) } label: {
-                            Text(q)
-                                .foregroundStyle(deepBlue)
-                        }
-                        .buttonStyle(.plain)
                     }
                 }
                 .font(.system(.subheadline, design: .rounded))
