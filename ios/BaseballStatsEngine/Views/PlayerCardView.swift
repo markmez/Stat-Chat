@@ -96,7 +96,10 @@ struct PlayerCardView: View {
                                     .foregroundStyle(.primary)
                             }
 
-                            // Team(s) + position + age + handedness
+                            // Team(s) + position + age + handedness.
+                            // Each non-team item is split into a separator view + content view
+                            // so FlowLayout can drop the separator if it would land at the start
+                            // of a wrapped line. The line break itself provides separation.
                             if isRecentPlayer {
                                 FlowLayout(spacing: 0) {
                                     Button {
@@ -109,25 +112,31 @@ struct PlayerCardView: View {
                                     }
                                     .buttonStyle(.plain)
                                     if let positions = card.positions {
-                                        Text("  \u{00B7}  \(positions)")
+                                        Text("  \u{00B7}  ").flowSeparator()
+                                        Text(positions)
                                     }
                                     if let age = card.age {
-                                        Text("  \u{00B7}  Age \(age)")
+                                        Text("  \u{00B7}  ").flowSeparator()
+                                        Text("Age \(age)")
                                     }
                                     if card.isTwoWay {
                                         if let bats = card.bats {
-                                            Text("  \u{00B7}  Bats: \(handednessWord(bats))")
+                                            Text("  \u{00B7}  ").flowSeparator()
+                                            Text("Bats: \(handednessWord(bats))")
                                         }
                                         if let throws_ = card.throws_ {
-                                            Text("  \u{00B7}  Throws: \(handednessWord(throws_))")
+                                            Text("  \u{00B7}  ").flowSeparator()
+                                            Text("Throws: \(handednessWord(throws_))")
                                         }
                                     } else if card.isPitcher {
                                         if let throws_ = card.throws_ {
-                                            Text("  \u{00B7}  Throws: \(handednessWord(throws_))")
+                                            Text("  \u{00B7}  ").flowSeparator()
+                                            Text("Throws: \(handednessWord(throws_))")
                                         }
                                     } else {
                                         if let bats = card.bats {
-                                            Text("  \u{00B7}  Bats: \(handednessWord(bats))")
+                                            Text("  \u{00B7}  ").flowSeparator()
+                                            Text("Bats: \(handednessWord(bats))")
                                         }
                                     }
                                 }

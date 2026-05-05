@@ -300,6 +300,22 @@ struct ResultCard: View {
 // MARK: - Flow layout for wrapping pills
 
 /// A horizontal wrapping layout — items flow left-to-right, wrapping to the next line when needed.
+/// Layout-value marker so FlowLayout can recognize separator-only views and
+/// drop them when they'd otherwise render at the start of a wrapped line —
+/// e.g. a bio dot ("  ·  Bats: Right") wrapping shouldn't leave a leading
+/// dot orphaned at the new line's left edge.
+private struct FlowSeparatorKey: LayoutValueKey {
+    static let defaultValue: Bool = false
+}
+
+extension View {
+    /// Mark a view (typically a small separator like " · ") so FlowLayout
+    /// will skip it when it would render at the start of a row.
+    func flowSeparator() -> some View {
+        layoutValue(key: FlowSeparatorKey.self, value: true)
+    }
+}
+
 struct FlowLayout: Layout {
     var spacing: CGFloat = 8
 
@@ -341,10 +357,18 @@ struct FlowLayout: Layout {
 
         for subview in subviews {
             let size = subview.sizeThatFits(.unspecified)
+            let isSeparator = subview[FlowSeparatorKey.self]
             let needed = currentRowWidth > 0 ? size.width + spacing : size.width
-            if currentRowWidth + needed > maxWidth && !rows[rows.count - 1].isEmpty {
+            let willOverflow = currentRowWidth + needed > maxWidth && !rows[rows.count - 1].isEmpty
+            if willOverflow {
                 rows.append([])
                 currentRowWidth = 0
+            }
+            // Drop separators that would land at the start of a row (the
+            // initial row's start, or the start of any wrapped row). The
+            // line break itself provides separation.
+            if isSeparator && rows[rows.count - 1].isEmpty {
+                continue
             }
             rows[rows.count - 1].append(RowItem(subview: subview, size: size))
             currentRowWidth += (currentRowWidth > 0 ? spacing : 0) + size.width
