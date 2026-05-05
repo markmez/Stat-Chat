@@ -229,24 +229,22 @@ struct ResultCard: View {
         case .didYouMean(let query):
             if let tap = onQueryTap {
                 let queries = query.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
-                FlowLayout(spacing: 0) {
-                    Text("See also: ")
+                // Stack vertically so long suggestions ("Pitchers with 200+ strikeouts
+                // and sub 3.00 ERA last year") get their own line and wrap cleanly within
+                // it instead of overflowing the inline FlowLayout. Comma separators are
+                // unnecessary when each item is on its own row.
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("See also:")
                         .foregroundStyle(.secondary)
-                    ForEach(Array(queries.enumerated()), id: \.offset) { idx, q in
-                        // Pair each item with its trailing comma in an HStack so the
-                        // comma wraps together with the item it belongs to. Otherwise
-                        // a bare ", " can orphan to the start of a wrapped line.
-                        HStack(spacing: 0) {
-                            Button { tap(q) } label: {
-                                Text(q)
-                                    .foregroundStyle(deepBlue)
-                            }
-                            .buttonStyle(.plain)
-                            if idx < queries.count - 1 {
-                                Text(", ")
-                                    .foregroundStyle(.secondary)
-                            }
+                    ForEach(Array(queries.enumerated()), id: \.offset) { _, q in
+                        Button { tap(q) } label: {
+                            Text(q)
+                                .foregroundStyle(deepBlue)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
                 .font(.system(.subheadline, design: .rounded))
