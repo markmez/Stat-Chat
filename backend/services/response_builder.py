@@ -2527,15 +2527,29 @@ def build_pitching_tto_splits(name: str, tto: Optional[str], season: int) -> Opt
 
         headers = ["AB", "H", "2B", "3B", "HR", "BB", "SO",
                    "AVG", "OBP", "SLG", "OPS"]
-        title_tto = f" — {tto} Time(s) Through Order" if tto else " — Times Through Order"
+        _ordinals = {"1": "1st", "2": "2nd", "3": "3rd", "4+": "4+"}
+        if tto:
+            ordinal = _ordinals.get(tto, tto)
+            noun = "Times" if tto == "4+" else "Time"
+            title_tto = f" — {ordinal} {noun} Through the Order"
+        else:
+            title_tto = " — Times Through the Order"
         parts = []
         parts.append(f"**{display_name}** — {season} Pitching{title_tto}\n")
         parts.append("[STATGRID]")
         parts.append("HEADER: " + ", ".join(headers))
+        single_row = tto is not None
         for row in rows:
-            tto_label = f"{row[0]}x Through"
+            # Single-TTO requests: drop the row label (the title already names the
+            # bucket). Multi-row "all TTO" view: short ordinal ("1st", "2nd", ...) —
+            # avoids triggering the iOS player-name extractor, which lights up any
+            # row label containing a space.
+            tto_label = "" if single_row else _ordinals.get(row[0], row[0])
             values = _format_pitching_values(headers, [str(v) if v is not None else "" for v in row[1:]])
-            parts.append(f"ROW {tto_label}: " + ", ".join(values))
+            if tto_label:
+                parts.append(f"ROW {tto_label}: " + ", ".join(values))
+            else:
+                parts.append("ROW: " + ", ".join(values))
         parts.append("[/STATGRID]")
         parts.append(f"\n[SUGGEST]{display_name} {season}[/SUGGEST]")
         return "\n".join(parts)
