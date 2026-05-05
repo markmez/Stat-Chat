@@ -40,11 +40,20 @@ _DETECTION_TYPE_STAT = {
     "career_p_wins_200": "wins",
     "alltime_passing_hits": "hits",
     "alltime_passing_home_runs": "home_runs",
+    "alltime_passing_rbi": "rbi",
+    "alltime_passing_stolen_bases": "stolen_bases",
     "alltime_passing_strikeouts": "strikeouts",
     "alltime_passing_doubles": "doubles",
+    "alltime_passing_wins": "wins",
     "alltime_passing_multi_hr": "home_runs",
+    "alltime_passing_3_hr": "home_runs",
     "franchise_passing_hits": "hits",
     "franchise_passing_home_runs": "home_runs",
+    "franchise_passing_rbi": "rbi",
+    "franchise_passing_stolen_bases": "stolen_bases",
+    "franchise_passing_doubles": "doubles",
+    "franchise_passing_wins": "wins",
+    "franchise_passing_strikeouts": "strikeouts",
     "pace_home_runs_50": "home_runs",
     "pace_home_runs_60": "home_runs",
     "pace_home_runs_70": "home_runs",
@@ -210,6 +219,11 @@ _PAST_VERB_STARTERS = {
     "stole", "struck", "threw", "gave", "left",
 }
 _HAS_BE_STARTERS = {"is", "was", "has", "had", "now"}
+# Present participles that survive into the impact when an active-state event
+# (live streak / ongoing pace) preserves present tense. Without this, an impact
+# starting "extending his hitting streak..." gets no subject prepended and
+# emerges as a sentence fragment ("By collecting 2 hits, extending his...").
+_PRESENT_PARTICIPLE_STARTERS = set(_PRESENT_TO_PAST.keys())
 
 # Sentence-boundary regex: period + whitespace + uppercase letter. Avoids
 # splitting on abbreviations like "Jr." / "Sr." / "St." since the next word
@@ -416,6 +430,10 @@ def _ensure_subject(text, *, active_state: bool = False):
         return text
     if first in _PAST_VERB_STARTERS or first in _HAS_BE_STARTERS:
         return "he " + text[0].lower() + text[1:]
+    # Present participle survivor (active-state preserved "extending"/"matching").
+    # Use "he's" so tense stays present-progressive — the streak is still alive.
+    if first in _PRESENT_PARTICIPLE_STARTERS:
+        return "he's " + text[0].lower() + text[1:]
     if first in ("the", "his", "her", "a", "an"):
         first_clause = " ".join(text.split()[:10]).lower()
         if any(f" {v} " in f" {first_clause} " for v in ("is", "was", "has", "had", "are", "were")):
