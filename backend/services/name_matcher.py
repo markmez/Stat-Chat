@@ -1561,14 +1561,28 @@ def parse_season_count(input_str: str) -> Optional[dict]:
     if not name:
         return None
 
-    stat_info = match_stat(lower)
-    if not stat_info:
-        # Infer batting average from verb forms like "batted .300", "hit .300"
-        # or bare rate values like ".300 seasons"
-        if re.search(r'(?:batted|hit|batting)\s+\.?\d', lower) or re.search(r'\.\d{3}\s+(?:seasons?|years?)', lower):
-            stat_info = match_stat("batting average")
+    # Verb-form rate values ("hit .300", "batted .300", "hit over .300")
+    # must override whatever match_stat would return. "hit" alone is an
+    # alias for the hits stat, but "hit .300" semantically means ".300
+    # batting average." Without this guard, match_stat resolves to hits
+    # first and the query becomes "0.3+ hits in N seasons" — never the
+    # user's intent. The leading dot in the regex is what disambiguates a
+    # rate value (.300) from a counting threshold (30).
+    verb_rate = re.search(
+        r'(?:batted|batting|hitting|hit|bat)\s+(?:over|above|under|below|sub)?\s*\.\d{2,3}',
+        lower,
+    )
+    if verb_rate:
+        stat_info = match_stat("batting average")
+    else:
+        stat_info = match_stat(lower)
         if not stat_info:
-            return None
+            # Bare rate values ".300 seasons" — no verb to anchor on, infer
+            # batting average from the rate-format value.
+            if re.search(r'\.\d{3}\s+(?:seasons?|years?)', lower):
+                stat_info = match_stat("batting average")
+            if not stat_info:
+                return None
 
     # Check for an explicit threshold — "hit 30 home runs", "batted .300", "stolen 40 bases"
     threshold = 1
@@ -1577,8 +1591,8 @@ def parse_season_count(input_str: str) -> Optional[dict]:
         if threshold == int(threshold):
             threshold = int(threshold)
     else:
-        # Try number anywhere near context: "hit 30", "batted .300", "stolen 40"
-        m = re.search(r'(?:hit|batted|stolen|had|threw|pitched|struck out|walked|over|above)\s+(\.?\d+\.?\d*)', lower)
+        # Try number anywhere near context: "hit 30", "batted .300", "stolen 40", "bat .300"
+        m = re.search(r'(?:hit|hitting|batted|batting|bat|stolen|had|threw|pitched|struck out|walked|over|above)\s+(\.?\d+\.?\d*)', lower)
         if m:
             threshold = float(m.group(1))
             if threshold == int(threshold):
