@@ -1937,7 +1937,7 @@ def _find_feed_pelt_comp(conn, exclude_pid, season, window, ops,
         tf_params = [f"%/{c}/%" for c in team_codes]
 
     row = conn.execute(f"""
-        SELECT p.name, cf.season
+        SELECT p.name, cf.season, cf.num_games
         FROM current_form cf
         JOIN players p ON cf.player_id = p.player_id
         WHERE cf.season < ? AND cf.season >= ?
@@ -1950,7 +1950,7 @@ def _find_feed_pelt_comp(conn, exclude_pid, season, window, ops,
     """, (season, min_season, exclude_pid, min_games, max_games, ops, *tf_params)).fetchone()
 
     if row:
-        return {"name": row[0], "season": row[1]}
+        return {"name": row[0], "season": row[1], "num_games": row[2]}
     return None
 
 
@@ -1999,17 +1999,21 @@ def _pelt_streak_headline(name, num_games, quality, stats_phrase, mlb_comp, team
 
     sentences = [f"{opener} — {stats_phrase}"]
 
-    # Comparisons are anchored on OPS (see _find_feed_pelt_comp). Naming the
-    # metric explicitly avoids vague antecedents like "Best such stretch" /
-    # "Longest by a Diamondback" that leave readers guessing what's being
-    # measured.
+    # Comparisons are anchored on OPS (see _find_feed_pelt_comp) over a window
+    # within ±2 games of the player's own length. State the length explicitly
+    # so the reader knows what's being measured — "such a stretch" leaves them
+    # guessing. Use the LOWER of the two windows + "+" so the claim ("best
+    # OPS over an N+ game stretch") is true for both players regardless of
+    # which side has the longer window.
     if mlb_comp:
+        n = min(num_games, mlb_comp.get("num_games", num_games))
         sentences.append(
-            f"Best OPS over such a stretch by any player since {mlb_comp['name']} in {mlb_comp['season']}"
+            f"Best OPS over a {n}+ game stretch by any player since {mlb_comp['name']} in {mlb_comp['season']}"
         )
     if team_comp and franchise_name:
+        n = min(num_games, team_comp.get("num_games", num_games))
         sentences.append(
-            f"Best OPS by a {franchise_name} over such a stretch since {team_comp['name']} in {team_comp['season']}"
+            f"Best OPS by a {franchise_name} over a {n}+ game stretch since {team_comp['name']} in {team_comp['season']}"
         )
 
     # Join: first sentence ends at em-dash phrase, rest are separate sentences.
