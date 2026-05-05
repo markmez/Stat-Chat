@@ -330,12 +330,17 @@ class TestQueriesThatFallThrough:
             assert try_intercept(q) is None, f"Should NOT intercept: {q}"
 
     def test_analytical_questions_not_intercepted(self):
-        """Reasoning/opinion questions should fall through to Claude."""
+        """Reasoning/opinion questions should fall through to Claude.
+
+        Note: vague "best hitter" / "best pitcher" / "best season" leaderboards
+        are now intercepted via the default-stat rule (OPS for batting, ERA for
+        pitching), so they're NOT in this list — they have a defined answer
+        ("show OPS leaders") and shouldn't burn a Claude call.
+        """
         for q in [
             "is that a good batting average?",
             "why did his stats drop in 2023?",
             "was that a record?",
-            "who had the best season ever",
         ]:
             assert try_intercept(q) is None, f"Should NOT intercept: {q}"
 

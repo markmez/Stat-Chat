@@ -591,6 +591,22 @@ def decompose(question: str) -> QueryPlan:
         # Collapse extra whitespace introduced by the strip
         lower = " ".join(lower.split())
 
+    # --- Early split-context detection ---
+    # Split-context phrases ("first at bat", "3rd time through the order") also
+    # contain words that ARE stat aliases ("at bat" → AB, "time" → time-on-base
+    # nope but still). Detect + strip the phrase from `lower` here so match_stat
+    # later sees a clean remainder. Without this, "best hitter in 1st at bat"
+    # would match AB (at-bats) instead of falling through to the OPS fallback.
+    plan.split_context = _detect_split_context(lower)
+    if plan.split_context:
+        for phrase in plan.split_context.consumed_phrases:
+            if phrase in lower:
+                lower = lower.replace(phrase, " ")
+                _add_consumed(plan, phrase)
+        lower = " ".join(lower.split())
+        if plan.split_context.is_pitching:
+            plan.is_pitching = True
+
     # --- Early detection: stat definitions ---
     # "what is OPS", "explain BABIP", "define ERA" — not a DB query
     definition_triggers = ["what is ", "what's ", "explain ", "define ", "what does ", "how is ", "how do you calculate"]
@@ -1081,14 +1097,9 @@ def decompose(question: str) -> QueryPlan:
             and plan.query_type not in ("game_log_count", "game_log_extreme")):
         plan.ambiguous_stat = True
 
-    plan.split_context = _detect_split_context(lower)
-    if plan.split_context:
-        for phrase in plan.split_context.consumed_phrases:
-            _add_consumed(plan, phrase)
-    # team_context detection happens early in decompose() so its consumed
-    # phrases are stripped before match_stat runs — avoiding mismatches
-    # where "innings" / "won" inside the context phrase were being read
-    # as stat keywords.
+    # split_context detection happens early in decompose() (alongside team_context)
+    # so consumed phrases are stripped before match_stat runs — avoiding mismatches
+    # where "at bat" inside "first at bat" was being read as the AB stat keyword.
 
     # Bats filter
     bats_patterns = [
@@ -1582,6 +1593,36 @@ def decompose(question: str) -> QueryPlan:
                 plan.threshold = float(numbers[0])
             else:
                 plan.threshold = None  # let the extra_filters carry the conditions
+
+    # Default-stat rule for vague "best X" leaderboards. The stat_config fallback
+    # aliases ("best hitter" → OPS, "best pitcher" → ERA) cover queries where
+    # those phrases are the entire ranking signal — but only when match_stat
+    # actually ran on a string containing those phrases. If we got here with
+    # no stat (e.g. a leaderboard trigger like "best" or "highest" with the
+    # stat noun not matching anything), fall back by intent:
+    #   - pitching + split_context  → OPS-against (split tables don't have ERA)
+    #   - pitching, no split        → ERA
+    #   - batting (default)         → OPS
+    if (plan.query_type == "leaderboard"
+            and plan.stat is None and plan.derived_stat is None
+            and any(t in lower for t in ["best", "highest", "lowest", "top",
+                                         "leaders", "leader", "leading", "most"])):
+        if plan.is_pitching:
+            if plan.split_context is not None:
+                plan.stat = stat_alias_map.get("ops")
+            else:
+                plan.stat = stat_alias_map.get("era")
+        else:
+            plan.stat = stat_alias_map.get("ops")
+
+    # Pitching split tables don't carry ERA — if we resolved to ERA via the
+    # fallback aliases ("best pitcher") AND a pitching split context is set,
+    # swap to OPS. build_split_leaderboard maps to ops_against under the hood.
+    if (plan.split_context is not None
+            and plan.split_context.is_pitching
+            and plan.stat is not None
+            and plan.stat.db_column == "era"):
+        plan.stat = stat_alias_map.get("ops")
 
     return plan
 

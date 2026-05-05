@@ -951,11 +951,15 @@ def _detect_team_context(lower: str) -> Optional[TeamContextFilter]:
 class SplitContext:
     """Describes a split-table filter for leaderboard queries."""
     table: str           # e.g. "count_batting_splits"
-    filter_col: str      # e.g. "count_state"
-    filter_values: list  # e.g. ["0-2", "1-2", "2-2", "3-2"]
+    filter_col: Optional[str]  # e.g. "count_state"; None when the table is already a single split (e.g. first_pa_batting_splits)
+    filter_values: list  # e.g. ["0-2", "1-2", "2-2", "3-2"]; empty list when filter_col is None
     label: str           # e.g. "With 2 Strikes"
     # Which words in the query this context consumed (for unexplained-word detection)
     consumed_phrases: list
+    # True when the split is sourced from a pitching split table (e.g. pitching_tto_splits).
+    # Drives the executor's column choice (_against rate cols), sort direction (ASC for rate
+    # stats), and qualifier table (season_pitching_stats).
+    is_pitching: bool = False
 
 
 # Map of split trigger phrases → SplitContext
@@ -995,6 +999,28 @@ _SPLIT_CONTEXTS = {
     "at home": SplitContext("home_away_splits", "split", ["home"], "At Home", ["at home"]),
     "on the road": SplitContext("home_away_splits", "split", ["away"], "On the Road", ["on the road"]),
     "away from home": SplitContext("home_away_splits", "split", ["away"], "On the Road", ["away from home"]),
+    # First PA of game (batting). Table is already a single bucket — no IN filter needed.
+    # Each entry's `consumed_phrases` strips both the trigger phrase AND the surrounding
+    # "of games" / "of the game" / "of a game" tail. Otherwise leftover "games" matches G
+    # (games played) as the leaderboard stat.
+    **{
+        f"{lead}{tail}": SplitContext(
+            "first_pa_batting_splits", None, [], "in 1st PA of Game",
+            [f"{lead}{tail}", lead],  # strip the long-form first, then bare lead just in case
+        )
+        for lead in [
+            "first at bat", "first at-bat", "1st at bat", "1st at-bat",
+            "first plate appearance", "1st plate appearance",
+        ]
+        for tail in [
+            " of games", " of the game", " of a game", " of game",
+            "s of the game", "s of a game", "s of games",  # plural lead handled below
+            "",
+        ]
+    },
+    "first pa": SplitContext("first_pa_batting_splits", None, [], "in 1st PA of Game", ["first pa"]),
+    "1st pa": SplitContext("first_pa_batting_splits", None, [], "in 1st PA of Game", ["1st pa"]),
+    "first time up": SplitContext("first_pa_batting_splits", None, [], "in 1st PA of Game", ["first time up"]),
     # Platoon
     "against lefties": SplitContext("platoon_splits", "split", ["vs_LHP"], "vs LHP", ["against lefties"]),
     "against righties": SplitContext("platoon_splits", "split", ["vs_RHP"], "vs RHP", ["against righties"]),
@@ -1008,10 +1034,43 @@ _SPLIT_CONTEXTS = {
 
 
 def _detect_split_context(lower: str) -> Optional[SplitContext]:
-    """Detect split context in query. Checks longest phrases first."""
+    """Detect split context in query. Checks longest fixed phrases first,
+    then parametric patterns (TTO ordinals)."""
     for phrase in sorted(_SPLIT_CONTEXTS.keys(), key=len, reverse=True):
         if phrase in lower:
             return _SPLIT_CONTEXTS[phrase]
+
+    # Parametric: "Nth time(s) through (the order)?" — pitching split (pitching_tto_splits).
+    # Must include "time through" / "times through" so bare ordinals like
+    # "third inning" don't false-match.
+    if "time through" in lower or "times through" in lower:
+        tto: Optional[str] = None
+        consumed_text: Optional[str] = None
+        # Word ordinals first
+        for word, n in _ORDINAL_WORDS.items():
+            m = re.search(rf'\b{word}\s+time(?:s)?\s+through(?:\s+the\s+order|\s+the\s+lineup|\s+order|\s+lineup)?\b', lower)
+            if m:
+                tto = str(n) if n < 4 else "4+"
+                consumed_text = m.group(0)
+                break
+        # Numeric ordinals if no word match
+        if tto is None:
+            m = re.search(r'\b(\d+)(?:st|nd|rd|th)\s+time(?:s)?\s+through(?:\s+the\s+order|\s+the\s+lineup|\s+order|\s+lineup)?\b', lower)
+            if m:
+                n = int(m.group(1))
+                tto = str(n) if n < 4 else "4+"
+                consumed_text = m.group(0)
+        if tto and consumed_text:
+            ordinal_label = {"1": "1st", "2": "2nd", "3": "3rd", "4+": "4+"}.get(tto, tto)
+            noun = "Times" if tto == "4+" else "Time"
+            return SplitContext(
+                table="pitching_tto_splits",
+                filter_col="tto",
+                filter_values=[tto],
+                label=f"{ordinal_label} {noun} Through the Order",
+                consumed_phrases=[consumed_text],
+                is_pitching=True,
+            )
     return None
 
 

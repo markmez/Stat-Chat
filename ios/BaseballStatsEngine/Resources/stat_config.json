@@ -89,6 +89,7 @@
     },
     "era": {
       "aliases": ["earned run average", "era"],
+      "fallback_aliases": ["best pitcher", "best pitchers", "top pitcher", "top pitchers", "greatest pitcher", "greatest pitchers", "best starting pitcher", "best starting pitchers", "best starter", "best starters", "top starter", "top starters", "ace pitcher"],
       "abbrev": "ERA", "name": "ERA", "is_rate": true
     },
     "whip": {

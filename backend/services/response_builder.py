@@ -5522,29 +5522,60 @@ def build_count_query(stat_info: StatInfo, threshold: float, season: Optional[in
 
 def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
                             limit: int = 50, league: Optional[str] = None) -> Optional[str]:
-    """Build a leaderboard from a split table (count, pitch type, RISP, home/away, platoon)."""
+    """Build a leaderboard from a split table (count, pitch type, RISP, home/away, platoon, TTO, first-PA).
+
+    Branches on `split_context.is_pitching`:
+      - pitching: source rate columns from `_against` variants, sort ASC for rates,
+        qualify against `season_pitching_stats`, league join via pitching team.
+      - batting (default): rate columns as-is, sort DESC, qualify via
+        `season_batting_stats`.
+    Handles tables that are already a single bucket (filter_col=None,
+    filter_values=[]): no IN-clause is emitted.
+    """
     conn = _get_db()
     try:
         table = split_context.table
         filter_col = split_context.filter_col
         filter_values = split_context.filter_values
         label = split_context.label
+        is_pitching = getattr(split_context, "is_pitching", False)
 
-        placeholders = ", ".join("?" for _ in filter_values)
-        split_filter = f"AND t.{filter_col} IN ({placeholders})"
+        # Filter clause: skip entirely when the table is already a single split
+        if filter_col and filter_values:
+            placeholders = ", ".join("?" for _ in filter_values)
+            split_filter = f"AND t.{filter_col} IN ({placeholders})"
+            split_params: tuple = tuple(filter_values)
+        else:
+            split_filter = ""
+            split_params = ()
 
         cur = conn.cursor()
         cur.execute(f"PRAGMA table_info({table})")
         valid_cols = {r[1] for r in cur.fetchall()}
 
+        # For pitching split tables, rate columns are stored as `_against` variants.
+        # Map the requested stat's db_column to the actual column on the table.
         col = stat_info.db_column
+        if is_pitching:
+            _pitching_rate_col_map = {
+                "ops": "ops_against", "obp": "obp_against",
+                "slg": "slg_against", "batting_avg": "batting_avg_against",
+                "avg": "batting_avg_against",
+            }
+            col = _pitching_rate_col_map.get(col, col)
         if col not in valid_cols:
             return None
 
+        # Rate stats sort lower-is-better for pitching, higher-is-better for batting
+        sort_dir = "ASC" if (is_pitching and stat_info.is_rate) else "DESC"
+
         pa_filter = ""
         if stat_info.is_rate:
-            # Prorate split PA minimum based on season progress
-            cur.execute("SELECT MAX(games) FROM season_batting_stats WHERE season = ?", (season,))
+            # Prorate split PA minimum based on season progress. Pull max games
+            # from the matching season-totals table so qualification scales with
+            # the league's actual progress rather than a hardcoded 162.
+            qual_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+            cur.execute(f"SELECT MAX(games) FROM {qual_table} WHERE season = ?", (season,))
             r = cur.fetchone()
             max_games = int(r[0]) if r and r[0] else 162
             split_pa_min = max(1, int(20 * max_games / 162))
@@ -5553,16 +5584,22 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
         league_filter = ""
         league_label = ""
         if league:
+            league_qual_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+            league_qual_alias = "spq"
             league_filter = (
-                f" AND EXISTS (SELECT 1 FROM season_batting_stats sbs "
-                f"WHERE sbs.player_id = t.player_id AND sbs.season = t.season "
-                f"AND {_league_team_clause(league, 'sbs')})"
+                f" AND EXISTS (SELECT 1 FROM {league_qual_table} {league_qual_alias} "
+                f"WHERE {league_qual_alias}.player_id = t.player_id "
+                f"AND {league_qual_alias}.season = t.season "
+                f"AND {_league_team_clause(league, league_qual_alias)})"
             )
             league_label = f" ({league})"
 
         # For rate stats: if multiple filter values, recompute from components.
-        # If single filter value, use the precomputed column directly.
-        needs_aggregation = len(filter_values) > 1
+        # If single filter value (or single-bucket table), use the precomputed
+        # column directly. Pitching split tables don't carry the raw
+        # _against rate-component pieces, so we never aggregate for them — the
+        # `_against` precomputed column is always single-bucket.
+        needs_aggregation = len(filter_values) > 1 and not is_pitching
         if needs_aggregation and stat_info.is_rate and col in ("batting_avg", "obp", "slg", "ops", "iso", "babip"):
             rate_formulas = {
                 "batting_avg": "CAST(SUM(t.hits) AS REAL) / NULLIF(SUM(t.at_bats), 0)",
@@ -5589,18 +5626,18 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
                 f"WHERE t.season = ? {split_filter}{pa_filter}{league_filter} "
                 f"GROUP BY t.player_id "
                 f"HAVING stat_val IS NOT NULL "
-                f"ORDER BY stat_val DESC LIMIT ?",
-                (season, *filter_values, limit),
+                f"ORDER BY stat_val {sort_dir} LIMIT ?",
+                (season, *split_params, limit),
             )
         elif not needs_aggregation:
-            # Single filter value — use precomputed column directly
+            # Single filter value (or single-bucket table) — use precomputed column directly
             cur.execute(
                 f"SELECT p.name, t.{col} AS stat_val "
                 f"FROM {table} t "
                 f"JOIN players p ON t.player_id = p.player_id "
                 f"WHERE t.season = ? {split_filter}{pa_filter}{league_filter} "
-                f"ORDER BY stat_val DESC LIMIT ?",
-                (season, *filter_values, limit),
+                f"ORDER BY stat_val {sort_dir} LIMIT ?",
+                (season, *split_params, limit),
             )
         else:
             # Counting stat — sum across filter values
@@ -5610,8 +5647,8 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
                 f"JOIN players p ON t.player_id = p.player_id "
                 f"WHERE t.season = ? {split_filter}{league_filter} "
                 f"GROUP BY t.player_id "
-                f"ORDER BY stat_val DESC LIMIT ?",
-                (season, *filter_values, limit),
+                f"ORDER BY stat_val {sort_dir} LIMIT ?",
+                (season, *split_params, limit),
             )
 
         rows = cur.fetchall()
