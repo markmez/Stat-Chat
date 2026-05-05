@@ -155,8 +155,10 @@ def _compile_snapshot(conn, season, latest_date):
         line += f" vs {opp}"
         sections.append(line)
 
-    # Season totals for yesterday's players
-    sections.append(f"\n=== SEASON TOTALS FOR YESTERDAY'S PLAYERS ===")
+    # Season totals for yesterday's players. Use the explicit "this-season" label
+    # on the games count so Sonnet doesn't conflate it with career game count
+    # (e.g. writing "his 5th MLB game" for a 4-year veteran with 6 games this year).
+    sections.append(f"\n=== {season} SEASON TOTALS FOR YESTERDAY'S PLAYERS ===")
     for name, h, ab, hr, rbi, d, t, bb, opp, team in bat_rows:
         season_row = conn.execute("""
             SELECT s.home_runs, s.rbi, s.hits, s.games, s.batting_avg, s.stolen_bases
@@ -165,7 +167,7 @@ def _compile_snapshot(conn, season, latest_date):
         """, (name, season)).fetchone()
         if season_row:
             shr, srbi, sh, sg, savg, ssb = season_row
-            sections.append(f"- {name}: {sg} G, {shr} HR, {srbi} RBI, {sh} H, {ssb} SB")
+            sections.append(f"- {name}: {sg} G this season, {shr} HR, {srbi} RBI, {sh} H, {ssb} SB")
 
     # Yesterday's pitching standouts
     sections.append(f"\n=== YESTERDAY'S PITCHING ({latest_date}) ===")
@@ -266,15 +268,30 @@ def _compile_snapshot(conn, season, latest_date):
         team = (career_bat[3] if career_bat and career_bat[3] else
                 career_pitch[3] if career_pitch and career_pitch[3] else "")
 
+        # Career game counts so Sonnet can anchor "Nth career game" claims
+        # against the real number instead of guessing from season totals.
+        career_g_row = conn.execute("""
+            SELECT COUNT(*) FROM game_batting_logs g
+            JOIN players p ON g.player_id = p.player_id
+            WHERE p.name = ?
+        """, (name,)).fetchone()
+        career_pg_row = conn.execute("""
+            SELECT COUNT(*) FROM game_pitching_logs g
+            JOIN players p ON g.player_id = p.player_id
+            WHERE p.name = ?
+        """, (name,)).fetchone()
+        career_games_total = (career_g_row[0] if career_g_row else 0) + (career_pg_row[0] if career_pg_row else 0)
+        gtag = f", {career_games_total} career G" if career_games_total else ""
+
         if seasons == 0: continue
         elif seasons == 1:
-            sections.append(f"- {name} ({team}): Rookie, first MLB season ({first}).")
+            sections.append(f"- {name} ({team}): Rookie, first MLB season ({first}){gtag}.")
         elif seasons == 2:
-            sections.append(f"- {name} ({team}): 2nd MLB season, debuted {first}.")
+            sections.append(f"- {name} ({team}): 2nd MLB season, debuted {first}{gtag}.")
         elif seasons <= 5:
-            sections.append(f"- {name} ({team}): Young player, {seasons} seasons since {first}.")
+            sections.append(f"- {name} ({team}): Young player, {seasons} seasons since {first}{gtag}.")
         else:
-            sections.append(f"- {name} ({team}): Veteran, {seasons} seasons since {first}.")
+            sections.append(f"- {name} ({team}): Veteran, {seasons} seasons since {first}{gtag}.")
 
     return "\n".join(sections)
 
@@ -426,6 +443,7 @@ WHAT WEAK INSIGHTS LOOK LIKE — avoid:
 - Unexplained other-player references. "Matching Riley" is noise unless you say who Riley is and why the comparison matters.
 - Vague rankings without the stat. "#4 all-time" / "5th-longest in MLB history" — the metric being ranked MUST appear in the same clause: "#4 all-time in HR streaks of this length", not just "#4 all-time".
 - Misuse of "just" as filler. "His first 4-hit game and just his 18th game as a Diamondback" — "just" implies a small accumulation context (e.g., "just 6 of his 80 career games"). For a single-event milestone, drop "just" entirely.
+- Career-game-count claims that conflate season with career. The SEASON TOTALS section shows games played THIS YEAR, not career. NEVER write "his Nth MLB game" / "his first N games of his career" / "in his first N MLB games" unless N matches the "career G" number listed under PLAYER CONTEXT. A 4th-year player with 6 games this season is on his 145th MLB game, not his 6th. If career G isn't listed, drop the career-game framing entirely.
 - Restating the same achievement in different words. WRONG: "By hitting 2 home runs, he hit his first career home run, and his first multi-homer game in his young career and all 2 of his home runs this season came in this single game." Three ways to say "first 2 career HR." Pick ONE phrasing and move on.
 - Restating the box-score line as the impact. The stat line ("X went 8.0 IP, 3 H, 0 ER, 9 K, 2 BB") is shown above your text; do not paraphrase it as the insight. The insight must add NEW information (a comparison, anchor, or rarity).
 
