@@ -90,6 +90,7 @@ SANITY_TOKEN = (
 # per-chapter chunks for chapter-level embeddings.
 GROQ_QUERY = """*[_type == "episode"]{
     _id,
+    "slug": slug.current,
     title,
     "descriptionText": pt::text(description),
     "seriesTitle": series->title,
@@ -114,6 +115,21 @@ GROQ_QUERY = """*[_type == "episode"]{
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIM = 1536
 TRANSCRIPT_CHAR_BUDGET = 18_000  # ~4500 tokens, leaves room for metadata
+
+# Round embedding vector components to this many decimal places before
+# JSON serialization. Python's default JSON encoder writes floats at
+# full precision (~18 chars/value), which produces 50-100MB files for
+# per-cue embedding catalogs. 3 decimals = 0.001 precision, plenty
+# for cosine-similarity ranking on text-embedding-3-small vectors
+# (typical component magnitudes 0.1-0.5; differences between similar
+# vs. unrelated items are ~0.05-0.3). Combined with gzip on disk
+# (see write_episode_cue_file_gzipped), final per-episode files land
+# at ~5-8MB — workable for iOS lazy-fetch on episode load.
+VECTOR_DECIMALS = 3
+
+
+def round_vector(v: List[float]) -> List[float]:
+    return [round(x, VECTOR_DECIMALS) for x in v]
 
 
 def fetch_sanity_episodes() -> List[dict]:
@@ -309,7 +325,7 @@ def embed_cues_for_episode(
                 "start": round(start, 3),
                 "end": round(end, 3),
                 "text": text,
-                "vector": vector,
+                "vector": round_vector(vector),
             })
     return out
 
@@ -339,13 +355,23 @@ def upload_to_s3(local_path: str) -> None:
 def upload_episode_embeddings_to_s3(local_dir: str) -> None:
     """Sync per-episode cue embedding files to s3://.../search/episode-embeddings/.
     Each becomes reachable at https://dzvnta9wbxyyv.cloudfront.net/search/
-    episode-embeddings/{episodeId}.json. Uses `aws s3 sync` so unchanged
-    files don't re-upload on subsequent runs."""
+    episode-embeddings/{episodeId}.json.
+
+    Files on disk are gzipped (see write_episode_cue_file) but the S3 key
+    keeps the .json extension. We set Content-Encoding: gzip in the S3
+    object metadata so CloudFront returns that header on responses, and
+    iOS URLSession auto-decompresses transparently. Halves bandwidth
+    over the wire vs. uncompressed.
+
+    Uses `aws s3 sync` with `--size-only` so re-runs only push files
+    whose size changed (default sync compares mtime, which is unstable
+    across rebuilds)."""
     import subprocess
     print(f"\nSyncing {local_dir} → {S3_EPISODE_PREFIX}")
     cmd = [
         "aws", "s3", "sync", local_dir, S3_EPISODE_PREFIX,
         "--content-type", "application/json",
+        "--content-encoding", "gzip",
         "--cache-control", "max-age=300",
         "--exclude", ".*",  # skip dotfiles
     ]
@@ -353,7 +379,7 @@ def upload_episode_embeddings_to_s3(local_dir: str) -> None:
     if result.returncode != 0:
         print(f"S3 episode sync failed:\n{result.stderr}", file=sys.stderr)
         sys.exit(1)
-    print("✅ Synced episode embeddings.")
+    print("✅ Synced episode embeddings (gzip-encoded).")
 
 
 def write_episode_cue_file(
@@ -361,8 +387,12 @@ def write_episode_cue_file(
     cues_with_vectors: List[dict],
     output_dir: str,
 ) -> str:
-    """Write a per-episode cue-embedding JSON to disk. Filename is the
-    Sanity _id (URL-safe by convention). Returns the local path."""
+    """Write a per-episode cue-embedding JSON to disk, gzipped. Filename
+    is `{episodeId}.json` (extension stays .json so the S3 key matches
+    the iOS URL convention; the file *content* is gzipped binary, with
+    Content-Encoding: gzip set on the S3 upload). Typical 3-4x size
+    reduction vs. plain JSON for arrays of rounded floats."""
+    import gzip
     os.makedirs(output_dir, exist_ok=True)
     payload = {
         "model": EMBEDDING_MODEL,
@@ -373,7 +403,7 @@ def write_episode_cue_file(
         "cues": cues_with_vectors,
     }
     path = os.path.join(output_dir, f"{episode_id}.json")
-    with open(path, "w") as f:
+    with gzip.open(path, "wt", encoding="utf-8", compresslevel=6) as f:
         json.dump(payload, f)
     return path
 
@@ -388,6 +418,13 @@ def main() -> None:
                         help="Skip per-episode cue-level embeddings (chapter-level only)")
     parser.add_argument("--upload", action="store_true",
                         help="Upload bundle (and per-episode files unless --skip-cues) to S3")
+    parser.add_argument("--episode-id", default=None,
+                        help="Process only the episode with this Sanity _id. "
+                             "Loads existing bundle (if present) and merges the "
+                             "single episode's entries, replacing prior data for it.")
+    parser.add_argument("--slug", default=None,
+                        help="Process only the episode with this slug. Same merge "
+                             "behavior as --episode-id.")
     args = parser.parse_args()
 
     api_key = os.getenv("OPENAI_API_KEY")
@@ -401,10 +438,49 @@ def main() -> None:
     episodes = fetch_sanity_episodes()
     print(f"  {len(episodes)} episodes")
 
+    # Single-episode filter mode. Narrow the working set, then preload
+    # the existing bundle so we merge into it rather than rewriting
+    # the whole catalog.
+    single_episode_mode = bool(args.episode_id or args.slug)
+    if single_episode_mode:
+        if args.episode_id:
+            episodes = [e for e in episodes if e.get("_id") == args.episode_id]
+            filter_descr = f"_id={args.episode_id}"
+        else:
+            episodes = [e for e in episodes if e.get("slug") == args.slug]
+            filter_descr = f"slug={args.slug}"
+        if not episodes:
+            print(f"ERROR: no episode matched filter ({filter_descr}).", file=sys.stderr)
+            sys.exit(1)
+        print(f"  Filtered to 1 episode: {episodes[0].get('title', '(untitled)')}")
+
     episode_index: dict = {}
     chapter_index: List[dict] = []
     cue_files_written: List[str] = []
     total_cues_embedded = 0
+
+    # If we're in single-episode mode and an existing bundle is on disk,
+    # seed our indexes from it so we preserve all the other episodes'
+    # entries. We'll overwrite this episode's entries during the loop;
+    # any prior chapter rows for it get dropped here.
+    if single_episode_mode and os.path.exists(args.output):
+        try:
+            with open(args.output) as f:
+                prev = json.load(f)
+            episode_index = dict(prev.get("episodes", {}))
+            target_ids = {e["_id"] for e in episodes}
+            chapter_index = [
+                c for c in (prev.get("chapters") or [])
+                if c.get("episode_id") not in target_ids
+            ]
+            print(
+                f"  Loaded existing bundle: {len(episode_index)} episodes, "
+                f"{len(chapter_index)} chapter rows (dropped any prior rows for filtered episode)"
+            )
+        except Exception as e:
+            print(f"  WARNING: couldn't load existing bundle ({e}); starting fresh", file=sys.stderr)
+            episode_index = {}
+            chapter_index = []
 
     for i, ep in enumerate(episodes, 1):
         ep_id = ep.get("_id")
@@ -429,7 +505,7 @@ def main() -> None:
         episode_index[ep_id] = {
             "title": title,
             "series": ep.get("seriesTitle") or "",
-            "vector": ep_vector,
+            "vector": round_vector(ep_vector),
         }
 
         # Chapter-level embeddings. Skip when there are no chapter
@@ -453,7 +529,7 @@ def main() -> None:
                 "episode_id": ep_id,
                 "chapter_number": ch_num if ch_num is not None else 0,
                 "title": ch_title,
-                "vector": ch_vector,
+                "vector": round_vector(ch_vector),
             })
 
         # Per-episode cue-level embeddings — powers in-episode search.
