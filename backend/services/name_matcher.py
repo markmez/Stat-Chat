@@ -573,10 +573,15 @@ def match_player(text: str) -> Optional[str]:
             candidates = last_name_index.get(lookup_key, [])
             same_full = [c for c in candidates if strip_diacritics(c.lower()) == ascii_lower]
             if len(same_full) > 1:
-                # Multiple players with same name — pick most prominent
-                result = match_player_with_prominence(lower)
-                if result:
-                    return result[0]
+                # Multiple players with same name — pick most prominent in-place.
+                # MUST sort here directly, not via match_player_with_prominence,
+                # because that function calls match_player which would re-enter this
+                # exact-match branch and recurse forever. RecursionError happens
+                # only when a starter tonight has a duplicated name in the DB
+                # (rare — surfaced by matchup_preview during a redetect on 5/4).
+                sorted_full, _ = _sort_by_prominence(same_full)
+                if sorted_full:
+                    return sorted_full[0]
             return match
         elif len(last_name_index.get(lookup_key, [])) <= 1:
             return match

@@ -2577,12 +2577,18 @@ def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
 # On This Date — historic moments from today's date in past years
 # ---------------------------------------------------------------------------
 
-def detect_on_this_date(conn, season, latest_date, target_date=None):
+def detect_on_this_date(conn, season, latest_date, target_date=None, attach_date=None):
     """Find historic moments from a given date's month-day in past seasons.
 
     Very high threshold — no-hitters, 4+ HR games, 20+ K, etc.
-    target_date defaults to date.today(); pass an ISO YYYY-MM-DD to inspect
-    other days (used by the on-this-date sandbox).
+
+    Two date parameters, decoupled so detect_all can show *today's* "on this
+    date" history attached to the *latest game date*'s feed bucket:
+      - target_date: which calendar day's month-day to look up history for
+        (defaults to date.today()).
+      - attach_date: which game_date to stamp on the resulting events so they
+        appear in that day's feed bucket (defaults to target_date, preserving
+        sandbox/backfill behavior where both are the same date).
     """
     events = []
 
@@ -2591,6 +2597,7 @@ def detect_on_this_date(conn, season, latest_date, target_date=None):
         month_day = today[5:]  # "04-09" from "2026-04-09"
     except:
         return events
+    stamp_date = attach_date or today
 
     nl_placeholders = ",".join("?" * len(_NEGRO_LEAGUE_TEAMS))
     nl_params = list(_NEGRO_LEAGUE_TEAMS)
@@ -2598,7 +2605,7 @@ def detect_on_this_date(conn, season, latest_date, target_date=None):
     def _append(headline, player_names, team_names):
         events.append({
             "headline": headline, "detail": "",
-            "category": "On This Date", "game_date": today,
+            "category": "On This Date", "game_date": stamp_date,
             "player_names": player_names, "team_names": team_names,
             "detection_type": "on_this_date", "priority": 3,
         })
@@ -2799,7 +2806,7 @@ def detect_on_this_date(conn, season, latest_date, target_date=None):
                 "headline": headline,
                 "detail": "",
                 "category": "On This Date",
-                "game_date": today,
+                "game_date": stamp_date,
                 "player_names": [pname],
                 "team_names": [],
                 "detection_type": "on_this_date",
@@ -2825,7 +2832,7 @@ def detect_on_this_date(conn, season, latest_date, target_date=None):
             "headline": moment["headline"],
             "detail": "",
             "category": "On This Date",
-            "game_date": today,
+            "game_date": stamp_date,
             "player_names": moment.get("player_names", []),
             "team_names": moment.get("team_names", []),
             "detection_type": "on_this_date",
@@ -3768,14 +3775,15 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False):
     except Exception as e:
         print(f"    Matchup previews failed: {e}")
 
-    # On This Date — historic moments from the LATEST GAME DATE's month-day
-    # in past years. Pre-fix this used calendar `date.today()`, which tagged
-    # OTD events with today's date even when the latest game was a day or
-    # two earlier — and the feed's "skip OTD-only days" filter then
-    # suppressed the entire OTD bucket. Anchoring on latest_date keeps OTD
-    # events on the same day as the game-action events they should accompany.
+    # On This Date — look up history for *today's calendar date* (so on May 5
+    # users see "On this date in YYYY..." for May 5), but stamp the events with
+    # game_date=latest_date so they share a feed bucket with the games users
+    # are actually viewing. Earlier fix collapsed both to latest_date, which
+    # showed yesterday's-date history; the original pre-fix bug was the
+    # opposite — OTD-only buckets being suppressed. Decoupling target_date
+    # (lookup) from attach_date (bucket) handles both.
     print("  Running On This Date...")
-    otd_events = detect_on_this_date(conn, season, latest_date, target_date=latest_date)
+    otd_events = detect_on_this_date(conn, season, latest_date, attach_date=latest_date)
     events += otd_events
     print(f"    On This Date: {len(otd_events)} events")
 
