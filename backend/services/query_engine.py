@@ -5361,7 +5361,11 @@ def _streak_leading(rows, target_length, label, plan) -> Optional[str]:
     if not target_length:
         target_length = 10  # default
 
-    career_mode = plan.scope in ("career", "all_time")
+    # career-debut grouping fires ONLY when the user said "career" explicitly
+    # (plan.scope=="career"). plan.scope=="all_time" is set by the any-season
+    # trigger, which means "for each player-season across all years" — that's
+    # the default season-mode (group by player+season), NOT career-debut.
+    career_mode = plan.scope == "career"
 
     if career_mode:
         # rows is already ordered by (player_id, season, date). Group
@@ -5450,7 +5454,11 @@ def _streak_tail_window(rows, target_length, label, plan) -> Optional[str]:
     if not target_length:
         target_length = 10
 
-    career_mode = plan.scope in ("career", "all_time")
+    # career-debut grouping fires ONLY when the user said "career" explicitly
+    # (plan.scope=="career"). plan.scope=="all_time" is set by the any-season
+    # trigger, which means "for each player-season across all years" — that's
+    # the default season-mode (group by player+season), NOT career-debut.
+    career_mode = plan.scope == "career"
 
     if career_mode:
         player_games = defaultdict(list)
