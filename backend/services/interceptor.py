@@ -329,6 +329,22 @@ def try_intercept(question: str):
         if response:
             return response
 
+    # 7b. Platoon leaderboard — "best ERA vs LHB", "most HR against lefties".
+    # No player name in query; ranks across all players who faced the
+    # specified handedness. Routes batting and pitching variants based on
+    # is_pitching flag from the parser.
+    platoon_lb = nm.parse_platoon_leaderboard(trimmed)
+    if platoon_lb:
+        response = rb.build_platoon_leaderboard(
+            platoon_lb["stat"], platoon_lb["hand"],
+            is_pitching=platoon_lb["is_pitching"],
+            season=platoon_lb["season"],
+            limit=platoon_lb["limit"],
+            league=platoon_lb.get("league"),
+        )
+        if response:
+            return response
+
     # 8. Home/away splits — "Judge home vs away"
     home_away = nm.parse_home_away_splits(trimmed)
     if home_away:
