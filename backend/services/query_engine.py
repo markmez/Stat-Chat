@@ -2020,20 +2020,30 @@ def _format_rate(value) -> str:
         return str(value)
 
 
+_ERA_CLASS_ABBREVS = {"ERA", "WHIP", "K/9", "BB/9", "K/BB", "H/9", "HR/9"}
+
+
 def _format_threshold_clause(threshold, comparison, abbrev, is_rate=False) -> str:
     """Render a user-facing filter clause for (threshold, comparison, abbrev).
 
     Examples:
-      (30, ">=", "HR")       → "30+ HR"
-      (100, "<=", "K")       → "≤100 K"
-      (3.50, "<=", "ERA", T) → "sub-3.50 ERA"  (rate stats use "sub-" prefix)
-      (0, anything, "BB")    → "0 BB"          (zero is unambiguous)
+      (30, ">=", "HR")        → "30+ HR"
+      (100, "<=", "K")        → "≤100 K"
+      (3.50, "<=", "ERA", T)  → "sub-3.50 ERA"  (rate stats use "sub-" prefix;
+                                                  ERA-class shows 2 decimals)
+      (.300, ">=", "AVG", T)  → ".300+ AVG"     (batting rates show 3 decimals)
+      (0, anything, "BB")     → "0 BB"          (zero is unambiguous)
 
     Centralized so leaderboard / threshold / career-filter titles all render
     consistently. Previously several call sites hardcoded "+" regardless of
     comparison, which silently lied for "under N" / "fewer than N" / lower-
     is-better-stat queries — the SQL filter was correct but the title told
     the user the opposite.
+
+    For rate stats, decimal precision is abbrev-aware:
+      - ERA, WHIP, K/9, BB/9, etc. (always ≥ 1) → 2 decimals (3.50 not 3.500)
+      - AVG, OBP, SLG, OPS, etc. (≥ 1 only for elite seasons) → 3 decimals
+        via _format_rate, which renders ".300" / "1.422" conventionally.
     """
     if threshold is None:
         return abbrev
@@ -2041,8 +2051,16 @@ def _format_threshold_clause(threshold, comparison, abbrev, is_rate=False) -> st
         t_int = int(threshold) if threshold == int(threshold) else None
     except (TypeError, ValueError):
         t_int = None
-    t_disp = _format_rate(str(threshold)) if is_rate else (
-        str(t_int) if t_int is not None else str(threshold))
+    if is_rate:
+        if abbrev in _ERA_CLASS_ABBREVS:
+            try:
+                t_disp = f"{float(threshold):.2f}"
+            except (TypeError, ValueError):
+                t_disp = str(threshold)
+        else:
+            t_disp = _format_rate(str(threshold))
+    else:
+        t_disp = str(t_int) if t_int is not None else str(threshold)
     if t_int == 0:
         return f"0 {abbrev}"
     if comparison == ">=":
@@ -2518,9 +2536,22 @@ def execute(plan: QueryPlan) -> Optional[str]:
         # "{abbrev} leaders" string and silently dropped the user's filters.
         _explicit_season = any(p in plan.original_question.lower() for p in [
             "this season", "this year", str(date.today().year)])
+        # Suppress current-season alts when the query already carries an
+        # intrinsic non-season scope. Examples:
+        #   - "best OPS over their last 100 games"  → career_game_window
+        #     scope=recent (inherently spans all history)
+        #   - "best OPS in first 50 career games"   → career_game_window
+        #     scope=career
+        # In both cases plan.season may still be 2026 (default) but no
+        # year inference actually drives the answer, so offering "last
+        # year / all time" alternatives is misleading.
+        _intrinsic_scope = (plan.career_game_window
+                            and plan.career_game_window.get("scope")
+                                in ("career", "recent"))
         if (result and plan.season and plan.season == date.today().year
                 and plan.stat and plan.query_type in ("leaderboard", "threshold")
-                and not _explicit_season):
+                and not _explicit_season
+                and not _intrinsic_scope):
             oq = plan.original_question.strip().rstrip("?.!,;:")
             last_year = plan.season - 1
 

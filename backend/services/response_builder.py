@@ -4734,6 +4734,55 @@ def build_player_game_logs(name: str, season: int) -> Optional[str]:
 # ===================================================================
 
 
+def _render_pitching_window(pitch_rows, row_label: str,
+                             max_gamelogs: int = 30) -> tuple[str, str]:
+    """Render a pitching career-window block (totals STATGRID + per-game GAMELOGS).
+
+    Used by every "first/last N starts" branch in build_player_game_window
+    so output shape is consistent: same 4 totals columns, same per-game
+    line format, same row label convention.
+
+    `pitch_rows` columns: (gdate, ip_text, ip_outs, h, er, so, bb, hr, win, loss, opp)
+      — same shape SELECTed by both pitching branches.
+    `row_label`: prefix for the totals row (e.g. "First 7 Starts" or "Last 5 Starts").
+    Returns (grid_block, gamelogs_block) — caller decides ordering and titles.
+    """
+    total_outs = sum(r[2] or 0 for r in pitch_rows)
+    total_h = sum(r[3] or 0 for r in pitch_rows)
+    total_er = sum(r[4] or 0 for r in pitch_rows)
+    total_so = sum(r[5] or 0 for r in pitch_rows)
+    total_bb = sum(r[6] or 0 for r in pitch_rows)
+    total_ip = total_outs / 3 if total_outs else 0.0
+    era = (total_er / total_ip * 9) if total_ip > 0 else 0.0
+    whip = ((total_h + total_bb) / total_ip) if total_ip > 0 else 0.0
+    ip_str = f"{total_outs // 3}.{total_outs % 3}"
+
+    grid = (
+        "[STATGRID]\n"
+        "HEADER: IP, K, ERA, WHIP\n"
+        f"ROW {row_label}: {ip_str}, {total_so}, {era:.2f}, {whip:.2f}\n"
+        "[/STATGRID]"
+    )
+    gamelogs = ""
+    if len(pitch_rows) <= max_gamelogs:
+        gl_lines = ["[GAMELOGS]"]
+        for row in pitch_rows:
+            gdate, ip_text, ip_outs, h, er, so, bb, hr, win, loss, opp = row
+            ip_display = ip_text or f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
+            decision = ""
+            if win:
+                decision = ", W"
+            elif loss:
+                decision = ", L"
+            gl_lines.append(
+                f"GAME {gdate}|{ip_display} IP, {h or 0} H, {er or 0} ER, "
+                f"{bb or 0} BB, {so or 0} K, {hr or 0} HR{decision}"
+            )
+        gl_lines.append("[/GAMELOGS]")
+        gamelogs = "\n".join(gl_lines)
+    return grid, gamelogs
+
+
 def build_player_game_window(name: str, window_type: str, n_games: int,
                               stat_info=None, season: Optional[int] = None,
                               window_noun: str = "Games") -> Optional[str]:
@@ -4788,10 +4837,12 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
             """, (pid, n_games))
             rows = cur.fetchall()
         if not rows:
-            # Try pitching game logs for pitchers
+            # Try pitching game logs for pitchers. Same SQL shape and
+            # render format as the season-set first-N branch below so
+            # outputs are consistent across all branches of this builder.
             cur.execute(f"""
                 SELECT g.date, g.innings_pitched, g.ip_outs, g.hits, g.earned_runs,
-                       g.strikeouts, g.walks, g.home_runs, g.win, g.opponent
+                       g.strikeouts, g.walks, g.home_runs, g.win, g.loss, g.opponent
                 FROM game_pitching_logs g
                 WHERE g.player_id = ?
                 ORDER BY g.date DESC
@@ -4802,35 +4853,18 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
                 conn.close()
                 return None
 
-            # Build pitching game log display
-            parts = []
-            parts.append("[GAMELOGS]")
-            for row in reversed(pitch_rows):
-                gdate, ip_text, ip_outs, h, er, so, bb, hr, win, opp = row
-                ip_display = ip_text or f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
-                w_marker = ", W" if win else ""
-                line = f"{ip_display} IP, {h or 0} H, {er or 0} ER, {so or 0} K, {bb or 0} BB{w_marker}"
-                parts.append(f"GAME {gdate}|{line}")
-            parts.append("[/GAMELOGS]")
-
-            # Add totals — chat-card grid convention: ≤4 stat cols.
-            total_outs = sum(r[2] or 0 for r in pitch_rows)
-            total_h = sum(r[3] or 0 for r in pitch_rows)
-            total_er = sum(r[4] or 0 for r in pitch_rows)
-            total_so = sum(r[5] or 0 for r in pitch_rows)
-            total_bb = sum(r[6] or 0 for r in pitch_rows)
-            total_ip = total_outs / 3
-            era = (total_er / total_ip * 9) if total_ip > 0 else 0
-            whip = ((total_h + total_bb) / total_ip) if total_ip > 0 else 0
-            ip_str = f"{total_outs // 3}.{total_outs % 3}"
-
-            parts.insert(0, (
-                f"**{display_name} — {label} {n_games} {window_noun}**\n"
-                f"[STATGRID]\n"
-                f"HEADER: IP, K, ERA, WHIP\n"
-                f"ROW: {ip_str}, {total_so}, {era:.2f}, {whip:.2f}\n"
-                f"[/STATGRID]\n"
-            ))
+            row_label = f"{label} {n_games} {window_noun}"
+            grid_block, gamelogs_block = _render_pitching_window(
+                # reverse to chronological order so [GAMELOGS] reads top→bottom
+                # as oldest→newest, matching the season-set branch.
+                list(reversed(pitch_rows)),
+                row_label=row_label, max_gamelogs=30,
+            )
+            parts = [
+                f"**{display_name} — {label} {n_games} {window_noun}**\n",
+                grid_block,
+                gamelogs_block,
+            ]
 
             conn.close()
             return "\n".join(parts)
@@ -5032,39 +5066,15 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
                 conn.close()
                 return None
 
-            total_outs = sum(r[2] or 0 for r in pitch_rows)
-            total_h = sum(r[3] or 0 for r in pitch_rows)
-            total_er = sum(r[4] or 0 for r in pitch_rows)
-            total_so = sum(r[5] or 0 for r in pitch_rows)
-            total_bb = sum(r[6] or 0 for r in pitch_rows)
-            total_hr = sum(r[7] or 0 for r in pitch_rows)
-            total_w = sum(1 for r in pitch_rows if r[8])
-            total_l = sum(1 for r in pitch_rows if r[9])
-            total_ip = total_outs / 3 if total_outs else 0.0
-            era = (total_er / total_ip * 9) if total_ip > 0 else 0.0
-            whip = ((total_h + total_bb) / total_ip) if total_ip > 0 else 0.0
-            ip_str = f"{total_outs // 3}.{total_outs % 3}"
-
+            row_label = f"{label} {n_games} {window_noun}"
+            grid_block, gamelogs_block = _render_pitching_window(
+                pitch_rows, row_label=row_label, max_gamelogs=30,
+            )
             title = f"**{display_name} — {label} {n_games} {window_noun} of {season}**\n"
-            parts = [title, "[STATGRID]",
-                     "HEADER: IP, K, ERA, WHIP",
-                     f"ROW {label} {n_games} {window_noun}: {ip_str}, {total_so}, "
-                     f"{era:.2f}, {whip:.2f}",
-                     "[/STATGRID]"]
-            # Per-game breakdown for spans ≤ 30
-            if n_games <= 30:
+            parts = [title, grid_block]
+            if gamelogs_block:
                 parts.append("")
-                parts.append("[GAMELOGS]")
-                for row in pitch_rows:
-                    gdate, ip_text, ip_outs, h, er, so, bb, hr, win, loss, opp = row
-                    ip_display = ip_text or f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
-                    decision = ""
-                    if win: decision = ", W"
-                    elif loss: decision = ", L"
-                    line = (f"{ip_display} IP, {h or 0} H, {er or 0} ER, "
-                            f"{bb or 0} BB, {so or 0} K, {hr or 0} HR{decision}")
-                    parts.append(f"GAME {gdate}|{line}")
-                parts.append("[/GAMELOGS]")
+                parts.append(gamelogs_block)
             parts.append(f"\n[SUGGEST]{display_name} {season}[/SUGGEST]")
             parts.append(f"[SUGGEST]{display_name} career stats[/SUGGEST]")
             conn.close()
@@ -5654,7 +5664,14 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
             cur.execute(f"SELECT MAX(games) FROM {qual_table} WHERE season = ?", (season,))
             r = cur.fetchone()
             max_games = int(r[0]) if r and r[0] else 162
-            split_pa_min = max(1, int(20 * max_games / 162))
+            # Pitching split qualifier needs a much higher floor than batting:
+            # a pitcher gets only ~3 PA/inning of work, so an inning-split or
+            # tight count-split sample size is tiny per pitcher. Without a
+            # higher floor, every reliever who pitched a clean 7th inning
+            # shows up at .000 OPS-against and floods the top of the
+            # leaderboard. Use ~3x the batting floor.
+            base_min = max(1, int(20 * max_games / 162))
+            split_pa_min = base_min * 3 if is_pitching else base_min
             pa_filter = f" AND t.plate_appearances >= {split_pa_min}"
 
         league_filter = ""
@@ -5735,11 +5752,18 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
         if not stat_info.is_rate and rows[0][1] is not None and float(rows[0][1]) == 0:
             return None
 
-        title = f"**{season} {stat_info.display_name} Leaders {label}{league_label}**\n"
+        # For pitching splits, rate columns are "_against" variants — call out
+        # that we're showing what hitters did against the pitcher, not what
+        # the pitcher did at the plate.
+        title_stat = (f"{stat_info.display_name} Allowed" if is_pitching and stat_info.is_rate
+                      else stat_info.display_name)
+        header_stat = (f"{stat_info.display_abbrev} Allowed" if is_pitching and stat_info.is_rate
+                       else stat_info.display_abbrev)
+        title = f"**{season} {title_stat} Leaders {label}{league_label}**\n"
         parts = [title]
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
-        parts.append(f"HEADER: {stat_info.display_abbrev}")
+        parts.append(f"HEADER: {header_stat}")
         for i, row in enumerate(rows):
             val = _format_rate(str(row[1])) if stat_info.is_rate else str(int(row[1]))
             parts.append(f"ROW {i+1}. {row[0]}: {val}")
