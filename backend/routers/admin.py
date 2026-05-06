@@ -5324,3 +5324,40 @@ async def on_this_date_sandbox(
 {''.join(sections)}
 </body></html>"""
     return HTMLResponse(content=html)
+
+
+@router.get("/audit-detection-types")
+async def audit_detection_types(
+    authorization: str | None = Header(None),
+    key: str | None = None,
+):
+    """List every detection_type in notable_events that is missing from the
+    merge layer's _DETECTION_TYPE_STAT catalog. Each missing entry is a
+    potential merge-format bug — events of that type fall through to keyword
+    scanning instead of getting a deterministic lead-in.
+
+    Run periodically as a tripwire for catalog drift when new detectors ship.
+    Returns a JSON list of missing types and a short verdict.
+    """
+    verify_admin(authorization, key)
+    try:
+        from routers.notable import _DETECTION_TYPE_STAT, _NON_MERGEABLE_TYPES
+        conn = sqlite3.connect(DB_PATH)
+        rows = conn.execute("SELECT DISTINCT detection_type FROM notable_events").fetchall()
+        conn.close()
+        prod_types = {r[0] for r in rows if r[0]}
+        missing = sorted(prod_types - set(_DETECTION_TYPE_STAT.keys()))
+        return {
+            "status": "ok" if not missing else "drift",
+            "prod_types_count": len(prod_types),
+            "catalog_count": len(_DETECTION_TYPE_STAT),
+            "non_mergeable": sorted(_NON_MERGEABLE_TYPES),
+            "missing_from_catalog": missing,
+            "verdict": ("All prod detection_types are catalogued."
+                        if not missing else
+                        f"{len(missing)} type(s) missing from catalog — events of these "
+                        "types fall through to keyword-scan in the merge layer."),
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+

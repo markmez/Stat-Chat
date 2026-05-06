@@ -688,6 +688,29 @@ def match_stat(input_str: str) -> Optional[StatInfo]:
         if hr_stat:
             return hr_stat
 
+    # "hit/bat/batted .300" → batting_avg (not hits/AB).
+    # The verb-form rate value pattern is unambiguous: a leading dot signals
+    # a rate (.300 = .300 AVG), distinct from a counting threshold (300 hits).
+    # Without this rule, "hit" greedy-matches the hits stat and queries like
+    # "how many seasons has Judge hit .300" return "0.3+ hits in 11 seasons."
+    # Only fires when no longer/more-specific stat keyword (HR, RBI, etc.) is
+    # in the query — those win via the existing length-priority alias scan.
+    if re.search(r'\b(?:bat|batted|batting|hit|hitting)\s+(?:over|above|under|below|sub)?\s*\.\d{2,3}', lower):
+        # Quick check: is there a more specific stat keyword in the query?
+        # If yes, defer to the standard alias scan so compound queries like
+        # "Judge hit 30 HR with .300 AVG" still resolve to home_runs as the
+        # primary stat. Only override when the bare-rate context is the only
+        # signal in the query.
+        has_specific_keyword = any(kw in lower for kw in (
+            "home run", "homer", " hr", "rbi", " sb", "stolen base",
+            "strikeout", " k ", "walk", " bb", "double", "triple",
+            "innings", "save", "era", "whip", "obp", "slg", " ops"
+        ))
+        if not has_specific_keyword:
+            avg_stat = stat_alias_map.get("batting average")
+            if avg_stat:
+                return avg_stat
+
     # "walked" → walks (BB)
     if re.search(r'\bwalked\b', lower):
         walks_stat = stat_alias_map.get("walks") or stat_alias_map.get("bb")

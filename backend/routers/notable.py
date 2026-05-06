@@ -62,9 +62,18 @@ _DETECTION_TYPE_STAT = {
     "pace_stolen_bases_60": "stolen_bases",
     "pace_stolen_bases_70": "stolen_bases",
     "hitting_streak": "hits",
+    "onbase_streak": None,  # mixed (hits + walks + HBP); fall through to keyword scan
+    "hr_streak_ended": "home_runs",
+    "hot_streak_pelt": "hits",  # OPS-anchored streak; "hits" is the closest lead-in match
     "scoreless_streak": "strikeouts",
     "qs_streak": "strikeouts",
+    "14k_game": "strikeouts",
+    "career_p_strikeouts_1000": "strikeouts",
     "career_high": None,  # depends on stat in headline; falls through to keyword scan
+    "career_first": None,  # varies (first HR/win/save); fall through to keyword scan
+    "historical_scan": None,  # broad family; varies. Fall through to keyword scan.
+    "ai_insight": None,      # Sonnet narrative; varies. Fall through to keyword scan.
+    "on_this_date": None,    # non-mergeable (see _NON_MERGEABLE_TYPES); catalog entry for completeness.
 }
 
 

@@ -1133,6 +1133,96 @@ def reconcile_season_totals_from_game_logs(conn, season_year):
     print(f"    Reconciled {bat_updated} batter rows, {pit_updated} pitcher rows")
 
 
+def verify_season_total_consistency(conn, season_year):
+    """Post-condition for reconcile_season_totals_from_game_logs: every
+    single-team current-season player's season counting stats must equal
+    SUM(game_logs).
+
+    Logs drift loudly but does not crash the pipeline — downstream steps
+    (detection, matchup previews) still run on the best data we have.
+    The invariant is a tripwire for future reconciliation regressions or
+    drift introduced by a downstream step that mutates season totals.
+    """
+    print(f"  Verifying season-total / game-log consistency for {season_year}...")
+    cursor = conn.cursor()
+
+    # --- Batting ---
+    cursor.execute("""
+        WITH single_team AS (
+            SELECT player_id FROM season_batting_stats
+            WHERE season = ? GROUP BY player_id HAVING COUNT(*) = 1
+        ),
+        gl_sums AS (
+            SELECT player_id,
+                   SUM(home_runs) AS hr, SUM(hits) AS h, SUM(rbi) AS rbi,
+                   SUM(at_bats) AS ab, SUM(walks) AS bb, SUM(strikeouts) AS so
+            FROM game_batting_logs WHERE season = ? GROUP BY player_id
+        )
+        SELECT p.name, s.home_runs, gl.hr, s.hits, gl.h,
+               s.rbi, gl.rbi, s.at_bats, gl.ab, s.walks, gl.bb,
+               s.strikeouts, gl.so
+        FROM season_batting_stats s
+        JOIN players p ON s.player_id = p.player_id
+        JOIN gl_sums gl ON gl.player_id = s.player_id
+        WHERE s.season = ?
+          AND s.player_id IN (SELECT player_id FROM single_team)
+          AND (s.home_runs != gl.hr OR s.hits != gl.h OR s.rbi != gl.rbi
+               OR s.at_bats != gl.ab OR s.walks != gl.bb OR s.strikeouts != gl.so)
+        ORDER BY ABS(s.home_runs - gl.hr) DESC
+    """, (season_year, season_year, season_year))
+    bat_drift = cursor.fetchall()
+
+    # --- Pitching ---
+    cursor.execute("""
+        WITH single_team AS (
+            SELECT player_id FROM season_pitching_stats
+            WHERE season = ? GROUP BY player_id HAVING COUNT(*) = 1
+        ),
+        gl_sums AS (
+            SELECT player_id,
+                   SUM(ip_outs) AS ip_outs, SUM(earned_runs) AS er,
+                   SUM(strikeouts) AS so, SUM(walks) AS bb,
+                   SUM(hits) AS h, SUM(home_runs) AS hr
+            FROM game_pitching_logs WHERE season = ? GROUP BY player_id
+        )
+        SELECT p.name, s.ip_outs, gl.ip_outs, s.earned_runs, gl.er,
+               s.strikeouts, gl.so, s.walks, gl.bb, s.hits, gl.h,
+               s.home_runs, gl.hr
+        FROM season_pitching_stats s
+        JOIN players p ON s.player_id = p.player_id
+        JOIN gl_sums gl ON gl.player_id = s.player_id
+        WHERE s.season = ?
+          AND s.player_id IN (SELECT player_id FROM single_team)
+          AND (s.ip_outs != gl.ip_outs OR s.earned_runs != gl.er
+               OR s.strikeouts != gl.so OR s.walks != gl.bb
+               OR s.hits != gl.h OR s.home_runs != gl.hr)
+        ORDER BY ABS(s.ip_outs - gl.ip_outs) DESC
+    """, (season_year, season_year, season_year))
+    pit_drift = cursor.fetchall()
+
+    if not bat_drift and not pit_drift:
+        print(f"    ✓ Season totals consistent with game logs (batting + pitching)")
+        return True
+
+    if bat_drift:
+        print(f"    ⚠️ DATA DRIFT: {len(bat_drift)} batter(s) — season != SUM(game_logs)")
+        for row in bat_drift[:5]:
+            name, s_hr, gl_hr, s_h, gl_h, s_rbi, gl_rbi, s_ab, gl_ab, s_bb, gl_bb, s_so, gl_so = row
+            print(f"      {name}: HR {s_hr}/{gl_hr}, H {s_h}/{gl_h}, RBI {s_rbi}/{gl_rbi}, "
+                  f"AB {s_ab}/{gl_ab}, BB {s_bb}/{gl_bb}, SO {s_so}/{gl_so}")
+        if len(bat_drift) > 5:
+            print(f"      ...and {len(bat_drift) - 5} more")
+    if pit_drift:
+        print(f"    ⚠️ DATA DRIFT: {len(pit_drift)} pitcher(s) — season != SUM(game_logs)")
+        for row in pit_drift[:5]:
+            name, s_ip, gl_ip, s_er, gl_er, s_so, gl_so, s_bb, gl_bb, s_h, gl_h, s_hr, gl_hr = row
+            print(f"      {name}: IP_outs {s_ip}/{gl_ip}, ER {s_er}/{gl_er}, "
+                  f"K {s_so}/{gl_so}, BB {s_bb}/{gl_bb}, H {s_h}/{gl_h}, HR {s_hr}/{gl_hr}")
+        if len(pit_drift) > 5:
+            print(f"      ...and {len(pit_drift) - 5} more")
+    return False
+
+
 def compute_batting_home_away_splits(conn, season_year):
     """Compute batting home/away splits from game logs for this season."""
     print(f"  Computing batting home/away splits for {season_year}...")
@@ -2126,6 +2216,11 @@ def main():
         # game logs are the latest data, and BEFORE detect_all later in main()
         # so events are computed against consistent totals.
         reconcile_season_totals_from_game_logs(conn, season_year)
+        # Tripwire: assert post-condition. If reconciliation skipped a player
+        # (e.g. mid-season trade) or a downstream step mutates season_batting_stats
+        # again, this prints loudly. Doesn't fail the pipeline — detection still
+        # runs — but the next operator on call will see the diff in logs.
+        verify_season_total_consistency(conn, season_year)
 
         # Team-level game results (scores, W/L, innings, attendance, weather).
         # Cheap: one MSF endpoint, ~15 seconds. Powers "team record" /
