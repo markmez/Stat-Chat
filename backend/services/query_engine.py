@@ -3067,6 +3067,19 @@ def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     else:
         return None
 
+    # Rate-stat qualifier — keep pitchers with one bat-PA out of an OPS
+    # leaderboard, and short-relievers out of an ERA leaderboard. Scales
+    # with N: ~2 PA/game for batting, ~1 IP/game for pitching, with a
+    # floor so very small Ns still filter chaff.
+    rate_qual = ""
+    if is_rate and plan.stat:
+        if is_pitching:
+            ip_outs_min = max(30, n_val * 3)  # ~1 IP per game in window
+            rate_qual = f" AND SUM(r.ip_outs) >= {ip_outs_min}"
+        else:
+            pa_min = max(20, n_val * 2)  # ~2 PA per game in window
+            rate_qual = f" AND SUM(r.plate_appearances) >= {pa_min}"
+
     # CTE: assign row numbers per player ordered chronologically.
     # Then keep only rn <= N. HAVING COUNT(*) >= N excludes players who
     # haven't reached the window length.
@@ -3081,7 +3094,7 @@ def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         f"JOIN players p ON r.player_id = p.player_id "
         f"WHERE r.rn <= ? "
         f"GROUP BY r.player_id "
-        f"HAVING COUNT(*) >= ? "
+        f"HAVING COUNT(*) >= ?{rate_qual} "
         f"ORDER BY stat_val {order} LIMIT ?"
     )
     cur = conn.cursor()
