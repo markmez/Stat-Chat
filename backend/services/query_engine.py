@@ -2937,6 +2937,14 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
         # 100 IP (300 outs) — the threshold for "real meaningful workload."
         if plan.rookie and ip_min > 300:
             ip_min = 300
+        # Data-integrity check: require batters_faced >= ip_outs (1 BF per
+        # out minimum). Modern MLB has ~1.3-1.5 BF/out; a record with
+        # BF significantly < ip_outs has incomplete play-tracking
+        # (common in pre-1910 data and Negro Leagues entries). Without
+        # this filter, "best rookie ERA all time" surfaced 1903-1904
+        # pitchers with 0.00 ERA over 300+ outs but only 30 BF, which
+        # is mathematically impossible. Same defensive pattern as
+        # monthly_aggregates.
         ip_display = f"{ip_min // 3}.{ip_min % 3}"
         if _is_current_season_scope and season and ip_min < 486:
             label = f"Showing pitchers on pace for 162+ IP ({ip_display} IP minimum)"
@@ -2944,7 +2952,8 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
             label = f"Min. {ip_display} IP (rookie qualifier)."
         else:
             label = f"Min. {ip_display} IP."
-        return f" AND {prefix}.ip_outs >= {ip_min}", label
+        return (f" AND {prefix}.ip_outs >= {ip_min} "
+                f"AND {prefix}.batters_faced >= {prefix}.ip_outs", label)
     else:
         if qual_season is None:
             pa_min = 502  # 3.1 PA × 162 scheduled games
