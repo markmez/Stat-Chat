@@ -195,6 +195,82 @@ def _detect_since_date(lower: str) -> Optional[str]:
     return None
 
 
+def _detect_month_range(lower: str) -> Optional[tuple]:
+    """Detect bare month references as closed date ranges.
+
+    Catches patterns like:
+      "in April 2025"      → ("2025-04-01", "2025-04-30")
+      "in April last year" → ("2025-04-01", "2025-04-30")  (current=2026)
+      "in April this year" → ("2026-04-01", "2026-04-30")
+      "during May 2024"    → ("2024-05-01", "2024-05-31")
+      "in June"            → infer year, return month range
+
+    Returns (since_date, end_date) tuple, both YYYY-MM-DD, or None.
+
+    Distinct from _detect_since_date (open-ended "since X") and
+    parse_month_query (single-player "Judge in May 2024"). This one
+    handles leaderboard queries where the month is the time window:
+    "who had the most RBI in April last year".
+    """
+    from datetime import timedelta
+    today = date.today()
+
+    # Year resolver: explicit YYYY, "last year", "this year", "two years ago"
+    def _resolve_year(text: str) -> Optional[int]:
+        m = re.search(r'\b(20[012]\d|19\d{2})\b', text)
+        if m:
+            return int(m.group(1))
+        if "last year" in text or "last season" in text:
+            return today.year - 1
+        if "this year" in text or "this season" in text or "current season" in text:
+            return today.year
+        if "two years ago" in text or "2 years ago" in text:
+            return today.year - 2
+        if "three years ago" in text or "3 years ago" in text:
+            return today.year - 3
+        return None
+
+    # Find a month name in the query. Use word boundary to avoid matching
+    # "may" inside "many" / "april" inside something fluky.
+    month_word = None
+    month_num = None
+    for name, num in _MONTH_MAP.items():
+        if re.search(rf'\b{name}\b', lower):
+            month_word = name
+            month_num = num
+            break
+
+    if month_num is None:
+        return None
+
+    # Don't fire when the query is a "since" pattern — that's
+    # _detect_since_date's job (open-ended), not a closed range.
+    if re.search(rf'\bsince\s+{month_word}\b', lower):
+        return None
+
+    # Don't fire when there's a specific day attached: "April 15" / "April
+    # 15 2024" should be a date_range starting from that exact day, which
+    # _detect_since_date handles (or in a similar pattern).
+    if re.search(rf'\b{month_word}\.?\s+\d{{1,2}}(?:st|nd|rd|th)?\b', lower):
+        return None
+
+    # Resolve year — explicit, relative, or fallback.
+    year = _resolve_year(lower)
+    if year is None:
+        # No year context. Default: most recent occurrence of that month.
+        # If we're past it this year, use this year; otherwise last year.
+        year = today.year if month_num <= today.month else today.year - 1
+
+    # Compute last day of month
+    if month_num == 12:
+        next_first = date(year + 1, 1, 1)
+    else:
+        next_first = date(year, month_num + 1, 1)
+    last_day = (next_first - timedelta(days=1)).day
+
+    return (f"{year}-{month_num:02d}-01", f"{year}-{month_num:02d}-{last_day:02d}")
+
+
 DB_PATH = os.getenv(
     "DB_PATH",
     os.path.join(os.path.dirname(__file__), "..", "..", "baseball_stats_full.db"),
@@ -1071,6 +1147,27 @@ def decompose(question: str) -> QueryPlan:
             cleaned = token.strip(",.;")
             if re.match(r'^\d{1,4}(st|nd|rd|th)?$', cleaned):
                 _add_consumed(plan, cleaned)
+
+    # Bare month-as-closed-range: "in April last year", "during May 2024".
+    # Distinct from since_date (open-ended). Sets both since_date and end_date
+    # so the date_range branch aggregates from game logs over a full month.
+    # Only fire if month_grouped / recurring_half / since_date paths haven't
+    # already claimed the query.
+    if (not plan.since_date and not plan.month_grouped
+            and not plan.recurring_half):
+        month_range = _detect_month_range(lower)
+        if month_range:
+            plan.since_date, plan.end_date = month_range
+            plan.scope = "date_range"
+            plan.query_type = "leaderboard"
+            plan.threshold = None
+            month_names = " ".join(_MONTH_MAP.keys())
+            _add_consumed(plan,
+                f"in during last this year season current two three years ago {month_names}")
+            for token in lower.split():
+                cleaned = token.strip(",.;")
+                if re.match(r'^\d{1,4}$', cleaned):
+                    _add_consumed(plan, cleaned)
 
     since_year = _detect_since_year(lower)
     if since_year and not plan.since_date:
@@ -5506,10 +5603,14 @@ def _streak_sliding(rows, target_length, label, plan) -> Optional[str]:
                 results.append((max_streak, player_names[pid], season))
 
     if not results:
+        scope = str(plan.season) if plan.season else f"Since {plan.since_year}" if plan.since_year else "All-Time"
         if target_length:
-            scope = str(plan.season) if plan.season else "All-Time"
             return f"No {target_length}+ game streaks of {label} found ({scope})." + _empty_result_pills(plan)
-        return None
+        # No target_length means "find the longest streak ever". An empty
+        # result here means there are no games meeting the per-game
+        # condition at all — still a deterministic answer, not a
+        # mystery for Sonnet.
+        return f"No game streaks of {label} found ({scope})." + _empty_result_pills(plan)
 
     # Sort by streak length descending
     results.sort(key=lambda x: x[0], reverse=True)
@@ -5587,7 +5688,8 @@ def _streak_leading(rows, target_length, label, plan) -> Optional[str]:
                 results.append((player_names[pid], span))
 
         if not results:
-            return None
+            return (f"**No players have had {label} in Each of Their "
+                    f"First {target_length} Career Games.**" + _empty_result_pills(plan))
 
         title = (f"**Players with {label} in Each of Their First "
                  f"{target_length} Career Games**\n")
