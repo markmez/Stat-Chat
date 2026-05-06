@@ -370,6 +370,11 @@ class QueryPlan:
     end_date: Optional[str] = None    # "YYYY-MM-DD" for closed sub-season ranges (e.g. "in the first half" = season opener → ASG break)
     recurring_half: Optional[str] = None  # "first_half" | "second_half" — multi-season recurring window combined with since_year
     month_grouped: bool = False  # group game logs by (player, year, month) — "best HR in a single month all time"
+    # Game-window scope: "first/last N (career) games" — aggregated from the
+    # first/last N rows of each player's chronologically-ordered game logs.
+    # Shape: {"direction": "first"|"last", "n": int,
+    #         "scope": "season"|"career"|"recent"}
+    career_game_window: Optional[dict] = None
 
     # Filters
     league: Optional[str] = None
@@ -868,6 +873,13 @@ def decompose(question: str) -> QueryPlan:
         # Strip game-context phrases so "game" doesn't match as a stat
         for phrase in ["in a game", "in one game", "in a single game"]:
             stat_text = stat_text.replace(phrase, " ")
+        # Strip career-game-window phrases so "50" in "first 50 games" doesn't
+        # get read as a stat threshold and "games" doesn't match as a stat.
+        stat_text = re.sub(
+            r'\b(?:first|last)\s+\d+\s+(?:career\s+)?'
+            r'(?:games?|starts?|at[- ]?bats?|abs?|appearances)\b',
+            ' ', stat_text,
+        )
         age_pre = re.search(r'\b(?:under|younger than|over|older than)\s+(\d+)(?:\s+(?:years?\s+old|year-old))?\b', stat_text)
         if age_pre:
             # Check if followed by a stat keyword — if so, it's a stat filter, not age
@@ -969,6 +981,62 @@ def decompose(question: str) -> QueryPlan:
             plan.threshold = None
             _add_consumed(plan,
                 "in a single any one calendar month monthly leaderboard best ever all time")
+
+    # Career-game-window: "first/last N (career) games", "first N starts".
+    # Aggregates across the first/last N rows of each player's chronologically
+    # ordered game logs. Three scopes:
+    #   season — "in their first 50 games this season"
+    #   career — "in a player's first 50 career games"
+    #   recent — "over their last 100 games" (no season anchor)
+    # Skip when month_grouped or recurring_half already claimed the query.
+    if (not plan.month_grouped and not plan.recurring_half
+            and plan.career_game_window is None):
+        # "(first|last) N (career) games|starts|at-bats"
+        m = re.search(
+            r'\b(first|last)\s+(\d+|\w+)\s+(?:career\s+)?(games?|starts?|at[- ]?bats?|appearances)',
+            lower,
+        )
+        if m:
+            direction = m.group(1)
+            n_raw = m.group(2)
+            n_val: Optional[int] = None
+            if n_raw.isdigit():
+                n_val = int(n_raw)
+            else:
+                _word_nums = {"two": 2, "three": 3, "four": 4, "five": 5,
+                              "six": 6, "seven": 7, "eight": 8, "nine": 9,
+                              "ten": 10, "fifteen": 15, "twenty": 20,
+                              "thirty": 30, "forty": 40, "fifty": 50,
+                              "hundred": 100}
+                n_val = _word_nums.get(n_raw)
+            if n_val and 2 <= n_val <= 500:
+                # Scope determination
+                career_words = ("career", "of his career", "of their career",
+                                 "of a career", "of a player's career",
+                                 "in a career")
+                if any(w in lower for w in career_words):
+                    scope = "career"
+                elif direction == "last" and not any(
+                        s in lower for s in
+                        ["this season", "this year", str(date.today().year)]):
+                    # "last N games" without a season anchor = recent rolling
+                    scope = "recent"
+                else:
+                    scope = "season"
+                plan.career_game_window = {
+                    "direction": direction,
+                    "n": n_val,
+                    "scope": scope,
+                }
+                # Reset stray scope assignments — the executor will override
+                # via career_game_window. Don't clobber explicit since_year.
+                if scope == "career" and plan.scope != f"since_{plan.since_year}":
+                    plan.scope = "career"
+                _add_consumed(plan,
+                    "first last career games game starts start at-bats at-bat appearances")
+                # Suppress threshold being read as the N count
+                # (e.g. "first 50 games" — "50" is N, not a threshold).
+                # parse_threshold runs later and will see the consumed words.
 
     since_date = _detect_since_date(lower) if not plan.since_date else None
     if since_date:
@@ -1315,7 +1383,9 @@ def decompose(question: str) -> QueryPlan:
         _add_consumed(plan, top_match.group(0))
 
     # --- Detect threshold (only if multi-condition didn't already set it) ---
-    if plan.threshold is None and plan.stat and not plan.extra_filters:
+    # Skip when a career_game_window is set — the "50" in "first 50 games"
+    # is the window length, not a stat threshold.
+    if plan.threshold is None and plan.stat and not plan.extra_filters and not plan.career_game_window:
         threshold_text = lower
         if plan.age_max:
             threshold_text = re.sub(rf'\b(?:under|younger than)\s+{plan.age_max}\b', '', threshold_text)
@@ -1331,7 +1401,7 @@ def decompose(question: str) -> QueryPlan:
             if plan.query_type == "leaderboard" and plan.superlative is None:
                 plan.query_type = "threshold"
 
-    elif plan.threshold is None and plan.derived_stat and not plan.extra_filters:
+    elif plan.threshold is None and plan.derived_stat and not plan.extra_filters and not plan.career_game_window:
         threshold = _extract_threshold(lower)
         if threshold is not None:
             plan.threshold = threshold
@@ -1518,7 +1588,8 @@ def decompose(question: str) -> QueryPlan:
     # streak detections. The word "first" in "first half" otherwise trips the
     # streak_context flag and a generic "home run" / "hit" stat keyword would
     # then misroute to streak_sequence.
-    if plan.recurring_half or plan.since_date or plan.month_grouped:
+    if (plan.recurring_half or plan.since_date or plan.month_grouped
+            or plan.career_game_window):
         has_streak_context = False
 
     streak_detected = False
@@ -2889,6 +2960,181 @@ def _execute_month_grouped_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     return "\n".join(parts)
 
 
+def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
+    """First/last N games leaderboard — three scope variants.
+
+    Aggregates the first or last N game-log rows for each player (ordered
+    chronologically), then ranks the resulting per-player aggregates.
+
+    Scopes:
+      - season: first/last N games WITHIN one season (single year filter)
+      - career: first N rows ever — career debut window (no year filter,
+        ASC order in the inner ROW_NUMBER)
+      - recent: last N rows ever — most recent N appearances (no year
+        filter, DESC order)
+
+    Players who haven't reached N games yet are excluded by HAVING
+    COUNT(*) >= n.
+    """
+    if not plan.stat and not plan.derived_stat:
+        return None
+    win = plan.career_game_window or {}
+    direction = win.get("direction", "first")
+    n_val = int(win.get("n", 0) or 0)
+    scope = win.get("scope", "season")
+    if n_val < 2:
+        return None
+
+    is_pitching = plan.is_pitching
+    gl_table = "game_pitching_logs" if is_pitching else "game_batting_logs"
+    is_rate = (plan.stat and plan.stat.is_rate) or (
+        plan.derived_stat and _DERIVED_STATS.get(plan.derived_stat, {}).get("is_rate", False)
+    )
+
+    is_lower_better = plan.stat and plan.stat.db_column in _LOWER_IS_BETTER
+    if plan.sort_asc and is_lower_better:
+        order = "DESC"
+    elif plan.sort_asc:
+        order = "ASC"
+    elif is_lower_better:
+        order = "ASC"
+    else:
+        order = "DESC"
+
+    # Inner ORDER BY direction:
+    #  - first/season + first/career: ASC (chronologically earliest rows)
+    #  - last/recent: DESC (chronologically latest rows)
+    inner_order = "ASC" if direction == "first" else "DESC"
+
+    # Build inner WHERE — narrows the partition source rows by scope
+    inner_where_parts: list = []
+    inner_params: list = []
+    if scope == "season":
+        # Pick season: explicit plan.season, else current year
+        season_yr = plan.season or date.today().year
+        inner_where_parts.append("gl.season = ?")
+        inner_params.append(season_yr)
+    elif scope in ("career", "recent"):
+        # No year filter — full history per player
+        pass
+
+    # Optional handedness/league/position filters via EXISTS on season-stats
+    table, prefix = _table_and_prefix(plan)
+    filters_str, fparams = _build_filters(plan, prefix, conn)
+    if filters_str:
+        ss_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+        ss_alias = "ss"
+        ss_filter = filters_str.replace(f"{prefix}.", f"{ss_alias}.")
+        inner_where_parts.append(
+            f"EXISTS (SELECT 1 FROM {ss_table} {ss_alias} "
+            f"WHERE {ss_alias}.player_id = gl.player_id "
+            f"AND {ss_alias}.season = gl.season "
+            f"AND {ss_filter})"
+        )
+        inner_params += fparams
+
+    inner_where = ("WHERE " + " AND ".join(inner_where_parts)) if inner_where_parts else ""
+
+    # Stat formulas — operate on the windowed CTE alias `r`
+    if is_pitching:
+        rate_formulas = {
+            "era": "9.0 * SUM(r.earned_runs) / NULLIF(SUM(r.ip_outs) / 3.0, 0)",
+            "whip": "CAST(SUM(r.hits) + SUM(r.walks) AS REAL) / NULLIF(SUM(r.ip_outs) / 3.0, 0)",
+            "k_per_9": "9.0 * SUM(r.strikeouts) / NULLIF(SUM(r.ip_outs) / 3.0, 0)",
+            "bb_per_9": "9.0 * SUM(r.walks) / NULLIF(SUM(r.ip_outs) / 3.0, 0)",
+        }
+    else:
+        rate_formulas = {
+            "batting_avg": "CAST(SUM(r.hits) AS REAL) / NULLIF(SUM(r.at_bats), 0)",
+            "obp": ("CAST(SUM(r.hits) + SUM(r.walks) + SUM(COALESCE(r.hit_by_pitch, 0)) AS REAL) / "
+                    "NULLIF(SUM(r.at_bats) + SUM(r.walks) + SUM(COALESCE(r.hit_by_pitch, 0)) + SUM(COALESCE(r.sacrifice_flies, 0)), 0)"),
+            "slg": ("CAST(SUM(r.hits) - SUM(r.doubles) - SUM(r.triples) - SUM(r.home_runs) "
+                    "+ 2*SUM(r.doubles) + 3*SUM(r.triples) + 4*SUM(r.home_runs) AS REAL) / NULLIF(SUM(r.at_bats), 0)"),
+            "ops": ("(CAST(SUM(r.hits) + SUM(r.walks) + SUM(COALESCE(r.hit_by_pitch, 0)) AS REAL) / "
+                    "NULLIF(SUM(r.at_bats) + SUM(r.walks) + SUM(COALESCE(r.hit_by_pitch, 0)) + SUM(COALESCE(r.sacrifice_flies, 0)), 0)) + "
+                    "(CAST(SUM(r.hits) - SUM(r.doubles) - SUM(r.triples) - SUM(r.home_runs) "
+                    "+ 2*SUM(r.doubles) + 3*SUM(r.triples) + 4*SUM(r.home_runs) AS REAL) / NULLIF(SUM(r.at_bats), 0))"),
+            "iso": "CAST(SUM(r.doubles) + 2*SUM(r.triples) + 3*SUM(r.home_runs) AS REAL) / NULLIF(SUM(r.at_bats), 0)",
+        }
+
+    stat_col = plan.stat.db_column if plan.stat else (plan.derived_stat or "")
+    if is_rate and stat_col in rate_formulas:
+        stat_expr = rate_formulas[stat_col]
+    elif plan.stat and not is_rate:
+        stat_expr = f"SUM(r.{stat_col})"
+    elif plan.derived_stat and plan.derived_stat in rate_formulas:
+        stat_expr = rate_formulas[plan.derived_stat]
+    else:
+        return None
+
+    # CTE: assign row numbers per player ordered chronologically.
+    # Then keep only rn <= N. HAVING COUNT(*) >= N excludes players who
+    # haven't reached the window length.
+    sql = (
+        f"WITH ranked AS ("
+        f"  SELECT gl.*, ROW_NUMBER() OVER ("
+        f"    PARTITION BY gl.player_id ORDER BY gl.date {inner_order}, gl.game_number {inner_order}"
+        f"  ) AS rn FROM {gl_table} gl {inner_where}"
+        f") "
+        f"SELECT p.name, {stat_expr} AS stat_val, COUNT(*) AS games "
+        f"FROM ranked r "
+        f"JOIN players p ON r.player_id = p.player_id "
+        f"WHERE r.rn <= ? "
+        f"GROUP BY r.player_id "
+        f"HAVING COUNT(*) >= ? "
+        f"ORDER BY stat_val {order} LIMIT ?"
+    )
+    cur = conn.cursor()
+    try:
+        cur.execute(sql, tuple(inner_params + [n_val, n_val, plan.limit]))
+    except Exception as e:
+        # Some game-log tables may not have game_number — retry without
+        # the secondary ordering. Doubleheaders can swap order but the
+        # effect on N-game windows is tiny.
+        if "game_number" in str(e):
+            sql_fallback = sql.replace(f", gl.game_number {inner_order}", "")
+            try:
+                cur.execute(sql_fallback, tuple(inner_params + [n_val, n_val, plan.limit]))
+            except Exception as e2:
+                return f"Could not run game-window query: {e2}"
+        else:
+            return f"Could not run game-window query: {e}"
+    rows = cur.fetchall()
+
+    direction_label = "Fewest " if (plan.sort_asc and not is_rate) else ""
+    if plan.sort_asc and is_rate:
+        direction_label = "Worst " if is_lower_better else "Lowest "
+    title_stat = plan.stat.display_name if plan.stat else (
+        _DERIVED_STATS[plan.derived_stat]["name"] if plan.derived_stat else ""
+    )
+    if scope == "season":
+        season_yr = plan.season or date.today().year
+        scope_phrase = f"First {n_val} Games of {season_yr}" if direction == "first" else f"Last {n_val} Games of {season_yr}"
+    elif scope == "career":
+        scope_phrase = f"First {n_val} Career Games" if direction == "first" else f"Last {n_val} Career Games"
+    else:  # recent
+        scope_phrase = f"Last {n_val} Games"
+    title = f"**{direction_label}{title_stat} — {scope_phrase}**\n"
+    if not rows:
+        return f"{title}\nNo qualifying players found."
+
+    abbrev = plan.stat.display_abbrev if plan.stat else (
+        _DERIVED_STATS[plan.derived_stat]["display"] if plan.derived_stat else ""
+    )
+    parts = [title, "[TIP]Tap a player name for their full profile.[/TIP]", "[LEADERBOARD]"]
+    parts.append(f"HEADER: {abbrev}")
+    for row in rows:
+        name = row[0]
+        stat_val = row[1]
+        if is_rate:
+            val_str = _format_rate(stat_val)
+        else:
+            val_str = _format_val(stat_col, stat_val, is_rate=False)
+        parts.append(f"ROW {name}: {val_str}")
+    parts.append("[/LEADERBOARD]")
+    return "\n".join(parts)
+
+
 def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     """Standard stat leaderboard."""
     # Recurring-window queries ("first half of a season since 2020") aggregate
@@ -2899,6 +3145,8 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         return _execute_recurring_half_leaderboard(conn, plan)
     if plan.month_grouped:
         return _execute_month_grouped_leaderboard(conn, plan)
+    if plan.career_game_window:
+        return _execute_game_window_leaderboard(conn, plan)
     table, prefix = _table_and_prefix(plan)
     stat_expr, abbrev, name, is_rate = _stat_expr(plan, prefix)
     filters_str, params = _build_filters(plan, prefix, conn)

@@ -723,7 +723,25 @@ def match_stat(input_str: str) -> Optional[StatInfo]:
         if k_stat:
             return k_stat
 
+    # "(first|last) N games/at-bats/starts" — these are scope markers for
+    # the career-game-window leaderboard, not stat asks. Strip them from
+    # the alias scan so a longer stat keyword in the same query (OPS, AVG,
+    # HR) still wins. Bare "first 50 games" with no other stat will fall
+    # through and the leaderboard executor's default-stat rule applies.
+    _window_phrase = re.search(
+        r'\b(?:first|last)\s+\d+\s+(?:career\s+)?'
+        r'(games?|starts?|at[- ]?bats?|abs?|appearances)',
+        lower,
+    )
+    window_skip: set[str] = set()
+    if _window_phrase:
+        window_skip = {"games", "game", "at-bats", "at bats", "ab",
+                        "abs", "starts", "start", "at-bat", "at bat",
+                        "appearances", "appearance"}
+
     for alias in _sorted_stat_aliases:
+        if alias in window_skip:
+            continue
         if contains_word(alias, lower):
             return stat_alias_map[alias]
     # Handle split phrases like "stolen 60 bases" -> "stolen bases"
@@ -731,6 +749,8 @@ def match_stat(input_str: str) -> Optional[StatInfo]:
     without_numbers = re.sub(r'\s+', ' ', without_numbers).strip()
     if without_numbers != lower:
         for alias in _sorted_stat_aliases:
+            if alias in window_skip:
+                continue
             if contains_word(alias, without_numbers):
                 return stat_alias_map[alias]
     # Fallback — generic "best hitter" / "top batter" phrasings default to OPS
