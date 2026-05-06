@@ -3876,10 +3876,29 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         try:
             start_dt = datetime.strptime(since_date, "%Y-%m-%d")
             if plan.end_date:
+                from datetime import timedelta as _td
                 end_dt = datetime.strptime(plan.end_date, "%Y-%m-%d")
-                # Closed range — show "First Half YYYY" for season-opener-to-ASG
-                if start_dt.month == 4 and start_dt.day == 1:
+                # Closed range labels, in priority order:
+                #   start=Apr 1 + end matches ASG break for year   → "First Half YYYY"
+                #   start=day 1 of month + end=last day same month → "{Month} YYYY"
+                #   anything else                                  → date span
+                _asg = _ASG_DATES.get(start_dt.year)
+                _is_first_half = (start_dt.month == 4 and start_dt.day == 1
+                                  and _asg and plan.end_date == _asg)
+                # Last day of start_dt.month
+                if start_dt.month == 12:
+                    _next_first = datetime(start_dt.year + 1, 1, 1)
+                else:
+                    _next_first = datetime(start_dt.year, start_dt.month + 1, 1)
+                _last_day_same_month = (_next_first - _td(days=1)).day
+                _is_full_month = (start_dt.day == 1
+                                  and end_dt.year == start_dt.year
+                                  and end_dt.month == start_dt.month
+                                  and end_dt.day == _last_day_same_month)
+                if _is_first_half:
                     scope_label = f"First Half {start_dt.year}"
+                elif _is_full_month:
+                    scope_label = f"{start_dt.strftime('%B %Y')}"
                 else:
                     scope_label = (
                         f"{start_dt.strftime('%B %-d, %Y')} "
@@ -3947,6 +3966,17 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             formula_template, having = _career_rate_formulas[stat_col]
             formula = formula_template.format(p=prefix)
             having = having.format(p=prefix)
+
+            # Position filter dramatically narrows the qualifying universe.
+            # Pitchers don't accumulate 5000 career AB; catchers / DHs /
+            # short-career players also won't. Lower the qualifier so
+            # "best batting AVG by a pitcher" doesn't return zero rows.
+            # 200 AB ≈ ~50 games of meaningful hitting; reasonable for the
+            # pitcher-as-batter universe (Bumgarner, Wainwright, Greinke,
+            # Ohtani-pre-DH-era types).
+            if plan.position and stat_col in (
+                    "batting_avg", "obp", "slg", "ops", "iso", "babip"):
+                having = having.replace(">= 5000", ">= 200")
 
             cur = conn.cursor()
             cur.execute(
