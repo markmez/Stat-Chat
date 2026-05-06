@@ -1102,19 +1102,14 @@ def decompose(question: str) -> QueryPlan:
     if any(t in lower for t in any_season_triggers):
         plan.scope = "all_time"
         plan.season = None
-        # NOTE: We previously promoted career_game_window.scope to "career"
-        # here so the cumulative executor would drop the year filter. That
-        # was wrong for per-game-each (streak_sequence) queries — it forced
-        # career-debut grouping instead of per-season grouping, so "8+ K in
-        # each of first 3 starts of any season" returned only debut-window
-        # matches (Tanaka, Strasburg) instead of all qualifying
-        # player-seasons. Leave career_game_window.scope as "season" so the
-        # streak executor's season-mode (group by player+season) runs;
-        # plan.scope="all_time" alone drops the SQL season filter.
-        # The cumulative path's "any season" support is a separate gap —
-        # the cumulative executor doesn't currently have per-season
-        # grouping; "best OPS in first 50 games of any season" still
-        # routes to the (incomplete) career-debut branch there.
+        # Force career_game_window.scope to "season" — "any season" means
+        # per-season grouping regardless of how the original detector
+        # classified the window (it might have set "recent" for last-N
+        # without a season anchor). The streak executor's season-mode
+        # AND the cumulative executor's per_season_any branch both key
+        # off window_scope=="season" + plan.scope=="all_time".
+        if plan.career_game_window:
+            plan.career_game_window["scope"] = "season"
         _add_consumed(plan, "any season year of his their across all seasons years")
 
     # "active" filter — current or previous year has stats
@@ -2023,6 +2018,38 @@ def _format_rate(value) -> str:
         return f"{fv:.3f}"
     except (ValueError, TypeError):
         return str(value)
+
+
+def _format_threshold_clause(threshold, comparison, abbrev, is_rate=False) -> str:
+    """Render a user-facing filter clause for (threshold, comparison, abbrev).
+
+    Examples:
+      (30, ">=", "HR")       → "30+ HR"
+      (100, "<=", "K")       → "≤100 K"
+      (3.50, "<=", "ERA", T) → "sub-3.50 ERA"  (rate stats use "sub-" prefix)
+      (0, anything, "BB")    → "0 BB"          (zero is unambiguous)
+
+    Centralized so leaderboard / threshold / career-filter titles all render
+    consistently. Previously several call sites hardcoded "+" regardless of
+    comparison, which silently lied for "under N" / "fewer than N" / lower-
+    is-better-stat queries — the SQL filter was correct but the title told
+    the user the opposite.
+    """
+    if threshold is None:
+        return abbrev
+    try:
+        t_int = int(threshold) if threshold == int(threshold) else None
+    except (TypeError, ValueError):
+        t_int = None
+    t_disp = _format_rate(str(threshold)) if is_rate else (
+        str(t_int) if t_int is not None else str(threshold))
+    if t_int == 0:
+        return f"0 {abbrev}"
+    if comparison == ">=":
+        return f"{t_disp}+ {abbrev}"
+    if comparison == "<=":
+        return f"sub-{t_disp} {abbrev}" if is_rate else f"≤{t_disp} {abbrev}"
+    return f"{comparison} {t_disp} {abbrev}"
 
 
 def _format_val(stat_col: str, value, is_rate: bool = False) -> str:
@@ -3112,20 +3139,26 @@ def _execute_month_grouped_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
 
 
 def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
-    """First/last N games leaderboard — three scope variants.
+    """First/last N games leaderboard — four scope variants.
 
-    Aggregates the first or last N game-log rows for each player (ordered
-    chronologically), then ranks the resulting per-player aggregates.
+    Aggregates the first or last N game-log rows per partition (ordered
+    chronologically), then ranks the resulting aggregates.
 
     Scopes:
-      - season: first/last N games WITHIN one season (single year filter)
+      - season: first/last N games WITHIN one season (single year filter,
+        partition by player_id)
       - career: first N rows ever — career debut window (no year filter,
-        ASC order in the inner ROW_NUMBER)
+        partition by player_id, ASC inner order)
       - recent: last N rows ever — most recent N appearances (no year
-        filter, DESC order)
+        filter, partition by player_id, DESC inner order)
+      - per-season any-year: triggered when window scope=="season" AND
+        plan.scope=="all_time" (user said "any season"). No year filter,
+        partition by (player_id, season) so each player-season is its
+        own window, then rank across all such windows. Output rows
+        include the season label.
 
-    Players who haven't reached N games yet are excluded by HAVING
-    COUNT(*) >= n.
+    Players who haven't reached N games in their partition are excluded
+    by HAVING COUNT(*) >= n.
     """
     if not plan.stat and not plan.derived_stat:
         return None
@@ -3135,6 +3168,11 @@ def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     scope = win.get("scope", "season")
     if n_val < 2:
         return None
+
+    # Per-season any-year mode: window scope says "season" but plan.scope
+    # is "all_time" (the any-season trigger fired). Partition each
+    # (player, season) independently, no year filter.
+    per_season_any = (scope == "season" and plan.scope == "all_time")
 
     is_pitching = plan.is_pitching
     gl_table = "game_pitching_logs" if is_pitching else "game_batting_logs"
@@ -3160,14 +3198,12 @@ def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     # Build inner WHERE — narrows the partition source rows by scope
     inner_where_parts: list = []
     inner_params: list = []
-    if scope == "season":
-        # Pick season: explicit plan.season, else current year
+    if scope == "season" and not per_season_any:
+        # Single explicit season
         season_yr = plan.season or date.today().year
         inner_where_parts.append("gl.season = ?")
         inner_params.append(season_yr)
-    elif scope in ("career", "recent"):
-        # No year filter — full history per player
-        pass
+    # career, recent, and per_season_any → no year filter
 
     # Optional handedness/league/position filters via EXISTS on season-stats
     table, prefix = _table_and_prefix(plan)
@@ -3231,20 +3267,30 @@ def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             pa_min = max(20, n_val * 2)  # ~2 PA per game in window
             rate_qual = f" AND SUM(r.plate_appearances) >= {pa_min}"
 
-    # CTE: assign row numbers per player ordered chronologically.
-    # Then keep only rn <= N. HAVING COUNT(*) >= N excludes players who
-    # haven't reached the window length.
+    # CTE: row-number rows within each partition (player, or player+season).
+    # Per-season-any mode partitions by (player_id, season) so each player-
+    # season is independently windowed. All other modes partition by
+    # player_id only.
+    if per_season_any:
+        partition_clause = "PARTITION BY gl.player_id, gl.season"
+        select_extra = ", r.season AS row_season"
+        group_by_clause = "GROUP BY r.player_id, r.season"
+    else:
+        partition_clause = "PARTITION BY gl.player_id"
+        select_extra = ""
+        group_by_clause = "GROUP BY r.player_id"
+
     sql = (
         f"WITH ranked AS ("
         f"  SELECT gl.*, ROW_NUMBER() OVER ("
-        f"    PARTITION BY gl.player_id ORDER BY gl.date {inner_order}, gl.game_number {inner_order}"
+        f"    {partition_clause} ORDER BY gl.date {inner_order}, gl.game_number {inner_order}"
         f"  ) AS rn FROM {gl_table} gl {inner_where}"
         f") "
-        f"SELECT p.name, {stat_expr} AS stat_val, COUNT(*) AS games "
+        f"SELECT p.name{select_extra}, {stat_expr} AS stat_val, COUNT(*) AS games "
         f"FROM ranked r "
         f"JOIN players p ON r.player_id = p.player_id "
         f"WHERE r.rn <= ? "
-        f"GROUP BY r.player_id "
+        f"{group_by_clause} "
         f"HAVING COUNT(*) >= ?{rate_qual} "
         f"ORDER BY stat_val {order} LIMIT ?"
     )
@@ -3271,7 +3317,12 @@ def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     title_stat = plan.stat.display_name if plan.stat else (
         _DERIVED_STATS[plan.derived_stat]["name"] if plan.derived_stat else ""
     )
-    if scope == "season":
+    if per_season_any:
+        scope_phrase = (
+            f"First {n_val} Games of Any Season" if direction == "first"
+            else f"Last {n_val} Games of Any Season"
+        )
+    elif scope == "season":
         season_yr = plan.season or date.today().year
         scope_phrase = f"First {n_val} Games of {season_yr}" if direction == "first" else f"Last {n_val} Games of {season_yr}"
     elif scope == "career":
@@ -3286,15 +3337,25 @@ def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         _DERIVED_STATS[plan.derived_stat]["display"] if plan.derived_stat else ""
     )
     parts = [title, "[TIP]Tap a player name for their full profile.[/TIP]", "[LEADERBOARD]"]
-    parts.append(f"HEADER: {abbrev}")
+    if per_season_any:
+        parts.append(f"HEADER: {abbrev}, Year")
+    else:
+        parts.append(f"HEADER: {abbrev}")
     for row in rows:
         name = row[0]
-        stat_val = row[1]
+        if per_season_any:
+            row_season = row[1]
+            stat_val = row[2]
+        else:
+            stat_val = row[1]
         if is_rate:
             val_str = _format_rate(stat_val)
         else:
             val_str = _format_val(stat_col, stat_val, is_rate=False)
-        parts.append(f"ROW {name}: {val_str}")
+        if per_season_any:
+            parts.append(f"ROW {name}: {val_str}, {row_season}")
+        else:
+            parts.append(f"ROW {name}: {val_str}")
     parts.append("[/LEADERBOARD]")
     return "\n".join(parts)
 
@@ -4086,10 +4147,16 @@ def _execute_player_threshold(conn, plan: QueryPlan) -> Optional[str]:
     )
     rows = cur.fetchall()
 
-    if not rows:
-        return f"{plan.player_name} has no seasons with {threshold_display}+ {abbrev}." + _empty_result_pills(plan)
+    # Render filter clause respecting comparison direction. The SQL query
+    # already filters by plan.comparison correctly (line above); the title
+    # was previously hardcoding "+" which silently lied for "under N" /
+    # "fewer than N" / lower-is-better-stat queries.
+    _filter_clause = _format_threshold_clause(plan.threshold, plan.comparison, abbrev, is_rate)
 
-    title = f"**{plan.player_name} — {len(rows)} season{'s' if len(rows) != 1 else ''} with {threshold_display}+ {abbrev}**\n"
+    if not rows:
+        return f"{plan.player_name} has no seasons with {_filter_clause}." + _empty_result_pills(plan)
+
+    title = f"**{plan.player_name} — {len(rows)} season{'s' if len(rows) != 1 else ''} with {_filter_clause}**\n"
     parts = [title]
     parts.append("[LEADERBOARD]")
     parts.append(f"HEADER: {abbrev}, G, H-AB, RBI, R")
@@ -4158,17 +4225,21 @@ def _execute_career_threshold(conn, plan: QueryPlan) -> Optional[str]:
     cur.execute(sql, tuple(where_params + [plan.threshold]))
     rows = cur.fetchall()
 
-    if not rows:
-        return f"No players with {threshold_display}+ career {abbrev} found." + _empty_result_pills(plan)
+    _primary_clause = _format_threshold_clause(
+        plan.threshold, plan.comparison, abbrev, is_rate)
 
-    # Title
-    filter_desc = f"{threshold_display}+ {abbrev}"
+    if not rows:
+        return f"No players with career {_primary_clause} found." + _empty_result_pills(plan)
+
+    # Title — primary uses comparison-aware helper; extras already do
+    filter_desc = _primary_clause
     for ef in plan.extra_filters:
-        ef_val = int(ef["threshold"])
-        if ef["comparison"] == "<=":
-            filter_desc += f" and ≤{ef_val} {ef['stat'].display_abbrev}"
-        else:
-            filter_desc += f" and {ef_val}+ {ef['stat'].display_abbrev}"
+        ef_stat = ef.get("stat")
+        ef_abbrev = ef_stat.display_abbrev if ef_stat else ""
+        ef_is_rate = ef_stat.is_rate if ef_stat else False
+        filter_desc += " and " + _format_threshold_clause(
+            ef.get("threshold"), ef.get("comparison", ">="),
+            ef_abbrev, ef_is_rate)
 
     scope_label = f"Since {plan.since_year}" if plan.since_year else "All-Time"
     parts = [f"**Career {filter_desc} ({scope_label})**"]
@@ -4431,14 +4502,13 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
                     )
                     pace_rows = pace_cur.fetchall()
                     if pace_rows:
-                        # Build pace display
-                        filter_desc = f"{threshold_display}+ {abbrev}"
+                        # Build pace display — primary now respects plan.comparison
+                        filter_desc = _format_threshold_clause(
+                            plan.threshold, plan.comparison, abbrev, is_rate)
                         for ef in plan.extra_filters:
-                            ef_val = _format_val(ef["stat"].db_column, ef["threshold"], ef["stat"].is_rate) if ef["stat"].is_rate else str(int(ef["threshold"]))
-                            if ef["comparison"] == "<=":
-                                filter_desc += f" and sub-{ef_val} {ef['stat'].display_abbrev}"
-                            else:
-                                filter_desc += f" and {ef_val}+ {ef['stat'].display_abbrev}"
+                            filter_desc += " and " + _format_threshold_clause(
+                                ef.get("threshold"), ef.get("comparison", ">="),
+                                ef["stat"].display_abbrev, ef["stat"].is_rate)
                         parts = [f"No one has reached {filter_desc} yet in {season}."]
                         parts.append(f"Through {max_games} games, {len(pace_rows)} {'player is' if len(pace_rows) == 1 else 'players are'} on pace:\n")
                         parts.append("[LEADERBOARD]")
@@ -4475,15 +4545,14 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
                 logger.warning("pace_fallback_error error=%s", e)
         return _zero_result_sentence(plan) + _empty_result_pills(plan)
 
-    # Build title with extra filters
-    filter_parts = [f"{threshold_display}+ {abbrev}"]
+    # Build title with extra filters — primary now respects plan.comparison
+    filter_parts = [_format_threshold_clause(
+        plan.threshold, plan.comparison, abbrev, is_rate)]
     for ef in plan.extra_filters:
         ef_stat = ef["stat"]
-        ef_val = int(ef["threshold"]) if ef["threshold"] == int(ef["threshold"]) else ef["threshold"]
-        if ef["comparison"] == "<=":
-            filter_parts.append(f"≤{ef_val} {ef_stat.display_abbrev}")
-        else:
-            filter_parts.append(f"{ef_val}+ {ef_stat.display_abbrev}")
+        filter_parts.append(_format_threshold_clause(
+            ef.get("threshold"), ef.get("comparison", ">="),
+            ef_stat.display_abbrev, ef_stat.is_rate))
     title = f"**{rookie_label} with {' and '.join(filter_parts)} ({scope_label})**"
 
     count = len(rows)

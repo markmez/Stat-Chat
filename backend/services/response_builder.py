@@ -3595,7 +3595,14 @@ def build_milestone(stat_info: StatInfo, threshold: float,
         threshold_display = _format_rate(str(threshold)) if stat_info.is_rate else str(int(threshold))
         since_label = f" since {since}" if since else ""
         verb = "or lower" if lower_is_better else "or more"
-        title = f"{threshold_display}+ {stat_info.display_name} Seasons{since_label}{league_label}"
+        # Title respects comparison direction so "Sub-2.50 ERA Seasons" reads
+        # correctly for ERA-style stats. Previously hardcoded "+" which lied
+        # for lower-is-better stats — SQL filter was correct, title was not.
+        if lower_is_better:
+            prefix = "Sub-" if stat_info.is_rate else "≤"
+            title = f"{prefix}{threshold_display} {stat_info.display_name} Seasons{since_label}{league_label}"
+        else:
+            title = f"{threshold_display}+ {stat_info.display_name} Seasons{since_label}{league_label}"
 
         count = len(rows)
         parts = [f"**{title}**\n"]
