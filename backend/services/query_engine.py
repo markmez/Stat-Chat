@@ -5767,7 +5767,15 @@ def _streak_leading(rows, target_length, label, plan) -> Optional[str]:
             results.append((player_names[pid], season, target_length))
 
     if not results:
-        return None  # Fall through to Haiku/Sonnet
+        # Deterministic 0-matched answer. Previously fell through to LLM
+        # but that mixed two different cases (legit-zero vs misparse) and
+        # made audit discipline impossible. Audit-discipline note in
+        # feedback-routing-audit-discipline.md.
+        scope_label = (str(plan.season) if plan.season
+                       else f"since {plan.since_year}" if plan.since_year
+                       else "across the eras we have data for")
+        return (f"**No players had {label} in each of their first "
+                f"{target_length} games ({scope_label}).**" + _empty_result_pills(plan))
 
     scope = str(plan.season) if plan.season else f"Since {plan.since_year}" if plan.since_year else "2016-2025"
     title = f"**Players with {label} in Each of Their First {target_length} Games ({scope})**\n"
@@ -5829,7 +5837,9 @@ def _streak_tail_window(rows, target_length, label, plan) -> Optional[str]:
                 results.append((player_names[pid], span))
 
         if not results:
-            return None
+            return (f"**No players had {label} in each of their last "
+                    f"{target_length} games (career-mode).**"
+                    + _empty_result_pills(plan))
 
         title = (f"**Players with {label} in Each of Their Last "
                  f"{target_length} Games**\n")
@@ -5857,7 +5867,12 @@ def _streak_tail_window(rows, target_length, label, plan) -> Optional[str]:
             results.append((player_names[pid], season, target_length))
 
     if not results:
-        return None
+        scope_label = (str(plan.season) if plan.season
+                       else f"since {plan.since_year}" if plan.since_year
+                       else "across the eras we have data for")
+        return (f"**No players had {label} in each of their last "
+                f"{target_length} games ({scope_label}).**"
+                + _empty_result_pills(plan))
 
     scope = str(plan.season) if plan.season else f"Since {plan.since_year}" if plan.since_year else "2016-2025"
     title = f"**Players with {label} in Each of Their Last {target_length} Games ({scope})**\n"
@@ -5900,7 +5915,12 @@ def _streak_trailing(rows, target_length, label, plan) -> Optional[str]:
                 results.append((streak, player_names[pid], season))
 
     if not results:
-        return None
+        # Clean up label for the empty-result message
+        _empty_label_map = {"a hit": "hitting", "a HR": "HR", "a BB": "walk",
+                            "scoreless": "scoreless"}
+        display_label = _empty_label_map.get(label, label)
+        return (f"**No active {display_label} streaks of any length right now.**"
+                + _empty_result_pills(plan))
 
     results.sort(key=lambda x: x[0], reverse=True)
 

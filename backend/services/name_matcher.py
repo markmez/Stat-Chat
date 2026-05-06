@@ -1881,11 +1881,15 @@ def parse_platoon_leaderboard(input_str: str) -> Optional[dict]:
     lhp_triggers = ["vs lefties", "against lefties", "vs left-handed", "vs lhp",
                      "versus lefties", "facing lefties", "left-handed pitching",
                      "against left-handed", "against lhp", "left-handed batters",
-                     "left-handed hitters"]
+                     "left-handed hitters",
+                     # Abbreviation forms common in stat-Twitter
+                     "vs lhb", "against lhb", "facing lhb", "versus lhb"]
     rhp_triggers = ["vs righties", "against righties", "vs right-handed", "vs rhp",
                      "versus righties", "facing righties", "right-handed pitching",
                      "against right-handed", "against rhp", "right-handed batters",
-                     "right-handed hitters"]
+                     "right-handed hitters",
+                     # Abbreviation forms common in stat-Twitter
+                     "vs rhb", "against rhb", "facing rhb", "versus rhb"]
 
     has_lhp = any(t in lower for t in lhp_triggers)
     has_rhp = any(t in lower for t in rhp_triggers)
@@ -1910,10 +1914,10 @@ def parse_platoon_leaderboard(input_str: str) -> Optional[dict]:
 
     # Detect pitching context: pitching-specific stat, or "pitcher" NOT preceded
     # by "against/vs/facing ... pitcher" (which describes the opponent, not the subject)
-    pitching_stats = {"earned_run_avg", "wins", "losses", "saves", "whip",
-                      "k_per_9", "bb_per_9", "h_per_9", "hr_per_9",
+    pitching_stats = {"era", "earned_run_avg", "wins", "losses", "saves", "whip",
+                      "k_per_9", "bb_per_9", "h_per_9", "hr_per_9", "k_per_bb",
                       "innings_pitched", "quality_starts", "complete_games",
-                      "batting_avg_against"}
+                      "shutouts", "batting_avg_against"}
     # "against left-handed pitchers" = batters facing pitchers, NOT pitching context
     # "against left-handed batters/hitters" = pitchers facing batters, IS pitching context
     pitcher_is_subject = bool(re.search(r'\bpitcher', lower)) and \

@@ -32,15 +32,25 @@ PROD = "https://api.secondsignalapps.com"
 ADMIN_KEY = "I9-NNJ-GBen3SZ-wf8JkZX5-_zvvt8Qri2EtTxWUo-I"
 
 THROTTLE_SECONDS = 1.5
-MAX_CONSECUTIVE_ERRORS = 3
+MAX_CONSECUTIVE_ERRORS = 5  # tolerate a few slow queries before assuming meltdown
 DEEP_TIMEOUT = 90
-SHALLOW_TIMEOUT = 30
+SHALLOW_TIMEOUT = 60  # some career-scope window queries legitimately take 20-30s
 
-# Expected routing values:
-#   "intercepted"  — interceptor parser OR query_engine handled the query
-#   "haiku"        — Haiku SQL fallback handled (deep mode only detects this)
-#   "sonnet"       — Sonnet sql_planner / insight engine handled (deep mode only)
-#   "either"       — intercepted OR Haiku is acceptable (some narrative queries)
+# Expected routing values — strict binary, no hand-waving:
+#   "intercepted"  — interceptor parser OR query_engine handled the query.
+#                     This is the ONLY accepted result for any query that
+#                     can be answered structurally from the DB. Falling to
+#                     Haiku or Sonnet here is a regression to fix.
+#   "sonnet"       — Sonnet sql_planner / insight engine handled. Reserve
+#                     ONLY for genuinely narrative / off-topic / out-of-
+#                     schema queries (e.g. "explain FIP vs xERA" when those
+#                     metrics aren't in our DB). If you find yourself
+#                     reaching for "sonnet" because "well, query engine
+#                     can't really do that" — it's actually a query engine
+#                     gap. Add a parser instead of weakening the test.
+#   "haiku"        — kept as a deep-mode bucket for diagnostic reporting,
+#                     but no test SHOULD expect it (Haiku is a fallback,
+#                     not a target).
 
 TESTS: list[tuple[str, str, str]] = [
     # ============================================================
@@ -227,12 +237,21 @@ TESTS: list[tuple[str, str, str]] = [
     ("Explain why teams are throwing more sliders", "sonnet", "Narrative"),
 
     # ============================================================
-    # Tier 18: Long-tail (Haiku territory acceptable)
+    # Tier 18: Long-tail structurally-answerable — should be query_engine
+    # The filter is structural ("last name starts with X") but we don't
+    # have a parser for it. Real gap, not "Haiku OK" — see audit
+    # discipline memory note. Falling to Haiku is a regression to fix.
     # ============================================================
-    ("Pitchers whose last name starts with a vowel", "either",
-     "Long-tail (Haiku OK)"),
-    ("What's the difference between FIP and xERA", "either",
-     "Long-tail (Haiku OK)"),
+    ("Pitchers whose last name starts with a vowel", "intercepted",
+     "Long-tail structurally answerable"),
+
+    # ============================================================
+    # Tier 18b: Off-topic / metric comparisons not in schema — Sonnet expected
+    # FIP and xERA aren't in our DB; this is a genuine narrative
+    # explanation, no structural answer possible.
+    # ============================================================
+    ("What's the difference between FIP and xERA", "sonnet",
+     "Off-topic / metric comparison"),
 ]
 
 
@@ -252,9 +271,25 @@ def http_post(path: str, body: dict, timeout: int = DEEP_TIMEOUT) -> dict:
         return json.loads(text)
 
 
-def classify_intercept_only(query: str) -> tuple[str, int, str]:
-    """Hit /admin/debug-intercept. Returns (route, latency_ms, snippet).
-    route is "intercepted" or "miss" or "error"."""
+_ZERO_RESULT_MARKERS = (
+    "0 ", "No players", "No game streaks", "No active",
+    "No qualifying", "No qualified", "No matching",
+)
+
+
+def _is_zero_result(preview: str) -> bool:
+    """Heuristic: detect 'query engine ran, found 0 rows' from result preview.
+    Looks at the first ~60 chars where titles/zero-sentences live."""
+    if not preview:
+        return False
+    head = preview.lstrip("*# \n").lower()
+    return any(head.startswith(m.lower()) for m in _ZERO_RESULT_MARKERS)
+
+
+def classify_intercept_only(query: str) -> tuple[str, int, str, bool]:
+    """Hit /admin/debug-intercept. Returns (route, latency_ms, snippet, is_zero).
+    route is "intercepted" or "miss" or "error". is_zero is True when
+    intercepted but the response was a deterministic "0 matched" answer."""
     q_enc = urllib.parse.quote(query)
     url = f"{PROD}/admin/debug-intercept?key={ADMIN_KEY}&q={q_enc}"
     t0 = time.time()
@@ -262,17 +297,18 @@ def classify_intercept_only(query: str) -> tuple[str, int, str]:
         with urllib.request.urlopen(url, timeout=SHALLOW_TIMEOUT) as r:
             body = json.loads(r.read().decode("utf-8", errors="replace"))
     except Exception as e:
-        return ("error", int((time.time() - t0) * 1000), f"err: {e}")
+        return ("error", int((time.time() - t0) * 1000), f"err: {e}", False)
     ms = int((time.time() - t0) * 1000)
     if body.get("error"):
-        return ("error", ms, f"err: {body['error'][:120]}")
+        return ("error", ms, f"err: {body['error'][:120]}", False)
     if body.get("intercepted"):
-        snip = (body.get("result_preview") or "").replace("\n", " ")[:90]
-        return ("intercepted", ms, snip)
-    return ("miss", ms, "")
+        preview = body.get("result_preview") or ""
+        snip = preview.replace("\n", " ")[:90]
+        return ("intercepted", ms, snip, _is_zero_result(preview))
+    return ("miss", ms, "", False)
 
 
-def classify_deep(query: str) -> tuple[str, int, str]:
+def classify_deep(query: str) -> tuple[str, int, str, bool]:
     """Hit /query streaming. Returns (route, latency_ms, snippet).
     route is "intercepted" / "haiku" / "sonnet" / "error"."""
     body = {
@@ -314,7 +350,7 @@ def classify_deep(query: str) -> tuple[str, int, str]:
                     break
             except Exception:
                 continue
-    return (route, ms, snip)
+    return (route, ms, snip, _is_zero_result(snip))
 
 
 def main():
@@ -334,6 +370,7 @@ def main():
     pass_count = 0
     fail_count = 0
     regressions: list[dict] = []
+    zero_intercepts: list[dict] = []  # passed but with 0-row response
     per_category: dict[str, dict[str, int]] = {}
     consecutive_errors = 0
     aborted = False
@@ -341,7 +378,7 @@ def main():
     print(f"\nAuditing {len(tests)} queries against {PROD}")
     print(f"Mode: {'deep' if args.deep else 'shallow'} | "
           f"throttle: {'off' if args.no_throttle else f'{THROTTLE_SECONDS}s'}\n")
-    print(f"{'#':>3} {'CAT':<32} {'EXPECT':<12} {'ACTUAL':<12} {'MS':>5}  QUERY")
+    print(f"{'#':>3} {'CAT':<32} {'EXPECT':<12} {'ACTUAL':<12} {'MS':>5} {'0?':>3}  QUERY")
     print("-" * 130)
 
     for i, (query, expected, category) in enumerate(tests, start=1):
@@ -349,19 +386,25 @@ def main():
             time.sleep(THROTTLE_SECONDS)
 
         if args.deep:
-            actual, ms, snip = classify_deep(query)
+            actual, ms, snip, is_zero = classify_deep(query)
         else:
-            route, ms, snip = classify_intercept_only(query)
+            route, ms, snip, is_zero = classify_intercept_only(query)
             actual = route if route in ("intercepted", "error") else "miss"
 
-        # Normalize expected for comparison
-        if expected == "either":
-            ok = actual in ("intercepted", "haiku")
+        # Normalize expected for comparison.
+        # In shallow mode, classify_intercept_only returns "intercepted" /
+        # "miss" / "error". `expected="sonnet"` maps to "actual==miss"
+        # (anything past the interceptor — shallow mode can't distinguish
+        # Haiku vs Sonnet). Errors always fail. No "either" — the audit
+        # is binary: query_engine handled it, or it's a regression.
+        if actual == "error":
+            ok = False
         elif expected == "intercepted":
             ok = actual == "intercepted"
         elif expected == "sonnet":
             ok = actual == "sonnet" if args.deep else actual == "miss"
         elif expected == "haiku":
+            # Diagnostic-only; no test SHOULD expect this. Kept for clarity.
             ok = actual == "haiku" if args.deep else actual == "miss"
         else:
             ok = actual == expected
@@ -370,6 +413,15 @@ def main():
         if ok:
             pass_count += 1
             consecutive_errors = 0
+            if is_zero:
+                # Track passing intercepts that returned 0 rows. These are
+                # legitimate deterministic answers but worth reviewing
+                # periodically — could be a parser misclassification (silent
+                # wrong answer), seasonal-data gap, or genuinely just zero.
+                zero_intercepts.append({
+                    "query": query, "category": category,
+                    "snippet": snip, "ms": ms,
+                })
         else:
             fail_count += 1
             regressions.append({
@@ -385,7 +437,8 @@ def main():
         per_category.setdefault(category, {"pass": 0, "fail": 0})
         per_category[category]["pass" if ok else "fail"] += 1
 
-        print(f"{status_marker}{i:>3} {category[:32]:<32} {expected:<12} {actual:<12} {ms:>5}  {query[:55]}")
+        zero_marker = "0" if is_zero else ""
+        print(f"{status_marker}{i:>3} {category[:32]:<32} {expected:<12} {actual:<12} {ms:>5} {zero_marker:>3}  {query[:55]}")
 
         if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
             print(f"\n  ! {MAX_CONSECUTIVE_ERRORS} consecutive errors — backend may be struggling. Aborting.")
@@ -410,6 +463,15 @@ def main():
             print(f"    Query: {r['query']}")
             if r["snippet"]:
                 print(f"    Got:   {r['snippet']}")
+            print()
+
+    if zero_intercepts:
+        print(f"\nZero-result intercepts ({len(zero_intercepts)}) — query_engine "
+              f"answered deterministically with 0 rows. Review periodically:\n")
+        for z in zero_intercepts:
+            print(f"  [{z['category']}] {z['query']}")
+            if z["snippet"]:
+                print(f"    Got: {z['snippet']}")
             print()
 
     if aborted:
