@@ -1623,6 +1623,26 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
         if re.search(pat, lower):
             return None
 
+    # Reject narrative / interrogative / opinion shapes. These ask about
+    # WHY / HOW / a player's story — not their stat line. Returning a
+    # season summary drops the actual question and ships an answer the
+    # user didn't ask for. Decline so the chain falls through to Sonnet's
+    # sql_planner, which can handle narrative analysis.
+    narrative_triggers = [
+        r'\bwhy\s+(?:is|are|was|were|does|do|did|has|have|had)\b',
+        r'\bexplain\b',
+        r'\btell\s+me\s+about\b',
+        r'\b(?:how\s+come|how\s+did)\b',
+        r'\bwhat\s+(?:makes|made)\b',
+        r'\bdescribe\b',
+        r'\bcompare\b',  # "compare X and Y" — handled by parse_comparison if both names present
+        r'\bbreakdown\b',
+        r'\bbreak\s+down\b',
+    ]
+    for pat in narrative_triggers:
+        if re.search(pat, lower):
+            return None
+
     current_year = _get_db_max_season()
 
     target_season: Optional[int] = None

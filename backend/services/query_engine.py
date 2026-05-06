@@ -1717,6 +1717,62 @@ def decompose(question: str) -> QueryPlan:
         else:
             plan.sort_asc = True  # "lowest OPS" = worst
 
+    # --- Career-window per-game threshold → streak_sequence leading ---
+    # "10+ K in each of their first 3 starts of 2026", "2+ HR in their first
+    # 5 games", "0 BB in each of his first 4 starts". These are per-game-each
+    # checks: every one of the first N games must satisfy the threshold.
+    # The existing _streak_leading executor already implements this exactly
+    # (`all(g == 1 for g in first_n)` at line ~5209) — we just need to wire
+    # the decomposed plan into streak_sequence shape.
+    #
+    # Trigger: career_game_window with direction="first" + a per-game
+    # threshold (counting stat threshold) + a single stat. Rate stats with
+    # cumulative semantics ("best OPS in first 50 games") are NOT converted
+    # — they keep career_game_window scope and route to the cumulative
+    # executor. The fork is "is there a counting threshold tied to the
+    # stat?" → per-game-each. Otherwise → cumulative.
+    if (plan.career_game_window
+            and plan.career_game_window.get("direction") == "first"
+            and plan.threshold is not None
+            and plan.stat is not None
+            and not plan.streak_conditions):
+        # Build per-game SQL condition from threshold + stat. Game-log
+        # column names match plan.stat.db_column except for a few stats
+        # that have different game-log names (handled below).
+        col = plan.stat.db_column
+        # Map season-stats columns to game-log columns where they differ.
+        # Most stats share names; common exceptions: ip_outs vs innings_pitched.
+        _gl_col_map = {
+            "innings_pitched": "ip_outs",  # stored as outs in game logs
+            "saves": "save",               # game log uses "save" (0/1)
+            "wins": "win",
+            "losses": "loss",
+        }
+        col = _gl_col_map.get(col, col)
+        threshold_int = int(plan.threshold) if plan.threshold == int(plan.threshold) else plan.threshold
+        op = plan.comparison if plan.comparison in (">=", "<=", ">", "<", "=") else ">="
+        # threshold == 0 with default >= produces always-true conditions
+        # (every game has stat >= 0). User asking "0 BB in first 5 starts"
+        # means "no walks each game" → flip to <=. Safe because >= 0 is
+        # never a meaningful filter for non-negative stats.
+        if threshold_int == 0 and op == ">=":
+            op = "<="
+        # innings_pitched stored as outs: 6 IP = 18 outs, etc.
+        if col == "ip_outs" and isinstance(threshold_int, (int, float)):
+            threshold_int = int(threshold_int * 3)
+        plan.streak_conditions = [f"g.{col} {op} {threshold_int}"]
+        # Build display label from threshold + stat abbrev.
+        abbrev = plan.stat.display_abbrev or plan.stat.db_column.upper()
+        threshold_disp = int(plan.threshold) if plan.threshold == int(plan.threshold) else plan.threshold
+        op_label = "+" if op == ">=" else (op + " ")
+        plan.streak_condition_labels = [f"{threshold_disp}{op_label} {abbrev}"]
+        plan.streak_length = plan.career_game_window["n"]
+        plan.streak_direction = "leading"
+        plan.query_type = "streak_sequence"
+        # Consume the threshold + window — the streak path owns them now.
+        plan.threshold = None
+        plan.career_game_window = None
+
     # --- Check for unexplained words ---
     words = re.findall(r"[a-z0-9'+%-]+", lower)
     for w in words:
