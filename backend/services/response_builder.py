@@ -4758,17 +4758,28 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
 
     cur = conn.cursor()
 
+    # "Starts" / "Appearances" forces the pitching path. The default
+    # batting-first fallthrough below would otherwise grab an interleague
+    # at-bat (e.g. Skubal's 1 PA from 2021) and serve a misleading batting
+    # line. By skipping straight to pitching when the user said "starts",
+    # we avoid that — and pitchers who never bat in the period in question
+    # still get pitching logs.
+    pitching_first = window_noun in ("Starts", "Appearances")
+
     # "last N games" without a season = most recent N games across all seasons
     if season is None and window_type == "last":
-        cur.execute(f"""
-            SELECT g.date, g.hits, g.at_bats, g.doubles, g.triples, g.home_runs,
-                   g.runs, g.rbi, g.walks, g.strikeouts, g.opponent
-            FROM game_batting_logs g
-            WHERE g.player_id = ? AND g.at_bats > 0
-            ORDER BY g.date DESC
-            LIMIT ?
-        """, (pid, n_games))
-        rows = cur.fetchall()
+        if pitching_first:
+            rows = []  # skip batting branch
+        else:
+            cur.execute(f"""
+                SELECT g.date, g.hits, g.at_bats, g.doubles, g.triples, g.home_runs,
+                       g.runs, g.rbi, g.walks, g.strikeouts, g.opponent
+                FROM game_batting_logs g
+                WHERE g.player_id = ? AND g.at_bats > 0
+                ORDER BY g.date DESC
+                LIMIT ?
+            """, (pid, n_games))
+            rows = cur.fetchall()
         if not rows:
             # Try pitching game logs for pitchers
             cur.execute(f"""
@@ -4982,18 +4993,21 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
 
     else:
         # Specific season — show the stat line for that window
-        cur.execute(f"""
-            SELECT g.date, g.hits, g.at_bats, g.doubles, g.triples, g.home_runs,
-                   g.runs, g.rbi, g.walks, g.strikeouts
-            FROM (
-                SELECT *, ROW_NUMBER() OVER (ORDER BY date {order}) as game_num
-                FROM game_batting_logs
-                WHERE player_id = ? AND season = ? AND at_bats > 0
-            ) g
-            WHERE g.game_num <= ?
-            ORDER BY g.date
-        """, (pid, season, n_games))
-        rows = cur.fetchall()
+        if pitching_first:
+            rows = []  # skip batting branch when user said "starts"
+        else:
+            cur.execute(f"""
+                SELECT g.date, g.hits, g.at_bats, g.doubles, g.triples, g.home_runs,
+                       g.runs, g.rbi, g.walks, g.strikeouts
+                FROM (
+                    SELECT *, ROW_NUMBER() OVER (ORDER BY date {order}) as game_num
+                    FROM game_batting_logs
+                    WHERE player_id = ? AND season = ? AND at_bats > 0
+                ) g
+                WHERE g.game_num <= ?
+                ORDER BY g.date
+            """, (pid, season, n_games))
+            rows = cur.fetchall()
         if not rows:
             # No batting logs — try pitching. Pitchers asked about "first N
             # starts of 2025" land here. Same window math, different schema.
