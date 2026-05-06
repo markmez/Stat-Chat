@@ -3588,21 +3588,70 @@ def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         threshold_having = f" AND stat_val {op} ?"
         threshold_having_params = [plan.threshold]
 
-    sql = (
-        f"WITH ranked AS ("
-        f"  SELECT gl.*, ROW_NUMBER() OVER ("
-        f"    {partition_clause} ORDER BY gl.date {inner_order}, gl.game_number {inner_order}"
-        f"  ) AS rn FROM {gl_table} gl {inner_where}"
-        f") "
-        f"SELECT p.name{select_extra}, {stat_expr} AS stat_val, COUNT(*) AS games "
-        f"FROM ranked r "
-        f"JOIN players p ON r.player_id = p.player_id "
-        f"WHERE r.rn <= ? "
-        f"{group_by_clause} "
-        f"HAVING COUNT(*) >= ?{rate_qual}{threshold_having} "
-        f"ORDER BY stat_val {order} LIMIT ?"
+    # Fast path: career scope uses the materialized `career_game_num` column
+    # so the SQL is a simple WHERE filter instead of ROW_NUMBER OVER PARTITION.
+    # The window-function variant takes 22-44s on 5M batting rows; this path
+    # is 2-3s. Only kicks in when partition is per-player (not per_season_any)
+    # and there are no scope-specific filters (which "career" doesn't have —
+    # it's the no-year-filter case).
+    use_career_fast_path = (
+        scope == "career"
+        and not per_season_any
+        and not inner_where_parts  # no extra inner filters
     )
-    sql_params = tuple(inner_params + [n_val, n_val] + threshold_having_params + [plan.limit])
+
+    if use_career_fast_path:
+        # Translate inner stat_expr (which references the windowed alias `r`)
+        # to use `gl` directly — same column names, just different alias.
+        gl_stat_expr = stat_expr.replace("r.", "gl.")
+        gl_rate_qual = rate_qual.replace("r.", "gl.")
+
+        # Filter rows to the player's first or last N career games using
+        # the materialized career_game_num. For "first N" it's a direct
+        # column filter; for "last N" we need each player's max to compute
+        # the tail window.
+        if direction == "first":
+            window_filter = "WHERE gl.career_game_num <= ?"
+            window_params: list = [n_val]
+        else:  # "last" / tail-of-career
+            window_filter = (
+                "JOIN (SELECT player_id, MAX(career_game_num) AS max_g "
+                f"FROM {gl_table} GROUP BY player_id) m "
+                "ON m.player_id = gl.player_id "
+                "WHERE gl.career_game_num > m.max_g - ?"
+            )
+            window_params = [n_val]
+
+        # Stat-table filters via EXISTS (handedness, league, position, etc.)
+        # were captured in inner_where_parts via `_build_filters` earlier;
+        # since we early-out when inner_where_parts is non-empty, no filters
+        # apply on this path.
+        sql = (
+            f"SELECT p.name, {gl_stat_expr} AS stat_val, COUNT(*) AS games "
+            f"FROM {gl_table} gl "
+            f"JOIN players p ON gl.player_id = p.player_id "
+            f"{window_filter} "
+            f"GROUP BY gl.player_id "
+            f"HAVING COUNT(*) >= ?{gl_rate_qual}{threshold_having} "
+            f"ORDER BY stat_val {order} LIMIT ?"
+        )
+        sql_params = tuple(window_params + [n_val] + threshold_having_params + [plan.limit])
+    else:
+        sql = (
+            f"WITH ranked AS ("
+            f"  SELECT gl.*, ROW_NUMBER() OVER ("
+            f"    {partition_clause} ORDER BY gl.date {inner_order}, gl.game_number {inner_order}"
+            f"  ) AS rn FROM {gl_table} gl {inner_where}"
+            f") "
+            f"SELECT p.name{select_extra}, {stat_expr} AS stat_val, COUNT(*) AS games "
+            f"FROM ranked r "
+            f"JOIN players p ON r.player_id = p.player_id "
+            f"WHERE r.rn <= ? "
+            f"{group_by_clause} "
+            f"HAVING COUNT(*) >= ?{rate_qual}{threshold_having} "
+            f"ORDER BY stat_val {order} LIMIT ?"
+        )
+        sql_params = tuple(inner_params + [n_val, n_val] + threshold_having_params + [plan.limit])
     cur = conn.cursor()
     try:
         cur.execute(sql, sql_params)

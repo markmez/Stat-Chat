@@ -224,6 +224,13 @@ def create_tables(conn):
     # takes ~34s on prod (the planner can't combine season filter + sort
     # without it). With this index, the same query is sub-second.
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_gamelogs_season_player_date ON game_batting_logs(season, player_id, date)")
+    # career_game_num materialized column — populated by
+    # backfill_career_game_num() after game logs load. Replaces the
+    # ROW_NUMBER OVER PARTITION BY in _execute_game_window_leaderboard
+    # for career-scope queries ("first/last 50 career games").
+    # 22-44s window-function path → 2-3s indexed lookup.
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_gamelogs_career_game ON game_batting_logs(career_game_num)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_gamelogs_player_career_game ON game_batting_logs(player_id, career_game_num)")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS season_fielding_stats (
@@ -335,6 +342,10 @@ def create_tables(conn):
     # streak queries like "10+ K in 3 consecutive starts of 2024". Same
     # rationale as the batting equivalent above.
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchlogs_season_player_date ON game_pitching_logs(season, player_id, date)")
+    # career_game_num materialized column for pitching — same purpose as
+    # the batting equivalent above.
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchlogs_career_game ON game_pitching_logs(career_game_num)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchlogs_player_career_game ON game_pitching_logs(player_id, career_game_num)")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS pitching_platoon_splits (
@@ -638,6 +649,44 @@ def load_players_and_season_stats(conn, start_season, end_season):
     conn.commit()
 
     print(f"  Loaded {total_players} players, {total_stats} season stat rows total")
+
+
+# ---------------------------------------------------------------------------
+# Career game numbering — supports fast career-window queries
+# ---------------------------------------------------------------------------
+
+def backfill_career_game_num(conn, table_name: str):
+    """Backfill career_game_num for every row in a game-log table.
+
+    Each row gets ROW_NUMBER OVER (PARTITION BY player_id ORDER BY date,
+    game_number) — i.e. its 1-indexed position in the player's career.
+    Powers _execute_game_window_leaderboard's career-scope fast path
+    ("first/last 50 career games"). Without this, that query path uses
+    a window function over the full ~5M-row table and takes 22-44s on
+    prod; with the materialized column it's ~2s.
+
+    Safe to call repeatedly — the UPDATE FROM with ROW_NUMBER produces
+    deterministic values for any given DB state.
+    """
+    if table_name not in ("game_batting_logs", "game_pitching_logs"):
+        raise ValueError(f"Unknown game-log table: {table_name}")
+    print(f"  Backfilling career_game_num on {table_name}...")
+    cursor = conn.cursor()
+    # Prefer ordering by (date, game_number) so doubleheaders sort correctly,
+    # but fall back to date-only ordering if game_number isn't present.
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    cols = {row[1] for row in cursor.fetchall()}
+    order_clause = "date, game_number" if "game_number" in cols else "date"
+    cursor.execute(f"""
+        UPDATE {table_name} SET career_game_num = ranked.rn
+        FROM (
+            SELECT id, ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY {order_clause}) AS rn
+            FROM {table_name}
+        ) AS ranked
+        WHERE {table_name}.id = ranked.id
+    """)
+    conn.commit()
+    print(f"    Updated {cursor.rowcount} rows")
 
 
 # ---------------------------------------------------------------------------
@@ -1731,6 +1780,14 @@ def pull_and_load(start_season, end_season, skip_game_logs=False):
     if "vishome" not in gl_columns:
         cursor.execute("ALTER TABLE game_batting_logs ADD COLUMN vishome TEXT")
         print("  Migrated: added vishome column to game_batting_logs")
+    if "career_game_num" not in gl_columns:
+        cursor.execute("ALTER TABLE game_batting_logs ADD COLUMN career_game_num INTEGER")
+        print("  Migrated: added career_game_num column to game_batting_logs")
+    cursor.execute("PRAGMA table_info(game_pitching_logs)")
+    pl_columns = {row[1] for row in cursor.fetchall()}
+    if "career_game_num" not in pl_columns:
+        cursor.execute("ALTER TABLE game_pitching_logs ADD COLUMN career_game_num INTEGER")
+        print("  Migrated: added career_game_num column to game_pitching_logs")
     conn.commit()
 
     # Migrate existing DBs: add bio columns to players if missing
@@ -1748,6 +1805,9 @@ def pull_and_load(start_season, end_season, skip_game_logs=False):
     if not skip_game_logs:
         # Phase 2: Game logs from Retrosheet
         load_game_logs(conn, start_season, end_season)
+
+        # Phase 2a: Backfill career_game_num for the new game logs
+        backfill_career_game_num(conn, "game_batting_logs")
 
         # Phase 2b: Home/away splits from Retrosheet
         load_home_away_splits(conn, start_season, end_season)
@@ -1772,6 +1832,7 @@ def pull_and_load(start_season, end_season, skip_game_logs=False):
 
     if not skip_game_logs:
         load_pitching_game_logs(conn, start_season, end_season)
+        backfill_career_game_num(conn, "game_pitching_logs")
         load_pitching_home_away_splits(conn, start_season, end_season)
     else:
         print("Skipping pitching game logs and home/away splits (--skip-game-logs)")

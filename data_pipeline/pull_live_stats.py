@@ -1223,6 +1223,63 @@ def verify_season_total_consistency(conn, season_year):
     return False
 
 
+def refresh_career_game_num(conn):
+    """Recompute career_game_num for players whose game logs were touched
+    by this pull (any rows with NULL career_game_num).
+
+    INSERT OR REPLACE wipes the existing career_game_num value for each
+    inserted/updated row, so after a daily pull the freshly-inserted rows
+    have NULL. Rather than re-rank the whole 5M-row table (60s cost), find
+    the affected players and re-rank only their careers.
+    """
+    cursor = conn.cursor()
+    for table in ("game_batting_logs", "game_pitching_logs"):
+        # Confirm column exists (added via migration in pull_stats.py;
+        # if running pull_live_stats.py against a DB that pre-dates it,
+        # add it here too so the pipeline is self-contained).
+        cols = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()}
+        if "career_game_num" not in cols:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN career_game_num INTEGER")
+            print(f"  Added career_game_num column to {table}")
+            cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_career_game ON {table}(career_game_num)")
+            cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_player_career_game ON {table}(player_id, career_game_num)")
+            conn.commit()
+
+        # Players with any NULL — these are the ones we need to renumber.
+        cursor.execute(
+            f"SELECT DISTINCT player_id FROM {table} WHERE career_game_num IS NULL"
+        )
+        affected = [r[0] for r in cursor.fetchall()]
+        if not affected:
+            continue
+        print(f"  Refreshing career_game_num for {len(affected)} players in {table}...")
+
+        # Order clause depends on whether game_number column exists
+        # (it does on prod, but be defensive for fresh-rebuild DBs).
+        order_clause = "date, game_number" if "game_number" in cols else "date"
+
+        # UPDATE FROM ROW_NUMBER scoped to just these players. Using a
+        # parameterized IN list with chunks of 500 to avoid SQLite's
+        # default expression depth limit on huge IN clauses.
+        chunk_size = 500
+        total = 0
+        for i in range(0, len(affected), chunk_size):
+            chunk = affected[i:i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            cursor.execute(f"""
+                UPDATE {table} SET career_game_num = ranked.rn
+                FROM (
+                    SELECT id, ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY {order_clause}) AS rn
+                    FROM {table}
+                    WHERE player_id IN ({placeholders})
+                ) AS ranked
+                WHERE {table}.id = ranked.id
+            """, tuple(chunk))
+            total += cursor.rowcount
+        conn.commit()
+        print(f"    Updated {total} rows")
+
+
 def compute_batting_home_away_splits(conn, season_year):
     """Compute batting home/away splits from game logs for this season."""
     print(f"  Computing batting home/away splits for {season_year}...")
@@ -2231,6 +2288,14 @@ def main():
         compute_batting_home_away_splits(conn, season_year)
         compute_pitching_home_away_splits(conn, season_year)
 
+        # Refresh career_game_num on rows where it's NULL (newly inserted
+        # rows from this pull). The query_engine career-window fast path
+        # reads this column instead of running an expensive ROW_NUMBER
+        # OVER PARTITION BY across the full game-log table at query time
+        # (22-44s → 2-3s). Re-rank only the affected players' careers
+        # so we don't pay the full-table cost daily.
+        refresh_career_game_num(conn)
+
         # Compute platoon splits from play-by-play
         compute_platoon_splits(conn, args.season)
 
@@ -2311,15 +2376,15 @@ def main():
 
         record_last_update(conn, args.season)
 
-        # Refresh monthly aggregates for this season — see
-        # backend/services/monthly_aggregates.py. Cross-player
-        # month-grouped leaderboards query these instead of aggregating
-        # game logs at request time. Incremental: only this season's rows
-        # get rebuilt; static history stays untouched.
+        # Refresh monthly aggregates for this season — the cross-player
+        # month-grouped leaderboards ("most HR in a single month all time")
+        # query these instead of aggregating game logs at request time.
+        # Incremental rebuild only: clear+repopulate this season's rows so
+        # we don't redo 100+ years of static history every run.
         try:
-            backend_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend")
-            if backend_dir not in sys.path:
-                sys.path.insert(0, backend_dir)
+            services_parent = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+            if services_parent not in sys.path:
+                sys.path.insert(0, services_parent)
             from services.monthly_aggregates import rebuild_all
             print(f"\nRebuilding monthly aggregates for {season_year}...")
             counts = rebuild_all(conn, since_season=season_year)
