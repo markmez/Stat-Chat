@@ -3145,12 +3145,23 @@ def _execute_month_grouped_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
 
     where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
+    # Tiebreak rate stats by sample size (more IP / more PA means a more
+    # impressive equal rate). Without this, ties at 0.00 ERA fall back to
+    # alphabetical and lesser-known short stretches outrank Hershiser Sep
+    # 1988 (55 IP / 0 ER), Gooden Sep 1985 (44 IP / 0 ER), etc. Counting
+    # stats don't tie nearly as often; leave their ORDER BY single-key.
+    if is_rate:
+        tiebreak_col = f"{ma}.ip_outs" if is_pitching else f"{ma}.plate_appearances"
+        order_by = f"stat_val {order}, {tiebreak_col} DESC"
+    else:
+        order_by = f"stat_val {order}"
+
     sql = (
         f"SELECT p.name, {ma}.season, {ma}.month, {stat_expr} AS stat_val "
         f"FROM {agg_table} {ma} "
         f"JOIN players p ON {ma}.player_id = p.player_id "
         f"{where} "
-        f"ORDER BY stat_val {order} LIMIT ?"
+        f"ORDER BY {order_by} LIMIT ?"
     )
     cur = conn.cursor()
     try:
