@@ -1058,6 +1058,13 @@ _SPLIT_CONTEXTS = {
     "against right-handed": SplitContext("platoon_splits", "split", ["vs_RHP"], "vs RHP", ["against right-handed", "against right handed"]),
     "vs left-handed": SplitContext("platoon_splits", "split", ["vs_LHP"], "vs LHP", ["vs left-handed", "vs left handed"]),
     "vs right-handed": SplitContext("platoon_splits", "split", ["vs_RHP"], "vs RHP", ["vs right-handed", "vs right handed"]),
+    # Pitching inning splits — pitching_tto_splits-shaped table with `inning`
+    # column holding "1".."9" or "10+". Numeric and word-ordinal triggers are
+    # in _detect_split_context's parametric branch below; this map carries
+    # the bonus phrasings ("extra innings", "in extras") that don't fit a
+    # bare ordinal regex.
+    "extra innings": SplitContext("pitching_inning_splits", "inning", ["10+"], "Extra Innings", ["extra innings", "in extras"], is_pitching=True),
+    "in extras": SplitContext("pitching_inning_splits", "inning", ["10+"], "Extra Innings", ["in extras"], is_pitching=True),
 }
 
 
@@ -1097,6 +1104,50 @@ def _detect_split_context(lower: str) -> Optional[SplitContext]:
                 filter_values=[tto],
                 label=f"{ordinal_label} {noun} Through the Order",
                 consumed_phrases=[consumed_text],
+                is_pitching=True,
+            )
+
+    # Parametric: "Nth inning" — pitching split (pitching_inning_splits).
+    # Must include the bare word "inning" so generic "first" / "third" with
+    # no inning context don't false-match. Word ordinals 1-9 (+ "tenth" → 10+),
+    # numeric ordinals "1st".."9th", and the plain "inning N" form all map to
+    # the inning column ("1".."9" or "10+").
+    if "inning" in lower:
+        inning_str: Optional[str] = None
+        consumed: Optional[str] = None
+        # Word ordinals first (e.g. "seventh inning")
+        for word, n in _ORDINAL_WORDS.items():
+            m = re.search(rf'\b{word}\s+inning\b', lower)
+            if m:
+                inning_str = str(n) if n < 10 else "10+"
+                consumed = m.group(0)
+                break
+        # Numeric ordinals: "7th inning"
+        if inning_str is None:
+            m = re.search(r'\b(\d+)(?:st|nd|rd|th)\s+inning\b', lower)
+            if m:
+                n = int(m.group(1))
+                inning_str = str(n) if n < 10 else "10+"
+                consumed = m.group(0)
+        # Plain "inning 7" form
+        if inning_str is None:
+            m = re.search(r'\binning\s+(\d+)\b', lower)
+            if m:
+                n = int(m.group(1))
+                inning_str = str(n) if n < 10 else "10+"
+                consumed = m.group(0)
+        if inning_str and consumed:
+            ordinal_label = {
+                "1": "1st", "2": "2nd", "3": "3rd",
+                "10+": "Extra",
+            }.get(inning_str, f"{inning_str}th")
+            label = "Extra Innings" if inning_str == "10+" else f"{ordinal_label} Inning"
+            return SplitContext(
+                table="pitching_inning_splits",
+                filter_col="inning",
+                filter_values=[inning_str],
+                label=label,
+                consumed_phrases=[consumed],
                 is_pitching=True,
             )
     return None
