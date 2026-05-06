@@ -295,6 +295,10 @@ _STOP_WORDS = {
     "league", "led", "leading", "leads", "leader", "leaders",
     "outing", "outings", "start", "starts", "appearance", "appearances",
     "baseman", "basemen", "fielder", "fielders",
+    # "qualified" is redundant — every rate-stat leaderboard already enforces
+    # minimum PA / IP. "Worst ERA among qualified starters" means the same as
+    # "worst ERA among starters". Don't bail out on it.
+    "qualified", "qualifying", "qualify",
     "?", "!", ".",
 }
 
@@ -2529,8 +2533,14 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
 
     elif plan.scope == "all_time" or plan.scope.startswith("since_"):
         pa, pa_label = _pa_filter(plan, prefix, conn)
+        # Build WHERE clauses and params in lockstep — appending each clause's
+        # params at the same time we append its '?' placeholders. Previously we
+        # seeded query_params with `params` up-front but added filters_str (which
+        # produced those params) at the end of where_parts, so the bindings
+        # mis-aligned: a query like "most wins by a LHP since 2020" wound up
+        # executing `sp.season >= 'L' AND p.throws = 2020` and returning zero.
         where_parts = []
-        query_params = list(params)
+        query_params: list = []
         if plan.since_year:
             where_parts.append(f"{prefix}.season >= ?")
             query_params.append(plan.since_year)
@@ -2539,6 +2549,7 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             query_params.append(plan.end_year)
         if filters_str:
             where_parts.append(filters_str)
+            query_params += params
         if pa:
             where_parts.append(pa[5:])  # strip " AND "
         if plan.active_only:
@@ -3445,13 +3456,17 @@ def _execute_threshold(conn, plan: QueryPlan) -> Optional[str]:
         scope_label = str(season)
     else:
         pa, pa_label = _pa_filter(plan, prefix, conn)
+        # Keep clauses + params in lockstep. Previously seeded query_params
+        # with `[threshold] + params` upfront but added filters_str (the
+        # source of those params) after since_year, mis-aligning bindings.
         where_parts = [f"{stat_expr} {plan.comparison} ?"]
-        query_params = [plan.threshold] + params
+        query_params: list = [plan.threshold]
         if plan.since_year:
             where_parts.append(f"{prefix}.season >= ?")
             query_params.append(plan.since_year)
         if filters_str:
             where_parts.append(filters_str)
+            query_params += params
         if pa:
             where_parts.append(pa[5:])
         where = f"WHERE {' AND '.join(where_parts)}"
