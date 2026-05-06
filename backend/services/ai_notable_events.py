@@ -66,6 +66,41 @@ _ANCHOR_FLOOR_PATTERNS = [
 ]
 
 
+def _strip_emdashes(events):
+    """Defense-in-depth: post-process Sonnet output to remove em-dashes used
+    as clause connectors. The CRITICAL RULE in the prompt forbids them, but
+    Sonnet sometimes emits them anyway. Replacing here guarantees the feed
+    never shows em-dash-as-connector, which is the most reliable AI-tell.
+
+    Strategy:
+      - " — " (em-dash with surrounding spaces, used as clause connector) →
+        ". " with the following character capitalized so the result is a
+        well-formed sentence.
+      - Bare em-dash without space ("3-for-4—his 5th") is unusual but if it
+        appears, treat it the same way.
+    Stat-line em-dashes ("complete game — 9.0 IP, 12 K") are produced by the
+    rule-based detectors, never by Sonnet, so we don't need to preserve them.
+    """
+    import re
+    cleaned = []
+    for e in events:
+        h = e.get("headline", "")
+        if "—" in h:
+            # Replace " — " (with optional surrounding whitespace) with ". "
+            # plus capitalize the first letter of the next clause.
+            def _capitalize_after(match):
+                next_char = match.group(1)
+                return ". " + next_char.upper()
+            h = re.sub(r"\s*—\s*([a-zA-Z])", _capitalize_after, h)
+            # Catch any remaining em-dash with non-letter after (e.g. punctuation)
+            h = h.replace(" — ", ". ").replace("—", ". ")
+            # Collapse double-period runs
+            h = re.sub(r"\.{2,}", ".", h)
+            e = {**e, "headline": h}
+        cleaned.append(e)
+    return cleaned
+
+
 def _strip_below_floor_anchors(events):
     """Drop events whose headline anchors on a stat threshold below the
     structural detector's floor. Only catches threshold values appearing
@@ -78,7 +113,7 @@ def _strip_below_floor_anchors(events):
       - "his 16th game with 3+ hits" (3 < 4)
 
     Keeps:
-      - "Bellinger went 3-for-4 with 4 RBI — his 20th career multi-HR game"
+      - "Bellinger went 3-for-4 with 4 RBI, his 20th career multi-HR game"
         (4 RBI is box-score, not anchor; "20th multi-HR" anchor has no
         numeric threshold)
       - "his 16th game with 4+ hits in his 12-year career" (4 == floor)
@@ -383,8 +418,9 @@ CRITICAL RULES:
 3. Do NOT write about career milestones (approaching/reaching round numbers like 1500 K, 500 HR, 3000 hits) or leaderboard positions. The rule-based system covers both.
 4. Do NOT invent historical comparisons. Only cite facts confirmed by tool calls.
 5. Do NOT duplicate events listed under ALREADY-DETECTED. If an already-detected event covers a player, you may write about that player ONLY if your angle is substantially different.
-6. Write each as a single flowing sentence, conversational and punchy. Always include units — "6 innings" not just "6", "3 starts" not just "3".
-7. Output ONLY a JSON array: [{"headline": "...", "player_names": ["..."], "team_names": ["..."], "opponent": "OPP"}]. The "opponent" field must be the team abbreviation the primary player played against (from the box score). The "player_names" array MUST include EVERY player named in the headline — primary subject AND any secondary players you reference (e.g. "first since Aaron Judge in 2017" requires "Aaron Judge" in the array). The iOS feed only renders names tappable when they appear in this list. If nothing meets the bar, return an empty array []. NEVER return prose, explanation, or commentary — only the JSON array.
+6. Write each as a single flowing sentence, conversational and punchy. Always include units (e.g., "6 innings" not just "6"; "3 starts" not just "3").
+7. NEVER use an em-dash (—) or double-hyphen (--) as a connector between clauses. Em-dash-as-connector reads AI-generated and is the single most reliable tell. Use a period boundary instead, with a follow-up like "That's...", "It's...", "He has...". A comma is acceptable when joining tightly-related clauses (e.g., "...10 K, his career high"). Em-dashes are forbidden in your output. (Internal exception, not for you to emit: rule-based detectors use em-dashes inside stat lists like "complete game (9.0 IP, 12 K, 1 hit)" — that's their format, not yours.)
+8. Output ONLY a JSON array: [{"headline": "...", "player_names": ["..."], "team_names": ["..."], "opponent": "OPP"}]. The "opponent" field must be the team abbreviation the primary player played against (from the box score). The "player_names" array MUST include EVERY player named in the headline — primary subject AND any secondary players you reference (e.g. "first since Aaron Judge in 2017" requires "Aaron Judge" in the array). The iOS feed only renders names tappable when they appear in this list. If nothing meets the bar, return an empty array []. NEVER return prose, explanation, or commentary — only the JSON array.
 
 WHAT MATTERS MOST — every event must carry at least ONE of these:
 
@@ -410,7 +446,7 @@ WHAT MATTERS MOST — every event must carry at least ONE of these:
 
    3 hits, 1 HR, 4 RBI, 8 K — these do NOT qualify on their own AND do not qualify as anchors. Skip entirely.
 
-3. A BREAKOUT TRAJECTORY — a 3rd+ season player on pace to substantially EXCEED (not match) their career high in a SEASON counting stat. Example: "Peraza already has 5 homers in 13 games — his career high is 8, set across a full 2024 season."
+3. A BREAKOUT TRAJECTORY — a 3rd+ season player on pace to substantially EXCEED (not match) their career high in a SEASON counting stat. Example: "Peraza already has 5 homers in 13 games. His career high is 8, set across a full 2024 season."
    FLOORS — prior career best must clear: HR ≥ 5, SB ≥ 10, RBI ≥ 30, hits ≥ 50. Current pace must DWARF prior best (~1.5x on 162-game projection). Season totals only — single-game belongs to criterion 2.
 
 The best events have BOTH a comparison and an outlier (e.g., 11 K AND career-high match). Any one of the three alone can work. None means skip.
@@ -427,9 +463,9 @@ NEVER write counts you haven't verified via tool. NEVER round up or guess.
 
 WHAT GREAT LOOKS LIKE — study these:
 
-- "Corbin Carroll went 4-for-5 with 2 home runs and 6 RBI — matches his career high in RBI (last reached May 24, 2023) and his first multi-homer game since June 2024." (Outlier clearing 4+ hit, 2+ HR, 5+ RBI floors + dated anchor.)
-- "Will Warren went 7.0 IP, 11 K, 0 BB and 2 ER — the 11 strikeouts match his career high set last August, his first double-digit strikeout game since." (Outlier + anchor.)
-- "Byron Buxton went 4-for-5 with 2 homers and 2 RBI — the veteran's first 4-hit game of 2026 and his 16th game with 4+ hits in his 12-year career." (Outlier + count-over-career anchor.)
+- "Corbin Carroll went 4-for-5 with 2 home runs and 6 RBI, matching his career high in RBI (last reached May 24, 2023). It's also his first multi-homer game since June 2024." (Outlier clearing 4+ hit, 2+ HR, 5+ RBI floors + dated anchor.)
+- "Will Warren went 7.0 IP, 11 K, 0 BB and 2 ER. The 11 strikeouts match his career high set last August, his first double-digit strikeout game since." (Outlier + anchor.)
+- "Byron Buxton went 4-for-5 with 2 homers and 2 RBI, the veteran's first 4-hit game of 2026 and his 16th game with 4+ hits in his 12-year career." (Outlier + count-over-career anchor.)
 
 WHAT WEAK INSIGHTS LOOK LIKE — avoid:
 
@@ -464,8 +500,7 @@ STYLE RULES:
 - Be explicit when comparing to prior periods ("on a similar pace to" or "already has X, took until August last year").
 - Over short spans (<20 games), use rate stats (".417 over 12 games") not cumulative ("25 hits in 12 games").
 - Never name another player without explaining who they are and why the comparison matters.
-- Any RANKING claim ("Nth all-time", "Nth-longest", "best since X") MUST name the metric being ranked in the same clause. "His 5-game HR streak, 4th all-time at this point in a season" is fine; "His 5-game HR streak, #4 all-time" is not (4th in WHAT?).
-- AVOID em-dashes (— or --) as connectors between clauses. Em-dash-as-connector reads AI-generated. Use a period boundary with a fresh sentence ("That's...", "It's...") or a comma when joining tightly-related clauses. Em-dashes are fine inside a stat list ("complete game — 9.0 IP, 12 K, 1 hit") but not as a substitute for a period."""
+- Any RANKING claim ("Nth all-time", "Nth-longest", "best since X") MUST name the metric being ranked in the same clause. "His 5-game HR streak, 4th all-time at this point in a season" is fine; "His 5-game HR streak, #4 all-time" is not (4th in WHAT?)."""
 
 
 _VERIFIER_SYSTEM = """You verify baseball headlines against a data snapshot.
@@ -649,6 +684,9 @@ def generate_ai_insights_with_prompt(conn, season, latest_date, prompt_template,
             events = json.loads(text)
         except json.JSONDecodeError:
             events = []
+        # Defense-in-depth: strip em-dash connectors. The prompt forbids them
+        # but Sonnet sometimes emits them anyway.
+        events = _strip_emdashes(events)
         result = {"events": events, "raw_text": raw_text[:500]}
         if verify and events:
             verified_events, dropped, fixed_log = _verify_with_haiku(events, snapshot)
@@ -721,6 +759,9 @@ def generate_ai_insights(conn, season, latest_date, dry_run=False, preview=False
         before_filter = len(events)
         events = _strip_below_floor_anchors(events)
         filtered = before_filter - len(events)
+        # Defense-in-depth: strip em-dash connectors from Sonnet output. The
+        # prompt forbids them but the model sometimes emits them anyway.
+        events = _strip_emdashes(events)
 
         # Haiku verifier with one Sonnet retry per failed event
         verifier_dropped = []

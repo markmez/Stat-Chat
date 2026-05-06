@@ -2178,12 +2178,21 @@ def detect_hot_streaks_pelt(conn, season, latest_date=None, cooldowns=None):
             name, num_games, quality, stats_phrase, mlb_comp, team_comp, franchise_name
         )
 
+        # Register the historical-comparison player(s) so iOS renders them as
+        # tappable links. Without this, "Best OPS by any player since Aaron
+        # Judge in 2025" leaves "Aaron Judge" as plain text in the feed.
+        secondary_names: list[str] = []
+        if mlb_comp and mlb_comp.get("name"):
+            secondary_names.append(mlb_comp["name"])
+        if team_comp and team_comp.get("name") and team_comp["name"] not in secondary_names:
+            secondary_names.append(team_comp["name"])
+
         events.append({
             "headline": headline,
             "detail": "",
             "category": "Streak",
             "game_date": latest_date,
-            "player_names": [name],
+            "player_names": [name] + secondary_names,
             "team_names": [],
             "detection_type": "hot_streak_pelt",
             "priority": 2,
