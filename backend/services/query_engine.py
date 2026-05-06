@@ -74,38 +74,51 @@ _ASG_DATES = {
 }
 
 
-def _detect_half_of_season(lower: str) -> Optional[tuple[str, Optional[str]]]:
-    """Detect "in the first half" / "in the second half" of a single season.
+def _detect_half_window(lower: str) -> Optional[dict]:
+    """Detect "first half" / "second half" date window — either single-season
+    (closed range within one year) or multi-season recurring (the equivalent
+    window in each year of a multi-year scope).
 
-    Returns (start_date, end_date) tuple. end_date is None for the open-ended
-    "second half" → today. Resolves the year from a 4-digit year in the query
-    or the current calendar year. Skips years with no ASG (1945, 2020).
-
-    SINGLE-SEASON ONLY. Bails on multi-season constructions like "in the first
-    half of a season since 2020" — those ask "best half-season across years
-    2020-now" which needs a different (recurring-window) executor we don't
-    have yet. Returning None here lets the query fall through to Haiku rather
-    than producing a silently-wrong single-year answer.
+    Returns one of:
+      - {"kind": "first_half"|"second_half", "single_season": True,
+         "since_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"|None}
+      - {"kind": "first_half"|"second_half", "single_season": False,
+         "since_year": int}
+      - None
     """
     import re
     is_first = bool(re.search(r"\b(?:in\s+the\s+)?first\s+half\b", lower))
     is_second = bool(re.search(r"\b(?:in\s+the\s+)?second\s+half\b", lower))
     if not (is_first or is_second):
         return None
-    # Multi-season giveaway phrasings — let these fall through.
-    if re.search(r"\bof\s+a\s+season\b", lower) or re.search(r"\b(?:any|each|every)\s+season\b", lower):
-        return None
-    if re.search(r"\bsince\s+(?:19|20)\d{2}\b", lower):
-        return None
+    kind = "first_half" if is_first else "second_half"
     today = date.today()
+
+    # Multi-season triggers: "first half of a season since YYYY", "first half
+    # of any season since YYYY". The recurring-window executor will rebuild
+    # the start/end dates per year using _ASG_DATES.
+    multi_match = re.search(
+        r"\b(?:of\s+(?:a|any|each|every)\s+season\s+)?since\s+((?:19|20)\d{2})\b", lower
+    )
+    if multi_match:
+        return {"kind": kind, "single_season": False,
+                "since_year": int(multi_match.group(1))}
+    if re.search(r"\bof\s+(?:a|any|each|every)\s+season\b", lower):
+        # "of a season" with no since-year — interpret as all-time recurring
+        # (since 1933, the start of ASG records).
+        return {"kind": kind, "single_season": False, "since_year": 1933}
+
+    # Single-season — extract a 4-digit year if present, else default to current.
     year_match = re.search(r"\b((?:19|20)\d{2})\b", lower)
     year = int(year_match.group(1)) if year_match else today.year
     while year not in _ASG_DATES and year > 1933:
         year -= 1
     asg = _ASG_DATES.get(year, f"{year}-07-15")
-    if is_first:
-        return (f"{year}-04-01", asg)
-    return (asg, None)
+    if kind == "first_half":
+        return {"kind": "first_half", "single_season": True,
+                "since_date": f"{year}-04-01", "end_date": asg}
+    return {"kind": "second_half", "single_season": True,
+            "since_date": asg, "end_date": None}
 
 
 def _detect_since_date(lower: str) -> Optional[str]:
@@ -355,6 +368,7 @@ class QueryPlan:
     end_year: Optional[int] = None  # For decade ranges: "last decade" = 2010-2019
     since_date: Optional[str] = None  # "YYYY-MM-DD" for sub-season date ranges
     end_date: Optional[str] = None    # "YYYY-MM-DD" for closed sub-season ranges (e.g. "in the first half" = season opener → ASG break)
+    recurring_half: Optional[str] = None  # "first_half" | "second_half" — multi-season recurring window combined with since_year
 
     # Filters
     league: Optional[str] = None
@@ -909,19 +923,30 @@ def decompose(question: str) -> QueryPlan:
     # --- Detect scope/season ---
 
     # Date-range detection (sub-season granularity) — check before since_year.
-    # First half / second half is a closed range (start AND end), so we check
-    # for it first; the open-ended "since" patterns come second.
-    half_window = _detect_half_of_season(lower)
+    # First half / second half can be single-season (closed range) or multi-
+    # season recurring (the same Apr-Jul window applied across each year in
+    # the scope).
+    half_window = _detect_half_window(lower)
     if half_window:
-        plan.since_date, plan.end_date = half_window
-        plan.scope = "date_range"
         plan.query_type = "leaderboard"
         plan.threshold = None
-        _add_consumed(plan, "in the first second half of season the all star all-star break")
+        _add_consumed(plan,
+            "in the first second half of a any each every season the all star all-star break since")
         for token in lower.split():
             cleaned = token.strip(",.;")
             if re.match(r"^\d{4}$", cleaned):
                 _add_consumed(plan, cleaned)
+        if half_window["single_season"]:
+            plan.since_date = half_window["since_date"]
+            plan.end_date = half_window["end_date"]
+            plan.scope = "date_range"
+        else:
+            # Multi-season recurring window — set since_year scope and the
+            # recurring_half flag. Executor builds per-season WHERE clauses
+            # from _ASG_DATES.
+            plan.recurring_half = half_window["kind"]
+            plan.since_year = half_window["since_year"]
+            plan.scope = f"since_{half_window['since_year']}"
     since_date = _detect_since_date(lower) if not plan.since_date else None
     if since_date:
         plan.since_date = since_date
@@ -969,9 +994,12 @@ def decompose(question: str) -> QueryPlan:
             _add_consumed(plan, "career")
 
     # "single season" / "in a season" / "in a year" = best single season
-    # This OVERRIDES career if both present ("most HR in a season ever")
+    # This OVERRIDES career if both present ("most HR in a season ever").
+    # Skip when recurring_half is set — "of a season" in "first half of a
+    # season since 2020" is grammatical, not a single-season-records signal,
+    # and we want to keep the since_year scope already chosen.
     single_season_triggers = ["single season", "in a season", "in a year", "of a season"]
-    if any(t in lower for t in single_season_triggers):
+    if any(t in lower for t in single_season_triggers) and not plan.recurring_half:
         plan.scope = "all_time"  # all_time = best single season records
         _add_consumed(plan, "single season in a season in a year")
 
@@ -1460,6 +1488,14 @@ def decompose(question: str) -> QueryPlan:
     season_level_streak = has_streak_context and re.search(
         r'(?:consecutive|straight|back.to.back)\s+(?:season|year)', lower)
     if season_level_streak:
+        has_streak_context = False
+
+    # Half-window queries ("first half of a season since 2020", "best ERA in
+    # the first half of 2024") are date-window aggregations, not game-by-game
+    # streak detections. The word "first" in "first half" otherwise trips the
+    # streak_context flag and a generic "home run" / "hit" stat keyword would
+    # then misroute to streak_sequence.
+    if plan.recurring_half or plan.since_date:
         has_streak_context = False
 
     streak_detected = False
@@ -2514,8 +2550,172 @@ def _execute_award_lookup(conn, plan: QueryPlan) -> Optional[str]:
     return f"Recent {display} winners:\n" + "\n".join(parts)
 
 
+def _execute_recurring_half_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
+    """Multi-season recurring-window leaderboard.
+
+    Powers queries like "best ERA in the first half of a season since 2020"
+    or "most home runs in the second half of any season since 2015". For
+    each year in [since_year, current_year], applies the season's specific
+    half-window (Apr 1 → ASG break for first; ASG break → end-of-season for
+    second), aggregates game logs by (player_id, season), qualifies with a
+    half-season floor, then ranks the resulting player-season rows.
+
+    Output rows label both player and season ("Max Fried (2024): 1.85")
+    since the same player can appear multiple times — once per qualifying
+    half-season.
+    """
+    if not plan.stat and not plan.derived_stat:
+        return None
+    is_pitching = plan.is_pitching
+    gl_table = "game_pitching_logs" if is_pitching else "game_batting_logs"
+    gl = "gl"
+    is_rate = (plan.stat and plan.stat.is_rate) or (
+        plan.derived_stat and _DERIVED_STATS.get(plan.derived_stat, {}).get("is_rate", False)
+    )
+
+    # Sort direction: lower-is-better rate stats invert
+    is_lower_better = plan.stat and plan.stat.db_column in _LOWER_IS_BETTER
+    if plan.sort_asc and is_lower_better:
+        order = "DESC"
+    elif plan.sort_asc:
+        order = "ASC"
+    elif is_lower_better:
+        order = "ASC"
+    else:
+        order = "DESC"
+
+    # Build per-year date windows. Skip 1945 (WWII) and 2020 (COVID) — those
+    # years have no ASG date, so we can't define a half-window for them.
+    today = date.today()
+    year_windows = []
+    year_params: list = []
+    for year in range(plan.since_year, today.year + 1):
+        if year not in _ASG_DATES:
+            continue
+        asg = _ASG_DATES[year]
+        if plan.recurring_half == "first_half":
+            year_windows.append(f"({gl}.season = ? AND {gl}.date >= ? AND {gl}.date <= ?)")
+            year_params.extend([year, f"{year}-04-01", asg])
+        else:  # second_half
+            # No per-season end_date stored — cap at Oct 31 (covers regular
+            # season + early postseason; gametype filter further narrows).
+            year_windows.append(f"({gl}.season = ? AND {gl}.date >= ? AND {gl}.date <= ?)")
+            year_params.extend([year, asg, f"{year}-10-31"])
+
+    if not year_windows:
+        return None
+    window_clause = "(" + " OR ".join(year_windows) + ")"
+
+    # Stat expression — game-log columns. Same formulas as the date_range
+    # executor (_execute_leaderboard's date_range branch).
+    if is_pitching:
+        rate_formulas = {
+            "era": f"9.0 * SUM({gl}.earned_runs) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
+            "whip": f"CAST(SUM({gl}.hits) + SUM({gl}.walks) AS REAL) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
+            "k_per_9": f"9.0 * SUM({gl}.strikeouts) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
+            "bb_per_9": f"9.0 * SUM({gl}.walks) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
+        }
+        # Half-season qualifier: ~80 IP (240 outs) — half of the standard 162 IP.
+        having_clause = f"HAVING SUM({gl}.ip_outs) >= 240"
+    else:
+        rate_formulas = {
+            "batting_avg": f"CAST(SUM({gl}.hits) AS REAL) / NULLIF(SUM({gl}.at_bats), 0)",
+            "obp": (f"CAST(SUM({gl}.hits) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) AS REAL) / "
+                    f"NULLIF(SUM({gl}.at_bats) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) + SUM(COALESCE({gl}.sacrifice_flies, 0)), 0)"),
+            "slg": (f"CAST(SUM({gl}.hits) - SUM({gl}.doubles) - SUM({gl}.triples) - SUM({gl}.home_runs) "
+                    f"+ 2*SUM({gl}.doubles) + 3*SUM({gl}.triples) + 4*SUM({gl}.home_runs) AS REAL) / NULLIF(SUM({gl}.at_bats), 0)"),
+            "ops": (f"(CAST(SUM({gl}.hits) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) AS REAL) / "
+                    f"NULLIF(SUM({gl}.at_bats) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) + SUM(COALESCE({gl}.sacrifice_flies, 0)), 0)) + "
+                    f"(CAST(SUM({gl}.hits) - SUM({gl}.doubles) - SUM({gl}.triples) - SUM({gl}.home_runs) "
+                    f"+ 2*SUM({gl}.doubles) + 3*SUM({gl}.triples) + 4*SUM({gl}.home_runs) AS REAL) / NULLIF(SUM({gl}.at_bats), 0))"),
+            "iso": (f"CAST(SUM({gl}.doubles) + 2*SUM({gl}.triples) + 3*SUM({gl}.home_runs) AS REAL) / NULLIF(SUM({gl}.at_bats), 0)"),
+        }
+        # Half-season PA qualifier: ~250 PA (half of the standard 502).
+        having_clause = f"HAVING SUM({gl}.plate_appearances) >= 250"
+
+    stat_col = plan.stat.db_column if plan.stat else (plan.derived_stat or "")
+    if is_rate and stat_col in rate_formulas:
+        stat_expr = rate_formulas[stat_col]
+    elif plan.stat and not is_rate:
+        stat_expr = f"SUM({gl}.{stat_col})"
+        having_clause = ""  # No qualifier on counting stats — every total stands
+    elif plan.derived_stat and plan.derived_stat in rate_formulas:
+        stat_expr = rate_formulas[plan.derived_stat]
+    else:
+        return None
+
+    # Build full WHERE — recurring window + filters_str via EXISTS subquery
+    # (filters_str references season-table columns).
+    table, prefix = _table_and_prefix(plan)
+    filters_str, fparams = _build_filters(plan, prefix, conn)
+    where_parts = [window_clause]
+    full_params = list(year_params)
+    if filters_str:
+        ss_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+        ss_alias = "ss"
+        ss_filter = filters_str.replace(f"{prefix}.", f"{ss_alias}.")
+        where_parts.append(
+            f"EXISTS (SELECT 1 FROM {ss_table} {ss_alias} "
+            f"WHERE {ss_alias}.player_id = {gl}.player_id "
+            f"AND {ss_alias}.season = {gl}.season "
+            f"AND {ss_filter})"
+        )
+        full_params += fparams
+    where = "WHERE " + " AND ".join(where_parts)
+
+    sql = (
+        f"SELECT p.name, {gl}.season, {stat_expr} AS stat_val "
+        f"FROM {gl_table} {gl} "
+        f"JOIN players p ON {gl}.player_id = p.player_id "
+        f"{where} "
+        f"GROUP BY {gl}.player_id, {gl}.season "
+        f"{having_clause} "
+        f"ORDER BY stat_val {order} LIMIT ?"
+    )
+    cur = conn.cursor()
+    try:
+        cur.execute(sql, tuple(full_params + [plan.limit]))
+    except Exception as e:
+        return f"Could not run recurring-half query: {e}"
+    rows = cur.fetchall()
+
+    half_label = "First Half" if plan.recurring_half == "first_half" else "Second Half"
+    direction_label = "Worst " if (plan.sort_asc and not is_rate) else ""
+    if plan.sort_asc and is_rate:
+        direction_label = "Worst " if is_lower_better else "Lowest "
+    title_stat = plan.stat.display_name if plan.stat else (
+        _DERIVED_STATS[plan.derived_stat]["name"] if plan.derived_stat else ""
+    )
+    title = f"**{direction_label}{title_stat} — {half_label} of a Season Since {plan.since_year}**\n"
+    if not rows:
+        return f"{title}\nNo players qualified."
+
+    abbrev = plan.stat.display_abbrev if plan.stat else (
+        _DERIVED_STATS[plan.derived_stat]["display"] if plan.derived_stat else ""
+    )
+    parts = [title, "[TIP]Tap a player name for their full profile.[/TIP]", "[LEADERBOARD]"]
+    parts.append(f"HEADER: {abbrev}, Year")
+    for name, season_yr, stat_val in rows:
+        if is_rate:
+            val_str = _format_rate(stat_val)
+        else:
+            val_str = _format_val(stat_col, stat_val, is_rate=False)
+        parts.append(f"ROW {name}: {val_str}, {season_yr}")
+    parts.append("[/LEADERBOARD]")
+    if is_rate:
+        qual_note = "Min. 80.0 IP" if is_pitching else "Min. 250 PA"
+        parts.append(f"\n_{qual_note} in the half-season window._")
+    return "\n".join(parts)
+
+
 def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     """Standard stat leaderboard."""
+    # Recurring-window queries ("first half of a season since 2020") aggregate
+    # game logs across multiple years' Apr-Jul windows. They share the same
+    # game-logs aggregation shape as date_range but with a multi-season WHERE
+    # built from _ASG_DATES — handle in a dedicated executor.
+    if plan.recurring_half:
+        return _execute_recurring_half_leaderboard(conn, plan)
     table, prefix = _table_and_prefix(plan)
     stat_expr, abbrev, name, is_rate = _stat_expr(plan, prefix)
     filters_str, params = _build_filters(plan, prefix, conn)
