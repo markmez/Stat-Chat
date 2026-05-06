@@ -1,46 +1,65 @@
 #!/bin/bash
-# Xcode Cloud: skip build if no iOS files changed in the latest commit.
-# This prevents backend-only pushes from burning App Store Connect build quota.
+# Xcode Cloud build gate.
+#
+# Approach: tag the last successfully-built commit as `last-ios-build`. On
+# every clone, diff `last-ios-build..HEAD` for changes under `ios/` or
+# `shared/`. If iOS changed → allow build (exit 0). If not → skip the build
+# (exit 1) so backend-only pushes don't burn ASC build slots.
+#
+# The tag is updated by ci_post_xcodebuild.sh after a successful build —
+# requires a GITHUB_PUSH_TOKEN environment secret in the Xcode Cloud
+# workflow with `contents: write` permission.
+#
+# Bootstrap: if the tag doesn't exist (first run, or fetch failed), the
+# script allows the build to proceed. Better to over-build once than miss
+# a real iOS change.
 
 set -e
 
-echo "Checking if iOS files changed..."
+echo "=== iOS-build gate (post_clone) ==="
 
-# Try multiple approaches for shallow clones
-CHANGED=""
+# Fetch tags + recent history so we can resolve `last-ios-build` and
+# do a meaningful diff. Xcode Cloud's clone is shallow by default.
+echo "Fetching tags + recent history..."
+git fetch --tags --depth=100 2>/dev/null || true
 
-# Approach 1: git diff HEAD~1
-CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+# Try to resolve the marker tag.
+LAST_BUILD=$(git rev-parse --verify --quiet last-ios-build 2>/dev/null || true)
 
-# Approach 2: if that failed, try fetching more history
-if [ -z "$CHANGED" ]; then
-    echo "HEAD~1 failed, fetching more history..."
-    git fetch --deepen=2 2>/dev/null || true
-    CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
-fi
-
-# Approach 3: use git log to get changed files
-if [ -z "$CHANGED" ]; then
-    echo "Trying git log..."
-    CHANGED=$(git log --name-only --pretty=format: -1 HEAD 2>/dev/null || echo "")
-fi
-
-# If we still can't determine, allow the build
-if [ -z "$CHANGED" ]; then
-    echo "Could not determine changed files — allowing build."
+if [ -z "$LAST_BUILD" ]; then
+    echo "No last-ios-build tag found — bootstrap mode, allowing this build."
+    echo "(After this build succeeds, ci_post_xcodebuild.sh will set the tag.)"
     exit 0
 fi
 
-echo "Changed files:"
-echo "$CHANGED"
+echo "Last successful iOS build was at: $LAST_BUILD"
+echo "Current HEAD: $(git rev-parse HEAD)"
 
-# Check if any iOS-related files changed
+# Diff from last-build commit to current HEAD.
+CHANGED=$(git diff --name-only "$LAST_BUILD" HEAD 2>/dev/null || echo "DIFF_FAIL")
+
+if [ "$CHANGED" = "DIFF_FAIL" ]; then
+    echo "Diff failed — likely shallow clone didn't include the tag's commit."
+    echo "Allowing build (safer than skipping a possibly-real iOS change)."
+    exit 0
+fi
+
+if [ -z "$CHANGED" ]; then
+    echo "No changes since last build — skipping."
+    exit 1
+fi
+
+# Filter for iOS-relevant paths.
 IOS_CHANGED=$(echo "$CHANGED" | grep -E "^ios/|^shared/" || true)
 
 if [ -z "$IOS_CHANGED" ]; then
-    echo "No iOS files changed — skipping build."
-    exit 1  # Non-zero exit cancels the Xcode Cloud build
+    echo "No iOS files changed since last build — skipping."
+    echo "(All changed files were backend-only.)"
+    exit 1
 fi
 
-echo "iOS files changed — proceeding with build:"
+echo "iOS files changed since last build:"
 echo "$IOS_CHANGED"
+echo ""
+echo "Allowing build."
+exit 0
