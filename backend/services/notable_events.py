@@ -1446,12 +1446,14 @@ def detect_career_milestones(conn, season, latest_date):
                             action = f"collected {game_row[0]} hit{'s' if game_row[0] != 1 else ''}"
                     headline = f"{name} {action}, reaching {m:,} {label}!"
                     # Iconic-threshold anchor: "Nth player ever; last since X in YEAR"
+                    iconic_secondary = []
                     if m in _ICONIC_CAREER_THRESHOLDS.get(col, set()):
                         ctx = _last_player_to_cross_career_threshold(
                             conn, col, m, pid, is_pitching=False
                         )
                         if ctx:
                             rank, last_name, last_year = ctx
+                            iconic_secondary.append(last_name)
                             headline = _continue_with_context(
                                 headline,
                                 f"the {_ordinal(rank)} player ever to reach {m:,} "
@@ -1463,7 +1465,7 @@ def detect_career_milestones(conn, season, latest_date):
                         "detail": "",
                         "category": "Milestone",
                         "game_date": game_date,
-                        "player_names": [name],
+                        "player_names": [name] + iconic_secondary,
                         "team_names": [],
                         "detection_type": f"career_{col}_{m}",
                         "priority": 1,
@@ -1537,12 +1539,14 @@ def detect_career_milestones(conn, season, latest_date):
                     # Just crossed milestone (total passed m, and today's contribution pushed them over)
                     action = action_fn(stat_val)
                     headline = f"{name} {action}, reaching {m:,} {label}!"
+                    iconic_secondary = []
                     if m in _ICONIC_CAREER_THRESHOLDS.get(col, set()):
                         ctx = _last_player_to_cross_career_threshold(
                             conn, col, m, pid, is_pitching=True
                         )
                         if ctx:
                             rank, last_name, last_year = ctx
+                            iconic_secondary.append(last_name)
                             headline = _continue_with_context(
                                 headline,
                                 f"the {_ordinal(rank)} pitcher ever to reach {m:,} "
@@ -1554,7 +1558,7 @@ def detect_career_milestones(conn, season, latest_date):
                         "detail": "",
                         "category": "Milestone",
                         "game_date": game_date,
-                        "player_names": [name],
+                        "player_names": [name] + iconic_secondary,
                         "team_names": [],
                         "detection_type": f"career_p_{col}_{m}",
                         "priority": 1,
@@ -3791,12 +3795,17 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False):
         # state is unified below.
         deep_events = run_deep_scans(conn, season, latest_date, cooldowns=cooldowns)
         for de in deep_events:
+            primary = [de.get("player")] if de.get("player") else []
+            # Include the historical-comparison player ("the last X player to
+            # do this was Y") so iOS renders that name as a tappable link too.
+            # Without this, the secondary name appears as plain text in the feed.
+            secondary = de.get("secondary_names") or []
             events.append({
                 "headline": de.get("detail", ""),
                 "detail": "",
                 "category": "Deep Scan",
                 "game_date": latest_date,
-                "player_names": [de.get("player")] if de.get("player") else [],
+                "player_names": primary + [n for n in secondary if n and n not in primary],
                 "team_names": [de.get("team")] if de.get("team") else [],
                 "detection_type": f"deep_scan_{de.get('scan', 'unknown')}",
                 "priority": 2,

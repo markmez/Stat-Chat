@@ -434,7 +434,11 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
                                    player_team=None):
     """Rank a currently-active streak against the historical_streaks table.
 
-    Returns a list of context phrases. Fires when a streak is:
+    Returns (phrases, mentioned_player_names). Phrases are the prose for
+    embedding in the headline; mentioned_player_names is a parallel list
+    so the caller can register them in the event's `player_names` field
+    and the iOS feed can render them as tappable links. Fires when a
+    streak is:
       (a) Longer than anything in the last year (MLB-wide), AND/OR
       (b) Top 100 in the last 100+ years (MLB-wide), AND/OR
       (c) Team anchor: longest on this franchise in ≥10 years MORE than
@@ -455,9 +459,10 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
     try:
         conn.execute("SELECT 1 FROM historical_streaks LIMIT 1").fetchone()
     except Exception:
-        return []
+        return [], []
 
     phrases = []
+    mentioned: list[str] = []
 
     # (1) "Longest since X's Y in YEAR" — MLB-wide most recent prior streak
     try:
@@ -476,6 +481,7 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
     if mlb_prior:
         pname, plen, pend, pseason = mlb_prior
         mlb_season = pseason
+        mentioned.append(pname)
         if plen == current_length:
             phrases.append(f"matching {pname}'s {plen}-game run from {pseason}")
         else:
@@ -525,6 +531,7 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
                 # Fire team phrase if the delta is meaningful OR MLB had no
                 # match and the team gap is substantial on its own
                 if (mlb_season is None and team_gap >= 10) or (team_gap - mlb_gap >= 10):
+                    mentioned.append(t_name)
                     if t_len == current_length:
                         phrases.append(
                             f"matching {t_name}'s {t_len}-game run as a "
@@ -536,7 +543,7 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
                             f"since {t_name}'s {t_len} in {t_season}"
                         )
 
-    return phrases
+    return phrases, mentioned
 
 
 def scan_cross_season_streaks(conn, season, latest_date):
@@ -625,7 +632,7 @@ def scan_cross_season_streaks(conn, season, latest_date):
             player_team = None
             if pt_row and pt_row[0]:
                 player_team = pt_row[0].split("/")[0].strip() or None
-            historical_context = get_streak_historical_context(
+            historical_context, hist_mentioned = get_streak_historical_context(
                 conn, streak_type_key, streak, streak_start, player_team=player_team
             )
 
@@ -639,6 +646,7 @@ def scan_cross_season_streaks(conn, season, latest_date):
                 "label": check["label"],
                 "streak_type_key": streak_type_key,
                 "historical_context": historical_context,
+                "historical_mentioned": hist_mentioned,
             })
 
     # Keep top per type (now guaranteed to match the true global max if emitted)
@@ -1583,6 +1591,12 @@ def template_facts(conn, facts, season, latest_date):
             label = f["label"]
             ctx = "dating back to last season" if f["spans_seasons"] else "this season"
 
+            # Register secondary players mentioned in the historical phrases
+            # so iOS renders them as tappable links. Without this, "the longest
+            # by any player since Aaron Judge in 2017" leaves "Aaron Judge"
+            # as plain text in the feed.
+            secondary_names.extend(f.get("historical_mentioned") or [])
+
             # Historical ranking context. Use a period boundary + "That's" lead-in
             # rather than an em-dash — em-dashes as connectors read AI-generated
             # and the appositive after a comma+ctx is awkward to parse. Multi-
@@ -1644,13 +1658,16 @@ def template_facts(conn, facts, season, latest_date):
             ctx_parts = []
             if mlb_match and (season - mlb_match["season"]) >= 2:
                 ctx_parts.append(f"the first pitcher to do that since {mlb_match['name']} in {mlb_match['season']}")
+                secondary_names.append(mlb_match["name"])
             if team_match and franchise_name:
                 gap_team = season - team_match["season"]
                 gap_mlb = (season - mlb_match["season"]) if mlb_match else 9999
                 if gap_team - gap_mlb >= 6:
                     ctx_parts.append(f"the first {franchise_name} pitcher to do it since {team_match['name']} in {team_match['season']}")
+                    secondary_names.append(team_match["name"])
             elif not mlb_match and team_match and franchise_name:
                 ctx_parts.append(f"the first {franchise_name} pitcher to do it since {team_match['name']} in {team_match['season']}")
+                secondary_names.append(team_match["name"])
             if ctx_parts:
                 headline = _continue_with_context(
                     headline, ", and ".join(ctx_parts)

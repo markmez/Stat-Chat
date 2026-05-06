@@ -384,7 +384,7 @@ CRITICAL RULES:
 4. Do NOT invent historical comparisons. Only cite facts confirmed by tool calls.
 5. Do NOT duplicate events listed under ALREADY-DETECTED. If an already-detected event covers a player, you may write about that player ONLY if your angle is substantially different.
 6. Write each as a single flowing sentence, conversational and punchy. Always include units — "6 innings" not just "6", "3 starts" not just "3".
-7. Output ONLY a JSON array: [{"headline": "...", "player_names": ["..."], "team_names": ["..."], "opponent": "OPP"}]. The "opponent" field must be the team abbreviation the primary player played against (from the box score). If nothing meets the bar, return an empty array []. NEVER return prose, explanation, or commentary — only the JSON array.
+7. Output ONLY a JSON array: [{"headline": "...", "player_names": ["..."], "team_names": ["..."], "opponent": "OPP"}]. The "opponent" field must be the team abbreviation the primary player played against (from the box score). The "player_names" array MUST include EVERY player named in the headline — primary subject AND any secondary players you reference (e.g. "first since Aaron Judge in 2017" requires "Aaron Judge" in the array). The iOS feed only renders names tappable when they appear in this list. If nothing meets the bar, return an empty array []. NEVER return prose, explanation, or commentary — only the JSON array.
 
 WHAT MATTERS MOST — every event must carry at least ONE of these:
 

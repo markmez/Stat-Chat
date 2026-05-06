@@ -249,6 +249,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                     "type": "deep_scan",
                     "scan": "slash_line_season",
                     "player": pname, "team": team or "",
+                    "secondary_names": [last_team["name"]],
                     "detail": _continue_with_context(
                         f"{pname} is posting a {ops_display} OPS "
                         f"({_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)}) "
@@ -268,6 +269,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "type": "deep_scan",
                         "scan": "slash_line_season",
                         "player": pname, "team": team or "",
+                        "secondary_names": [last_match["name"]],
                         "detail": _continue_with_context(
                             f"{pname} is posting a {ops_display} OPS "
                             f"({_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)}) "
@@ -312,6 +314,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                     "type": "deep_scan",
                     "scan": "hr_accumulation",
                     "player": pname, "team": team or "",
+                    "secondary_names": [last_hr_team["name"]],
                     "detail": _continue_with_context(
                         f"{pname} has {hr} HR through {games} games",
                         f"the last {franchise_name} player to hit that many through {games} games was "
@@ -328,6 +331,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "type": "deep_scan",
                         "scan": "hr_accumulation",
                         "player": pname, "team": team or "",
+                        "secondary_names": [last_hr["name"]],
                         "detail": _continue_with_context(
                             f"{pname} has {hr} HR through {games} games",
                             f"the last player to hit that many through {games} games was "
@@ -367,6 +371,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                     "type": "deep_scan",
                     "scan": "sb_accumulation",
                     "player": pname, "team": team or "",
+                    "secondary_names": [last_sb_team["name"]],
                     "detail": _continue_with_context(
                         f"{pname} has {sb} SB through {games} games",
                         f"the last {franchise_name} player to steal that many through {games} games was "
@@ -383,6 +388,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "type": "deep_scan",
                         "scan": "sb_accumulation",
                         "player": pname, "team": team or "",
+                        "secondary_names": [last_sb["name"]],
                         "detail": _continue_with_context(
                             f"{pname} has {sb} SB through {games} games",
                             f"the last player to steal that many through {games} games was "
@@ -411,6 +417,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                     "type": "deep_scan",
                     "scan": "power_speed",
                     "player": pname, "team": team or "",
+                    "secondary_names": [last_ps_team["name"]],
                     "detail": _continue_with_context(
                         f"{pname} has {hr} HR and {sb} SB through {games} games",
                         f"the last {franchise_name} player with that power-speed combo through {games} games was "
@@ -427,6 +434,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "type": "deep_scan",
                         "scan": "power_speed",
                         "player": pname, "team": team or "",
+                        "secondary_names": [last_ps["name"]],
                         "detail": _continue_with_context(
                             f"{pname} has {hr} HR and {sb} SB through {games} games",
                             f"the last player with that power-speed combo through {games} games was "
@@ -485,6 +493,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                     "type": "deep_scan",
                     "scan": "pitching_dominance",
                     "player": pname, "team": team or "",
+                    "secondary_names": [last_dom_team["name"]],
                     "detail": _continue_with_context(
                         f"{pname} has a {era:.2f} ERA with {total_k} K through {starts} starts "
                         f"({ip_display} IP)",
@@ -503,6 +512,7 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "type": "deep_scan",
                         "scan": "pitching_dominance",
                         "player": pname, "team": team or "",
+                        "secondary_names": [last_dom["name"]],
                         "detail": _continue_with_context(
                             f"{pname} has a {era:.2f} ERA with {total_k} K through {starts} starts "
                             f"({ip_display} IP)",
