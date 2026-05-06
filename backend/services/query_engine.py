@@ -5640,10 +5640,15 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
         season_filter = " AND g.season >= ?"
         season_params = [plan.since_year]
     elif plan.streak_direction == "trailing":
-        # Active streaks may span season boundary — use current + prior season
-        from datetime import datetime as _dt
-        season_filter = " AND g.season >= ?"
-        season_params = [_dt.now().year - 1]
+        # Active streaks are short by definition. The longest in MLB
+        # history (DiMaggio 56) took ~60 days. Filter to last 90 days
+        # so the partition scan is over ~30K rows instead of ~200K and
+        # the query finishes well under a second instead of timing out.
+        # Date filter uses the (player_id, date) composite index.
+        from datetime import datetime as _dt, timedelta as _td
+        floor_date = (_dt.now() - _td(days=90)).date().isoformat()
+        season_filter = " AND g.date >= ?"
+        season_params = [floor_date]
     else:
         # No season specified — default to current season to avoid scanning 600K+ rows
         from datetime import datetime as _dt
