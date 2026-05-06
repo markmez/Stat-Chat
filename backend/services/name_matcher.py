@@ -1010,6 +1010,22 @@ class SplitContext:
     is_pitching: bool = False
 
 
+# Game-window qualifier regex shared by parsers that should DECLINE when a
+# query includes a "first/last N games|starts|at-bats|appearances|innings"
+# clause. Matching parsers don't model the window and would silently drop
+# the qualifier, returning stale full-season stats instead. Declining here
+# lets the chain fall through to the query engine / Haiku / Sonnet, which
+# can handle the window structurally or via SQL. Includes spelled-out
+# numbers for voice input.
+_GW_NUM = (
+    r'(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|'
+    r'eleven|twelve|thirteen|fourteen|fifteen|twenty|thirty|forty|fifty|sixty)'
+)
+_GW_DIRECTION = r'(?:first|last|past|previous|recent|opening|final)'
+_GW_NOUN = r'(?:games?|starts?|at[- ]?bats?|appearances?|innings?)'
+_GAME_WINDOW_RX = rf'\b{_GW_DIRECTION}\s+{_GW_NUM}\s+(?:career\s+)?{_GW_NOUN}\b'
+
+
 # Map of split trigger phrases → SplitContext
 _SPLIT_CONTEXTS = {
     # Count-based
@@ -1582,10 +1598,12 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
     if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)\+?\s*[- ]?\s*hit\s+games?|\d+\+\s+\w+\s+games?', lower):
         return None
 
-    # Reject "first/last/past/previous/recent N games" — game-window query
-    # (includes spelled-out numbers for voice input)
-    _gw_num = r'(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|twenty|thirty|forty|fifty|sixty)'
-    if re.search(rf'\b(first|last|past|previous|recent|opening|final)\s+{_gw_num}\s*games?\b', lower):
+    # Reject "first/last/past/previous/recent N games|starts|at-bats|appearances|innings"
+    # — these are game-window qualifiers we don't model in a season summary.
+    # Letting them through claims the query with stale full-season stats and
+    # silently drops the qualifier. Decline so the chain falls to the
+    # query engine or Haiku SQL.
+    if re.search(_GAME_WINDOW_RX, lower):
         return None
 
     # Reject year-over-year comparisons — "Betts 2023 vs 2024" or "Soto last year vs this year"
@@ -1708,12 +1726,11 @@ def parse_single_stat_lookup(input_str: str) -> Optional[dict]:
     if re.search(r'\bgame\s*logs?\b', lower):
         return None
 
-    # Reject "first/last/past/previous/recent N games" — game-window query.
-    # Without this guard, "Stanton past 5 games" would silently match the
-    # "games" stat and return a season count, ignoring the qualifier.
-    # Includes spelled-out numbers ("past five games") for voice input.
-    _gw_num = r'(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|twenty|thirty|forty|fifty|sixty)'
-    if re.search(rf'\b(first|last|past|previous|recent|opening|final)\s+{_gw_num}\s*games?\b', lower):
+    # Reject game-window qualifiers ("Stanton past 5 games", "Will Warren
+    # first seven starts"). Without this guard, the qualifier is silently
+    # dropped and the user gets a full-season stat line — see _GAME_WINDOW_RX
+    # comment for the full pattern shape.
+    if re.search(_GAME_WINDOW_RX, lower):
         return None
 
     # Reject platoon-filtered queries — handled by platoon parser
@@ -3186,6 +3203,14 @@ def parse_catch_all_player_stat(input_str: str) -> Optional[dict]:
         return None
     # Game-log-style queries: "games with 4+ hits", "multi-homer games" — not a single-stat lookup
     if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)\+?\s*[- ]?\s*hit\s+games?|\d+\+\s+\w+\s+games?', lower):
+        return None
+
+    # Reject game-window qualifiers — "Stanton past 5 games", "Will Warren
+    # first seven starts". The catch-all is the LAST resort before falling
+    # to the query engine / Haiku / Sonnet, so a greedy player+stat match
+    # here would silently drop the qualifier and ship a wrong full-season
+    # answer. Decline.
+    if re.search(_GAME_WINDOW_RX, lower):
         return None
 
     stat = match_stat(lower)
