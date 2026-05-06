@@ -1761,57 +1761,90 @@ def decompose(question: str) -> QueryPlan:
         else:
             plan.sort_asc = True  # "lowest OPS" = worst
 
-    # --- Career-window per-game threshold → streak_sequence leading ---
-    # "10+ K in each of their first 3 starts of 2026", "2+ HR in their first
-    # 5 games", "0 BB in each of his first 4 starts". These are per-game-each
-    # checks: every one of the first N games must satisfy the threshold.
-    # The existing _streak_leading executor already implements this exactly
-    # (`all(g == 1 for g in first_n)` at line ~5209) — we just need to wire
-    # the decomposed plan into streak_sequence shape.
+    # --- Career-window per-game threshold → streak_sequence ---
+    # "10+ K in each of their first 3 starts of 2026" (leading)
+    # "10+ K in each of their last 3 starts" (tail_window)
+    # "2+ HR in first 5 career games" (leading + career-debut grouping)
+    # "10+ K AND 0 BB in first 3 starts" (compound: stat + extra_filters)
     #
-    # Trigger: career_game_window with direction="first" + a per-game
-    # threshold (counting stat threshold) + a single stat. Rate stats with
-    # cumulative semantics ("best OPS in first 50 games") are NOT converted
-    # — they keep career_game_window scope and route to the cumulative
-    # executor. The fork is "is there a counting threshold tied to the
-    # stat?" → per-game-each. Otherwise → cumulative.
+    # These are per-game-each checks: every one of the N games must satisfy
+    # the threshold(s). The existing _streak_leading and new _streak_tail_window
+    # executors already implement this — we just wire the plan into
+    # streak_sequence shape and translate (stat, threshold, comparison) into
+    # SQL conditions.
+    #
+    # Trigger: career_game_window + per-game threshold(s) + at least one
+    # stat. Rate stats with cumulative semantics ("best OPS in first 50
+    # games") have no threshold and are NOT converted — they keep
+    # career_game_window scope and route to the cumulative executor.
     if (plan.career_game_window
-            and plan.career_game_window.get("direction") == "first"
             and plan.threshold is not None
             and plan.stat is not None
             and not plan.streak_conditions):
-        # Build per-game SQL condition from threshold + stat. Game-log
-        # column names match plan.stat.db_column except for a few stats
-        # that have different game-log names (handled below).
-        col = plan.stat.db_column
-        # Map season-stats columns to game-log columns where they differ.
-        # Most stats share names; common exceptions: ip_outs vs innings_pitched.
+        # Game-log column map (season-stats → game-log column where they differ)
         _gl_col_map = {
             "innings_pitched": "ip_outs",  # stored as outs in game logs
-            "saves": "save",               # game log uses "save" (0/1)
+            "saves": "save",
             "wins": "win",
             "losses": "loss",
         }
-        col = _gl_col_map.get(col, col)
-        threshold_int = int(plan.threshold) if plan.threshold == int(plan.threshold) else plan.threshold
-        op = plan.comparison if plan.comparison in (">=", "<=", ">", "<", "=") else ">="
-        # threshold == 0 with default >= produces always-true conditions
-        # (every game has stat >= 0). User asking "0 BB in first 5 starts"
-        # means "no walks each game" → flip to <=. Safe because >= 0 is
-        # never a meaningful filter for non-negative stats.
-        if threshold_int == 0 and op == ">=":
-            op = "<="
-        # innings_pitched stored as outs: 6 IP = 18 outs, etc.
-        if col == "ip_outs" and isinstance(threshold_int, (int, float)):
-            threshold_int = int(threshold_int * 3)
-        plan.streak_conditions = [f"g.{col} {op} {threshold_int}"]
-        # Build display label from threshold + stat abbrev.
-        abbrev = plan.stat.display_abbrev or plan.stat.db_column.upper()
-        threshold_disp = int(plan.threshold) if plan.threshold == int(plan.threshold) else plan.threshold
-        op_label = "+" if op == ">=" else (op + " ")
-        plan.streak_condition_labels = [f"{threshold_disp}{op_label} {abbrev}"]
-        plan.streak_length = plan.career_game_window["n"]
-        plan.streak_direction = "leading"
+
+        def _build_streak_condition(stat_obj, threshold_val, comparison):
+            """Translate (stat, threshold, comparison) to a SQL condition + label.
+            Returns (sql_cond_str, label_str) or (None, None) if not buildable.
+            """
+            if stat_obj is None or threshold_val is None:
+                return None, None
+            col = _gl_col_map.get(stat_obj.db_column, stat_obj.db_column)
+            t_int = int(threshold_val) if threshold_val == int(threshold_val) else threshold_val
+            op = comparison if comparison in (">=", "<=", ">", "<", "=") else ">="
+            # threshold==0 with default >= → always true. Flip to <=.
+            if t_int == 0 and op == ">=":
+                op = "<="
+            # IP stored as outs: 6 IP = 18 outs.
+            sql_t = t_int * 3 if col == "ip_outs" and isinstance(t_int, (int, float)) else t_int
+            abbrev = stat_obj.display_abbrev or stat_obj.db_column.upper()
+            op_label = "+" if op == ">=" else (op + " ")
+            label = f"{t_int}{op_label} {abbrev}"
+            return f"g.{col} {op} {sql_t}", label
+
+        # Primary stat condition
+        cond_str, cond_label = _build_streak_condition(
+            plan.stat, plan.threshold, plan.comparison)
+        if cond_str:
+            plan.streak_conditions = [cond_str]
+            plan.streak_condition_labels = [cond_label]
+
+            # Extra filters (compound: "10+ K AND 0 BB in first 3 starts")
+            for ef in plan.extra_filters:
+                ef_cond, ef_label = _build_streak_condition(
+                    ef.get("stat"), ef.get("threshold"), ef.get("comparison", ">="))
+                if ef_cond:
+                    plan.streak_conditions.append(ef_cond)
+                    plan.streak_condition_labels.append(ef_label)
+            plan.extra_filters = []  # consumed into streak conditions
+
+            plan.streak_length = plan.career_game_window["n"]
+            direction = plan.career_game_window.get("direction")
+            window_scope = plan.career_game_window.get("scope", "season")
+            # Map career_game_window direction → streak_direction
+            #   first → leading (first N games per scope)
+            #   last  → tail_window (last N games per scope)
+            plan.streak_direction = "leading" if direction == "first" else "tail_window"
+            # When the window scope is "career" or "recent", the executor
+            # should group by player_id only and slice the player's full
+            # history — not group by (player_id, season) per the default
+            # leading/tail_window grouping. Promoting plan.scope to "career"
+            # both drops the SQL season filter and signals the executor
+            # to use per-player grouping (see _streak_leading /
+            # _streak_tail_window scope check).
+            if window_scope in ("career", "recent"):
+                plan.scope = "career"
+                plan.season = None
+
+            plan.query_type = "streak_sequence"
+            plan.threshold = None
+            plan.career_game_window = None
         plan.query_type = "streak_sequence"
         # Consume the threshold + window — the streak path owns them now.
         plan.threshold = None
@@ -5220,6 +5253,8 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
 
     if plan.streak_direction == "leading":
         return _streak_leading(rows, target_length, label, plan)
+    elif plan.streak_direction == "tail_window":
+        return _streak_tail_window(rows, target_length, label, plan)
     elif plan.streak_direction == "trailing":
         return _streak_trailing(rows, target_length, label, plan)
     else:  # sliding
@@ -5290,16 +5325,67 @@ def _streak_sliding(rows, target_length, label, plan) -> Optional[str]:
 
 
 def _streak_leading(rows, target_length, label, plan) -> Optional[str]:
-    """Find players who achieved the condition in their first N games of a season."""
+    """Find players who achieved the condition in their first N games.
+
+    Two modes based on plan.scope:
+      - season-mode (default): group by (player_id, season), check
+        each player-season's first N games independently. Powers
+        "10+ K in first 3 starts of 2026" and "in first 3 starts of
+        any season."
+      - career-mode (plan.scope in {"career", "all_time"}): group by
+        player_id only, check the player's first N games of their
+        entire career. Powers "10+ K in first 3 career starts" — the
+        debut window. Each player produces one row labeled by debut
+        season span.
+    """
     from collections import defaultdict
+
+    if not target_length:
+        target_length = 10  # default
+
+    career_mode = plan.scope in ("career", "all_time")
+
+    if career_mode:
+        # rows is already ordered by (player_id, season, date). Group
+        # by player_id only and slice the first N games chronologically.
+        player_games = defaultdict(list)
+        player_names = {}
+        for pid, name, season, date, success in rows:
+            player_games[pid].append((season, date, success))
+            player_names[pid] = name
+
+        results = []
+        for pid, games in player_games.items():
+            if len(games) < target_length:
+                continue
+            first_n = games[:target_length]
+            if all(s == 1 for _, _, s in first_n):
+                debut_season = first_n[0][0]
+                end_season = first_n[-1][0]
+                span = (str(debut_season) if debut_season == end_season
+                        else f"{debut_season}-{end_season}")
+                results.append((player_names[pid], span))
+
+        if not results:
+            return None
+
+        title = (f"**Players with {label} in Each of Their First "
+                 f"{target_length} Career Games**\n")
+        # Sort: prefer recent debut spans first
+        results.sort(key=lambda x: x[1], reverse=True)
+        parts = [title, "[TIP]Tap a player name for their full profile.[/TIP]",
+                 "[LEADERBOARD]", "HEADER: Debut"]
+        for i, (name, span) in enumerate(results[:50]):
+            parts.append(f"ROW {i+1}. {name}: {span}")
+        parts.append("[/LEADERBOARD]")
+        return "\n".join(parts)
+
+    # Season-mode (default)
     player_seasons = defaultdict(list)
     player_names = {}
     for pid, name, season, date, success in rows:
         player_seasons[(pid, season)].append(success)
         player_names[pid] = name
-
-    if not target_length:
-        target_length = 10  # default
 
     results = []
     for (pid, season), games in player_seasons.items():
@@ -5310,7 +5396,6 @@ def _streak_leading(rows, target_length, label, plan) -> Optional[str]:
             results.append((player_names[pid], season, target_length))
 
     if not results:
-        scope = str(plan.season) if plan.season else "all seasons"
         return None  # Fall through to Haiku/Sonnet
 
     scope = str(plan.season) if plan.season else f"Since {plan.since_year}" if plan.since_year else "2016-2025"
@@ -5326,6 +5411,87 @@ def _streak_leading(rows, target_length, label, plan) -> Optional[str]:
         parts.append(f"ROW {i+1}. {name}: {season}")
     parts.append("[/LEADERBOARD]")
 
+    return "\n".join(parts)
+
+
+def _streak_tail_window(rows, target_length, label, plan) -> Optional[str]:
+    """Find players who achieved the condition in EACH of their last N games.
+
+    Symmetric to _streak_leading but operates on the tail. Distinct from
+    _streak_trailing (which finds active streaks of varying length from the
+    most recent game backwards) — this checks "all of last N met threshold"
+    where N is fixed.
+
+    Modes:
+      - season-mode: per (player_id, season), last N games of that season
+      - career-mode (plan.scope in {"career","all_time"}): per player_id,
+        last N games chronologically across all their history
+    """
+    from collections import defaultdict
+
+    if not target_length:
+        target_length = 10
+
+    career_mode = plan.scope in ("career", "all_time")
+
+    if career_mode:
+        player_games = defaultdict(list)
+        player_names = {}
+        for pid, name, season, date, success in rows:
+            player_games[pid].append((season, date, success))
+            player_names[pid] = name
+
+        results = []
+        for pid, games in player_games.items():
+            if len(games) < target_length:
+                continue
+            last_n = games[-target_length:]
+            if all(s == 1 for _, _, s in last_n):
+                start_season = last_n[0][0]
+                end_season = last_n[-1][0]
+                span = (str(end_season) if start_season == end_season
+                        else f"{start_season}-{end_season}")
+                results.append((player_names[pid], span))
+
+        if not results:
+            return None
+
+        title = (f"**Players with {label} in Each of Their Last "
+                 f"{target_length} Games**\n")
+        results.sort(key=lambda x: x[1], reverse=True)
+        parts = [title, "[TIP]Tap a player name for their full profile.[/TIP]",
+                 "[LEADERBOARD]", "HEADER: Span"]
+        for i, (name, span) in enumerate(results[:50]):
+            parts.append(f"ROW {i+1}. {name}: {span}")
+        parts.append("[/LEADERBOARD]")
+        return "\n".join(parts)
+
+    # Season-mode
+    player_seasons = defaultdict(list)
+    player_names = {}
+    for pid, name, season, date, success in rows:
+        player_seasons[(pid, season)].append(success)
+        player_names[pid] = name
+
+    results = []
+    for (pid, season), games in player_seasons.items():
+        if len(games) < target_length:
+            continue
+        last_n = games[-target_length:]
+        if all(g == 1 for g in last_n):
+            results.append((player_names[pid], season, target_length))
+
+    if not results:
+        return None
+
+    scope = str(plan.season) if plan.season else f"Since {plan.since_year}" if plan.since_year else "2016-2025"
+    title = f"**Players with {label} in Each of Their Last {target_length} Games ({scope})**\n"
+    results.sort(key=lambda x: x[1], reverse=True)
+    parts = [title, "[TIP]Tap a player name for their full profile.[/TIP]",
+             "[LEADERBOARD]", "HEADER: Year"]
+    for i, (name, season, _) in enumerate(results[:50]):
+        parts.append(f"ROW {i+1}. {name}: {season}")
+    parts.append("[/LEADERBOARD]")
     return "\n".join(parts)
 
 
