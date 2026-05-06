@@ -2020,6 +2020,22 @@ def _format_rate(value) -> str:
         return str(value)
 
 
+def _format_rate_for_abbrev(value, abbrev: str) -> str:
+    """Stat-aware rate formatting.
+
+    ERA-class stats (ERA/WHIP/K/9/BB/9/etc.) conventionally show 2 decimals
+    — "1.08", "2.50". Batting rates (AVG/OBP/SLG/OPS) show 3 decimals via
+    _format_rate — ".302", "1.422". When rendering a leaderboard cell we
+    know the stat abbrev, so dispatch to the right precision.
+    """
+    if abbrev in _ERA_CLASS_ABBREVS:
+        try:
+            return f"{float(value):.2f}"
+        except (ValueError, TypeError):
+            return str(value)
+    return _format_rate(value)
+
+
 _ERA_CLASS_ABBREVS = {"ERA", "WHIP", "K/9", "BB/9", "K/BB", "H/9", "HR/9"}
 
 
@@ -3000,7 +3016,7 @@ def _execute_recurring_half_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     parts.append(f"HEADER: {abbrev}, Year")
     for name, season_yr, stat_val in rows:
         if is_rate:
-            val_str = _format_rate(stat_val)
+            val_str = _format_rate_for_abbrev(stat_val, abbrev)
         else:
             val_str = _format_val(stat_col, stat_val, is_rate=False)
         parts.append(f"ROW {name}: {val_str}, {season_yr}")
@@ -3176,7 +3192,7 @@ def _execute_month_grouped_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     parts.append(f"HEADER: {abbrev}, Month")
     for name, season_yr, mo, stat_val in rows:
         if is_rate:
-            val_str = _format_rate(stat_val)
+            val_str = _format_rate_for_abbrev(stat_val, abbrev)
         else:
             val_str = _format_val(stat_col, stat_val, is_rate=False)
         mo_idx = int(mo) if mo is not None else 0
@@ -3400,7 +3416,7 @@ def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         else:
             stat_val = row[1]
         if is_rate:
-            val_str = _format_rate(stat_val)
+            val_str = _format_rate_for_abbrev(stat_val, abbrev)
         else:
             val_str = _format_val(stat_col, stat_val, is_rate=False)
         if per_season_any:
