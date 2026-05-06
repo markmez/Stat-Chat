@@ -3075,7 +3075,14 @@ def _execute_month_grouped_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             "k_per_9": f"9.0 * {ma}.strikeouts / NULLIF({ma}.ip_outs / 3.0, 0)",
             "bb_per_9": f"9.0 * {ma}.walks / NULLIF({ma}.ip_outs / 3.0, 0)",
         }
-        rate_qualifier = f"{ma}.ip_outs >= 90"
+        # Sample-size qualifier: 30 IP minimum AND batters_faced >= ip_outs.
+        # Modern MLB pitchers face ~1.3-1.5 batters per recorded out; the
+        # floor of 1.0 BF/out filters records where batters_faced wasn't
+        # reliably captured (some Negro Leagues entries have ip_outs and
+        # ER but a partial BF count, surfacing as bogus 0.10-0.40 ratios).
+        # Real dominant months — Hershiser Sep 1988 at 1.22, Gooden Sep
+        # 1985 at 1.24, Joe Black Aug 1947 at 1.45 — all clear the floor.
+        rate_qualifier = f"{ma}.ip_outs >= 90 AND {ma}.batters_faced >= {ma}.ip_outs"
     else:
         rate_formulas = {
             "batting_avg": f"CAST({ma}.hits AS REAL) / NULLIF({ma}.at_bats, 0)",
