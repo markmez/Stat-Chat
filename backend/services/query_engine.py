@@ -3860,7 +3860,24 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
                 "k_per_9": f"9.0 * SUM({gl}.strikeouts) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
                 "bb_per_9": f"9.0 * SUM({gl}.walks) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
             }
-            min_pa_sql = f"HAVING SUM({gl}.ip_outs) >= 30"  # ~10 IP minimum
+            # Prorated IP minimum based on date range. Mirrors the batting
+            # PA prorating below. 1 IP/day floor approximates a qualifying
+            # starter's pace (162 IP / 162 team-games). Without this,
+            # "Best ERA in May this year" with only ~6 days played returns
+            # 0 rows (every pitcher under 10 IP) and falls through to LLM.
+            try:
+                start = datetime.strptime(plan.since_date, "%Y-%m-%d").date()
+                if plan.end_date:
+                    end = datetime.strptime(plan.end_date, "%Y-%m-%d").date()
+                    days_in_range = (min(end, date.today()) - start).days + 1
+                else:
+                    days_in_range = (date.today() - start).days + 1
+                # 3 outs/day = 1 IP/day average. Floor 18 outs (6 IP),
+                # ceiling 240 outs (80 IP, half-season).
+                min_outs = max(18, min(days_in_range * 3, 240))
+            except Exception:
+                min_outs = 30
+            min_pa_sql = f"HAVING SUM({gl}.ip_outs) >= {min_outs}"
         else:
             _gl_rate_formulas = {
                 "batting_avg": f"CAST(SUM({gl}.hits) AS REAL) / NULLIF(SUM({gl}.at_bats), 0)",
