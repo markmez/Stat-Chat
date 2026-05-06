@@ -255,8 +255,11 @@ def _display_col_name(col: str) -> Optional[str]:
 def _format_haiku_result(result_text: str, question: str = "") -> str:
     """
     Convert SqlRunner pipe-delimited output into [LEADERBOARD] or [STATGRID] format.
-    Multi-row results with names → [LEADERBOARD] with rank numbers.
-    Single-row or aggregate → [STATGRID].
+    Thin wrapper over `_format_structured_rows_to_grid` — parses pipe-delimited
+    text into structured rows then delegates. The same core formatting logic
+    powers both Haiku (pipe-text in) and Sonnet sql_planner (structured rows
+    in via tool-use), so column-cap rules / name-column detection / single-
+    aggregate handling stay in one place.
     """
     # Extract total count metadata if present
     total_count = None
@@ -282,6 +285,32 @@ def _format_haiku_result(result_text: str, question: str = "") -> str:
 
     if not data_rows:
         return clean_text
+
+    formatted = _format_structured_rows_to_grid(columns, data_rows, total_count, question)
+    return formatted if formatted is not None else clean_text
+
+
+def _format_structured_rows_to_grid(
+    columns: list[str],
+    data_rows: list[dict],
+    total_count: int | None = None,
+    question: str = "",
+) -> Optional[str]:
+    """
+    Shared row-to-grid formatter. Used by both Haiku (after parsing pipe text)
+    and Sonnet sql_planner (after capturing tool_result rows). Returns:
+      - A formatted [LEADERBOARD]/[STATGRID] block when the rows are gridable
+      - A bold one-liner ("**1,234** Home Runs") when the result is a single
+        scalar aggregate
+      - None when the rows are too weird to render as a grid (caller should
+        fall back to whatever text it had — narration, raw text, etc.)
+
+    Column-cap rule (max 4 stat columns) and column prioritization
+    (deprioritize date/diff/gap cols) live here so every formatter caller
+    inherits the same discipline.
+    """
+    if not data_rows or not columns:
+        return None
 
     # Single aggregate result (COUNT, SUM, etc.) — format as a clean answer
     if len(data_rows) == 1 and len(columns) == 1:
@@ -407,7 +436,7 @@ def _format_haiku_result(result_text: str, question: str = "") -> str:
     stat_cols = [c for c in stat_cols if _display_col_name(c) is not None]
 
     if not stat_cols:
-        return result_text
+        return None
 
     # Build header
     header_names = [_display_col_name(c) for c in stat_cols]
@@ -1479,10 +1508,35 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         insight_result = future.result()
         if insight_result:
             logger.info("query_insight question=%r", question)
-            insight_result = _strip_bold_title(insight_result, original_question)
-            insight_result = _add_pre1898_note(insight_result, original_question)
-            insight_result += "\n\n[AIDISCLAIMER]Stats verified against our database. Analysis is AI-generated.[/AIDISCLAIMER]"
-            yield event({"type": "text", "text": insight_result})
+            insight_text: str = insight_result.get("text", "") if isinstance(insight_result, dict) else str(insight_result)
+
+            # If sql_planner captured structured rows from its primary
+            # tool_result, run them through the shared row-to-grid
+            # formatter. Same code path Haiku uses, so column-cap and
+            # name-column rules are identical. Returns None when the
+            # data isn't gridable (single scalar, weird shape) — in
+            # that case we send Sonnet's prose alone, preserving the
+            # rich narrative fallback for definitional / opinion /
+            # historical-narrative questions.
+            grid_block: Optional[str] = None
+            if isinstance(insight_result, dict):
+                cols = insight_result.get("columns")
+                rows = insight_result.get("rows")
+                if cols and rows:
+                    rows_as_dicts = [dict(zip(cols, r)) for r in rows]
+                    grid_block = _format_structured_rows_to_grid(
+                        list(cols), rows_as_dicts, total_count=None,
+                        question=question,
+                    )
+
+            insight_text = _strip_bold_title(insight_text, original_question)
+            insight_text = _add_pre1898_note(insight_text, original_question)
+            if grid_block:
+                payload = grid_block + "\n\n" + insight_text
+            else:
+                payload = insight_text
+            payload += "\n\n[AIDISCLAIMER]Stats verified against our database. Analysis is AI-generated.[/AIDISCLAIMER]"
+            yield event({"type": "text", "text": payload})
             done_event = {"type": "done", "insight": True}
             if rewritten_query:
                 done_event["rewritten_query"] = rewritten_query

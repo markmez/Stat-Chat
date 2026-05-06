@@ -84,10 +84,27 @@ RULES:
 MAX_TOOL_ROUNDS = 8  # prevent runaway query chains
 
 
-def plan_and_execute(question: str) -> str | None:
+def plan_and_execute(question: str) -> dict | None:
     """Run the insight engine on a question.
 
-    Returns the formatted answer text, or None on failure.
+    Returns one of:
+      None — engine failed (no API key, max rounds, exception, empty answer)
+      dict with shape:
+        {
+          "text": str           — Sonnet's natural-language answer
+          "columns": list[str]  — column names of the primary tool_result, or None
+          "rows": list[list]    — rows of the primary tool_result, or None
+        }
+
+    "Primary tool_result" is the largest successful tool_result by row count.
+    Ties broken by recency. Lookup-helper queries (single-row scalar SELECTs
+    that resolve a player_id, a team code, etc.) naturally lose this race
+    to the actual answer query, which usually returns the most rows.
+    Callers can pass `columns`/`rows` through the shared row-to-grid
+    formatter to render a [STATGRID]/[LEADERBOARD] above Sonnet's prose
+    when the data is gridable; if the formatter returns None (ungridable
+    shape — definitions, opinions, narrative answers), prose alone is
+    used and nothing is lost.
     """
     if not ANTHROPIC_API_KEY:
         logger.warning("insight_engine: no API key")
@@ -97,6 +114,11 @@ def plan_and_execute(question: str) -> str | None:
 
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.execute("PRAGMA query_only = ON")
+
+    # Track tool results across rounds so we can promote the "primary"
+    # one (most rows) into the structured-output channel. Each entry:
+    # {"columns": [...], "rows": [[...], ...]}
+    tool_results_history: list[dict] = []
 
     messages = [{"role": "user", "content": question}]
 
@@ -137,7 +159,23 @@ def plan_and_execute(question: str) -> str | None:
                 answer = "\n".join(text_parts).strip()
                 if answer:
                     logger.info("insight_engine: answered in %d rounds", round_num + 1)
-                    return answer
+                    # Pick "primary" tool result: largest by row count, ties
+                    # broken by recency. Returns None if no eligible result
+                    # was captured (pure narrative / definitional answers
+                    # where Sonnet ended without DB queries, or only
+                    # ran lookup-shaped queries we filtered out).
+                    primary: dict | None = None
+                    if tool_results_history:
+                        primary = max(
+                            tool_results_history,
+                            key=lambda tr: (len(tr["rows"]),
+                                            tool_results_history.index(tr)),
+                        )
+                    return {
+                        "text": answer,
+                        "columns": primary["columns"] if primary else None,
+                        "rows": primary["rows"] if primary else None,
+                    }
                 _log_err("insight_engine", "empty_answer",
                          "end_turn with no text content", question,
                          {"round": round_num + 1})
@@ -176,6 +214,20 @@ def plan_and_execute(question: str) -> str | None:
                                 "tool_use_id": tool_id,
                                 "content": json.dumps(result_data, default=str),
                             })
+                            # Stash for primary-result selection at end.
+                            # Skip empty results (zero-row lookups) and
+                            # NULL/None-only single-cell aggregates that
+                            # represent "no data found" — those aren't
+                            # gridable and shouldn't compete with real
+                            # answer rows.
+                            if cols and rows:
+                                if len(rows) == 1 and len(cols) == 1 and rows[0][0] is None:
+                                    pass
+                                else:
+                                    tool_results_history.append({
+                                        "columns": cols,
+                                        "rows": [list(r) for r in rows],
+                                    })
                         except Exception as e:
                             tool_results.append({
                                 "type": "tool_result",
