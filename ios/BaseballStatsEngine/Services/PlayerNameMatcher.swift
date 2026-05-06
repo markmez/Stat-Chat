@@ -2068,6 +2068,13 @@ enum PlayerNameMatcher {
         if text.contains("statchat://") { return text }
         var result = text
         for name in sortedNames {
+            // Skip single-word "names" — almost always pre-1900 placeholder
+            // entries (483 in DB, all <100 career games) and they collide
+            // with English words ("Day" inside "Day Games", "Score" inside
+            // "Score yesterday", etc). Real prominent players all have full
+            // first+last names. A bare "Day" pointing at a player who logged
+            // 0 games is worse than nothing.
+            guard name.contains(" ") else { continue }
             // Skip if name not present (fast path)
             guard result.range(of: name) != nil else { continue }
             // Replace with markdown link, word-boundary aware

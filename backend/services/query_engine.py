@@ -3990,10 +3990,52 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     else:
         season_label = "All-Time"
     if not rows:
+        # Build a description of every active filter so the user knows why the
+        # result is empty. "No players found" alone reads like "the stat
+        # doesn't exist" rather than "your specific filter combination has
+        # zero matches" — which is what's actually happening on queries like
+        # "best OPS by Yankees rookies in day games".
+        filter_parts: list[str] = []
+        if plan.team_code:
+            from .response_builder import _team_full_name
+            filter_parts.append(_team_full_name(plan.team_code))
+        if plan.rookie:
+            filter_parts.append("rookies")
+        if plan.position:
+            filter_parts.append(f"{plan.position}s")
+        if plan.bats:
+            filter_parts.append(
+                {"L": "left-handed", "R": "right-handed", "B": "switch-hitting"}.get(plan.bats, plan.bats) + " batters"
+            )
+        if plan.throws:
+            filter_parts.append(
+                {"L": "left-handed", "R": "right-handed"}.get(plan.throws, plan.throws) + " pitchers"
+            )
+        if plan.pitcher_role == "starter":
+            filter_parts.append("starters")
+        elif plan.pitcher_role == "reliever":
+            filter_parts.append("relievers")
+        if plan.age_max:
+            filter_parts.append(f"under {plan.age_max}")
+        if plan.age_min:
+            filter_parts.append(f"over {plan.age_min}")
+
+        subject = " ".join(filter_parts) if filter_parts else "players"
         scope_phrase = season_label if (season is None and season_range is None) else f"in {season_label}"
+        # Mention rate-stat qualification so users understand the floor — a
+        # common reason the empty result fires (especially for rookies early
+        # in the season). Counting stats don't have a meaningful threshold.
+        qual_note = ""
+        if is_rate:
+            if qual_label == "Outs":
+                ip_full = int(min_qual) // 3
+                ip_part = int(min_qual) % 3
+                qual_note = f" (min. {ip_full}.{ip_part} IP in {tc.label.lower()})"
+            else:
+                qual_note = f" (min. {int(min_qual)} {qual_label} in {tc.label.lower()})"
         return (
-            f"No players found with **{plan.stat.display_name}** "
-            f"({tc.label}) {scope_phrase}."
+            f"No {subject} qualified for the {plan.stat.display_name} leaderboard "
+            f"in **{tc.label}** {scope_phrase}{qual_note}."
         )
 
     title = (
