@@ -729,6 +729,17 @@ def decompose(question: str) -> QueryPlan:
         segments = [p.strip() for p in temp.split("|SEP|") if p.strip()]
 
         for seg in segments:
+            # Strip career-window phrases so "10" in "first 10 at-bats" or
+            # "first 3 starts" doesn't get pulled in as a stat threshold by
+            # _parse_stat_condition. Without this, "players with hits in
+            # each of their first 10 at-bats" builds a bogus threshold of
+            # 10 from the window N. The whole-query path (no separator)
+            # already does this strip; mirror it here for parity.
+            seg = re.sub(
+                r'\b(first|last)\s+\d+\s+(?:career\s+)?'
+                r'(?:games?|starts?|at[- ]?bats?|abs?|appearances)\b',
+                ' ', seg,
+            )
             cond = _parse_stat_condition(seg)
             if cond:
                 all_conditions.append(cond)
@@ -991,9 +1002,15 @@ def decompose(question: str) -> QueryPlan:
     # Skip when month_grouped or recurring_half already claimed the query.
     if (not plan.month_grouped and not plan.recurring_half
             and plan.career_game_window is None):
-        # "(first|last) N (career) games|starts|at-bats"
+        # "(first|last) N (career) games|starts|appearances".
+        # NOTE: "at-bats" is intentionally NOT in this regex. At-bats are a
+        # per-PA unit, not a per-game unit, and we don't have a per-PA log
+        # table. Routing "first 10 at-bats" through the game-window executor
+        # would silently mistreat 10 ABs as 10 games. Let those queries fall
+        # through to Haiku, which can write SQL against game_batting_logs.at_bats
+        # cumulatively to find when a player accumulated their first 10 ABs.
         m = re.search(
-            r'\b(first|last)\s+(\d+|\w+)\s+(?:career\s+)?(games?|starts?|at[- ]?bats?|appearances)',
+            r'\b(first|last)\s+(\d+|\w+)\s+(?:career\s+)?(games?|starts?|appearances)',
             lower,
         )
         if m:
@@ -1073,6 +1090,25 @@ def decompose(question: str) -> QueryPlan:
     if any(t in lower for t in career_phrase_triggers) or any(re.search(t, lower) for t in career_word_triggers):
         plan.scope = "career"
         _add_consumed(plan, "all time all-time in history ever career record")
+
+    # "any season" / "any year" / "of any year" / "any of his seasons" — same
+    # semantic as all-time for window/streak queries. Without this, "10+ K
+    # in first 3 starts of any season" defaults to current season only and
+    # silently drops the "any season" qualifier.
+    any_season_triggers = [
+        "any season", "any year", "of any year", "in any season", "in any year",
+        "any of his seasons", "any of their seasons", "across all seasons",
+    ]
+    if any(t in lower for t in any_season_triggers):
+        plan.scope = "all_time"
+        plan.season = None
+        # Promote any career_game_window scope=season to "career" so the
+        # cumulative window executor drops the year filter and aggregates
+        # across all seasons (semantically: "for each player-season, the
+        # first N games window — return best across all such pairs").
+        if plan.career_game_window and plan.career_game_window.get("scope") == "season":
+            plan.career_game_window["scope"] = "career"
+        _add_consumed(plan, "any season year of his their across all seasons years")
 
     # "active" filter — current or previous year has stats
     active_triggers = ["active", "still playing", "playing today", "current players"]
@@ -1590,6 +1626,14 @@ def decompose(question: str) -> QueryPlan:
     # then misroute to streak_sequence.
     if (plan.recurring_half or plan.since_date or plan.month_grouped
             or plan.career_game_window):
+        has_streak_context = False
+
+    # At-bats are a per-PA unit; we don't have a per-PA log table. A query
+    # like "hit safely in his first 10 at-bats" can't be answered by the
+    # per-game streak executor (which would interpret 10 ABs as 10 games).
+    # Suppress streak detection so the query falls through to Haiku, which
+    # can write SQL against game_batting_logs.at_bats cumulatively.
+    if re.search(r'\b(?:first|last)\s+\d+\s+(?:career\s+)?(?:at[- ]?bats?|abs?)\b', lower):
         has_streak_context = False
 
     streak_detected = False
