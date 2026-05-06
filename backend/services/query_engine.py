@@ -1334,6 +1334,14 @@ def decompose(question: str) -> QueryPlan:
     plan.rookie = _detect_rookie(lower)
     if plan.rookie:
         _add_consumed(plan, "rookie rookies first year first-year")
+        # A rookie has by definition one rookie season. "Best rookie ERA all
+        # time" / "Most HR by a rookie all time" means "best single rookie
+        # season ever," not "career rookie aggregate" — career-rate formulas
+        # would apply a 1000-IP / 5000-AB qualifier across the (one) rookie
+        # season per player, which excludes virtually everyone. Demote
+        # career scope to all_time (per-season ranking) when rookie is set.
+        if plan.scope == "career":
+            plan.scope = "all_time"
 
     # Award filter — "by an MVP", "among MVPs", "MVP seasons", "Cy Young winners"
     _AWARD_PATTERNS = [
