@@ -1775,13 +1775,32 @@ def decompose(question: str) -> QueryPlan:
     # streak_sequence shape and translate (stat, threshold, comparison) into
     # SQL conditions.
     #
-    # Trigger: career_game_window + per-game threshold(s) + at least one
-    # stat. Rate stats with cumulative semantics ("best OPS in first 50
-    # games") have no threshold and are NOT converted — they keep
-    # career_game_window scope and route to the cumulative executor.
+    # Trigger: career_game_window + threshold + stat + EXPLICIT
+    # per-game-each phrasing ("each of", "every one of", etc.).
+    #
+    # Without explicit per-game phrasing, the natural reading is
+    # CUMULATIVE over the window:
+    #   "10 HRs in their first 50 games"     → 10 total HRs, 50-game window
+    #   "hit .300 in their first 50 games"   → cumulative .300 AVG over window
+    # These route to the cumulative executor below (with threshold
+    # filter on the window aggregate).
+    #
+    # With explicit per-game phrasing, the user wants every game in
+    # the window to satisfy the condition independently:
+    #   "10+ K in EACH of their first 3 starts"   → every game >= 10 K
+    #   "0 BB in EACH of their first 5 starts"    → every game has 0 BB
+    # These convert to streak_sequence + leading direction below.
+    _per_game_each_triggers = (
+        "each of", "every one of", "every of", "in each of",
+        "in every of", "all of their first", "all of his first",
+        "all of her first", "all of their last", "all of his last",
+        "all of her last",
+    )
+    _per_game_each = any(t in lower for t in _per_game_each_triggers)
     if (plan.career_game_window
             and plan.threshold is not None
             and plan.stat is not None
+            and _per_game_each
             and not plan.streak_conditions):
         # Game-log column map (season-stats → game-log column where they differ)
         _gl_col_map = {
@@ -2462,7 +2481,15 @@ def execute(plan: QueryPlan) -> Optional[str]:
         elif plan.query_type == "superlative":
             result = _execute_superlative(conn, plan)
         elif plan.query_type == "threshold":
-            result = _execute_threshold(conn, plan)
+            # career_game_window + threshold = cumulative-over-window
+            # filter ("hit .300 in their first 50 games", "10 HR in
+            # their first 50 games"). Route to the game-window
+            # executor which knows how to aggregate over the window
+            # AND apply a threshold filter on the result.
+            if plan.career_game_window:
+                result = _execute_game_window_leaderboard(conn, plan)
+            else:
+                result = _execute_threshold(conn, plan)
         elif plan.query_type == "leaderboard":
             result = _execute_leaderboard(conn, plan)
 
@@ -3358,6 +3385,24 @@ def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         select_extra = ""
         group_by_clause = "GROUP BY r.player_id"
 
+    # Optional threshold filter: when the user wrote "10 HRs in their
+    # first 50 games" or "hit .300 in their first 50 games" — cumulative
+    # over the window, return all qualifying players (not just top N
+    # ranked). Threshold semantics share the same comparison direction
+    # logic as elsewhere: ">=" by default, "<=" for under/fewer-than
+    # phrasing or zero-threshold edge cases.
+    threshold_having = ""
+    threshold_having_params: list = []
+    if plan.threshold is not None:
+        op = plan.comparison if plan.comparison in (">=", "<=", ">", "<", "=") else ">="
+        # threshold==0 with default >= is always true on counting stats.
+        # Flip to <= so "0 BB in their first 5 games" reads as "no walks
+        # over the window" rather than "any walk count over the window."
+        if plan.threshold == 0 and op == ">=" and not is_rate:
+            op = "<="
+        threshold_having = f" AND stat_val {op} ?"
+        threshold_having_params = [plan.threshold]
+
     sql = (
         f"WITH ranked AS ("
         f"  SELECT gl.*, ROW_NUMBER() OVER ("
@@ -3369,12 +3414,13 @@ def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         f"JOIN players p ON r.player_id = p.player_id "
         f"WHERE r.rn <= ? "
         f"{group_by_clause} "
-        f"HAVING COUNT(*) >= ?{rate_qual} "
+        f"HAVING COUNT(*) >= ?{rate_qual}{threshold_having} "
         f"ORDER BY stat_val {order} LIMIT ?"
     )
+    sql_params = tuple(inner_params + [n_val, n_val] + threshold_having_params + [plan.limit])
     cur = conn.cursor()
     try:
-        cur.execute(sql, tuple(inner_params + [n_val, n_val, plan.limit]))
+        cur.execute(sql, sql_params)
     except Exception as e:
         # Some game-log tables may not have game_number — retry without
         # the secondary ordering. Doubleheaders can swap order but the
@@ -3382,7 +3428,7 @@ def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         if "game_number" in str(e):
             sql_fallback = sql.replace(f", gl.game_number {inner_order}", "")
             try:
-                cur.execute(sql_fallback, tuple(inner_params + [n_val, n_val, plan.limit]))
+                cur.execute(sql_fallback, sql_params)
             except Exception as e2:
                 return f"Could not run game-window query: {e2}"
         else:
