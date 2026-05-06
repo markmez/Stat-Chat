@@ -1719,7 +1719,11 @@ def detect_rarities(conn, season, latest_date):
         # 15+ K
         if so >= 15 and (pid, game_date, "15k") not in seen:
             seen.add((pid, game_date, "15k"))
-            headline = f"{name} struck out {so} in {ip_display} innings, allowing {h} hits and {er} earned runs."
+            headline = (
+                f"{name} struck out {so} in {ip_display} innings, "
+                f"allowing {h} hit{'s' if h != 1 else ''} and "
+                f"{er} earned run{'s' if er != 1 else ''}."
+            )
             context = _rarity_context_combined(
                 conn, f"strikeouts >= {so}", "game_pitching_logs",
                 exclude_season=season, player_id=pid,
@@ -1734,7 +1738,11 @@ def detect_rarities(conn, season, latest_date):
         # 14+ K (if not already 15+)
         if 14 <= so < 15 and key not in seen:
             seen.add(key)
-            headline = f"{name} struck out {so} in {ip_display} innings, allowing {h} hits and {er} earned runs."
+            headline = (
+                f"{name} struck out {so} in {ip_display} innings, "
+                f"allowing {h} hit{'s' if h != 1 else ''} and "
+                f"{er} earned run{'s' if er != 1 else ''}."
+            )
             if _is_first_this_season(conn, "strikeouts >= 14", "game_pitching_logs", season, game_date):
                 headline = headline.rstrip(".") + " — the first 14+ strikeout game this season."
             events.append({"headline": headline, "detail": "", "category": "Rarity", "game_date": game_date,
@@ -1753,7 +1761,10 @@ def detect_rarities(conn, season, latest_date):
         if ip_outs >= 27 and key not in seen:
             seen.add(key)
             if er == 0:
-                headline = f"{name} threw a complete game shutout — {ip_display} IP, {so} K, {h} hits."
+                headline = (
+                    f"{name} threw a complete game shutout — {ip_display} IP, "
+                    f"{so} K, {h} hit{'s' if h != 1 else ''}."
+                )
             else:
                 headline = f"{name} threw a complete game — {ip_display} IP, {er} ER, {so} K."
             if _is_first_this_season(conn, "ip_outs >= 27", "game_pitching_logs", season, game_date):
@@ -2763,7 +2774,7 @@ def detect_on_this_date(conn, season, latest_date, target_date=None, attach_date
         opp_name = team_display(opp) if opp else ""
         hr = hr or 0
         headline = (f"On this date in {yr}, {name} drove in {rbi} runs, "
-                    f"going {h}-for-{ab} with {hr} home runs")
+                    f"going {h}-for-{ab} with {hr} home run{'s' if hr != 1 else ''}")
         if opp_name:
             headline += f" against the {opp_name}"
         # Pick most specific rarity first

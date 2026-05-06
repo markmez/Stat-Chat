@@ -1564,38 +1564,35 @@ def template_facts(conn, facts, season, latest_date):
             label = f["label"]
             ctx = "dating back to last season" if f["spans_seasons"] else "this season"
 
-            # Historical ranking context. First phrase attaches with em-dash;
-            # last two phrases join with "and"; any middle phrase becomes its
-            # own sentence. Prose reads tighter than semicolon chains.
+            # Historical ranking context. Use a period boundary + "That's" lead-in
+            # rather than an em-dash — em-dashes as connectors read AI-generated
+            # and the appositive after a comma+ctx is awkward to parse. Multi-
+            # phrase context still chains as separate sentences.
             hist_phrases = f.get("historical_context") or []
             if not hist_phrases:
                 hist_suffix = ""
             elif len(hist_phrases) == 1:
-                hist_suffix = " — " + hist_phrases[0]
+                hist_suffix = ". That's " + hist_phrases[0]
             elif len(hist_phrases) == 2:
-                hist_suffix = " — " + hist_phrases[0] + " and " + hist_phrases[1]
+                hist_suffix = ". That's " + hist_phrases[0] + " and " + hist_phrases[1]
             else:
                 # 3+: middle phrases as sentences, last two joined with "and"
                 first = hist_phrases[0]
                 middle = [(p[0].upper() + p[1:]) for p in hist_phrases[1:-1]]
                 last = hist_phrases[-1]
-                # Capitalize the second-to-last (it starts its sentence)
-                last_sentence_start = middle[-1] if middle else first
-                # Build: "— first. Middle1. Middle2 and last"
                 if middle:
-                    # Last middle phrase joins with "and last" instead of standalone
                     middle_minus_last = middle[:-1]
                     last_middle = middle[-1]
-                    sentences = [first] + middle_minus_last
+                    sentences = ["That's " + first] + middle_minus_last
                     joined = ". ".join(sentences)
-                    hist_suffix = " — " + joined + ". " + last_middle + " and " + last
+                    hist_suffix = ". " + joined + ". " + last_middle + " and " + last
                 else:
-                    hist_suffix = " — " + first + " and " + last
+                    hist_suffix = ". That's " + first + " and " + last
 
             if game_line:
-                headline = f"{player} went {game_line}, extending the longest active {label} in MLB to {streak} games, {ctx}{hist_suffix}."
+                headline = f"{player} went {game_line}, extending the longest active {label} in MLB to {streak} games {ctx}{hist_suffix}."
             else:
-                headline = f"{player} extended the longest active {label} in MLB to {streak} games, {ctx}{hist_suffix}."
+                headline = f"{player} extended the longest active {label} in MLB to {streak} games {ctx}{hist_suffix}."
 
         elif f["type"] == "10k_0bb_first_2_starts":
             k = f["k"]
