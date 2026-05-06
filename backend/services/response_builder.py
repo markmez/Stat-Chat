@@ -4806,21 +4806,22 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
                 parts.append(f"GAME {gdate}|{line}")
             parts.append("[/GAMELOGS]")
 
-            # Add totals
+            # Add totals — chat-card grid convention: ≤4 stat cols.
             total_outs = sum(r[2] or 0 for r in pitch_rows)
+            total_h = sum(r[3] or 0 for r in pitch_rows)
             total_er = sum(r[4] or 0 for r in pitch_rows)
             total_so = sum(r[5] or 0 for r in pitch_rows)
             total_bb = sum(r[6] or 0 for r in pitch_rows)
             total_ip = total_outs / 3
             era = (total_er / total_ip * 9) if total_ip > 0 else 0
+            whip = ((total_h + total_bb) / total_ip) if total_ip > 0 else 0
             ip_str = f"{total_outs // 3}.{total_outs % 3}"
 
-            era_fmt = f"{era:.2f}"
             parts.insert(0, (
                 f"**{display_name} — {label} {n_games} {window_noun}**\n"
                 f"[STATGRID]\n"
-                f"HEADER: IP, ER, K, BB, ERA\n"
-                f"ROW: {ip_str}, {total_er}, {total_so}, {total_bb}, {era_fmt}\n"
+                f"HEADER: IP, K, ERA, WHIP\n"
+                f"ROW: {ip_str}, {total_so}, {era:.2f}, {whip:.2f}\n"
                 f"[/STATGRID]\n"
             ))
 
@@ -4862,11 +4863,9 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
             except:
                 pass
         parts.append("[STATGRID]")
-        parts.append("HEADER: G, AB, H, 2B, 3B, HR, R, RBI, BB, SO, AVG, OPS")
-        parts.append(f"ROW Cumulative: {totals['g']}, {totals['ab']}, {totals['h']}, "
-                    f"{totals['2b']}, {totals['3b']}, {totals['hr']}, {totals['r']}, "
-                    f"{totals['rbi']}, {totals['bb']}, {totals['so']}, "
-                    f"{_format_rate(avg)}, {_format_rate(ops)}")
+        parts.append("HEADER: H, HR, RBI, OPS")
+        parts.append(f"ROW Cumulative: {totals['h']}, {totals['hr']}, {totals['rbi']}, "
+                    f"{_format_rate(ops)}")
         parts.append("[/STATGRID]")
 
         # Per-game breakdown for spans ≤ 30 games
@@ -4961,20 +4960,19 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
         parts = [title]
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
-        parts.append("HEADER: G, AB, H, HR, AVG, OPS")
+        parts.append("HEADER: H, HR, RBI, OPS")
 
         for szn, s in sorted_seasons:
             if s["g"] == 0:
                 continue
-            avg = s["h"] / max(s["ab"], 1)
             obp_num = s["h"] + s["bb"]
             obp_den = s["ab"] + s["bb"]
             obp = obp_num / max(obp_den, 1)
             slg_num = (s["h"] - s["2b"] - s["3b"] - s["hr"]) + 2*s["2b"] + 3*s["3b"] + 4*s["hr"]
             slg = slg_num / max(s["ab"], 1)
             ops = obp + slg
-            parts.append(f"ROW {szn}: {s['g']}, {s['ab']}, {s['h']}, {s['hr']}, "
-                        f"{_format_rate(avg)}, {_format_rate(ops)}")
+            parts.append(f"ROW {szn}: {s['h']}, {s['hr']}, {s['rbi']}, "
+                        f"{_format_rate(ops)}")
         parts.append("[/LEADERBOARD]")
 
         # Best season callout
@@ -5042,9 +5040,8 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
 
             title = f"**{display_name} — {label} {n_games} {window_noun} of {season}**\n"
             parts = [title, "[STATGRID]",
-                     "HEADER: G, IP, H, ER, BB, K, HR, ERA, WHIP",
-                     f"ROW {label} {n_games} {window_noun}: {len(pitch_rows)}, {ip_str}, "
-                     f"{total_h}, {total_er}, {total_bb}, {total_so}, {total_hr}, "
+                     "HEADER: IP, K, ERA, WHIP",
+                     f"ROW {label} {n_games} {window_noun}: {ip_str}, {total_so}, "
                      f"{era:.2f}, {whip:.2f}",
                      "[/STATGRID]"]
             # Per-game breakdown for spans ≤ 30
@@ -5090,11 +5087,9 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
         title = f"**{display_name} — {label} {n_games} {window_noun} of {season}**\n"
         parts = [title]
         parts.append("[STATGRID]")
-        parts.append("HEADER: G, AB, H, 2B, 3B, HR, R, RBI, BB, SO, AVG, OPS")
-        parts.append(f"ROW {label} {n_games} {window_noun}: {totals['g']}, {totals['ab']}, {totals['h']}, "
-                    f"{totals['2b']}, {totals['3b']}, {totals['hr']}, {totals['r']}, "
-                    f"{totals['rbi']}, {totals['bb']}, {totals['so']}, "
-                    f"{_format_rate(avg)}, {_format_rate(ops)}")
+        parts.append("HEADER: H, HR, RBI, OPS")
+        parts.append(f"ROW {label} {n_games} {window_noun}: {totals['h']}, {totals['hr']}, "
+                    f"{totals['rbi']}, {_format_rate(ops)}")
         parts.append("[/STATGRID]")
         parts.append(f"\n[SUGGEST]{display_name} {season}[/SUGGEST]")
         parts.append(f"[SUGGEST]{display_name} career stats[/SUGGEST]")
