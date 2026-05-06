@@ -3470,7 +3470,21 @@ def _execute_game_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         season_yr = plan.season or date.today().year
         inner_where_parts.append("gl.season = ?")
         inner_params.append(season_yr)
-    # career, recent, and per_season_any → no year filter
+    elif scope == "recent":
+        # "Last N games" with no year scope: user means recent / currently
+        # active players' last N. A retired player's "last 100 games" from
+        # 1965 isn't what someone asks for when they say "last 100 games"
+        # — they mean Judge / Trout / Ohtani's most recent 100. Restrict
+        # to last ~3 seasons so the ROW_NUMBER OVER PARTITION BY scan is
+        # over ~500K rows instead of ~5M, and aligns with user intent.
+        # Players who've been retired more than 3 years don't qualify
+        # for "recent." For users who genuinely want all-time tail
+        # windows, the "career" scope ("first/last N career games") is
+        # the right phrasing.
+        recent_floor = date.today().year - 2
+        inner_where_parts.append("gl.season >= ?")
+        inner_params.append(recent_floor)
+    # career, per_season_any → no year filter
 
     # Optional handedness/league/position filters via EXISTS on season-stats
     table, prefix = _table_and_prefix(plan)

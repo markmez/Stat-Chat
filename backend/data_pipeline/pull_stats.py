@@ -214,6 +214,10 @@ def create_tables(conn):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_gamelogs_player ON game_batting_logs(player_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_gamelogs_player_season ON game_batting_logs(player_id, season)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_gamelogs_date ON game_batting_logs(date)")
+    # (player_id, date) composite — used by ROW_NUMBER OVER PARTITION BY
+    # player_id ORDER BY date in _execute_game_window_leaderboard.
+    # Without this, "best OPS over their last 100 games" times out at 30s+.
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_gamelogs_player_date ON game_batting_logs(player_id, date)")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS season_fielding_stats (
@@ -317,6 +321,10 @@ def create_tables(conn):
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchlogs_player ON game_pitching_logs(player_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchlogs_player_season ON game_pitching_logs(player_id, season)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchlogs_date ON game_pitching_logs(date)")
+    # (player_id, date) composite — same purpose as the batting equivalent
+    # for window queries that ROW_NUMBER OVER PARTITION BY player_id ORDER
+    # BY date. Powers "best ERA over last 5 starts" and similar.
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchlogs_player_date ON game_pitching_logs(player_id, date)")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS pitching_platoon_splits (

@@ -122,7 +122,13 @@ TESTS: list[tuple[str, str, str]] = [
     # ============================================================
     ("Most RBI in April last year", "intercepted", "Date range: bare month"),
     ("Most HR in May 2024", "intercepted", "Date range: bare month"),
-    ("Best ERA in June this year", "intercepted", "Date range: bare month"),
+    # Use May — current month as of audit creation (May 2026). "June this
+    # year" was failing because June 2026 hasn't happened yet → empty
+    # leaderboard → fallthrough. Future-empty is legitimate but the audit
+    # should exercise a populated month. If the current month is past May,
+    # update this to a populated month (the bare-month-range parser is
+    # what we're really testing).
+    ("Best ERA in May this year", "intercepted", "Date range: bare month"),
     ("Most HR since June 1 2024", "intercepted", "Date range: since date"),
     ("Best ERA in the first half of a season since 2020", "intercepted", "Half-window"),
     ("Most HR in the second half of 2024", "intercepted", "Half-window"),
@@ -164,7 +170,11 @@ TESTS: list[tuple[str, str, str]] = [
     ("Pedro Martinez vs righties 2000", "intercepted", "Split: single-player platoon"),
     ("Aaron Judge with RISP this year", "intercepted", "Split: single-player RISP"),
     ("Most HR vs righties this year", "intercepted", "Split: leaderboard platoon"),
-    ("Best ERA vs LHB this year", "intercepted", "Split: leaderboard platoon"),
+    # NOTE: "Best ERA vs LHB" is a real schema gap — pitching_platoon_splits
+    # has _against rate stats and counting stats but NO earned_runs / ip_outs
+    # per split, so ERA-per-platoon is structurally not computable. Audit
+    # uses OPS-allowed instead which IS in the table.
+    ("Best OPS allowed vs LHB this year", "intercepted", "Split: leaderboard platoon"),
     ("Best ERA in the 7th inning", "intercepted", "Split: inning leaderboard"),
     ("Aaron Judge in the 1st inning 2024", "intercepted", "Split: single-player inning"),
 
