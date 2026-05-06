@@ -218,6 +218,12 @@ def create_tables(conn):
     # player_id ORDER BY date in _execute_game_window_leaderboard.
     # Without this, "best OPS over their last 100 games" times out at 30s+.
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_gamelogs_player_date ON game_batting_logs(player_id, date)")
+    # (season, player_id, date) composite — used by season-filtered streak
+    # queries like "20-game hitting streaks in 2024". Without this, the
+    # ORDER BY player_id, season, date over a season's worth of game logs
+    # takes ~34s on prod (the planner can't combine season filter + sort
+    # without it). With this index, the same query is sub-second.
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_gamelogs_season_player_date ON game_batting_logs(season, player_id, date)")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS season_fielding_stats (
@@ -325,6 +331,10 @@ def create_tables(conn):
     # for window queries that ROW_NUMBER OVER PARTITION BY player_id ORDER
     # BY date. Powers "best ERA over last 5 starts" and similar.
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchlogs_player_date ON game_pitching_logs(player_id, date)")
+    # (season, player_id, date) composite — used by season-filtered pitching
+    # streak queries like "10+ K in 3 consecutive starts of 2024". Same
+    # rationale as the batting equivalent above.
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_pitchlogs_season_player_date ON game_pitching_logs(season, player_id, date)")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS pitching_platoon_splits (

@@ -5636,11 +5636,25 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
     # silently narrowed to the current year by the fallback.
     season_filter = ""
     season_params = []
-    if plan.scope in ("career", "all_time"):
+    if plan.streak_direction == "trailing":
+        # Active/current streaks: 90-day window. This branch runs FIRST
+        # (before the career/all_time check) because "active" in the user's
+        # query promotes plan.scope to "career" upstream, but trailing
+        # detection is fundamentally about CURRENT streaks — a full
+        # historical scan doesn't help find them, it just hangs the
+        # query for 60+s on the 4.8M-row sort. The longest active streak
+        # in MLB history (DiMaggio 56) took ~60 days, so 90 days is
+        # plenty of headroom. Uses the (player_id, date) composite index.
+        from datetime import datetime as _dt, timedelta as _td
+        floor_date = (_dt.now() - _td(days=90)).date().isoformat()
+        season_filter = " AND g.date >= ?"
+        season_params = [floor_date]
+        # Clear any career/all_time scope set by "active" trigger upstream
+        # so downstream title/header logic doesn't render this as a
+        # career-scope result.
+        plan.season = None
+    elif plan.scope in ("career", "all_time"):
         # Full historical scan — needed for records like DiMaggio's 56.
-        # Also defensively clear plan.season in case some upstream path set it
-        # alongside a career/all_time scope (would otherwise be picked up by
-        # downstream title/header logic that keys off plan.season).
         plan.season = None
     elif plan.season:
         season_filter = " AND g.season = ?"
@@ -5648,16 +5662,6 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
     elif plan.since_year:
         season_filter = " AND g.season >= ?"
         season_params = [plan.since_year]
-    elif plan.streak_direction == "trailing":
-        # Active streaks are short by definition. The longest in MLB
-        # history (DiMaggio 56) took ~60 days. Filter to last 90 days
-        # so the partition scan is over ~30K rows instead of ~200K and
-        # the query finishes well under a second instead of timing out.
-        # Date filter uses the (player_id, date) composite index.
-        from datetime import datetime as _dt, timedelta as _td
-        floor_date = (_dt.now() - _td(days=90)).date().isoformat()
-        season_filter = " AND g.date >= ?"
-        season_params = [floor_date]
     else:
         # No season specified — default to current season to avoid scanning 600K+ rows
         from datetime import datetime as _dt
