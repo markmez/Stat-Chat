@@ -1385,7 +1385,14 @@ def decompose(question: str) -> QueryPlan:
     if not plan.is_pitching and any(w in lower for w in ["pitcher", "pitchers", "pitching", "pitched"]):
         if not _stat_is_batting_only:
             plan.is_pitching = True
-    has_batting_context = any(w in lower for w in ["hitter", "hitters", "batter", "batters", "batting", "hitting", "players"])
+    # NOTE: "players" / "player" intentionally excluded — they're generic
+    # subjects that don't disambiguate batting vs pitching. With "players"
+    # in this list, "Players with 3000 strikeouts" was being interpreted
+    # as career batting K (where no one has 3000) instead of pitching K
+    # (where Nolan Ryan, Randy Johnson, Clemens, etc. clearly qualify).
+    # The other words ("batter", "hitting", "hitters") do uniquely signal
+    # batting context.
+    has_batting_context = any(w in lower for w in ["hitter", "hitters", "batter", "batters", "batting", "hitting"])
     # Extra filters containing batting-only stats imply batting context
     # e.g., "fewest strikeouts with 30+ HR" — HR is batting-only, so K must be batting too
     if not has_batting_context and plan.extra_filters:
@@ -2654,6 +2661,27 @@ def execute(plan: QueryPlan) -> Optional[str]:
                 oq = plan.original_question.strip().rstrip("?.!,;:")
                 see_also.append(f"{oq} {original_year}")
 
+        # Safety net: pure "best / most / leaders" leaderboard queries
+        # returning 0 rows are almost always a misclassification (we picked
+        # the wrong table, qualifier was too strict, etc.) — a leaderboard
+        # by definition is "rank everyone, show top N." 0 means we asked
+        # the wrong SQL. Fall through to LLM rather than ship a confusing
+        # "0 players had a qualifying X" message. Threshold queries with
+        # explicit user thresholds CAN legitimately return 0 (the user
+        # asked for ".400 AVG since 2010" and nobody did it), so they
+        # keep the deterministic 0-matched response. Streak / window /
+        # split executors handle their own empty-result returns elsewhere.
+        if (result and _is_zero_result(result)
+                and plan.query_type == "leaderboard"
+                and not plan.threshold
+                and not plan.extra_filters):
+            logger.info(
+                "leaderboard_zero_fallthrough question=%r — "
+                "treating empty leaderboard as misclassification",
+                plan.original_question,
+            )
+            result = None
+
         # Alternate interpretation for ambiguous stats
         if result and plan.ambiguous_stat:
             alt = _ambiguous_suggest(plan)
@@ -2894,9 +2922,18 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
             ip_min = 486  # 162 IP for a standard 162-game season
         else:
             ip_min = _qual_min_ip_outs(conn, qual_season)
+        # Rookies often don't reach a full 162-IP qualifying season —
+        # first big-league year is usually 100-150 IP for starters and far
+        # less for relievers (Strider 2022 = 131, Skenes 2024 = 133, etc.).
+        # Without lowering the floor, "best rookie ERA" returns 0. Use
+        # 100 IP (300 outs) — the threshold for "real meaningful workload."
+        if plan.rookie and ip_min > 300:
+            ip_min = 300
         ip_display = f"{ip_min // 3}.{ip_min % 3}"
         if _is_current_season_scope and season and ip_min < 486:
             label = f"Showing pitchers on pace for 162+ IP ({ip_display} IP minimum)"
+        elif plan.rookie:
+            label = f"Min. {ip_display} IP (rookie qualifier)."
         else:
             label = f"Min. {ip_display} IP."
         return f" AND {prefix}.ip_outs >= {ip_min}", label
@@ -2905,8 +2942,15 @@ def _pa_filter(plan: QueryPlan, prefix: str, conn, season: Optional[int] = None)
             pa_min = 502  # 3.1 PA × 162 scheduled games
         else:
             pa_min = _qual_min_pa(conn, qual_season)
+        # Rookies same story for batting — rookie position players often
+        # don't get a full 502 PA in their debut year. Lower to 300 PA
+        # (roughly 75 games of starting work).
+        if plan.rookie and pa_min > 300:
+            pa_min = 300
         if _is_current_season_scope and season and pa_min < 502:
             label = f"Showing hitters on pace for 502+ PA ({pa_min} PA minimum)"
+        elif plan.rookie:
+            label = f"Min. {pa_min} PA (rookie qualifier)."
         else:
             label = f"Min. {pa_min} PA."
         return f" AND {prefix}.plate_appearances >= {pa_min}", label
