@@ -4444,6 +4444,12 @@ def _execute_career_threshold(conn, plan: QueryPlan) -> Optional[str]:
     stat_col = plan.stat.db_column
     abbrev = plan.stat.display_abbrev
     threshold_display = str(int(plan.threshold))
+    # is_rate must be defined here for _format_threshold_clause below.
+    # _execute_career_threshold is only ever called for COUNTING stats
+    # (the gate at the call site is `not is_rate and ... _exceeds_season_record`),
+    # but the formatter takes is_rate explicitly so we set it for clarity
+    # and so the function is robust if the call site ever changes.
+    is_rate = plan.stat.is_rate if plan.stat else False
 
     # Build extra filter SUMs and HAVINGs
     extra_sums = ""

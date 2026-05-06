@@ -1,0 +1,423 @@
+"""
+Routing audit — runs a comprehensive set of canonical queries against
+prod and classifies which path handled each: interceptor / query_engine,
+Haiku SQL, or Sonnet sql_planner. Compares actual routing to expected,
+flags drift.
+
+Usage:
+    python3 backend/tests/audit_routing.py [--deep] [--filter SUBSTR] [--no-throttle]
+
+Default mode (shallow) uses /admin/debug-intercept which is fast and only
+tells us "did query_engine intercept yes/no" — sufficient for most
+regressions. Pass --deep to also hit /query for misses to see final
+routing (Haiku vs Sonnet). --deep is much slower and costs real money.
+
+Throttling: 1.5s sleep between requests by default to avoid hammering
+prod. Pass --no-throttle for testing locally against a dev backend.
+
+Early exit: if 3+ consecutive timeouts/errors, audit stops to avoid
+piling on a struggling backend.
+
+Add new test cases by appending to TESTS below.
+"""
+
+import argparse
+import json
+import sys
+import time
+import urllib.parse
+import urllib.request
+
+PROD = "https://api.secondsignalapps.com"
+ADMIN_KEY = "I9-NNJ-GBen3SZ-wf8JkZX5-_zvvt8Qri2EtTxWUo-I"
+
+THROTTLE_SECONDS = 1.5
+MAX_CONSECUTIVE_ERRORS = 3
+DEEP_TIMEOUT = 90
+SHALLOW_TIMEOUT = 30
+
+# Expected routing values:
+#   "intercepted"  — interceptor parser OR query_engine handled the query
+#   "haiku"        — Haiku SQL fallback handled (deep mode only detects this)
+#   "sonnet"       — Sonnet sql_planner / insight engine handled (deep mode only)
+#   "either"       — intercepted OR Haiku is acceptable (some narrative queries)
+
+TESTS: list[tuple[str, str, str]] = [
+    # ============================================================
+    # Tier 1: Foundational career milestones — MUST intercept
+    # ============================================================
+    ("Players with 3000 hits", "intercepted", "Foundational milestone"),
+    ("Players with 500 home runs", "intercepted", "Foundational milestone"),
+    ("Players with 300 wins", "intercepted", "Foundational milestone"),
+    ("Players with 3000 strikeouts", "intercepted", "Foundational milestone"),
+    ("Players with 500 stolen bases", "intercepted", "Foundational milestone"),
+    ("Pitchers with 200 wins all time", "intercepted", "Foundational milestone"),
+    ("Career 3000 strikeout pitchers", "intercepted", "Foundational milestone"),
+
+    # ============================================================
+    # Tier 2: All-time single-season records
+    # ============================================================
+    ("Most HR in a single season", "intercepted", "All-time single-season"),
+    ("Most hits in a single season", "intercepted", "All-time single-season"),
+    ("Most stolen bases in a single season", "intercepted", "All-time single-season"),
+    ("Most RBI in a season ever", "intercepted", "All-time single-season"),
+    ("Most strikeouts by a pitcher in a season", "intercepted", "All-time single-season"),
+
+    # ============================================================
+    # Tier 3: Single-player career + season + slash line
+    # ============================================================
+    ("Aaron Judge career stats", "intercepted", "Single-player career"),
+    ("Aaron Judge career home runs", "intercepted", "Single-player career"),
+    ("Mike Trout career", "intercepted", "Single-player career"),
+    ("Pedro Martinez career ERA", "intercepted", "Single-player career"),
+    ("Aaron Judge 2024", "intercepted", "Single-player season"),
+    ("Mike Trout 2017", "intercepted", "Single-player season"),
+    ("Pedro Martinez 2000", "intercepted", "Single-player season"),
+    ("Aaron Judge slash line 2024", "intercepted", "Slash line"),
+
+    # ============================================================
+    # Tier 4: Standard leaderboards
+    # ============================================================
+    ("Most HR this year", "intercepted", "Standard leaderboard"),
+    ("Best ERA in 2024", "intercepted", "Standard leaderboard"),
+    ("Most strikeouts in 2023", "intercepted", "Standard leaderboard"),
+    ("Highest OPS in 2024", "intercepted", "Standard leaderboard"),
+    ("Most saves in 2023", "intercepted", "Standard leaderboard"),
+
+    # ============================================================
+    # Tier 5: Filtered leaderboards (handedness, position, age, role)
+    # ============================================================
+    ("Most HR by a left-handed batter since 2020", "intercepted", "Filtered: handedness"),
+    ("Most wins by a left-handed pitcher since 2020", "intercepted", "Filtered: handedness"),
+    ("Best batting average by a pitcher all time", "intercepted", "Filtered: position-as-pitcher"),
+    ("Most HR by a catcher in 2024", "intercepted", "Filtered: position"),
+    ("Best ERA by a starter in 2024", "intercepted", "Filtered: pitcher role"),
+    ("Most saves by a closer in 2023", "intercepted", "Filtered: pitcher role"),
+    ("Most HR by a player under 25 in 2024", "intercepted", "Filtered: age"),
+    ("Best ERA by a pitcher over 35", "intercepted", "Filtered: age"),
+    ("Best rookie ERA all time", "intercepted", "Filtered: rookie"),
+    ("Most HR by a rookie all time", "intercepted", "Filtered: rookie"),
+
+    # ============================================================
+    # Tier 6: Multi-condition / compound thresholds
+    # ============================================================
+    ("Players with 30 HR and 30 SB", "intercepted", "Multi-condition season"),
+    ("Players who batted .300 with 30 HR", "intercepted", "Multi-condition season"),
+    ("Pitchers with 200 K and sub-3 ERA", "intercepted", "Multi-condition season"),
+    ("Players with 3000 hits and 500 HR", "intercepted", "Multi-condition career"),
+    ("Pitchers with 300 wins and 3000 K", "intercepted", "Multi-condition career"),
+
+    # ============================================================
+    # Tier 7: Date-range / closed window
+    # ============================================================
+    ("Most RBI in April last year", "intercepted", "Date range: bare month"),
+    ("Most HR in May 2024", "intercepted", "Date range: bare month"),
+    ("Best ERA in June this year", "intercepted", "Date range: bare month"),
+    ("Most HR since June 1 2024", "intercepted", "Date range: since date"),
+    ("Best ERA in the first half of a season since 2020", "intercepted", "Half-window"),
+    ("Most HR in the second half of 2024", "intercepted", "Half-window"),
+    ("Most HR in a single month all time", "intercepted", "Month-grouped"),
+
+    # ============================================================
+    # Tier 8: Recent stretch / current form
+    # ============================================================
+    ("Most HR in the last 30 days", "intercepted", "Recent stretch"),
+    ("Best ERA in the last 30 days", "intercepted", "Recent stretch"),
+    ("How is Aaron Judge doing lately", "intercepted", "Current form"),
+    ("Aaron Judge current form", "intercepted", "Current form"),
+
+    # ============================================================
+    # Tier 9: Career window (cumulative + per-game-each + variants)
+    # ============================================================
+    ("Players who hit .300 in their first 50 games this season",
+     "intercepted", "Career-window cumulative"),
+    ("Players with 10 HR in their first 50 games of 2024",
+     "intercepted", "Career-window cumulative"),
+    ("Best OPS over their last 100 games", "intercepted",
+     "Career-window cumulative recent"),
+    ("Best OPS in their first 50 career games", "intercepted",
+     "Career-window cumulative debut"),
+    ("Pitchers with 8+ K in each of their first 2 starts of 2026",
+     "intercepted", "Per-game-each first"),
+    ("Pitchers with 8+ K in each of their last 3 starts of 2026",
+     "intercepted", "Per-game-each tail"),
+    ("Hitters with 2+ HR in each of their first 5 games of 2024",
+     "intercepted", "Per-game-each first"),
+    ("Pitchers with 8+ K in each of their first 3 career starts",
+     "intercepted", "Per-game-each career-debut"),
+
+    # ============================================================
+    # Tier 10: Splits (single-player + leaderboard)
+    # ============================================================
+    ("Judge vs lefties this year", "intercepted", "Split: single-player platoon"),
+    ("Aaron Judge home and away 2024", "intercepted", "Split: single-player home/away"),
+    ("Pedro Martinez vs righties 2000", "intercepted", "Split: single-player platoon"),
+    ("Aaron Judge with RISP this year", "intercepted", "Split: single-player RISP"),
+    ("Most HR vs righties this year", "intercepted", "Split: leaderboard platoon"),
+    ("Best ERA vs LHB this year", "intercepted", "Split: leaderboard platoon"),
+    ("Best ERA in the 7th inning", "intercepted", "Split: inning leaderboard"),
+    ("Aaron Judge in the 1st inning 2024", "intercepted", "Split: single-player inning"),
+
+    # ============================================================
+    # Tier 11: Streaks
+    # ============================================================
+    ("Longest hitting streak in 2024", "intercepted", "Streak: longest"),
+    ("Longest active hitting streak", "intercepted", "Streak: active"),
+    ("20-game hitting streaks in 2024", "intercepted", "Streak: threshold"),
+    ("Pitchers with 10+ K in 3 consecutive starts of 2024", "intercepted",
+     "Streak: consecutive threshold"),
+
+    # ============================================================
+    # Tier 12: Comparisons, matchups, year-over-year
+    # ============================================================
+    ("Judge vs Soto", "intercepted", "Comparison: player vs player"),
+    ("Compare Maddux and Glavine", "intercepted", "Comparison: career"),
+    ("Mookie Betts 2018 vs 2019", "intercepted", "Year-over-year"),
+    ("Aaron Judge 2022 vs 2024", "intercepted", "Year-over-year"),
+    ("Judge vs Skubal", "intercepted", "Matchup: batter vs pitcher"),
+    ("How will Soto do against Cole", "intercepted", "Matchup: batter vs pitcher"),
+
+    # ============================================================
+    # Tier 13: Game-log / per-game queries
+    # ============================================================
+    ("Aaron Judge game logs", "intercepted", "Game logs"),
+    ("Most 4-hit games in 2024", "intercepted", "Game-level extreme"),
+    ("Most multi-homer games by a player in 2024", "intercepted",
+     "Game-level extreme"),
+
+    # ============================================================
+    # Tier 14: Stat definitions
+    # ============================================================
+    ("What is OPS?", "intercepted", "Stat definition"),
+    ("Define WHIP", "intercepted", "Stat definition"),
+    ("Explain BABIP", "intercepted", "Stat definition"),
+
+    # ============================================================
+    # Tier 15: League / division filter
+    # ============================================================
+    ("Best ERA in the AL 2024", "intercepted", "League filter"),
+    ("Most HR in the NL 2023", "intercepted", "League filter"),
+
+    # ============================================================
+    # Tier 15b: Award-filtered
+    # ============================================================
+    ("MVP winners with 50+ HR", "intercepted", "Award filter"),
+    ("Cy Young winners with sub-2 ERA", "intercepted", "Award filter"),
+    ("Most HR by a Hall of Famer", "intercepted", "Award filter"),
+
+    # ============================================================
+    # Tier 15c: Decade / cross-season range
+    # ============================================================
+    ("Most HR in the 2010s", "intercepted", "Decade range"),
+    ("Best ERA in the 2000s", "intercepted", "Decade range"),
+    ("Most wins in the last decade", "intercepted", "Decade range"),
+
+    # ============================================================
+    # Tier 16: Team
+    # ============================================================
+    ("Most wins by a team in 2024", "intercepted", "Team ranking"),
+    ("Best team ERA in 2024", "intercepted", "Team ranking"),
+    ("HR leader on each team this year", "intercepted", "Per-team leader"),
+
+    # ============================================================
+    # Tier 17: Narrative — Sonnet expected
+    # ============================================================
+    ("Why is Skenes considered a generational pitcher", "sonnet", "Narrative"),
+    ("Tell me about Roberto Clemente", "sonnet", "Narrative"),
+    ("Explain why teams are throwing more sliders", "sonnet", "Narrative"),
+
+    # ============================================================
+    # Tier 18: Long-tail (Haiku territory acceptable)
+    # ============================================================
+    ("Pitchers whose last name starts with a vowel", "either",
+     "Long-tail (Haiku OK)"),
+    ("What's the difference between FIP and xERA", "either",
+     "Long-tail (Haiku OK)"),
+]
+
+
+def http_post(path: str, body: dict, timeout: int = DEEP_TIMEOUT) -> dict:
+    """POST JSON, return parsed response. Streaming responses join all data."""
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        f"{PROD}{path}",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        text = r.read().decode("utf-8", errors="replace")
+        if "data: " in text:
+            return {"_stream": text}
+        return json.loads(text)
+
+
+def classify_intercept_only(query: str) -> tuple[str, int, str]:
+    """Hit /admin/debug-intercept. Returns (route, latency_ms, snippet).
+    route is "intercepted" or "miss" or "error"."""
+    q_enc = urllib.parse.quote(query)
+    url = f"{PROD}/admin/debug-intercept?key={ADMIN_KEY}&q={q_enc}"
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(url, timeout=SHALLOW_TIMEOUT) as r:
+            body = json.loads(r.read().decode("utf-8", errors="replace"))
+    except Exception as e:
+        return ("error", int((time.time() - t0) * 1000), f"err: {e}")
+    ms = int((time.time() - t0) * 1000)
+    if body.get("error"):
+        return ("error", ms, f"err: {body['error'][:120]}")
+    if body.get("intercepted"):
+        snip = (body.get("result_preview") or "").replace("\n", " ")[:90]
+        return ("intercepted", ms, snip)
+    return ("miss", ms, "")
+
+
+def classify_deep(query: str) -> tuple[str, int, str]:
+    """Hit /query streaming. Returns (route, latency_ms, snippet).
+    route is "intercepted" / "haiku" / "sonnet" / "error"."""
+    body = {
+        "question": query,
+        "device_id": "audit-routing-script-001",
+        "input_method": "text",
+        "no_count": True,
+    }
+    t0 = time.time()
+    try:
+        resp = http_post("/query", body, timeout=DEEP_TIMEOUT)
+    except Exception as e:
+        return ("error", int((time.time() - t0) * 1000), f"err: {e}")
+    ms = int((time.time() - t0) * 1000)
+    text = resp.get("_stream", "")
+    route = "unknown"
+    for line in text.splitlines():
+        if not line.startswith("data:"):
+            continue
+        try:
+            evt = json.loads(line[5:].strip())
+        except Exception:
+            continue
+        if evt.get("type") == "done":
+            if evt.get("intercepted"):
+                route = "intercepted"
+            elif evt.get("haiku_sql"):
+                route = "haiku"
+            elif evt.get("insight"):
+                route = "sonnet"
+            break
+    snip = ""
+    for line in text.splitlines():
+        if line.startswith("data:"):
+            try:
+                evt = json.loads(line[5:].strip())
+                if evt.get("type") == "text" and evt.get("text"):
+                    snip = evt["text"][:90].replace("\n", " ")
+                    break
+            except Exception:
+                continue
+    return (route, ms, snip)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--deep", action="store_true",
+                    help="Probe /query for full routing (Haiku/Sonnet detection). Slower.")
+    ap.add_argument("--filter", default="",
+                    help="Only run tests where query contains this substring.")
+    ap.add_argument("--no-throttle", action="store_true",
+                    help="Disable inter-request sleep (use against local backends only).")
+    args = ap.parse_args()
+
+    tests = TESTS
+    if args.filter:
+        tests = [t for t in TESTS if args.filter.lower() in t[0].lower()]
+
+    pass_count = 0
+    fail_count = 0
+    regressions: list[dict] = []
+    per_category: dict[str, dict[str, int]] = {}
+    consecutive_errors = 0
+    aborted = False
+
+    print(f"\nAuditing {len(tests)} queries against {PROD}")
+    print(f"Mode: {'deep' if args.deep else 'shallow'} | "
+          f"throttle: {'off' if args.no_throttle else f'{THROTTLE_SECONDS}s'}\n")
+    print(f"{'#':>3} {'CAT':<32} {'EXPECT':<12} {'ACTUAL':<12} {'MS':>5}  QUERY")
+    print("-" * 130)
+
+    for i, (query, expected, category) in enumerate(tests, start=1):
+        if not args.no_throttle and i > 1:
+            time.sleep(THROTTLE_SECONDS)
+
+        if args.deep:
+            actual, ms, snip = classify_deep(query)
+        else:
+            route, ms, snip = classify_intercept_only(query)
+            actual = route if route in ("intercepted", "error") else "miss"
+
+        # Normalize expected for comparison
+        if expected == "either":
+            ok = actual in ("intercepted", "haiku")
+        elif expected == "intercepted":
+            ok = actual == "intercepted"
+        elif expected == "sonnet":
+            ok = actual == "sonnet" if args.deep else actual == "miss"
+        elif expected == "haiku":
+            ok = actual == "haiku" if args.deep else actual == "miss"
+        else:
+            ok = actual == expected
+
+        status_marker = " " if ok else "✗"
+        if ok:
+            pass_count += 1
+            consecutive_errors = 0
+        else:
+            fail_count += 1
+            regressions.append({
+                "query": query, "category": category,
+                "expected": expected, "actual": actual,
+                "ms": ms, "snippet": snip,
+            })
+            if actual == "error":
+                consecutive_errors += 1
+            else:
+                consecutive_errors = 0
+
+        per_category.setdefault(category, {"pass": 0, "fail": 0})
+        per_category[category]["pass" if ok else "fail"] += 1
+
+        print(f"{status_marker}{i:>3} {category[:32]:<32} {expected:<12} {actual:<12} {ms:>5}  {query[:55]}")
+
+        if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+            print(f"\n  ! {MAX_CONSECUTIVE_ERRORS} consecutive errors — backend may be struggling. Aborting.")
+            aborted = True
+            break
+
+    print("\n" + "=" * 130)
+    print(f"\nResult: {pass_count} pass / {fail_count} fail / "
+          f"{pass_count + fail_count} run "
+          f"({len(tests) - pass_count - fail_count} skipped)\n")
+
+    print("By category:")
+    for cat, counts in sorted(per_category.items()):
+        total = counts["pass"] + counts["fail"]
+        bar = "✓" if counts["fail"] == 0 else "✗"
+        print(f"  {bar} {cat:<38} {counts['pass']}/{total}")
+
+    if regressions:
+        print(f"\nRegressions ({len(regressions)}):\n")
+        for r in regressions:
+            print(f"  [{r['category']}] expected={r['expected']} actual={r['actual']}")
+            print(f"    Query: {r['query']}")
+            if r["snippet"]:
+                print(f"    Got:   {r['snippet']}")
+            print()
+
+    if aborted:
+        print("AUDIT ABORTED EARLY due to consecutive errors.")
+        sys.exit(2)
+
+    sys.exit(0 if fail_count == 0 else 1)
+
+
+if __name__ == "__main__":
+    main()
