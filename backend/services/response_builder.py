@@ -4728,12 +4728,18 @@ def build_player_game_logs(name: str, season: int) -> Optional[str]:
 
 
 def build_player_game_window(name: str, window_type: str, n_games: int,
-                              stat_info=None, season: Optional[int] = None) -> Optional[str]:
+                              stat_info=None, season: Optional[int] = None,
+                              window_noun: str = "Games") -> Optional[str]:
     """Build a response for 'first/last N games' queries.
 
     If season is None, compares across all seasons (which season had the most X
     in the first/last N games). If season is set, shows the stat line for that
     specific window.
+
+    `window_noun` controls how the window unit is labelled in the title
+    ("Games", "Starts", "Appearances"). The underlying SQL doesn't change —
+    pitching game logs are one row per appearance, so "starts" maps onto
+    the same per-row aggregation as "games".
     """
     conn = _get_db()
     if not conn:
@@ -4800,7 +4806,7 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
 
             era_fmt = f"{era:.2f}"
             parts.insert(0, (
-                f"**{display_name} — {label} {n_games} Games**\n"
+                f"**{display_name} — {label} {n_games} {window_noun}**\n"
                 f"[STATGRID]\n"
                 f"HEADER: IP, ER, K, BB, ERA\n"
                 f"ROW: {ip_str}, {total_er}, {total_so}, {total_bb}, {era_fmt}\n"
@@ -4834,7 +4840,7 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
         earliest = rows[-1][0] if rows else ""
         latest = rows[0][0] if rows else ""
 
-        title = f"**{display_name} — Last {n_games} Games**\n"
+        title = f"**{display_name} — Last {n_games} {window_noun}**\n"
         parts = [title]
         if earliest and latest:
             try:
@@ -4937,9 +4943,9 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
 
         # Build output
         if stat_info and stat_label:
-            title = f"**{display_name} — {label} {n_games} Games by Season ({stat_label})**\n"
+            title = f"**{display_name} — {label} {n_games} {window_noun} by Season ({stat_label})**\n"
         else:
-            title = f"**{display_name} — {label} {n_games} Games by Season**\n"
+            title = f"**{display_name} — {label} {n_games} {window_noun} by Season**\n"
 
         parts = [title]
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
@@ -4989,8 +4995,62 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
         """, (pid, season, n_games))
         rows = cur.fetchall()
         if not rows:
+            # No batting logs — try pitching. Pitchers asked about "first N
+            # starts of 2025" land here. Same window math, different schema.
+            cur.execute(f"""
+                SELECT g.date, g.innings_pitched, g.ip_outs, g.hits, g.earned_runs,
+                       g.strikeouts, g.walks, g.home_runs, g.win, g.loss, g.opponent
+                FROM (
+                    SELECT *, ROW_NUMBER() OVER (ORDER BY date {order}) as game_num
+                    FROM game_pitching_logs
+                    WHERE player_id = ? AND season = ?
+                ) g
+                WHERE g.game_num <= ?
+                ORDER BY g.date
+            """, (pid, season, n_games))
+            pitch_rows = cur.fetchall()
+            if not pitch_rows:
+                conn.close()
+                return None
+
+            total_outs = sum(r[2] or 0 for r in pitch_rows)
+            total_h = sum(r[3] or 0 for r in pitch_rows)
+            total_er = sum(r[4] or 0 for r in pitch_rows)
+            total_so = sum(r[5] or 0 for r in pitch_rows)
+            total_bb = sum(r[6] or 0 for r in pitch_rows)
+            total_hr = sum(r[7] or 0 for r in pitch_rows)
+            total_w = sum(1 for r in pitch_rows if r[8])
+            total_l = sum(1 for r in pitch_rows if r[9])
+            total_ip = total_outs / 3 if total_outs else 0.0
+            era = (total_er / total_ip * 9) if total_ip > 0 else 0.0
+            whip = ((total_h + total_bb) / total_ip) if total_ip > 0 else 0.0
+            ip_str = f"{total_outs // 3}.{total_outs % 3}"
+
+            title = f"**{display_name} — {label} {n_games} {window_noun} of {season}**\n"
+            parts = [title, "[STATGRID]",
+                     "HEADER: G, IP, H, ER, BB, K, HR, ERA, WHIP",
+                     f"ROW {label} {n_games} {window_noun}: {len(pitch_rows)}, {ip_str}, "
+                     f"{total_h}, {total_er}, {total_bb}, {total_so}, {total_hr}, "
+                     f"{era:.2f}, {whip:.2f}",
+                     "[/STATGRID]"]
+            # Per-game breakdown for spans ≤ 30
+            if n_games <= 30:
+                parts.append("")
+                parts.append("[GAMELOGS]")
+                for row in pitch_rows:
+                    gdate, ip_text, ip_outs, h, er, so, bb, hr, win, loss, opp = row
+                    ip_display = ip_text or f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
+                    decision = ""
+                    if win: decision = ", W"
+                    elif loss: decision = ", L"
+                    line = (f"{ip_display} IP, {h or 0} H, {er or 0} ER, "
+                            f"{bb or 0} BB, {so or 0} K, {hr or 0} HR{decision}")
+                    parts.append(f"GAME {gdate}|{line}")
+                parts.append("[/GAMELOGS]")
+            parts.append(f"\n[SUGGEST]{display_name} {season}[/SUGGEST]")
+            parts.append(f"[SUGGEST]{display_name} career stats[/SUGGEST]")
             conn.close()
-            return None
+            return "\n".join(parts)
 
         # Aggregate
         totals = {"g": len(rows), "ab": 0, "h": 0, "2b": 0, "3b": 0, "hr": 0,
@@ -5013,11 +5073,11 @@ def build_player_game_window(name: str, window_type: str, n_games: int,
         obp = (totals["h"] + totals["bb"]) / max(totals["ab"] + totals["bb"], 1)
         ops = obp + slg
 
-        title = f"**{display_name} — {label} {n_games} Games of {season}**\n"
+        title = f"**{display_name} — {label} {n_games} {window_noun} of {season}**\n"
         parts = [title]
         parts.append("[STATGRID]")
         parts.append("HEADER: G, AB, H, 2B, 3B, HR, R, RBI, BB, SO, AVG, OPS")
-        parts.append(f"ROW {label} {n_games} Games: {totals['g']}, {totals['ab']}, {totals['h']}, "
+        parts.append(f"ROW {label} {n_games} {window_noun}: {totals['g']}, {totals['ab']}, {totals['h']}, "
                     f"{totals['2b']}, {totals['3b']}, {totals['hr']}, {totals['r']}, "
                     f"{totals['rbi']}, {totals['bb']}, {totals['so']}, "
                     f"{_format_rate(avg)}, {_format_rate(ops)}")

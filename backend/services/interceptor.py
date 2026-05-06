@@ -199,7 +199,8 @@ def try_intercept(question: str):
         response = rb.build_player_game_window(
             game_window["name"], game_window["window_type"],
             game_window["n_games"], game_window.get("stat"),
-            game_window.get("season"))
+            game_window.get("season"),
+            window_noun=game_window.get("window_noun", "Games"))
         if response:
             return response
 

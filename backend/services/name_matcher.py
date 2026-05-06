@@ -3134,13 +3134,30 @@ def parse_player_game_window(input_str: str) -> Optional[dict]:
         cleaned_no_s,
     )
 
-    # Detect "first N games" or "last N games" (also "past", "previous", "recent")
-    window_match = re.search(r'\b(first|last|past|previous|recent|opening|final)\s+(\d+)\s*games?\b', cleaned)
+    # Detect "first/last N games|starts|appearances". For pitchers, "starts"
+    # and "appearances" are valid synonyms — game_pitching_logs is one row
+    # per appearance, so the same window math applies. ("at-bats" is NOT
+    # included here: it implies per-PA aggregation we don't have a table
+    # for; queries with that phrasing should fall through to Haiku/Sonnet.)
+    window_match = re.search(
+        r'\b(first|last|past|previous|recent|opening|final)\s+(\d+)\s*'
+        r'(?:career\s+)?'
+        r'(games?|starts?|appearances?)\b',
+        cleaned,
+    )
     if not window_match:
         return None
 
     window_type = "first" if window_match.group(1) in ("first", "opening") else "last"
     n_games = int(window_match.group(2))
+    window_noun_raw = window_match.group(3)
+    # Normalize for display: "starts" → "Starts", "games" → "Games", etc.
+    if window_noun_raw.startswith("start"):
+        window_noun = "Starts"
+    elif window_noun_raw.startswith("appearance"):
+        window_noun = "Appearances"
+    else:
+        window_noun = "Games"
     if n_games < 1 or n_games > 162:
         return None
 
@@ -3162,8 +3179,12 @@ def parse_player_game_window(input_str: str) -> Optional[dict]:
         return None
 
     # Detect stat (optional — None means show full stat line)
-    # Strip the window phrase before matching to avoid "games" being matched as a stat
-    stat_text = re.sub(r'\b(first|last|past|previous|recent|opening|final)\s+\d+\s*games?\b', '', cleaned)
+    # Strip the window phrase before matching to avoid "games"/"starts" being matched as a stat
+    stat_text = re.sub(
+        r'\b(first|last|past|previous|recent|opening|final)\s+\d+\s*'
+        r'(?:career\s+)?(?:games?|starts?|appearances?)\b',
+        '', cleaned,
+    )
     stat = match_stat(stat_text)
     # "games" as a stat is almost never what the user means here
     if stat and stat.db_column == "games":
@@ -3180,6 +3201,7 @@ def parse_player_game_window(input_str: str) -> Optional[dict]:
         "name": player,
         "window_type": window_type,
         "n_games": n_games,
+        "window_noun": window_noun,
         "stat": stat,
         "season": season,
     }
