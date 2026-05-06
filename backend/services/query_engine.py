@@ -39,6 +39,75 @@ _MONTH_MAP = {
 }
 
 
+_ASG_DATES = {
+    1933: "1933-07-06", 1934: "1934-07-10", 1935: "1935-07-08",
+    1936: "1936-07-07", 1937: "1937-07-07", 1938: "1938-07-06",
+    1939: "1939-07-11", 1940: "1940-07-09", 1941: "1941-07-08",
+    1942: "1942-07-06", 1943: "1943-07-13", 1944: "1944-07-11",
+    1946: "1946-07-09", 1947: "1947-07-08", 1948: "1948-07-13",
+    1949: "1949-07-12", 1950: "1950-07-11", 1951: "1951-07-10",
+    1952: "1952-07-08", 1953: "1953-07-14", 1954: "1954-07-13",
+    1955: "1955-07-12", 1956: "1956-07-10", 1957: "1957-07-09",
+    1958: "1958-07-08", 1959: "1959-07-07", 1960: "1960-07-11",
+    1961: "1961-07-11", 1962: "1962-07-10", 1963: "1963-07-09",
+    1964: "1964-07-07", 1965: "1965-07-13", 1966: "1966-07-12",
+    1967: "1967-07-11", 1968: "1968-07-09", 1969: "1969-07-23",
+    1970: "1970-07-14", 1971: "1971-07-13", 1972: "1972-07-25",
+    1973: "1973-07-24", 1974: "1974-07-23", 1975: "1975-07-15",
+    1976: "1976-07-13", 1977: "1977-07-19", 1978: "1978-07-11",
+    1979: "1979-07-17", 1980: "1980-07-08", 1981: "1981-08-09",
+    1982: "1982-07-13", 1983: "1983-07-06", 1984: "1984-07-10",
+    1985: "1985-07-16", 1986: "1986-07-15", 1987: "1987-07-14",
+    1988: "1988-07-12", 1989: "1989-07-11", 1990: "1990-07-10",
+    1991: "1991-07-09", 1992: "1992-07-14", 1993: "1993-07-13",
+    1994: "1994-07-12", 1995: "1995-07-11", 1996: "1996-07-09",
+    1997: "1997-07-08", 1998: "1998-07-07", 1999: "1999-07-13",
+    2000: "2000-07-11", 2001: "2001-07-10", 2002: "2002-07-09",
+    2003: "2003-07-15", 2004: "2004-07-13", 2005: "2005-07-12",
+    2006: "2006-07-11", 2007: "2007-07-10", 2008: "2008-07-15",
+    2009: "2009-07-14", 2010: "2010-07-13", 2011: "2011-07-12",
+    2012: "2012-07-10", 2013: "2013-07-16", 2014: "2014-07-15",
+    2015: "2015-07-14", 2016: "2016-07-12", 2017: "2017-07-11",
+    2018: "2018-07-17", 2019: "2019-07-09",
+    2021: "2021-07-13", 2022: "2022-07-19", 2023: "2023-07-11",
+    2024: "2024-07-16", 2025: "2025-07-15", 2026: "2026-07-14",
+}
+
+
+def _detect_half_of_season(lower: str) -> Optional[tuple[str, Optional[str]]]:
+    """Detect "in the first half" / "in the second half" of a single season.
+
+    Returns (start_date, end_date) tuple. end_date is None for the open-ended
+    "second half" → today. Resolves the year from a 4-digit year in the query
+    or the current calendar year. Skips years with no ASG (1945, 2020).
+
+    SINGLE-SEASON ONLY. Bails on multi-season constructions like "in the first
+    half of a season since 2020" — those ask "best half-season across years
+    2020-now" which needs a different (recurring-window) executor we don't
+    have yet. Returning None here lets the query fall through to Haiku rather
+    than producing a silently-wrong single-year answer.
+    """
+    import re
+    is_first = bool(re.search(r"\b(?:in\s+the\s+)?first\s+half\b", lower))
+    is_second = bool(re.search(r"\b(?:in\s+the\s+)?second\s+half\b", lower))
+    if not (is_first or is_second):
+        return None
+    # Multi-season giveaway phrasings — let these fall through.
+    if re.search(r"\bof\s+a\s+season\b", lower) or re.search(r"\b(?:any|each|every)\s+season\b", lower):
+        return None
+    if re.search(r"\bsince\s+(?:19|20)\d{2}\b", lower):
+        return None
+    today = date.today()
+    year_match = re.search(r"\b((?:19|20)\d{2})\b", lower)
+    year = int(year_match.group(1)) if year_match else today.year
+    while year not in _ASG_DATES and year > 1933:
+        year -= 1
+    asg = _ASG_DATES.get(year, f"{year}-07-15")
+    if is_first:
+        return (f"{year}-04-01", asg)
+    return (asg, None)
+
+
 def _detect_since_date(lower: str) -> Optional[str]:
     """Detect sub-season date ranges: 'since June 16, 2025', 'since May 2025',
     'in the last 30 days', 'since the all-star break'.
@@ -54,43 +123,8 @@ def _detect_since_date(lower: str) -> Optional[str]:
         days = int(m.group(1))
         return (today - timedelta(days=days)).isoformat()
 
-    # "since the all-star break" — use actual ASG dates (1933-2026)
+    # "since the all-star break" — use actual ASG dates (1933-2026, see _ASG_DATES above)
     if "all-star break" in lower or "all star break" in lower:
-        _ASG_DATES = {
-            1933: "1933-07-06", 1934: "1934-07-10", 1935: "1935-07-08",
-            1936: "1936-07-07", 1937: "1937-07-07", 1938: "1938-07-06",
-            1939: "1939-07-11", 1940: "1940-07-09", 1941: "1941-07-08",
-            1942: "1942-07-06", 1943: "1943-07-13", 1944: "1944-07-11",
-            # 1945: no game (WWII)
-            1946: "1946-07-09", 1947: "1947-07-08", 1948: "1948-07-13",
-            1949: "1949-07-12", 1950: "1950-07-11", 1951: "1951-07-10",
-            1952: "1952-07-08", 1953: "1953-07-14", 1954: "1954-07-13",
-            1955: "1955-07-12", 1956: "1956-07-10", 1957: "1957-07-09",
-            1958: "1958-07-08", 1959: "1959-07-07", 1960: "1960-07-11",
-            1961: "1961-07-11", 1962: "1962-07-10", 1963: "1963-07-09",
-            1964: "1964-07-07", 1965: "1965-07-13", 1966: "1966-07-12",
-            1967: "1967-07-11", 1968: "1968-07-09", 1969: "1969-07-23",
-            1970: "1970-07-14", 1971: "1971-07-13", 1972: "1972-07-25",
-            1973: "1973-07-24", 1974: "1974-07-23", 1975: "1975-07-15",
-            1976: "1976-07-13", 1977: "1977-07-19", 1978: "1978-07-11",
-            1979: "1979-07-17", 1980: "1980-07-08", 1981: "1981-08-09",
-            1982: "1982-07-13", 1983: "1983-07-06", 1984: "1984-07-10",
-            1985: "1985-07-16", 1986: "1986-07-15", 1987: "1987-07-14",
-            1988: "1988-07-12", 1989: "1989-07-11", 1990: "1990-07-10",
-            1991: "1991-07-09", 1992: "1992-07-14", 1993: "1993-07-13",
-            1994: "1994-07-12", 1995: "1995-07-11", 1996: "1996-07-09",
-            1997: "1997-07-08", 1998: "1998-07-07", 1999: "1999-07-13",
-            2000: "2000-07-11", 2001: "2001-07-10", 2002: "2002-07-09",
-            2003: "2003-07-15", 2004: "2004-07-13", 2005: "2005-07-12",
-            2006: "2006-07-11", 2007: "2007-07-10", 2008: "2008-07-15",
-            2009: "2009-07-14", 2010: "2010-07-13", 2011: "2011-07-12",
-            2012: "2012-07-10", 2013: "2013-07-16", 2014: "2014-07-15",
-            2015: "2015-07-14", 2016: "2016-07-12", 2017: "2017-07-11",
-            2018: "2018-07-17", 2019: "2019-07-09",
-            # 2020: no game (COVID)
-            2021: "2021-07-13", 2022: "2022-07-19", 2023: "2023-07-11",
-            2024: "2024-07-16", 2025: "2025-07-15", 2026: "2026-07-14",
-        }
         # Check if user specified a year: "2024 all star break"
         year_match = re.search(r'\b((?:19|20)\d{2})\b', lower)
         if year_match:
@@ -320,6 +354,7 @@ class QueryPlan:
     since_year: Optional[int] = None
     end_year: Optional[int] = None  # For decade ranges: "last decade" = 2010-2019
     since_date: Optional[str] = None  # "YYYY-MM-DD" for sub-season date ranges
+    end_date: Optional[str] = None    # "YYYY-MM-DD" for closed sub-season ranges (e.g. "in the first half" = season opener → ASG break)
 
     # Filters
     league: Optional[str] = None
@@ -873,8 +908,21 @@ def decompose(question: str) -> QueryPlan:
 
     # --- Detect scope/season ---
 
-    # Date-range detection (sub-season granularity) — check before since_year
-    since_date = _detect_since_date(lower)
+    # Date-range detection (sub-season granularity) — check before since_year.
+    # First half / second half is a closed range (start AND end), so we check
+    # for it first; the open-ended "since" patterns come second.
+    half_window = _detect_half_of_season(lower)
+    if half_window:
+        plan.since_date, plan.end_date = half_window
+        plan.scope = "date_range"
+        plan.query_type = "leaderboard"
+        plan.threshold = None
+        _add_consumed(plan, "in the first second half of season the all star all-star break")
+        for token in lower.split():
+            cleaned = token.strip(",.;")
+            if re.match(r"^\d{4}$", cleaned):
+                _add_consumed(plan, cleaned)
+    since_date = _detect_since_date(lower) if not plan.since_date else None
     if since_date:
         plan.since_date = since_date
         plan.scope = "date_range"
@@ -2681,8 +2729,30 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             else:
                 return None  # Can't compute this stat from game logs
 
-        # Build WHERE
+        # Build WHERE — clauses + params in lockstep
         where_parts = [f"{gl}.date >= ?"]
+        # Closed range: "in the first half of YEAR" sets both since_date and
+        # end_date so we get start_of_season → ASG break.
+        if plan.end_date:
+            where_parts.append(f"{gl}.date <= ?")
+            query_params.append(plan.end_date)
+        # Apply filter_str (handedness, role, league, position, rookie, etc.) —
+        # required by queries like "best ERA in the second half by left-handed
+        # starters". Pre-fix this branch dropped the filter silently.
+        if filters_str:
+            # filter_str references the season table prefix (e.g. "sp.team"),
+            # but our FROM is game logs aliased as gl. Use an EXISTS subquery
+            # against the season table to apply the filter.
+            ss_table = "season_pitching_stats" if plan.is_pitching else "season_batting_stats"
+            ss_alias = "ss"
+            ss_filter = filters_str.replace(f"{prefix}.", f"{ss_alias}.")
+            where_parts.append(
+                f"EXISTS (SELECT 1 FROM {ss_table} {ss_alias} "
+                f"WHERE {ss_alias}.player_id = {gl}.player_id "
+                f"AND {ss_alias}.season = {gl}.season "
+                f"AND {ss_filter})"
+            )
+            query_params += params
         if plan.active_only:
             this_year = date.today().year
             last_year = this_year - 1
@@ -2710,9 +2780,20 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         # Format date for display
         try:
             start_dt = datetime.strptime(since_date, "%Y-%m-%d")
-            scope_label = f"Since {start_dt.strftime('%B %-d, %Y')}"
-            if date_was_floored:
-                scope_label += " (season opener)"
+            if plan.end_date:
+                end_dt = datetime.strptime(plan.end_date, "%Y-%m-%d")
+                # Closed range — show "First Half YYYY" for season-opener-to-ASG
+                if start_dt.month == 4 and start_dt.day == 1:
+                    scope_label = f"First Half {start_dt.year}"
+                else:
+                    scope_label = (
+                        f"{start_dt.strftime('%B %-d, %Y')} "
+                        f"– {end_dt.strftime('%B %-d, %Y')}"
+                    )
+            else:
+                scope_label = f"Since {start_dt.strftime('%B %-d, %Y')}"
+                if date_was_floored:
+                    scope_label += " (season opener)"
         except:
             scope_label = f"Since {since_date}"
 
