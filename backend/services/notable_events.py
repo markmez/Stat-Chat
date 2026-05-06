@@ -375,6 +375,33 @@ def _player_name(conn, player_id):
     return row[0] if row else player_id
 
 
+def _continue_with_context(base: str, continuation: str) -> str:
+    """Append a follow-up clause as a separate sentence rather than an
+    em-dash continuation. Em-dash-as-connector reads AI-generated; period
+    boundaries flow more like sportswriter prose.
+
+    - Preserves base's terminal punctuation (! stays !, ? stays ?).
+    - If the continuation begins lowercase (a noun/participial fragment
+      like "the most since X" or "matching his career high"), prepends
+      "That's" so it parses as a complete sentence.
+    - If the continuation already begins capitalized, treats it as a
+      complete sentence and appends as-is.
+    - Strips redundant trailing punctuation on `continuation` and adds
+      exactly one terminal period.
+    """
+    if not continuation:
+        return base
+    cont = continuation.strip().rstrip(".!?").strip()
+    if not cont:
+        return base
+    boundary = " " if base.rstrip().endswith(("!", "?", ".")) else ". "
+    if cont[0].isupper():
+        sentence = cont + "."
+    else:
+        sentence = "That's " + cont + "."
+    return base.rstrip() + boundary + sentence
+
+
 def _player_team_display(conn, player_id, season):
     """Get team display name for a player in a season."""
     row = conn.execute(
@@ -523,7 +550,7 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
                     )
 
     if mlb_phrase and team_phrase:
-        return mlb_phrase.rstrip(".") + " — and " + team_phrase
+        return mlb_phrase.rstrip(".") + ", and " + team_phrase
     return mlb_phrase or team_phrase
 
 
@@ -640,8 +667,8 @@ def _rarity_context_combined(conn, condition_sql, table, exclude_season,
         return ""
     if len(parts) == 1:
         return parts[0] + "."
-    # Combine with " — and "
-    return " — and ".join(parts) + "."
+    # Combine with ", and " — comma reads less AI-flagged than em-dash
+    return ", and ".join(parts) + "."
 
 
 def _rarity_last_occurrence_str(conn, condition_sql, table="game_batting_logs",
@@ -704,7 +731,7 @@ def detect_hitting_streaks(conn, season, latest_date, min_games=8):
             intro = f"{name} went {game_line}" if game_line else name
             headline = f"{intro}, extending his hitting streak to {streak} straight games"
             if context:
-                headline += f" — {context.lower()}"
+                headline = _continue_with_context(headline, context)
             else:
                 headline += "."
             events.append({
@@ -766,7 +793,7 @@ def detect_onbase_streaks(conn, season, latest_date, min_games=12):
             intro = f"{name} went {game_line}" if game_line else name
             headline = f"{intro}, extending his on-base streak to {streak} straight games"
             if context:
-                headline += f" — {context.lower()}"
+                headline = _continue_with_context(headline, context)
             else:
                 headline += "."
             events.append({
@@ -835,7 +862,7 @@ def detect_hr_streaks(conn, season, latest_date, min_games=4):
             ordinal = f"his {_ordinal(hr_total)}" if hr_total else "a"
             intro = f"{name} homered ({ordinal}) and has now gone deep in {streak} straight games"
             if context:
-                intro += f" — {context.lower()}"
+                intro = _continue_with_context(intro, context)
             else:
                 intro += "."
             headline = intro
@@ -984,7 +1011,7 @@ def _append_streak_end_event(conn, events, pid, season, latest_date, *,
     intro = f"{name} went {game_line}" if game_line else name
     headline = f"{intro}, ending his {streak}-game {label}"
     if context:
-        headline += f" — {context.lower()}"
+        headline = _continue_with_context(headline, context)
     else:
         headline += "."
 
@@ -1051,7 +1078,7 @@ def _pitching_streak_context(conn, pid, season, streak_len, condition_sql):
         return ""
     if len(parts) == 1:
         return parts[0] + "."
-    return " — and ".join(parts) + "."
+    return ", and ".join(parts) + "."
 
 
 def detect_pitching_streaks(conn, season, latest_date):
@@ -1097,7 +1124,7 @@ def detect_pitching_streaks(conn, season, latest_date):
             ctx = _pitching_streak_context(conn, pid, season, scoreless,
                                            "earned_runs = 0 AND ip_outs >= 15")
             if ctx:
-                headline = headline.rstrip(".") + f" — {ctx}"
+                headline = _continue_with_context(headline, ctx)
             events.append({
                 "headline": headline,
                 "detail": "",
@@ -1129,7 +1156,7 @@ def detect_pitching_streaks(conn, season, latest_date):
             ctx = _pitching_streak_context(conn, pid, season, qs,
                                            "ip_outs >= 18 AND earned_runs <= 3")
             if ctx:
-                headline = headline.rstrip(".") + f" — {ctx}"
+                headline = _continue_with_context(headline, ctx)
             events.append({
                 "headline": headline,
                 "detail": "",
@@ -1159,7 +1186,7 @@ def detect_pitching_streaks(conn, season, latest_date):
             ctx = _pitching_streak_context(conn, pid, season, k10,
                                            "strikeouts >= 10")
             if ctx:
-                headline = headline.rstrip(".") + f" — {ctx}"
+                headline = _continue_with_context(headline, ctx)
             events.append({
                 "headline": headline,
                 "detail": "",
@@ -1425,10 +1452,11 @@ def detect_career_milestones(conn, season, latest_date):
                         )
                         if ctx:
                             rank, last_name, last_year = ctx
-                            headline = headline.rstrip("!") + (
-                                f" — the {_ordinal(rank)} player ever to reach {m:,} "
+                            headline = _continue_with_context(
+                                headline,
+                                f"the {_ordinal(rank)} player ever to reach {m:,} "
                                 f"{label.replace('career ', '')}, and the first since "
-                                f"{last_name} in {last_year}."
+                                f"{last_name} in {last_year}",
                             )
                     events.append({
                         "headline": headline,
@@ -1515,10 +1543,11 @@ def detect_career_milestones(conn, season, latest_date):
                         )
                         if ctx:
                             rank, last_name, last_year = ctx
-                            headline = headline.rstrip("!") + (
-                                f" — the {_ordinal(rank)} pitcher ever to reach {m:,} "
+                            headline = _continue_with_context(
+                                headline,
+                                f"the {_ordinal(rank)} pitcher ever to reach {m:,} "
                                 f"{label.replace('career ', '')}, and the first since "
-                                f"{last_name} in {last_year}."
+                                f"{last_name} in {last_year}",
                             )
                     events.append({
                         "headline": headline,
@@ -1584,11 +1613,11 @@ def detect_rarities(conn, season, latest_date):
                         exclude_season=season, player_id=pid,
                     )
                     if context:
-                        headline = headline.rstrip(".") + f" — {context}"
+                        headline = _continue_with_context(headline, context)
                 elif use_first_this_season:
                     if _is_first_this_season(conn, check["history_sql"],
                                              "game_batting_logs", season, game_date):
-                        headline = headline.rstrip(".") + " — the first this season."
+                        headline = _continue_with_context(headline, "the first this season")
 
                 events.append({
                     "headline": headline, "detail": "",
@@ -1698,7 +1727,7 @@ def detect_rarities(conn, season, latest_date):
                 exclude_season=season, player_id=pid,
             )
             if context:
-                headline = headline.rstrip(".") + f" — {context}"
+                headline = _continue_with_context(headline, context)
             events.append({"headline": headline, "detail": "", "category": "Rarity", "game_date": game_date,
                            "player_names": [name], "team_names": [], "detection_type": "no_hitter", "priority": 1})
             continue
@@ -1712,7 +1741,7 @@ def detect_rarities(conn, season, latest_date):
                 exclude_season=season, player_id=pid,
             )
             if context:
-                headline = headline.rstrip(".") + f" — {context}"
+                headline = _continue_with_context(headline, context)
             events.append({"headline": headline, "detail": "", "category": "Rarity", "game_date": game_date,
                            "player_names": [name], "team_names": [], "detection_type": "1_hitter", "priority": 1})
 
@@ -1729,7 +1758,7 @@ def detect_rarities(conn, season, latest_date):
                 exclude_season=season, player_id=pid,
             )
             if context:
-                headline = headline.rstrip(".") + f" — {context}"
+                headline = _continue_with_context(headline, context)
             events.append({"headline": headline, "detail": "", "category": "Rarity", "game_date": game_date,
                            "player_names": [name], "team_names": [], "detection_type": "15k_game", "priority": 1})
 
@@ -1744,7 +1773,7 @@ def detect_rarities(conn, season, latest_date):
                 f"{er} earned run{'s' if er != 1 else ''}."
             )
             if _is_first_this_season(conn, "strikeouts >= 14", "game_pitching_logs", season, game_date):
-                headline = headline.rstrip(".") + " — the first 14+ strikeout game this season."
+                headline = _continue_with_context(headline, "the first 14+ strikeout game this season")
             events.append({"headline": headline, "detail": "", "category": "Rarity", "game_date": game_date,
                            "player_names": [name], "team_names": [], "detection_type": "14k_game", "priority": 2})
 
@@ -1753,7 +1782,7 @@ def detect_rarities(conn, season, latest_date):
             seen.add(key)
             headline = f"{name} threw a 2-hitter over {ip_display} innings, striking out {so}."
             if _is_first_this_season(conn, "ip_outs >= 27 AND hits <= 2", "game_pitching_logs", season, game_date):
-                headline = headline.rstrip(".") + " — the first 2-hitter this season."
+                headline = _continue_with_context(headline, "the first 2-hitter this season")
             events.append({"headline": headline, "detail": "", "category": "Rarity", "game_date": game_date,
                            "player_names": [name], "team_names": [], "detection_type": "2_hitter", "priority": 2})
 
@@ -1768,7 +1797,7 @@ def detect_rarities(conn, season, latest_date):
             else:
                 headline = f"{name} threw a complete game — {ip_display} IP, {er} ER, {so} K."
             if _is_first_this_season(conn, "ip_outs >= 27", "game_pitching_logs", season, game_date):
-                headline = headline.rstrip(".") + " — the first complete game this season."
+                headline = _continue_with_context(headline, "the first complete game this season")
             events.append({"headline": headline, "detail": "", "category": "Rarity", "game_date": game_date,
                            "player_names": [name], "team_names": [], "detection_type": "complete_game", "priority": 2})
 
@@ -2516,10 +2545,16 @@ def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
                     pct_label = round(mix_pct * 100)
                     if ops >= 0.800:
                         if not best_angle or ops > best_angle[0]:
-                            best_angle = (ops, f"{batter_name} has hit {_fmt_ops(ops)} OPS against {pitch_type.lower()}s — {pct_label}% of {pitcher_name}'s pitch mix.")
+                            best_angle = (ops, _continue_with_context(
+                                f"{batter_name} has hit {_fmt_ops(ops)} OPS against {pitch_type.lower()}s",
+                                f"{pct_label}% of {pitcher_name}'s pitch mix",
+                            ))
                     elif ops <= 0.650:
                         if not best_angle or ops < best_angle[0]:
-                            best_angle = (-ops, f"{batter_name} has struggled against {pitch_type.lower()}s ({_fmt_ops(ops)} OPS) — {pct_label}% of {pitcher_name}'s pitch mix.")
+                            best_angle = (-ops, _continue_with_context(
+                                f"{batter_name} has struggled against {pitch_type.lower()}s ({_fmt_ops(ops)} OPS)",
+                                f"{pct_label}% of {pitcher_name}'s pitch mix",
+                            ))
                 if best_angle:
                     return best_angle[1]
 
@@ -2546,9 +2581,15 @@ def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
                 ops = split[0]
                 hand_label = "lefties" if pitcher_hand == "L" else "righties"
                 if ops >= 0.800:
-                    return f"{batter_name} has hit {_fmt_ops(ops)} OPS against {hand_label} — {pitcher_name} throws {pitcher_hand}HP."
+                    return _continue_with_context(
+                        f"{batter_name} has hit {_fmt_ops(ops)} OPS against {hand_label}",
+                        f"{pitcher_name} throws {pitcher_hand}HP",
+                    )
                 elif ops <= 0.650:
-                    return f"{batter_name} has hit just {_fmt_ops(ops)} OPS against {hand_label} — {pitcher_name} throws {pitcher_hand}HP."
+                    return _continue_with_context(
+                        f"{batter_name} has hit just {_fmt_ops(ops)} OPS against {hand_label}",
+                        f"{pitcher_name} throws {pitcher_hand}HP",
+                    )
 
         # --- Tier 4: PELT current form ---
         cur.execute("""
@@ -2691,8 +2732,11 @@ def detect_on_this_date(conn, season, latest_date, target_date=None, attach_date
         headline = f"On this date in {yr}, {name} hit {hr} home runs"
         if opp_name:
             headline += f" against the {opp_name}"
-        headline += (f", going {h}-for-{ab} with {rbi or 0} RBI — tied the MLB "
-                     f"single-game record (only {total_4hr} times ever).")
+        headline += f", going {h}-for-{ab} with {rbi or 0} RBI"
+        headline = _continue_with_context(
+            headline,
+            f"tied the MLB single-game record (only {total_4hr} times ever)",
+        )
         _append(headline, [name], [opp_name] if opp_name else [])
 
     # --- 5+ XBH games (ties MLB single-game XBH record; never 6) ---
@@ -2722,8 +2766,11 @@ def detect_on_this_date(conn, season, latest_date, target_date=None, attach_date
         headline = f"On this date in {yr}, {name} had {combo}"
         if opp_name:
             headline += f" against the {opp_name}"
-        headline += (f", going {h}-for-{ab} with {rbi or 0} RBI — tied the MLB "
-                     f"single-game extra-base hit record (only {total_5xbh} times ever).")
+        headline += f", going {h}-for-{ab} with {rbi or 0} RBI"
+        headline = _continue_with_context(
+            headline,
+            f"tied the MLB single-game extra-base hit record (only {total_5xbh} times ever)",
+        )
         _append(headline, [name], [opp_name] if opp_name else [])
 
     # --- 18+ K games ---
@@ -2746,7 +2793,9 @@ def detect_on_this_date(conn, season, latest_date, target_date=None, attach_date
         headline = f"On this date in {yr}, {name} struck out {so} in {ip_display} innings"
         if opp_name:
             headline += f" against the {opp_name}"
-        headline += f" — one of only {total_18k} 18+ K games in MLB history."
+        headline = _continue_with_context(
+            headline, f"one of only {total_18k} 18+ K games in MLB history"
+        )
         _append(headline, [name], [opp_name] if opp_name else [])
 
     # --- 10+ RBI games (with extreme-combo callouts) ---
@@ -2780,16 +2829,16 @@ def detect_on_this_date(conn, season, latest_date, target_date=None, attach_date
         # Pick most specific rarity first
         if rbi >= 12 and hr >= 3 and h >= 5:
             n = _combo_count(12, 3, 5)
-            suffix = f" — one of only {n} games ever with 12+ RBI, 3+ HR, and 5+ hits"
+            rarity = f"one of only {n} games ever with 12+ RBI, 3+ HR, and 5+ hits"
         elif rbi >= 10 and hr >= 3 and h >= 6:
             n = _combo_count(10, 3, 6)
-            suffix = f" — one of only {n} games ever with 10+ RBI, 3+ HR, and 6+ hits"
+            rarity = f"one of only {n} games ever with 10+ RBI, 3+ HR, and 6+ hits"
         elif rbi >= 11:
             n = _combo_count(11, 0, 0)
-            suffix = f" — one of only {n} games ever with {rbi}+ RBI"
+            rarity = f"one of only {n} games ever with {rbi}+ RBI"
         else:
-            suffix = f" — one of only {total_10rbi} 10+ RBI games in MLB history"
-        headline += suffix + "."
+            rarity = f"one of only {total_10rbi} 10+ RBI games in MLB history"
+        headline = _continue_with_context(headline, rarity)
         _append(headline, [name], [opp_name] if opp_name else [])
 
     # Iconic career milestone crossings on this date — from historic_moments table.
@@ -2813,10 +2862,9 @@ def detect_on_this_date(conn, season, latest_date, target_date=None, attach_date
         """, (month_day, season)).fetchall()
         for pname, yr, stat, threshold, context, rank_, total_ in moments:
             rank_phrase = _rank_phrase(rank_, total_, stat, threshold)
-            headline = f"On this date in {yr}, {pname} {context}"
+            headline = f"On this date in {yr}, {pname} {context}."
             if rank_phrase:
-                headline += f" — {rank_phrase}"
-            headline += "."
+                headline = _continue_with_context(headline, rank_phrase)
             events.append({
                 "headline": headline,
                 "detail": "",

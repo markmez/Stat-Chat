@@ -18,6 +18,23 @@ def _player_name(conn, player_id):
     return row[0] if row else player_id
 
 
+def _continue_with_context(base: str, continuation: str) -> str:
+    """Append a follow-up clause as a separate sentence rather than an
+    em-dash continuation. Mirrors the helper in notable_events.py — kept
+    local here to avoid a circular import."""
+    if not continuation:
+        return base
+    cont = continuation.strip().rstrip(".!?").strip()
+    if not cont:
+        return base
+    boundary = " " if base.rstrip().endswith(("!", "?", ".")) else ". "
+    if cont[0].isupper():
+        sentence = cont + "."
+    else:
+        sentence = "That's " + cont + "."
+    return base.rstrip() + boundary + sentence
+
+
 def _team_display(conn, player_id, season):
     row = conn.execute(
         "SELECT team FROM season_batting_stats WHERE player_id = ? AND season = ?",
@@ -1555,9 +1572,11 @@ def template_facts(conn, facts, season, latest_date):
                 secondary_names.append(last["player"])
 
             if game_line:
-                headline = f"{player} went {game_line}, and {label} — {context}."
+                headline = _continue_with_context(
+                    f"{player} went {game_line}, and {label}", context
+                )
             else:
-                headline = f"{player} {label} — {context}."
+                headline = _continue_with_context(f"{player} {label}", context)
 
         elif f["type"].startswith("cross_season_"):
             streak = f["streak"]
@@ -1605,7 +1624,10 @@ def template_facts(conn, facts, season, latest_date):
                 context = f"only {len(hist)} pitchers have done this in over 100 years, the last being {last['player']} in {last['season']}"
                 secondary_names.append(last["player"])
 
-            headline = f"{game_intro}, reaching {k} K and 0 BB through his first 2 starts of the season — {context}."
+            headline = _continue_with_context(
+                f"{game_intro}, reaching {k} K and 0 BB through his first 2 starts of the season",
+                context,
+            )
 
         elif f["type"] == "scoreless_first_n_starts":
             ip = f["ip"]
@@ -1630,7 +1652,9 @@ def template_facts(conn, facts, season, latest_date):
             elif not mlb_match and team_match and franchise_name:
                 ctx_parts.append(f"the first {franchise_name} pitcher to do it since {team_match['name']} in {team_match['season']}")
             if ctx_parts:
-                headline = headline.rstrip(".") + " — " + " — and ".join(ctx_parts) + "."
+                headline = _continue_with_context(
+                    headline, ", and ".join(ctx_parts)
+                )
 
         elif f["type"] == "team_fewest_er":
             er = f["er"]
@@ -1638,13 +1662,16 @@ def template_facts(conn, facts, season, latest_date):
             rank = f["rank"]
 
             if rank == 1:
-                headline = f"The {team} have allowed just {er} earned runs through {games} games — the fewest by any team in over 100 years."
+                headline = _continue_with_context(
+                    f"The {team} have allowed just {er} earned run{'s' if er != 1 else ''} through {games} games",
+                    "the fewest by any team in over 100 years",
+                )
             elif rank <= 5:
                 hist_str = ", ".join(f"the {h['season']} {h['team']} ({h['er']})"
                                    for h in hist[:3])
-                headline = f"The {team} have allowed just {er} earned runs through {games} games, #{rank} all-time behind only {hist_str}."
+                headline = f"The {team} have allowed just {er} earned run{'s' if er != 1 else ''} through {games} games, #{rank} all-time behind only {hist_str}."
             else:
-                headline = f"The {team} have allowed just {er} earned runs through {games} games, #{rank} all-time."
+                headline = f"The {team} have allowed just {er} earned run{'s' if er != 1 else ''} through {games} games, #{rank} all-time."
 
         elif f["type"] == "team_starter_era":
             era = f["era"]
@@ -1654,7 +1681,10 @@ def template_facts(conn, facts, season, latest_date):
             rank = f["rank"]
 
             if rank == 1:
-                headline = f"The {team}'s starters have a {era:.2f} ERA ({er} ER in {ip} IP) through {games} games — the lowest by any team's starters in over 100 years."
+                headline = _continue_with_context(
+                    f"The {team}'s starters have a {era:.2f} ERA ({er} ER in {ip} IP) through {games} games",
+                    "the lowest by any team's starters in over 100 years",
+                )
             elif rank <= 5:
                 hist_str = ", ".join(
                     f"the {h['season']} {h['team']} ({h['era_x100'] / 100:.2f})"
@@ -1685,10 +1715,16 @@ def template_facts(conn, facts, season, latest_date):
             else:
                 if ahead:
                     ahead_str = ", ".join(f"{a['player']} ({a['value']}, {a['season']})" for a in ahead[:3])
-                    headline = f"{game_intro}, giving him {val} {stat_label} in his first {cg} career games — #{rank} all-time, behind only {ahead_str}."
+                    headline = _continue_with_context(
+                        f"{game_intro}, giving him {val} {stat_label} in his first {cg} career games",
+                        f"#{rank} all-time, behind only {ahead_str}",
+                    )
                     secondary_names.extend(a["player"] for a in ahead[:3])
                 else:
-                    headline = f"{game_intro}, giving him {val} {stat_label} in his first {cg} career games — #{rank} all-time."
+                    headline = _continue_with_context(
+                        f"{game_intro}, giving him {val} {stat_label} in his first {cg} career games",
+                        f"#{rank} all-time",
+                    )
 
         elif f["type"] == "youngest_debut":
             age = f["age_years"]

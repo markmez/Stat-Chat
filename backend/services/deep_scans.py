@@ -97,6 +97,22 @@ def _ordinal(n):
     return f"{n}th"
 
 
+def _continue_with_context(base: str, continuation: str) -> str:
+    """Append a follow-up clause as a separate sentence rather than an
+    em-dash continuation. Mirrors the helper in notable_events.py."""
+    if not continuation:
+        return base
+    cont = continuation.strip().rstrip(".!?").strip()
+    if not cont:
+        return base
+    boundary = " " if base.rstrip().endswith(("!", "?", ".")) else ". "
+    if cont[0].isupper():
+        sentence = cont + "."
+    else:
+        sentence = "That's " + cont + "."
+    return base.rstrip() + boundary + sentence
+
+
 def _format_avg(val):
     if val is None: return "--"
     return f".{int(val * 1000):03d}"
@@ -233,12 +249,13 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                     "type": "deep_scan",
                     "scan": "slash_line_season",
                     "player": pname, "team": team or "",
-                    "detail": (
+                    "detail": _continue_with_context(
                         f"{pname} is posting a {ops_display} OPS "
                         f"({_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)}) "
-                        f"through {games} games — the last {franchise_name} player to "
-                        f"post an OPS that high through {games} games was "
-                        f"{last_team['name']} in {last_team['season']}."
+                        f"through {games} games",
+                        f"the last {franchise_name} player to post an OPS "
+                        f"that high through {games} games was "
+                        f"{last_team['name']} in {last_team['season']}",
                     ),
                 })
                 _set_cooldown(pid, "ops_season", team_gap)
@@ -251,11 +268,12 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "type": "deep_scan",
                         "scan": "slash_line_season",
                         "player": pname, "team": team or "",
-                        "detail": (
+                        "detail": _continue_with_context(
                             f"{pname} is posting a {ops_display} OPS "
                             f"({_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)}) "
-                            f"through {games} games — the last player to post an OPS that high through {games} games was "
-                            f"{last_match['name']} in {last_match['season']} ({years_ago} years ago)."
+                            f"through {games} games",
+                            f"the last player to post an OPS that high through {games} games was "
+                            f"{last_match['name']} in {last_match['season']} ({years_ago} years ago)",
                         ),
                     })
                     _set_cooldown(pid, "ops_season", years_ago)
@@ -265,10 +283,11 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                     "type": "deep_scan",
                     "scan": "slash_line_season",
                     "player": pname, "team": team or "",
-                    "detail": (
+                    "detail": _continue_with_context(
                         f"{pname} is posting a {ops_display} OPS "
                         f"({_format_avg(avg)}/{_format_avg(obp_val)}/{_format_avg(slg)}) "
-                        f"through {games} games — no player in our records has posted an OPS that high through {games} games."
+                        f"through {games} games",
+                        f"no player in our records has posted an OPS that high through {games} games",
                     ),
                 })
                 _set_cooldown(pid, "ops_season", 999)
@@ -293,10 +312,10 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                     "type": "deep_scan",
                     "scan": "hr_accumulation",
                     "player": pname, "team": team or "",
-                    "detail": (
-                        f"{pname} has {hr} HR through {games} games — "
+                    "detail": _continue_with_context(
+                        f"{pname} has {hr} HR through {games} games",
                         f"the last {franchise_name} player to hit that many through {games} games was "
-                        f"{last_hr_team['name']} ({last_hr_team['value']} HR) in {last_hr_team['season']}."
+                        f"{last_hr_team['name']} ({last_hr_team['value']} HR) in {last_hr_team['season']}",
                     ),
                 })
                 _set_cooldown(pid, "hr_acc", team_gap)
@@ -309,10 +328,10 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "type": "deep_scan",
                         "scan": "hr_accumulation",
                         "player": pname, "team": team or "",
-                        "detail": (
-                            f"{pname} has {hr} HR through {games} games — "
+                        "detail": _continue_with_context(
+                            f"{pname} has {hr} HR through {games} games",
                             f"the last player to hit that many through {games} games was "
-                            f"{last_hr['name']} ({last_hr['value']} HR) in {last_hr['season']}."
+                            f"{last_hr['name']} ({last_hr['value']} HR) in {last_hr['season']}",
                         ),
                     })
                     _set_cooldown(pid, "hr_acc", years_ago)
@@ -321,9 +340,9 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                     "type": "deep_scan",
                     "scan": "hr_accumulation",
                     "player": pname, "team": team or "",
-                    "detail": (
-                        f"{pname} has {hr} HR through {games} games — "
-                        f"no player in our records has reached that mark this quickly."
+                    "detail": _continue_with_context(
+                        f"{pname} has {hr} HR through {games} games",
+                        "no player in our records has reached that mark this quickly",
                     ),
                 })
                 _set_cooldown(pid, "hr_acc", 999)
@@ -348,10 +367,10 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                     "type": "deep_scan",
                     "scan": "sb_accumulation",
                     "player": pname, "team": team or "",
-                    "detail": (
-                        f"{pname} has {sb} SB through {games} games — "
+                    "detail": _continue_with_context(
+                        f"{pname} has {sb} SB through {games} games",
                         f"the last {franchise_name} player to steal that many through {games} games was "
-                        f"{last_sb_team['name']} ({last_sb_team['value']} SB) in {last_sb_team['season']}."
+                        f"{last_sb_team['name']} ({last_sb_team['value']} SB) in {last_sb_team['season']}",
                     ),
                 })
                 _set_cooldown(pid, "sb_acc", team_gap)
@@ -364,10 +383,10 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "type": "deep_scan",
                         "scan": "sb_accumulation",
                         "player": pname, "team": team or "",
-                        "detail": (
-                            f"{pname} has {sb} SB through {games} games — "
+                        "detail": _continue_with_context(
+                            f"{pname} has {sb} SB through {games} games",
                             f"the last player to steal that many through {games} games was "
-                            f"{last_sb['name']} ({last_sb['value']} SB) in {last_sb['season']}."
+                            f"{last_sb['name']} ({last_sb['value']} SB) in {last_sb['season']}",
                         ),
                     })
                     _set_cooldown(pid, "sb_acc", years_ago)
@@ -392,10 +411,10 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                     "type": "deep_scan",
                     "scan": "power_speed",
                     "player": pname, "team": team or "",
-                    "detail": (
-                        f"{pname} has {hr} HR and {sb} SB through {games} games — "
+                    "detail": _continue_with_context(
+                        f"{pname} has {hr} HR and {sb} SB through {games} games",
                         f"the last {franchise_name} player with that power-speed combo through {games} games was "
-                        f"{last_ps_team['name']} ({last_ps_team['hr']} HR, {last_ps_team['sb']} SB) in {last_ps_team['season']}."
+                        f"{last_ps_team['name']} ({last_ps_team['hr']} HR, {last_ps_team['sb']} SB) in {last_ps_team['season']}",
                     ),
                 })
                 _set_cooldown(pid, "power_speed", team_gap)
@@ -408,10 +427,10 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "type": "deep_scan",
                         "scan": "power_speed",
                         "player": pname, "team": team or "",
-                        "detail": (
-                            f"{pname} has {hr} HR and {sb} SB through {games} games — "
+                        "detail": _continue_with_context(
+                            f"{pname} has {hr} HR and {sb} SB through {games} games",
                             f"the last player with that power-speed combo through {games} games was "
-                            f"{last_ps['name']} ({last_ps['hr']} HR, {last_ps['sb']} SB) in {last_ps['season']}."
+                            f"{last_ps['name']} ({last_ps['hr']} HR, {last_ps['sb']} SB) in {last_ps['season']}",
                         ),
                     })
                     _set_cooldown(pid, "power_speed", years_ago)
@@ -466,11 +485,12 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                     "type": "deep_scan",
                     "scan": "pitching_dominance",
                     "player": pname, "team": team or "",
-                    "detail": (
+                    "detail": _continue_with_context(
                         f"{pname} has a {era:.2f} ERA with {total_k} K through {starts} starts "
-                        f"({ip_display} IP) — the last {franchise_name} pitcher to do that through "
+                        f"({ip_display} IP)",
+                        f"the last {franchise_name} pitcher to do that through "
                         f"{starts} starts was {last_dom_team['name']} "
-                        f"({last_dom_team['era']:.2f} ERA, {last_dom_team['k']} K) in {last_dom_team['season']}."
+                        f"({last_dom_team['era']:.2f} ERA, {last_dom_team['k']} K) in {last_dom_team['season']}",
                     ),
                 })
                 _set_cooldown(pid, "pitch_dom", team_gap)
@@ -483,10 +503,11 @@ def run_deep_scans(conn, season, target_date, cooldowns=None):
                         "type": "deep_scan",
                         "scan": "pitching_dominance",
                         "player": pname, "team": team or "",
-                        "detail": (
+                        "detail": _continue_with_context(
                             f"{pname} has a {era:.2f} ERA with {total_k} K through {starts} starts "
-                            f"({ip_display} IP) — the last pitcher to do that through {starts} starts was "
-                            f"{last_dom['name']} ({last_dom['era']:.2f} ERA, {last_dom['k']} K) in {last_dom['season']}."
+                            f"({ip_display} IP)",
+                            f"the last pitcher to do that through {starts} starts was "
+                            f"{last_dom['name']} ({last_dom['era']:.2f} ERA, {last_dom['k']} K) in {last_dom['season']}",
                         ),
                     })
                     _set_cooldown(pid, "pitch_dom", years_ago)

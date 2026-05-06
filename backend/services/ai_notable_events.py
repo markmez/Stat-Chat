@@ -460,11 +460,12 @@ STYLE RULES:
 - Do NOT restate the box score as your impact text. The stat line is shown separately; your text must add a comparison, anchor, or context that isn't already visible in the numbers.
 - Career year/season count is interesting only at extremes (debut, 2nd year, 15+ year veteran).
 - 162-game pace projections: note as fact, don't editorialize about sustainability.
-- NEVER use dangling references — every stat must be introduced before being referenced ("the 5 steals" requires earlier mention).
+- NEVER use dangling references; every stat must be introduced before being referenced ("the 5 steals" requires earlier mention).
 - Be explicit when comparing to prior periods ("on a similar pace to" or "already has X, took until August last year").
 - Over short spans (<20 games), use rate stats (".417 over 12 games") not cumulative ("25 hits in 12 games").
 - Never name another player without explaining who they are and why the comparison matters.
-- Any RANKING claim ("Nth all-time", "Nth-longest", "best since X") MUST name the metric being ranked in the same clause. "His 5-game HR streak — 4th all-time at this point in a season" is fine; "His 5-game HR streak — #4 all-time" is not (4th in WHAT?)."""
+- Any RANKING claim ("Nth all-time", "Nth-longest", "best since X") MUST name the metric being ranked in the same clause. "His 5-game HR streak, 4th all-time at this point in a season" is fine; "His 5-game HR streak, #4 all-time" is not (4th in WHAT?).
+- AVOID em-dashes (— or --) as connectors between clauses. Em-dash-as-connector reads AI-generated. Use a period boundary with a fresh sentence ("That's...", "It's...") or a comma when joining tightly-related clauses. Em-dashes are fine inside a stat list ("complete game — 9.0 IP, 12 K, 1 hit") but not as a substitute for a period."""
 
 
 _VERIFIER_SYSTEM = """You verify baseball headlines against a data snapshot.
