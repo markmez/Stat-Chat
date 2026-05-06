@@ -369,6 +369,7 @@ class QueryPlan:
     since_date: Optional[str] = None  # "YYYY-MM-DD" for sub-season date ranges
     end_date: Optional[str] = None    # "YYYY-MM-DD" for closed sub-season ranges (e.g. "in the first half" = season opener → ASG break)
     recurring_half: Optional[str] = None  # "first_half" | "second_half" — multi-season recurring window combined with since_year
+    month_grouped: bool = False  # group game logs by (player, year, month) — "best HR in a single month all time"
 
     # Filters
     league: Optional[str] = None
@@ -947,6 +948,28 @@ def decompose(question: str) -> QueryPlan:
             plan.recurring_half = half_window["kind"]
             plan.since_year = half_window["since_year"]
             plan.scope = f"since_{half_window['since_year']}"
+    # Month-grouped leaderboard: "most HR in a single month all time", "best
+    # OPS in any calendar month since 2010". Aggregates game logs by
+    # (player, year, month) and ranks the resulting player-month rows.
+    # Distinct from single-month parser (parse_month_query) which picks one
+    # specific month for one specific player. Triggers must be specific —
+    # bare "in May" must NOT fire this.
+    if not plan.recurring_half and not plan.since_date:
+        month_grouped_triggers = [
+            "in a single month", "in any single month", "in any one month",
+            "in one month", "in a calendar month", "in any calendar month",
+            "in any month", "in a month all time", "in a month ever",
+            "single month all time", "single month ever", "best single month",
+            "best month all time", "best month ever",
+            "monthly leaderboard",
+        ]
+        if any(t in lower for t in month_grouped_triggers):
+            plan.month_grouped = True
+            plan.query_type = "leaderboard"
+            plan.threshold = None
+            _add_consumed(plan,
+                "in a single any one calendar month monthly leaderboard best ever all time")
+
     since_date = _detect_since_date(lower) if not plan.since_date else None
     if since_date:
         plan.since_date = since_date
@@ -999,7 +1022,7 @@ def decompose(question: str) -> QueryPlan:
     # season since 2020" is grammatical, not a single-season-records signal,
     # and we want to keep the since_year scope already chosen.
     single_season_triggers = ["single season", "in a season", "in a year", "of a season"]
-    if any(t in lower for t in single_season_triggers) and not plan.recurring_half:
+    if any(t in lower for t in single_season_triggers) and not plan.recurring_half and not plan.month_grouped:
         plan.scope = "all_time"  # all_time = best single season records
         _add_consumed(plan, "single season in a season in a year")
 
@@ -1495,7 +1518,7 @@ def decompose(question: str) -> QueryPlan:
     # streak detections. The word "first" in "first half" otherwise trips the
     # streak_context flag and a generic "home run" / "hit" stat keyword would
     # then misroute to streak_sequence.
-    if plan.recurring_half or plan.since_date:
+    if plan.recurring_half or plan.since_date or plan.month_grouped:
         has_streak_context = False
 
     streak_detected = False
@@ -2708,6 +2731,164 @@ def _execute_recurring_half_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     return "\n".join(parts)
 
 
+def _execute_month_grouped_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
+    """Top single-month performances across history.
+
+    Powers queries like "most home runs in a single month all time" or
+    "best OPS in any calendar month since 2010". Game logs are aggregated
+    by (player_id, year, month) so the same player can appear multiple
+    times — once per qualifying month-season.
+
+    Scope handling:
+      - since_year set     → year >= since_year (with optional end_year cap)
+      - season set         → year = season (best month within that season)
+      - else               → all-time
+
+    Qualifiers:
+      - batting rate stats: 80 PA in the month (~half of full-month PA)
+      - pitching rate stats: 90 ip_outs (30 IP) in the month
+      - counting stats: no qualifier; April/October naturally trail because
+        of partial months.
+    """
+    if not plan.stat and not plan.derived_stat:
+        return None
+    is_pitching = plan.is_pitching
+    gl_table = "game_pitching_logs" if is_pitching else "game_batting_logs"
+    gl = "gl"
+    is_rate = (plan.stat and plan.stat.is_rate) or (
+        plan.derived_stat and _DERIVED_STATS.get(plan.derived_stat, {}).get("is_rate", False)
+    )
+
+    is_lower_better = plan.stat and plan.stat.db_column in _LOWER_IS_BETTER
+    if plan.sort_asc and is_lower_better:
+        order = "DESC"
+    elif plan.sort_asc:
+        order = "ASC"
+    elif is_lower_better:
+        order = "ASC"
+    else:
+        order = "DESC"
+
+    where_parts: list = []
+    where_params: list = []
+    if plan.since_year:
+        where_parts.append(f"{gl}.season >= ?")
+        where_params.append(plan.since_year)
+    if plan.end_year:
+        where_parts.append(f"{gl}.season <= ?")
+        where_params.append(plan.end_year)
+    if plan.season and not plan.since_year:
+        where_parts.append(f"{gl}.season = ?")
+        where_params.append(plan.season)
+
+    if is_pitching:
+        rate_formulas = {
+            "era": f"9.0 * SUM({gl}.earned_runs) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
+            "whip": f"CAST(SUM({gl}.hits) + SUM({gl}.walks) AS REAL) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
+            "k_per_9": f"9.0 * SUM({gl}.strikeouts) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
+            "bb_per_9": f"9.0 * SUM({gl}.walks) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
+        }
+        having_clause = f"HAVING SUM({gl}.ip_outs) >= 90"
+    else:
+        rate_formulas = {
+            "batting_avg": f"CAST(SUM({gl}.hits) AS REAL) / NULLIF(SUM({gl}.at_bats), 0)",
+            "obp": (f"CAST(SUM({gl}.hits) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) AS REAL) / "
+                    f"NULLIF(SUM({gl}.at_bats) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) + SUM(COALESCE({gl}.sacrifice_flies, 0)), 0)"),
+            "slg": (f"CAST(SUM({gl}.hits) - SUM({gl}.doubles) - SUM({gl}.triples) - SUM({gl}.home_runs) "
+                    f"+ 2*SUM({gl}.doubles) + 3*SUM({gl}.triples) + 4*SUM({gl}.home_runs) AS REAL) / NULLIF(SUM({gl}.at_bats), 0)"),
+            "ops": (f"(CAST(SUM({gl}.hits) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) AS REAL) / "
+                    f"NULLIF(SUM({gl}.at_bats) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) + SUM(COALESCE({gl}.sacrifice_flies, 0)), 0)) + "
+                    f"(CAST(SUM({gl}.hits) - SUM({gl}.doubles) - SUM({gl}.triples) - SUM({gl}.home_runs) "
+                    f"+ 2*SUM({gl}.doubles) + 3*SUM({gl}.triples) + 4*SUM({gl}.home_runs) AS REAL) / NULLIF(SUM({gl}.at_bats), 0))"),
+            "iso": f"CAST(SUM({gl}.doubles) + 2*SUM({gl}.triples) + 3*SUM({gl}.home_runs) AS REAL) / NULLIF(SUM({gl}.at_bats), 0)",
+        }
+        having_clause = f"HAVING SUM({gl}.plate_appearances) >= 80"
+
+    stat_col = plan.stat.db_column if plan.stat else (plan.derived_stat or "")
+    if is_rate and stat_col in rate_formulas:
+        stat_expr = rate_formulas[stat_col]
+    elif plan.stat and not is_rate:
+        stat_expr = f"SUM({gl}.{stat_col})"
+        having_clause = ""
+    elif plan.derived_stat and plan.derived_stat in rate_formulas:
+        stat_expr = rate_formulas[plan.derived_stat]
+    else:
+        return None
+
+    table, prefix = _table_and_prefix(plan)
+    filters_str, fparams = _build_filters(plan, prefix, conn)
+    if filters_str:
+        ss_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+        ss_alias = "ss"
+        ss_filter = filters_str.replace(f"{prefix}.", f"{ss_alias}.")
+        where_parts.append(
+            f"EXISTS (SELECT 1 FROM {ss_table} {ss_alias} "
+            f"WHERE {ss_alias}.player_id = {gl}.player_id "
+            f"AND {ss_alias}.season = {gl}.season "
+            f"AND {ss_filter})"
+        )
+        where_params += fparams
+
+    where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+    sql = (
+        f"SELECT p.name, {gl}.season, "
+        f"CAST(strftime('%m', {gl}.date) AS INTEGER) AS mo, "
+        f"{stat_expr} AS stat_val "
+        f"FROM {gl_table} {gl} "
+        f"JOIN players p ON {gl}.player_id = p.player_id "
+        f"{where} "
+        f"GROUP BY {gl}.player_id, {gl}.season, mo "
+        f"{having_clause} "
+        f"ORDER BY stat_val {order} LIMIT ?"
+    )
+    cur = conn.cursor()
+    try:
+        cur.execute(sql, tuple(where_params + [plan.limit]))
+    except Exception as e:
+        return f"Could not run month-grouped query: {e}"
+    rows = cur.fetchall()
+
+    direction_label = "Fewest " if (plan.sort_asc and not is_rate) else ""
+    if plan.sort_asc and is_rate:
+        direction_label = "Worst " if is_lower_better else "Lowest "
+    title_stat = plan.stat.display_name if plan.stat else (
+        _DERIVED_STATS[plan.derived_stat]["name"] if plan.derived_stat else ""
+    )
+    if plan.since_year and plan.end_year:
+        scope_phrase = f"{plan.since_year}-{plan.end_year}"
+    elif plan.since_year:
+        scope_phrase = f"Since {plan.since_year}"
+    elif plan.season:
+        scope_phrase = str(plan.season)
+    else:
+        scope_phrase = "All-Time"
+    title = f"**{direction_label}{title_stat} in a Single Month — {scope_phrase}**\n"
+    if not rows:
+        return f"{title}\nNo qualifying months found."
+
+    abbrev = plan.stat.display_abbrev if plan.stat else (
+        _DERIVED_STATS[plan.derived_stat]["display"] if plan.derived_stat else ""
+    )
+    month_names = ["", "January", "February", "March", "April", "May", "June",
+                   "July", "August", "September", "October", "November", "December"]
+    parts = [title, "[TIP]Tap a player name for their full profile.[/TIP]", "[LEADERBOARD]"]
+    parts.append(f"HEADER: {abbrev}, Month")
+    for name, season_yr, mo, stat_val in rows:
+        if is_rate:
+            val_str = _format_rate(stat_val)
+        else:
+            val_str = _format_val(stat_col, stat_val, is_rate=False)
+        mo_idx = int(mo) if mo is not None else 0
+        month_label = f"{month_names[mo_idx]} {season_yr}" if 1 <= mo_idx <= 12 else f"{season_yr}"
+        parts.append(f"ROW {name}: {val_str}, {month_label}")
+    parts.append("[/LEADERBOARD]")
+    if is_rate:
+        qual_note = "Min. 30.0 IP" if is_pitching else "Min. 80 PA"
+        parts.append(f"\n_{qual_note} in the month._")
+    return "\n".join(parts)
+
+
 def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     """Standard stat leaderboard."""
     # Recurring-window queries ("first half of a season since 2020") aggregate
@@ -2716,6 +2897,8 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     # built from _ASG_DATES — handle in a dedicated executor.
     if plan.recurring_half:
         return _execute_recurring_half_leaderboard(conn, plan)
+    if plan.month_grouped:
+        return _execute_month_grouped_leaderboard(conn, plan)
     table, prefix = _table_and_prefix(plan)
     stat_expr, abbrev, name, is_rate = _stat_expr(plan, prefix)
     filters_str, params = _build_filters(plan, prefix, conn)
