@@ -1102,12 +1102,19 @@ def decompose(question: str) -> QueryPlan:
     if any(t in lower for t in any_season_triggers):
         plan.scope = "all_time"
         plan.season = None
-        # Promote any career_game_window scope=season to "career" so the
-        # cumulative window executor drops the year filter and aggregates
-        # across all seasons (semantically: "for each player-season, the
-        # first N games window — return best across all such pairs").
-        if plan.career_game_window and plan.career_game_window.get("scope") == "season":
-            plan.career_game_window["scope"] = "career"
+        # NOTE: We previously promoted career_game_window.scope to "career"
+        # here so the cumulative executor would drop the year filter. That
+        # was wrong for per-game-each (streak_sequence) queries — it forced
+        # career-debut grouping instead of per-season grouping, so "8+ K in
+        # each of first 3 starts of any season" returned only debut-window
+        # matches (Tanaka, Strasburg) instead of all qualifying
+        # player-seasons. Leave career_game_window.scope as "season" so the
+        # streak executor's season-mode (group by player+season) runs;
+        # plan.scope="all_time" alone drops the SQL season filter.
+        # The cumulative path's "any season" support is a separate gap —
+        # the cumulative executor doesn't currently have per-season
+        # grouping; "best OPS in first 50 games of any season" still
+        # routes to the (incomplete) career-debut branch there.
         _add_consumed(plan, "any season year of his their across all seasons years")
 
     # "active" filter — current or previous year has stats
@@ -1804,8 +1811,19 @@ def decompose(question: str) -> QueryPlan:
             # IP stored as outs: 6 IP = 18 outs.
             sql_t = t_int * 3 if col == "ip_outs" and isinstance(t_int, (int, float)) else t_int
             abbrev = stat_obj.display_abbrev or stat_obj.db_column.upper()
-            op_label = "+" if op == ">=" else (op + " ")
-            label = f"{t_int}{op_label} {abbrev}"
+            # Label format:
+            #   0 + <stat>     →  "0 BB" (zero is unambiguous after threshold-zero flip)
+            #   N + ≥ filter   →  "N+ HR"
+            #   N + ≤ filter   →  "≤N HR"
+            #   N + > / < / =  →  "{op} N HR"
+            if t_int == 0:
+                label = f"0 {abbrev}"
+            elif op == ">=":
+                label = f"{t_int}+ {abbrev}"
+            elif op == "<=":
+                label = f"≤{t_int} {abbrev}"
+            else:
+                label = f"{op} {t_int} {abbrev}"
             return f"g.{col} {op} {sql_t}", label
 
         # Primary stat condition
