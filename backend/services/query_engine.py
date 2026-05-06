@@ -1363,15 +1363,28 @@ def decompose(question: str) -> QueryPlan:
         _add_consumed(plan, "starter starters starting reliever relievers relief closer closers bullpen")
         plan.is_pitching = True
 
-    # Bare "pitcher/pitching" context (without starter/reliever) still means pitching
-    if not plan.is_pitching and any(w in lower for w in ["pitcher", "pitchers", "pitching", "pitched"]):
-        plan.is_pitching = True
-
-    # Stats that default to pitching when no batting/pitching context is explicit
+    # Stat sets used by both the bare-pitcher gate below and downstream
+    # ambiguous-stat resolution. Defined early so the gate can consult them.
     _PITCHING_DEFAULT_STATS = {"strikeouts", "walks"}
     _AMBIGUOUS_STATS = {"strikeouts", "walks"}
     _BATTING_ONLY_STATS = {"home_runs", "rbi", "stolen_bases", "doubles", "triples",
                            "batting_avg", "obp", "slg", "ops", "ops_plus", "iso", "babip"}
+
+    # Bare "pitcher/pitching" context. By default this means "the QUERIED
+    # STATS are pitching stats" → set is_pitching=True. But when the stat
+    # is unambiguously a BATTING stat (batting_avg, OPS, HR, etc.), the
+    # "pitcher" word means "filter players to position=P" — _detect_position
+    # already populated plan.position=['P']. Setting is_pitching=True here
+    # would then route to season_pitching_stats which has no batting_avg
+    # column, the SQL fails, and the chain falls to Haiku unnecessarily.
+    # Example: "best batting average by a pitcher all time" — query batting
+    # stats with position=P filter, NOT pitching stats.
+    _stat_is_batting_only = (
+        plan.stat and plan.stat.db_column in _BATTING_ONLY_STATS
+    )
+    if not plan.is_pitching and any(w in lower for w in ["pitcher", "pitchers", "pitching", "pitched"]):
+        if not _stat_is_batting_only:
+            plan.is_pitching = True
     has_batting_context = any(w in lower for w in ["hitter", "hitters", "batter", "batters", "batting", "hitting", "players"])
     # Extra filters containing batting-only stats imply batting context
     # e.g., "fewest strikeouts with 30+ HR" — HR is batting-only, so K must be batting too
