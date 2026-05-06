@@ -3552,9 +3552,14 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         else:
             scope_label = "All-Time"
 
-        # For counting stats with "since", aggregate across seasons per player
-        # Exception: rookie queries — each player only has one rookie season, show per-season
-        if plan.since_year and not is_rate and not plan.rookie:
+        # For counting stats with "since YYYY" scope, aggregate across
+        # seasons per player ("most wins by LHP since 2020" → cumulative
+        # wins). When the user explicitly said "in a season" / "single
+        # season", the single_season_triggers detector promoted scope to
+        # "all_time" — that intent is "best single-season since YYYY",
+        # which falls through to per-season ranking with year column.
+        # Rookie queries always per-season (one season per player).
+        if plan.scope.startswith("since_") and not is_rate and not plan.rookie:
             if plan.derived_stat:
                 # Derived formula: replace "s.col" with "SUM(s.col)" for aggregation
                 d = _DERIVED_STATS[plan.derived_stat]
