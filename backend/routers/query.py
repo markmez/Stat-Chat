@@ -14,6 +14,7 @@ SSE event format:
 import json
 import asyncio
 import logging
+import time
 from typing import Optional
 
 from fastapi import APIRouter
@@ -1228,6 +1229,13 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
 async def _stream(question: str, device_id: str, history: list[dict], contextual: bool = False, input_method: str = "keyboard"):
     """Core pipeline: quota check → route → SQL → execute → stream answer."""
     original_question = question  # Before any rewriting
+    # Wall-clock at handler entry. Every log_query call below passes
+    # duration_ms so the dashboard can surface slow queries and we can
+    # later prioritize materialization based on real latency × volume.
+    t0 = time.time()
+
+    def _elapsed_ms() -> int:
+        return int((time.time() - t0) * 1000)
 
     def event(data: dict) -> str:
         return f"data: {json.dumps(data)}\n\n"
@@ -1255,7 +1263,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             return
         yield event({"type": "done"})
         increment_count(device_id)
-        log_query(question, device_id, "sonnet", input_method=input_method)
+        log_query(question, device_id, "sonnet", input_method=input_method, duration_ms=_elapsed_ms())
         return
 
     # 2. Follow-up rewrite — try local patterns BEFORE interceptor so short
@@ -1270,7 +1278,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             yield event({"type": "text", "text": canned})
             yield event({"type": "done", "intercepted": True})
             increment_count(device_id)
-            log_query(question, device_id, "query engine", is_followup=True,
+            log_query(question, device_id, "query engine", is_followup=True, duration_ms=_elapsed_ms(),
                       original_query=original_question, input_method=input_method)
             return
 
@@ -1296,7 +1304,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 done_event["rewritten_query"] = local_rewrite
                 yield event(done_event)
                 increment_count(device_id)
-                log_query(local_rewrite, device_id, "query engine", is_followup=True, original_query=original_question, input_method=input_method)
+                log_query(local_rewrite, device_id, "query engine", is_followup=True, original_query=original_question, input_method=input_method, duration_ms=_elapsed_ms())
                 return
             # Local rewrite didn't intercept — use it as the question for the rest of pipeline
             question = local_rewrite
@@ -1330,7 +1338,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                         done_event["rewritten_query"] = rewritten_query
                     yield event(done_event)
                     increment_count(device_id)
-                    log_query(rewritten, device_id, "intercepted", is_followup=True, original_query=original_question, input_method=input_method)
+                    log_query(rewritten, device_id, "intercepted", is_followup=True, original_query=original_question, input_method=input_method, duration_ms=_elapsed_ms())
                     return
             # Use rewritten question for the rest of the pipeline
             question = rewritten
@@ -1346,7 +1354,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             # Analytical follow-ups don't get rewritten queries in history
             yield event({"type": "done"})
             increment_count(device_id)
-            log_query(question, device_id, "sonnet", input_method=input_method)
+            log_query(question, device_id, "sonnet", input_method=input_method, duration_ms=_elapsed_ms())
             return
 
     # 2b. Insight query detection — check before interceptor
@@ -1418,7 +1426,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         yield event(done_event)
         if not no_count:
             increment_count(device_id)
-        log_query(question, device_id, "query engine",
+        log_query(question, device_id, "query engine", duration_ms=_elapsed_ms(),
                   is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
                   input_method=input_method)
         return
@@ -1448,7 +1456,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             done_event["rewritten_query"] = rewritten_query
         yield event(done_event)
         increment_count(device_id)
-        log_query(question, device_id, "haiku",
+        log_query(question, device_id, "haiku", duration_ms=_elapsed_ms(),
                   is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
                   input_method=input_method)
         return
@@ -1480,7 +1488,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 done_event["rewritten_query"] = rewritten_query
             yield event(done_event)
             increment_count(device_id)
-            log_query(question, device_id, "sonnet",
+            log_query(question, device_id, "sonnet", duration_ms=_elapsed_ms(),
                       is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
                       input_method=input_method)
             return
@@ -1533,6 +1541,6 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         done_event["rewritten_query"] = rewritten_query
     yield event(done_event)
     increment_count(device_id)
-    log_query(question, device_id, "sonnet",
+    log_query(question, device_id, "sonnet", duration_ms=_elapsed_ms(),
               is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
               input_method=input_method)

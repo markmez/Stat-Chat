@@ -4001,16 +4001,28 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         f"— {tc.label} ({season_label})**\n"
     )
     parts = [title, "[LEADERBOARD]"]
-    parts.append(f"HEADER: {plan.stat.display_name}, {qual_label}, G")
+    # Two-column display: stat + G. The qualification metric (ip_outs / AB)
+    # is enforced internally but not surfaced — labels like "Outs" alongside
+    # ERA or "AB" alongside OPS read cluttered and mislead users about what
+    # the leaderboard's measuring. For rate stats we add a footer note with
+    # the minimum so the qualification rule is still visible.
+    parts.append(f"HEADER: {plan.stat.display_name}, G")
     for name, metric, qual, games_n in rows:
         if is_rate:
             val_str = _format_rate(metric)
         else:
             val_str = _format_val(stat_col, metric, is_rate=False)
-        qual_str = _format_val(qual_expr.split("(")[1].split(")")[0] if "(" in qual_expr else qual_expr,
-                               qual, is_rate=False)
-        parts.append(f"ROW {name}: {val_str}, {qual}, {games_n}")
+        parts.append(f"ROW {name}: {val_str}, {games_n}")
     parts.append("[/LEADERBOARD]")
+    if is_rate:
+        # Format the minimum qualifier for the footer. Pitching uses ip_outs
+        # internally; convert to IP display (3 outs = 1 inning) for clarity.
+        if qual_label == "Outs":
+            min_ip_full = int(min_qual) // 3
+            min_ip_part = int(min_qual) % 3
+            parts.append(f"\n_Min. {min_ip_full}.{min_ip_part} IP in subset._")
+        else:
+            parts.append(f"\n_Min. {int(min_qual)} {qual_label} in subset._")
 
     # Suggestion pills — offer obvious follow-ups for the same filter
     stat_lower = plan.stat.display_name.lower()

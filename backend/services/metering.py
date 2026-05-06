@@ -64,9 +64,13 @@ def init_metering_db() -> None:
 
 def log_query(query_text: str, device_id: str, response_type: str,
               is_followup: bool = False, original_query: str = None,
-              input_method: str = "keyboard") -> None:
+              input_method: str = "keyboard",
+              duration_ms: int | None = None) -> None:
     """Log a query with its response type. response_type: 'intercepted', 'haiku', 'sonnet'.
-    input_method: 'keyboard' (default), 'mic', or 'mic+keyboard'."""
+    input_method: 'keyboard' (default), 'mic', or 'mic+keyboard'.
+    duration_ms: end-to-end handler latency in milliseconds. Captured by the
+    /query handler at request entry; used by the dashboard to surface slow
+    queries and by future materialization decisions."""
     conn = sqlite3.connect(METERING_DB_PATH)
     # Add followup columns if they don't exist yet
     try:
@@ -81,9 +85,13 @@ def log_query(query_text: str, device_id: str, response_type: str,
         conn.execute("ALTER TABLE query_log ADD COLUMN input_method TEXT DEFAULT 'keyboard'")
     except Exception:
         pass
+    try:
+        conn.execute("ALTER TABLE query_log ADD COLUMN duration_ms INTEGER")
+    except Exception:
+        pass
     conn.execute(
-        "INSERT INTO query_log (query_text, device_id, response_type, timestamp, is_followup, original_query, input_method) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (query_text, device_id, response_type, _now_iso(), 1 if is_followup else 0, original_query, input_method),
+        "INSERT INTO query_log (query_text, device_id, response_type, timestamp, is_followup, original_query, input_method, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (query_text, device_id, response_type, _now_iso(), 1 if is_followup else 0, original_query, input_method, duration_ms),
     )
     conn.commit()
     conn.close()

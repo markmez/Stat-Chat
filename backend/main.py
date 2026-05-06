@@ -146,6 +146,23 @@ def ensure_indexes():
             "CREATE INDEX IF NOT EXISTS idx_career_franchise_ranks_lookup "
             "ON career_franchise_ranks(player_id, side, franchise_code)"
         )
+        # Speeds up team-context leaderboards ("most HR in night games", "best
+        # OPS in rain games", etc.). Without these, the WHERE filter on
+        # daynight/weather scans the full team_game_results table on every
+        # all-time query — multi-second latency. Composite index covers the
+        # join keys + filter columns the executor uses.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tgr_join "
+            "ON team_game_results(date, opponent, is_home, season)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tgr_daynight "
+            "ON team_game_results(daynight)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tgr_gametype "
+            "ON team_game_results(gametype)"
+        )
         conn.commit()
         conn.close()
         print("Indexes and placeholder tables ensured")

@@ -2850,6 +2850,9 @@ async def dashboard(
     # latest_context: the client_context JSON from the most recent row with this
     # query_text (NULL if the column doesn't exist yet or nothing was logged).
     # Used by click-to-expand to show error details inline without a follow-up query.
+    # avg_ms / max_ms: per-query handler latency from the duration_ms column.
+    # Used by the dashboard to flag slow queries — drives materialization
+    # decisions later when usage data shows real cost × volume.
     queries = conn.execute(f"""
         SELECT q1.query_text, COUNT(*) as cnt,
                MAX(q1.timestamp) as last_seen,
@@ -2857,12 +2860,31 @@ async def dashboard(
                (SELECT q2.client_context FROM query_log AS q2
                 WHERE q2.query_text = q1.query_text AND q2.client_context IS NOT NULL
                 ORDER BY q2.timestamp DESC LIMIT 1) AS latest_context,
-               GROUP_CONCAT(DISTINCT COALESCE(q1.input_method, 'keyboard')) as input_methods
+               GROUP_CONCAT(DISTINCT COALESCE(q1.input_method, 'keyboard')) as input_methods,
+               CAST(AVG(q1.duration_ms) AS INTEGER) AS avg_ms,
+               MAX(q1.duration_ms) AS max_ms
         FROM query_log AS q1
         WHERE 1=1{date_filter.replace('timestamp', 'q1.timestamp')}
         GROUP BY q1.query_text
         ORDER BY cnt DESC, last_seen DESC
         LIMIT 1000
+    """, date_params).fetchall()
+
+    # Slowest queries — top 20 by P95-ish latency (we don't have window funcs
+    # in SQLite < 3.25 reliably, so use MAX as a proxy for tail latency).
+    # Min sample size = 3 to avoid one-shot outliers dominating the list.
+    slowest = conn.execute(f"""
+        SELECT query_text,
+               CAST(AVG(duration_ms) AS INTEGER) AS avg_ms,
+               MAX(duration_ms) AS max_ms,
+               COUNT(*) AS samples,
+               GROUP_CONCAT(DISTINCT response_type) AS types
+        FROM query_log
+        WHERE duration_ms IS NOT NULL{date_filter}
+        GROUP BY query_text
+        HAVING samples >= 3 AND avg_ms IS NOT NULL
+        ORDER BY avg_ms DESC
+        LIMIT 20
     """, date_params).fetchall()
 
     # Breakdown by response type
@@ -2922,9 +2944,32 @@ async def dashboard(
         <td><strong>${total_cost:.3f}</strong></td>
     </tr>"""
 
+    # Build "Slowest Queries" panel — top 20 by avg latency, min 3 samples.
+    # Drives the post-launch decision about which team-context buckets are
+    # worth materializing vs. leaving live.
+    slowest_html = ""
+    for s_text, s_avg, s_max, s_samples, s_types in slowest:
+        s_escaped = s_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        s_type_list = [t.strip() for t in (s_types or "").split(",")]
+        s_type_badges = " ".join(
+            f'<span class="badge {t.replace(" ", "-")}">{t}</span>'
+            for t in s_type_list
+        )
+        slow_color = "color:#c00;font-weight:bold" if s_avg and s_avg >= 2000 else (
+            "color:#e07a00" if s_avg and s_avg >= 1000 else ""
+        )
+        slowest_html += f"""
+        <tr>
+            <td class="query-text">{s_escaped}</td>
+            <td style="{slow_color}">{s_avg or ''} ms</td>
+            <td>{s_max or ''} ms</td>
+            <td>{s_samples}</td>
+            <td>{s_type_badges}</td>
+        </tr>"""
+
     # Build query rows
     query_rows = ""
-    for text, cnt, last_seen, types, latest_context, input_methods in queries:
+    for text, cnt, last_seen, types, latest_context, input_methods, avg_ms, max_ms in queries:
         # Convert UTC timestamp to Eastern
         ts_display = _to_eastern(last_seen) if last_seen else ""
         # Build type badges (intercepting clicks so the row doesn't also expand)
@@ -2963,11 +3008,24 @@ async def dashboard(
             row_class = ""
             chevron = ""
 
+        # Latency cell: avg ms, with max in parens when notably tail-heavy
+        # (max ≥ 2× avg). Color-flag anything averaging over 1s.
+        if avg_ms is not None:
+            if max_ms and max_ms >= avg_ms * 2 and max_ms != avg_ms:
+                latency_text = f"{avg_ms} ms <span style='color:#888;font-size:11px;'>(max {max_ms})</span>"
+            else:
+                latency_text = f"{avg_ms} ms"
+            slow_class = "slow" if avg_ms >= 1000 else ""
+        else:
+            latency_text = ""
+            slow_class = ""
+
         query_rows += f"""
-        <tr class="{row_class}" data-count="{cnt}" data-ts="{raw_ts}" data-types="{types_attr}" data-context="{context_attr}">
+        <tr class="{row_class}" data-count="{cnt}" data-ts="{raw_ts}" data-types="{types_attr}" data-context="{context_attr}" data-avgms="{avg_ms or 0}">
             <td class="query-text">{chevron}{escaped}</td>
             <td class="count">{cnt}</td>
             <td class="types">{type_badges} {method_badges}</td>
+            <td class="latency {slow_class}">{latency_text}</td>
             <td class="timestamp">{ts_display}</td>
         </tr>"""
 
@@ -3086,6 +3144,8 @@ async def dashboard(
   .timestamp {{ color: #999; font-size: 11px; white-space: nowrap; }}
   .query-text {{ max-width: 55vw; word-break: break-word; }}
   .types {{ white-space: nowrap; }}
+  .latency {{ font-variant-numeric: tabular-nums; font-size: 12px; color: #555; white-space: nowrap; }}
+  .latency.slow {{ color: #c00; font-weight: 600; }}
   .badge {{
     display: inline-block; padding: 2px 6px; border-radius: 4px;
     font-size: 10px; font-weight: 600; text-transform: uppercase;
@@ -3309,6 +3369,20 @@ async def dashboard(
 </table>
 </div>
 
+<h2>Slowest Queries <span style="font-weight:normal;font-size:13px;color:#888;">(min 3 samples, by avg ms)</span></h2>
+<div class="breakdown">
+<table>
+  <tr>
+    <th>Query</th>
+    <th>Avg</th>
+    <th>Max</th>
+    <th>Samples</th>
+    <th>Type</th>
+  </tr>
+  {slowest_html if slowest_html else '<tr><td colspan="5" style="color:#888;font-style:italic;padding:12px;">No queries with timing data yet.</td></tr>'}
+</table>
+</div>
+
 <h2>All Queries</h2>
 <div class="date-picker">
   <label>From:</label>
@@ -3327,6 +3401,7 @@ async def dashboard(
     <th>Query</th>
     <th class="sortable" onclick="sortBy('count')" id="th-count">Count<span class="arrow"> &#x25BE;</span></th>
     <th>Type</th>
+    <th class="sortable" onclick="sortBy('avgms')" id="th-avgms">Avg ms</th>
     <th class="sortable" onclick="sortBy('time')" id="th-time">Last (ET)</th>
   </tr>
   {query_rows}
@@ -3442,12 +3517,15 @@ function sortBy(mode) {{
   const rows = Array.from(table.querySelectorAll('tr[data-count]'));
   rows.sort((a, b) => {{
     if (mode === 'time') return b.dataset.ts.localeCompare(a.dataset.ts);
+    if (mode === 'avgms') return parseInt(b.dataset.avgms) - parseInt(a.dataset.avgms);
     const dc = parseInt(b.dataset.count) - parseInt(a.dataset.count);
     return dc !== 0 ? dc : b.dataset.ts.localeCompare(a.dataset.ts);
   }});
   rows.forEach(r => table.appendChild(r));
   document.getElementById('th-count').innerHTML = 'Count' + (mode === 'count' ? '<span class="arrow"> &#x25BE;</span>' : '');
   document.getElementById('th-time').innerHTML = 'Last (ET)' + (mode === 'time' ? '<span class="arrow"> &#x25BE;</span>' : '');
+  const tha = document.getElementById('th-avgms');
+  if (tha) tha.innerHTML = 'Avg ms' + (mode === 'avgms' ? '<span class="arrow"> &#x25BE;</span>' : '');
   renderPage();
 }}
 
