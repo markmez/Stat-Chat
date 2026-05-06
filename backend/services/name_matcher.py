@@ -718,7 +718,7 @@ def match_stat(input_str: str) -> Optional[StatInfo]:
             return walks_stat
 
     # "K" alone → strikeouts, but only in stat contexts (after numbers or "most")
-    if re.search(r'(?:\d+\s*k\b|most k\b|fewest k\b)', lower) and "k/" not in lower:
+    if re.search(r'(?:\d+\+?\s*k\b|most k\b|fewest k\b)', lower) and "k/" not in lower:
         k_stat = stat_alias_map.get("strikeouts") or stat_alias_map.get("ks")
         if k_stat:
             return k_stat
