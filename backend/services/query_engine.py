@@ -3015,26 +3015,26 @@ def _execute_month_grouped_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     """Top single-month performances across history.
 
     Powers queries like "most home runs in a single month all time" or
-    "best OPS in any calendar month since 2010". Game logs are aggregated
-    by (player_id, year, month) so the same player can appear multiple
-    times — once per qualifying month-season.
+    "best OPS in any calendar month since 2010". Reads from the
+    materialized monthly aggregates tables (one row per
+    player-season-month) instead of aggregating game_batting_logs /
+    game_pitching_logs at query time. Sub-100ms vs the 20+s a full
+    game-log GROUP BY took. The aggregates tables are repopulated by
+    the cron pipeline after each game-log refresh.
 
     Scope handling:
-      - since_year set     → year >= since_year (with optional end_year cap)
-      - season set         → year = season (best month within that season)
-      - else               → all-time
+      - since_year set → year >= since_year (with optional end_year cap)
+      - season set     → year = season
+      - else           → all-time
 
     Qualifiers:
-      - batting rate stats: 80 PA in the month (~half of full-month PA)
+      - batting rate stats: 80 PA in the month
       - pitching rate stats: 90 ip_outs (30 IP) in the month
-      - counting stats: no qualifier; April/October naturally trail because
-        of partial months.
+      - counting stats: no qualifier
     """
     if not plan.stat and not plan.derived_stat:
         return None
     is_pitching = plan.is_pitching
-    gl_table = "game_pitching_logs" if is_pitching else "game_batting_logs"
-    gl = "gl"
     is_rate = (plan.stat and plan.stat.is_rate) or (
         plan.derived_stat and _DERIVED_STATS.get(plan.derived_stat, {}).get("is_rate", False)
     )
@@ -3049,52 +3049,63 @@ def _execute_month_grouped_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     else:
         order = "DESC"
 
+    # Materialized aggregates tables are pre-grouped to one row per
+    # player-season-month. Stat expressions reference columns directly —
+    # no SUM, no GROUP BY. Rate stats compose from monthly component
+    # totals already on the row.
+    agg_table = "monthly_pitching_aggregates" if is_pitching else "monthly_batting_aggregates"
+    ma = "ma"
+
     where_parts: list = []
     where_params: list = []
     if plan.since_year:
-        where_parts.append(f"{gl}.season >= ?")
+        where_parts.append(f"{ma}.season >= ?")
         where_params.append(plan.since_year)
     if plan.end_year:
-        where_parts.append(f"{gl}.season <= ?")
+        where_parts.append(f"{ma}.season <= ?")
         where_params.append(plan.end_year)
     if plan.season and not plan.since_year:
-        where_parts.append(f"{gl}.season = ?")
+        where_parts.append(f"{ma}.season = ?")
         where_params.append(plan.season)
 
     if is_pitching:
         rate_formulas = {
-            "era": f"9.0 * SUM({gl}.earned_runs) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
-            "whip": f"CAST(SUM({gl}.hits) + SUM({gl}.walks) AS REAL) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
-            "k_per_9": f"9.0 * SUM({gl}.strikeouts) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
-            "bb_per_9": f"9.0 * SUM({gl}.walks) / NULLIF(SUM({gl}.ip_outs) / 3.0, 0)",
+            "era": f"9.0 * {ma}.earned_runs / NULLIF({ma}.ip_outs / 3.0, 0)",
+            "whip": f"CAST({ma}.hits + {ma}.walks AS REAL) / NULLIF({ma}.ip_outs / 3.0, 0)",
+            "k_per_9": f"9.0 * {ma}.strikeouts / NULLIF({ma}.ip_outs / 3.0, 0)",
+            "bb_per_9": f"9.0 * {ma}.walks / NULLIF({ma}.ip_outs / 3.0, 0)",
         }
-        having_clause = f"HAVING SUM({gl}.ip_outs) >= 90"
+        rate_qualifier = f"{ma}.ip_outs >= 90"
     else:
         rate_formulas = {
-            "batting_avg": f"CAST(SUM({gl}.hits) AS REAL) / NULLIF(SUM({gl}.at_bats), 0)",
-            "obp": (f"CAST(SUM({gl}.hits) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) AS REAL) / "
-                    f"NULLIF(SUM({gl}.at_bats) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) + SUM(COALESCE({gl}.sacrifice_flies, 0)), 0)"),
-            "slg": (f"CAST(SUM({gl}.hits) - SUM({gl}.doubles) - SUM({gl}.triples) - SUM({gl}.home_runs) "
-                    f"+ 2*SUM({gl}.doubles) + 3*SUM({gl}.triples) + 4*SUM({gl}.home_runs) AS REAL) / NULLIF(SUM({gl}.at_bats), 0)"),
-            "ops": (f"(CAST(SUM({gl}.hits) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) AS REAL) / "
-                    f"NULLIF(SUM({gl}.at_bats) + SUM({gl}.walks) + SUM(COALESCE({gl}.hit_by_pitch, 0)) + SUM(COALESCE({gl}.sacrifice_flies, 0)), 0)) + "
-                    f"(CAST(SUM({gl}.hits) - SUM({gl}.doubles) - SUM({gl}.triples) - SUM({gl}.home_runs) "
-                    f"+ 2*SUM({gl}.doubles) + 3*SUM({gl}.triples) + 4*SUM({gl}.home_runs) AS REAL) / NULLIF(SUM({gl}.at_bats), 0))"),
-            "iso": f"CAST(SUM({gl}.doubles) + 2*SUM({gl}.triples) + 3*SUM({gl}.home_runs) AS REAL) / NULLIF(SUM({gl}.at_bats), 0)",
+            "batting_avg": f"CAST({ma}.hits AS REAL) / NULLIF({ma}.at_bats, 0)",
+            "obp": (f"CAST({ma}.hits + {ma}.walks + {ma}.hit_by_pitch AS REAL) / "
+                    f"NULLIF({ma}.at_bats + {ma}.walks + {ma}.hit_by_pitch + {ma}.sacrifice_flies, 0)"),
+            "slg": (f"CAST({ma}.hits - {ma}.doubles - {ma}.triples - {ma}.home_runs "
+                    f"+ 2*{ma}.doubles + 3*{ma}.triples + 4*{ma}.home_runs AS REAL) / NULLIF({ma}.at_bats, 0)"),
+            "ops": (f"(CAST({ma}.hits + {ma}.walks + {ma}.hit_by_pitch AS REAL) / "
+                    f"NULLIF({ma}.at_bats + {ma}.walks + {ma}.hit_by_pitch + {ma}.sacrifice_flies, 0)) + "
+                    f"(CAST({ma}.hits - {ma}.doubles - {ma}.triples - {ma}.home_runs "
+                    f"+ 2*{ma}.doubles + 3*{ma}.triples + 4*{ma}.home_runs AS REAL) / NULLIF({ma}.at_bats, 0))"),
+            "iso": f"CAST({ma}.doubles + 2*{ma}.triples + 3*{ma}.home_runs AS REAL) / NULLIF({ma}.at_bats, 0)",
         }
-        having_clause = f"HAVING SUM({gl}.plate_appearances) >= 80"
+        rate_qualifier = f"{ma}.plate_appearances >= 80"
 
     stat_col = plan.stat.db_column if plan.stat else (plan.derived_stat or "")
     if is_rate and stat_col in rate_formulas:
         stat_expr = rate_formulas[stat_col]
+        where_parts.append(rate_qualifier)
     elif plan.stat and not is_rate:
-        stat_expr = f"SUM({gl}.{stat_col})"
-        having_clause = ""
+        # Counting stat — direct column read. The agg tables expose the
+        # same column names as the source game-log tables for these.
+        stat_expr = f"{ma}.{stat_col}"
     elif plan.derived_stat and plan.derived_stat in rate_formulas:
         stat_expr = rate_formulas[plan.derived_stat]
+        where_parts.append(rate_qualifier)
     else:
         return None
 
+    # Optional handedness/league/position filters via EXISTS on season-stats
     table, prefix = _table_and_prefix(plan)
     filters_str, fparams = _build_filters(plan, prefix, conn)
     if filters_str:
@@ -3103,8 +3114,8 @@ def _execute_month_grouped_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         ss_filter = filters_str.replace(f"{prefix}.", f"{ss_alias}.")
         where_parts.append(
             f"EXISTS (SELECT 1 FROM {ss_table} {ss_alias} "
-            f"WHERE {ss_alias}.player_id = {gl}.player_id "
-            f"AND {ss_alias}.season = {gl}.season "
+            f"WHERE {ss_alias}.player_id = {ma}.player_id "
+            f"AND {ss_alias}.season = {ma}.season "
             f"AND {ss_filter})"
         )
         where_params += fparams
@@ -3112,22 +3123,24 @@ def _execute_month_grouped_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
 
     sql = (
-        f"SELECT p.name, {gl}.season, "
-        f"CAST(strftime('%m', {gl}.date) AS INTEGER) AS mo, "
-        f"{stat_expr} AS stat_val "
-        f"FROM {gl_table} {gl} "
-        f"JOIN players p ON {gl}.player_id = p.player_id "
+        f"SELECT p.name, {ma}.season, {ma}.month, {stat_expr} AS stat_val "
+        f"FROM {agg_table} {ma} "
+        f"JOIN players p ON {ma}.player_id = p.player_id "
         f"{where} "
-        f"GROUP BY {gl}.player_id, {gl}.season, mo "
-        f"{having_clause} "
         f"ORDER BY stat_val {order} LIMIT ?"
     )
     cur = conn.cursor()
     try:
         cur.execute(sql, tuple(where_params + [plan.limit]))
+        rows = cur.fetchall()
+    except sqlite3.OperationalError as e:
+        # Aggregates table missing (pre-rebuild on a fresh deploy) — caller
+        # falls through to Haiku rather than returning a confusing error.
+        if "no such table" in str(e).lower():
+            return None
+        return f"Could not run month-grouped query: {e}"
     except Exception as e:
         return f"Could not run month-grouped query: {e}"
-    rows = cur.fetchall()
 
     direction_label = "Fewest " if (plan.sort_asc and not is_rate) else ""
     if plan.sort_asc and is_rate:

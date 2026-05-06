@@ -2310,6 +2310,23 @@ def main():
         conn.commit()
 
         record_last_update(conn, args.season)
+
+        # Refresh monthly aggregates for this season — the cross-player
+        # month-grouped leaderboards ("most HR in a single month all time")
+        # query these instead of aggregating game logs at request time.
+        # Incremental rebuild only: clear+repopulate this season's rows so
+        # we don't redo 100+ years of static history every run.
+        try:
+            services_parent = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+            if services_parent not in sys.path:
+                sys.path.insert(0, services_parent)
+            from services.monthly_aggregates import rebuild_all
+            print(f"\nRebuilding monthly aggregates for {season_year}...")
+            counts = rebuild_all(conn, since_season=season_year)
+            print(f"  ✓ {counts['batting']} batting + {counts['pitching']} pitching aggregate rows")
+        except Exception as e:
+            print(f"Monthly aggregates rebuild failed: {e}")
+
         conn.close()
 
         # Run streak detection for this season

@@ -1503,6 +1503,29 @@ async def repair_game_logs(
         raise HTTPException(500, str(e))
 
 
+@router.post("/rebuild-monthly-aggregates")
+async def rebuild_monthly_aggregates_endpoint(
+    since_season: int | None = None,
+    authorization: str | None = Header(None),
+):
+    """Rebuild monthly_batting_aggregates and monthly_pitching_aggregates.
+
+    Optional ?since_season=YYYY for incremental rebuild (only that year and
+    newer). Omit for full rebuild. Sync — caller waits for completion.
+    """
+    verify_admin(authorization)
+    try:
+        from services.monthly_aggregates import rebuild_all
+        conn = sqlite3.connect(DB_PATH, timeout=60)
+        try:
+            counts = rebuild_all(conn, since_season=since_season)
+        finally:
+            conn.close()
+        return {"status": "ok", "rebuilt": counts, "since_season": since_season}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @router.post("/run-sql")
 async def run_sql(
     sql: str = "",

@@ -2310,6 +2310,23 @@ def main():
         conn.commit()
 
         record_last_update(conn, args.season)
+
+        # Refresh monthly aggregates for this season — see
+        # backend/services/monthly_aggregates.py. Cross-player
+        # month-grouped leaderboards query these instead of aggregating
+        # game logs at request time. Incremental: only this season's rows
+        # get rebuilt; static history stays untouched.
+        try:
+            backend_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend")
+            if backend_dir not in sys.path:
+                sys.path.insert(0, backend_dir)
+            from services.monthly_aggregates import rebuild_all
+            print(f"\nRebuilding monthly aggregates for {season_year}...")
+            counts = rebuild_all(conn, since_season=season_year)
+            print(f"  ✓ {counts['batting']} batting + {counts['pitching']} pitching aggregate rows")
+        except Exception as e:
+            print(f"Monthly aggregates rebuild failed: {e}")
+
         conn.close()
 
         # Run streak detection for this season
