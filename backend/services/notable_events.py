@@ -3856,15 +3856,15 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False):
     except Exception as e:
         print(f"    Matchup previews failed: {e}")
 
-    # On This Date — look up history for *today's calendar date* (so on May 5
-    # users see "On this date in YYYY..." for May 5), but stamp the events with
-    # game_date=latest_date so they share a feed bucket with the games users
-    # are actually viewing. Earlier fix collapsed both to latest_date, which
-    # showed yesterday's-date history; the original pre-fix bug was the
-    # opposite — OTD-only buckets being suppressed. Decoupling target_date
-    # (lookup) from attach_date (bucket) handles both.
+    # On This Date — look up AND stamp using today's calendar date. Each event
+    # in the iOS feed has its own date superheader, so OTD events stamped with
+    # latest_date (yesterday's games) read as "May 5 — On this date in 1998..."
+    # when the historical content is actually about May 6. Anchoring both to
+    # today's calendar makes the superheader match the "this date" in the text.
     print("  Running On This Date...")
-    otd_events = detect_on_this_date(conn, season, latest_date, attach_date=latest_date)
+    today_iso = date.today().isoformat()
+    otd_events = detect_on_this_date(conn, season, latest_date,
+                                     target_date=today_iso, attach_date=today_iso)
     events += otd_events
     print(f"    On This Date: {len(otd_events)} events")
 
