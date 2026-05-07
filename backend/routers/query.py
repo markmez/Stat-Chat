@@ -1049,13 +1049,22 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
         "vs knuckleballs": "vs knuckleballs", "against knuckleballs": "vs knuckleballs",
     }
     if clean in splits_patterns:
-        # Additive: append split to prior query (don't strip anything unless the
-        # same split dimension was already present — which we approximate by
-        # removing any prior "vs X" / "at home" / "in the playoffs" / etc.)
         split = splits_patterns[clean]
-        # Remove any previously-applied split of the same rough category
+        # When the prior query has no explicit stat (current-form, streak,
+        # "how is X doing lately"), the prior query carries narrative triggers
+        # like "doing lately" that re-route to current_form even after we
+        # append the split. Naive append produces "How is Trout doing
+        # lately? vs lefties" — still parsed as current_form, ignoring
+        # the split. Rebuild from player+season instead so the split parser
+        # actually sees a clean target.
+        if not stat and player:
+            season_part = f" {season}" if season else ""
+            return f"{player} {split}{season_part}".strip()
+
+        # Stat-specific prior — additive append is correct. Strip any prior
+        # split of the same category first so we don't end up with "vs lefties
+        # vs righties" or "at home on the road".
         base = ctx["query"]
-        # If adding a handedness split, strip any prior handedness split
         handedness = {"vs lefties", "vs righties"}
         homeaway = {"at home", "on the road"}
         daynight = {"in day games", "at night"}
