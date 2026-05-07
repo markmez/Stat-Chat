@@ -5672,7 +5672,13 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
             # leaderboard. Use ~3x the batting floor.
             base_min = max(1, int(20 * max_games / 162))
             split_pa_min = base_min * 3 if is_pitching else base_min
-            pa_filter = f" AND t.plate_appearances >= {split_pa_min}"
+            # pitching_home_away_splits stores ip_outs/era/whip directly (no
+            # plate_appearances column). Use ip_outs as the qualifier; ~1
+            # out per PA-equivalent so reuse split_pa_min as the outs floor.
+            if table == "pitching_home_away_splits":
+                pa_filter = f" AND t.ip_outs >= {split_pa_min}"
+            else:
+                pa_filter = f" AND t.plate_appearances >= {split_pa_min}"
 
         league_filter = ""
         league_label = ""
@@ -5771,6 +5777,15 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
 
         if stat_info.is_rate:
             parts.append("\n_Min. 20 PA in split._")
+
+        # Cross-side pivot: when a counterpart split table exists, surface a
+        # tappable pill that flips between hitters/pitchers without making the
+        # user retype the whole query. The pivot phrase is set on each
+        # SplitContext that has a counterpart (no first_pa_pitching_splits, so
+        # first-PA entries leave it None and skip this affordance).
+        pivot = getattr(split_context, "pivot_phrase", None)
+        if pivot:
+            parts.append(f"\n[SUGGEST]{pivot}[/SUGGEST]")
 
         return "\n".join(parts)
     finally:

@@ -177,6 +177,14 @@ TESTS: list[tuple[str, str, str]] = [
     ("Best OPS allowed vs LHB this year", "intercepted", "Split: leaderboard platoon"),
     ("Best ERA in the 7th inning", "intercepted", "Split: inning leaderboard"),
     ("Aaron Judge in the 1st inning 2024", "intercepted", "Split: single-player inning"),
+    # Stage 2 pitching split leaderboards (count, RISP, home/away, pitch type).
+    # Each one routes to its *_pitching_splits table via explicit "pitchers"
+    # prefix or "throwing X" phrasing for pitch type.
+    ("Best pitchers with 2 strikes", "intercepted", "Split: leaderboard count pitching"),
+    ("Best pitchers with RISP", "intercepted", "Split: leaderboard RISP pitching"),
+    ("Best pitchers at home this year", "intercepted", "Split: leaderboard home/away pitching"),
+    ("Best pitchers throwing sliders", "intercepted", "Split: leaderboard pitch-type pitching"),
+    ("Best pitchers ahead in the count", "intercepted", "Split: leaderboard count pitching"),
 
     # ============================================================
     # Tier 11: Streaks

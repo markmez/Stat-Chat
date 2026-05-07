@@ -1008,6 +1008,11 @@ class SplitContext:
     # Drives the executor's column choice (_against rate cols), sort direction (ASC for rate
     # stats), and qualifier table (season_pitching_stats).
     is_pitching: bool = False
+    # Optional cross-side pivot — full query phrase rendered as a [SUGGEST] pill
+    # under the leaderboard so users can flip between "best hitters with 2 strikes"
+    # and "best pitchers with 2 strikes". Set only when a counterpart split table
+    # exists (no first_pa_pitching_splits, so first-PA entries leave this None).
+    pivot_phrase: Optional[str] = None
 
 
 # Game-window qualifier regex shared by parsers that should DECLINE when a
@@ -1027,42 +1032,72 @@ _GAME_WINDOW_RX = rf'\b{_GW_DIRECTION}\s+{_GW_NUM}\s+(?:career\s+)?{_GW_NOUN}\b'
 
 
 # Map of split trigger phrases → SplitContext
+#
+# Note on pitching variants: Stage 2 added explicit "pitchers <phrase>" entries
+# that route to the corresponding *_pitching_splits tables. This is "Option 2"
+# from the design discussion — explicit phrasing instead of inferred routing.
+# The pivot_phrase on each entry feeds a [SUGGEST] pill in the leaderboard so
+# users can flip between sides without retyping the whole query.
 _SPLIT_CONTEXTS = {
-    # Count-based
-    "with 2 strikes": SplitContext("count_batting_splits", "count_state", ["0-2", "1-2", "2-2", "3-2"], "With 2 Strikes", ["with 2 strikes", "with two strikes"]),
-    "with two strikes": SplitContext("count_batting_splits", "count_state", ["0-2", "1-2", "2-2", "3-2"], "With 2 Strikes", ["with two strikes"]),
-    "2-strike": SplitContext("count_batting_splits", "count_state", ["0-2", "1-2", "2-2", "3-2"], "With 2 Strikes", ["2-strike", "two-strike"]),
-    "two-strike": SplitContext("count_batting_splits", "count_state", ["0-2", "1-2", "2-2", "3-2"], "With 2 Strikes", ["two-strike"]),
-    "full count": SplitContext("count_batting_splits", "count_state", ["3-2"], "Full Count", ["full count"]),
-    "0-2 count": SplitContext("count_batting_splits", "count_state", ["0-2"], "0-2 Count", ["0-2 count"]),
-    "3-2 count": SplitContext("count_batting_splits", "count_state", ["3-2"], "3-2 Count", ["3-2 count"]),
-    "3-0 count": SplitContext("count_batting_splits", "count_state", ["3-0"], "3-0 Count", ["3-0 count"]),
-    "ahead in the count": SplitContext("count_batting_splits", "count_state", ["0-0", "1-0", "2-0", "3-0", "2-1", "3-1", "3-2"], "Ahead in Count", ["ahead in the count"]),
-    "behind in the count": SplitContext("count_batting_splits", "count_state", ["0-1", "0-2", "1-2"], "Behind in Count", ["behind in the count"]),
-    # Pitch type
-    "against fastball": SplitContext("pitch_type_batting_splits", "pitch_type", ["4-Seam"], "vs Fastballs", ["against fastball", "against fastballs"]),
-    "on fastball": SplitContext("pitch_type_batting_splits", "pitch_type", ["4-Seam"], "vs Fastballs", ["on fastball", "on fastballs"]),
-    "vs fastball": SplitContext("pitch_type_batting_splits", "pitch_type", ["4-Seam"], "vs Fastballs", ["vs fastball", "vs fastballs"]),
-    "against slider": SplitContext("pitch_type_batting_splits", "pitch_type", ["Slider"], "vs Sliders", ["against slider", "against sliders"]),
-    "on slider": SplitContext("pitch_type_batting_splits", "pitch_type", ["Slider"], "vs Sliders", ["on slider", "on sliders"]),
-    "vs slider": SplitContext("pitch_type_batting_splits", "pitch_type", ["Slider"], "vs Sliders", ["vs slider", "vs sliders"]),
-    "against curve": SplitContext("pitch_type_batting_splits", "pitch_type", ["Curve"], "vs Curveballs", ["against curve", "against curveball", "against curveballs"]),
-    "on curve": SplitContext("pitch_type_batting_splits", "pitch_type", ["Curve"], "vs Curveballs", ["on curve", "on curveball"]),
-    "vs curve": SplitContext("pitch_type_batting_splits", "pitch_type", ["Curve"], "vs Curveballs", ["vs curve", "vs curveball"]),
-    "against changeup": SplitContext("pitch_type_batting_splits", "pitch_type", ["Change"], "vs Changeups", ["against changeup", "against changeups"]),
-    "on changeup": SplitContext("pitch_type_batting_splits", "pitch_type", ["Change"], "vs Changeups", ["on changeup", "on changeups"]),
-    "vs changeup": SplitContext("pitch_type_batting_splits", "pitch_type", ["Change"], "vs Changeups", ["vs changeup", "vs changeups"]),
-    "against sinker": SplitContext("pitch_type_batting_splits", "pitch_type", ["Sinker"], "vs Sinkers", ["against sinker", "against sinkers"]),
-    "against cutter": SplitContext("pitch_type_batting_splits", "pitch_type", ["Cutter"], "vs Cutters", ["against cutter", "against cutters"]),
-    # RISP
-    "with risp": SplitContext("risp_batting_splits", "split", ["RISP"], "With RISP", ["with risp"]),
-    "runners in scoring": SplitContext("risp_batting_splits", "split", ["RISP"], "With RISP", ["runners in scoring position", "runners in scoring"]),
+    # Count-based — batting
+    "with 2 strikes": SplitContext("count_batting_splits", "count_state", ["0-2", "1-2", "2-2", "3-2"], "With 2 Strikes", ["with 2 strikes", "with two strikes"], pivot_phrase="best pitchers with 2 strikes"),
+    "with two strikes": SplitContext("count_batting_splits", "count_state", ["0-2", "1-2", "2-2", "3-2"], "With 2 Strikes", ["with two strikes"], pivot_phrase="best pitchers with 2 strikes"),
+    "2-strike": SplitContext("count_batting_splits", "count_state", ["0-2", "1-2", "2-2", "3-2"], "With 2 Strikes", ["2-strike", "two-strike"], pivot_phrase="best pitchers with 2 strikes"),
+    "two-strike": SplitContext("count_batting_splits", "count_state", ["0-2", "1-2", "2-2", "3-2"], "With 2 Strikes", ["two-strike"], pivot_phrase="best pitchers with 2 strikes"),
+    "full count": SplitContext("count_batting_splits", "count_state", ["3-2"], "Full Count", ["full count"], pivot_phrase="best pitchers in full count"),
+    "0-2 count": SplitContext("count_batting_splits", "count_state", ["0-2"], "0-2 Count", ["0-2 count"], pivot_phrase="best pitchers in 0-2 count"),
+    "3-2 count": SplitContext("count_batting_splits", "count_state", ["3-2"], "3-2 Count", ["3-2 count"], pivot_phrase="best pitchers in 3-2 count"),
+    "3-0 count": SplitContext("count_batting_splits", "count_state", ["3-0"], "3-0 Count", ["3-0 count"], pivot_phrase="best pitchers in 3-0 count"),
+    "ahead in the count": SplitContext("count_batting_splits", "count_state", ["0-0", "1-0", "2-0", "3-0", "2-1", "3-1", "3-2"], "Ahead in Count", ["ahead in the count"], pivot_phrase="best pitchers ahead in the count"),
+    "behind in the count": SplitContext("count_batting_splits", "count_state", ["0-1", "0-2", "1-2"], "Behind in Count", ["behind in the count"], pivot_phrase="best pitchers behind in the count"),
+    # Count-based — pitching (Stage 2)
+    "pitchers with 2 strikes": SplitContext("count_pitching_splits", "count_state", ["0-2", "1-2", "2-2", "3-2"], "With 2 Strikes", ["pitchers with 2 strikes", "pitchers with two strikes", "pitcher with 2 strikes", "pitcher with two strikes"], is_pitching=True, pivot_phrase="best hitters with 2 strikes"),
+    "pitchers in full count": SplitContext("count_pitching_splits", "count_state", ["3-2"], "Full Count", ["pitchers in full count", "pitcher in full count"], is_pitching=True, pivot_phrase="best hitters in full count"),
+    "pitchers in 0-2 count": SplitContext("count_pitching_splits", "count_state", ["0-2"], "0-2 Count", ["pitchers in 0-2 count", "pitcher in 0-2 count", "pitchers in 0-2"], is_pitching=True, pivot_phrase="best hitters in 0-2 count"),
+    "pitchers in 3-2 count": SplitContext("count_pitching_splits", "count_state", ["3-2"], "3-2 Count", ["pitchers in 3-2 count", "pitcher in 3-2 count", "pitchers in 3-2"], is_pitching=True, pivot_phrase="best hitters in 3-2 count"),
+    "pitchers in 3-0 count": SplitContext("count_pitching_splits", "count_state", ["3-0"], "3-0 Count", ["pitchers in 3-0 count", "pitcher in 3-0 count", "pitchers in 3-0"], is_pitching=True, pivot_phrase="best hitters in 3-0 count"),
+    "pitchers ahead in the count": SplitContext("count_pitching_splits", "count_state", ["0-0", "1-0", "2-0", "3-0", "2-1", "3-1", "3-2"], "Ahead in Count", ["pitchers ahead in the count", "pitcher ahead in the count"], is_pitching=True, pivot_phrase="best hitters ahead in the count"),
+    "pitchers behind in the count": SplitContext("count_pitching_splits", "count_state", ["0-1", "0-2", "1-2"], "Behind in Count", ["pitchers behind in the count", "pitcher behind in the count"], is_pitching=True, pivot_phrase="best hitters behind in the count"),
+    # Pitch type — batting
+    "against fastball": SplitContext("pitch_type_batting_splits", "pitch_type", ["4-Seam"], "vs Fastballs", ["against fastball", "against fastballs"], pivot_phrase="best pitchers throwing fastballs"),
+    "on fastball": SplitContext("pitch_type_batting_splits", "pitch_type", ["4-Seam"], "vs Fastballs", ["on fastball", "on fastballs"], pivot_phrase="best pitchers throwing fastballs"),
+    "vs fastball": SplitContext("pitch_type_batting_splits", "pitch_type", ["4-Seam"], "vs Fastballs", ["vs fastball", "vs fastballs"], pivot_phrase="best pitchers throwing fastballs"),
+    "against slider": SplitContext("pitch_type_batting_splits", "pitch_type", ["Slider"], "vs Sliders", ["against slider", "against sliders"], pivot_phrase="best pitchers throwing sliders"),
+    "on slider": SplitContext("pitch_type_batting_splits", "pitch_type", ["Slider"], "vs Sliders", ["on slider", "on sliders"], pivot_phrase="best pitchers throwing sliders"),
+    "vs slider": SplitContext("pitch_type_batting_splits", "pitch_type", ["Slider"], "vs Sliders", ["vs slider", "vs sliders"], pivot_phrase="best pitchers throwing sliders"),
+    "against curve": SplitContext("pitch_type_batting_splits", "pitch_type", ["Curve"], "vs Curveballs", ["against curve", "against curveball", "against curveballs"], pivot_phrase="best pitchers throwing curveballs"),
+    "on curve": SplitContext("pitch_type_batting_splits", "pitch_type", ["Curve"], "vs Curveballs", ["on curve", "on curveball"], pivot_phrase="best pitchers throwing curveballs"),
+    "vs curve": SplitContext("pitch_type_batting_splits", "pitch_type", ["Curve"], "vs Curveballs", ["vs curve", "vs curveball"], pivot_phrase="best pitchers throwing curveballs"),
+    "against changeup": SplitContext("pitch_type_batting_splits", "pitch_type", ["Change"], "vs Changeups", ["against changeup", "against changeups"], pivot_phrase="best pitchers throwing changeups"),
+    "on changeup": SplitContext("pitch_type_batting_splits", "pitch_type", ["Change"], "vs Changeups", ["on changeup", "on changeups"], pivot_phrase="best pitchers throwing changeups"),
+    "vs changeup": SplitContext("pitch_type_batting_splits", "pitch_type", ["Change"], "vs Changeups", ["vs changeup", "vs changeups"], pivot_phrase="best pitchers throwing changeups"),
+    "against sinker": SplitContext("pitch_type_batting_splits", "pitch_type", ["Sinker"], "vs Sinkers", ["against sinker", "against sinkers"], pivot_phrase="best pitchers throwing sinkers"),
+    "against cutter": SplitContext("pitch_type_batting_splits", "pitch_type", ["Cutter"], "vs Cutters", ["against cutter", "against cutters"], pivot_phrase="best pitchers throwing cutters"),
+    # Pitch type — pitching (Stage 2). Semantically "the pitcher's own X" rather
+    # than "vs X" — phrasing differs. "Throwing" is unambiguously a pitcher action.
+    "throwing fastballs": SplitContext("pitch_type_pitching_splits", "pitch_type", ["4-Seam"], "Throwing Fastballs", ["throwing fastballs", "throwing fastball", "with their fastball", "with their fastballs"], is_pitching=True, pivot_phrase="best hitters against fastballs"),
+    "throwing sliders": SplitContext("pitch_type_pitching_splits", "pitch_type", ["Slider"], "Throwing Sliders", ["throwing sliders", "throwing slider", "with their slider", "with their sliders"], is_pitching=True, pivot_phrase="best hitters against sliders"),
+    "throwing curveballs": SplitContext("pitch_type_pitching_splits", "pitch_type", ["Curve"], "Throwing Curveballs", ["throwing curveballs", "throwing curveball", "throwing curves", "throwing curve", "with their curveball", "with their curve"], is_pitching=True, pivot_phrase="best hitters against curveballs"),
+    "throwing changeups": SplitContext("pitch_type_pitching_splits", "pitch_type", ["Change"], "Throwing Changeups", ["throwing changeups", "throwing changeup", "with their changeup"], is_pitching=True, pivot_phrase="best hitters against changeups"),
+    "throwing sinkers": SplitContext("pitch_type_pitching_splits", "pitch_type", ["Sinker"], "Throwing Sinkers", ["throwing sinkers", "throwing sinker", "with their sinker"], is_pitching=True, pivot_phrase="best hitters against sinkers"),
+    "throwing cutters": SplitContext("pitch_type_pitching_splits", "pitch_type", ["Cutter"], "Throwing Cutters", ["throwing cutters", "throwing cutter", "with their cutter"], is_pitching=True, pivot_phrase="best hitters against cutters"),
+    # RISP — batting
+    "with risp": SplitContext("risp_batting_splits", "split", ["RISP"], "With RISP", ["with risp"], pivot_phrase="best pitchers with risp"),
+    "runners in scoring": SplitContext("risp_batting_splits", "split", ["RISP"], "With RISP", ["runners in scoring position", "runners in scoring"], pivot_phrase="best pitchers with risp"),
     # Note: "with runners on" is NOT the same as RISP — removed to prevent false matches.
     # We only have RISP splits, not "any runners on base" splits.
-    # Home/Away
-    "at home": SplitContext("home_away_splits", "split", ["home"], "At Home", ["at home"]),
-    "on the road": SplitContext("home_away_splits", "split", ["away"], "On the Road", ["on the road"]),
-    "away from home": SplitContext("home_away_splits", "split", ["away"], "On the Road", ["away from home"]),
+    # RISP — pitching (Stage 2)
+    "pitchers with risp": SplitContext("risp_pitching_splits", "split", ["RISP"], "With RISP", ["pitchers with risp", "pitcher with risp", "pitchers with runners in scoring position", "pitchers with runners in scoring"], is_pitching=True, pivot_phrase="best hitters with risp"),
+    # Home/Away — batting
+    "at home": SplitContext("home_away_splits", "split", ["home"], "At Home", ["at home"], pivot_phrase="best pitchers at home"),
+    "on the road": SplitContext("home_away_splits", "split", ["away"], "On the Road", ["on the road"], pivot_phrase="best pitchers on the road"),
+    "away from home": SplitContext("home_away_splits", "split", ["away"], "On the Road", ["away from home"], pivot_phrase="best pitchers on the road"),
+    # Home/Away — pitching (Stage 2). The pitching_home_away_splits table carries
+    # ERA/WHIP/K-9/BAA directly (NOT _against rate columns), so OPS-against
+    # queries fall through. ERA-class queries work.
+    "pitchers at home": SplitContext("pitching_home_away_splits", "split", ["home"], "At Home", ["pitchers at home", "pitcher at home"], is_pitching=True, pivot_phrase="best hitters at home"),
+    "pitchers on the road": SplitContext("pitching_home_away_splits", "split", ["away"], "On the Road", ["pitchers on the road", "pitcher on the road"], is_pitching=True, pivot_phrase="best hitters on the road"),
+    "pitchers away from home": SplitContext("pitching_home_away_splits", "split", ["away"], "On the Road", ["pitchers away from home", "pitcher away from home"], is_pitching=True, pivot_phrase="best hitters on the road"),
     # First PA of game (batting). Table is already a single bucket — no IN filter needed.
     # Each entry's `consumed_phrases` strips both the trigger phrase AND the surrounding
     # "of games" / "of the game" / "of a game" tail. Otherwise leftover "games" matches G
