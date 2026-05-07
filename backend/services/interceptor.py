@@ -115,6 +115,68 @@ def try_intercept(question: str):
                     "\n[SUGGEST]most errors 2025[/SUGGEST]"
                     "\n[SUGGEST]most double plays by a second baseman 2025[/SUGGEST]")
 
+    # PA/AB-window queries — game logs aggregate per game (no per-PA records),
+    # so "first 50 PAs of a career" can't be computed exactly. Refuse with
+    # NO_COUNT + game-equivalent SUGGEST. When the per-PA log infrastructure
+    # ships for 2025-2026 (project-pa-window-queries.md), this branch can
+    # narrow to historical-only refusals and let current-season queries
+    # answer structurally.
+    pa_window_match = re.search(
+        r'\b(first|last)\s+'
+        r'(\d+|two|three|four|five|six|seven|eight|nine|ten|'
+        r'eleven|twelve|fifteen|twenty|twenty-five|thirty|forty|fifty|'
+        r'sixty|seventy|eighty|ninety|hundred|two\s+hundred)\s+'
+        r'(?:career\s+|of\s+)?'
+        r'(plate\s+appearances?|pas?|at[- ]?bats?|abs?)\b',
+        lower,
+    )
+    if pa_window_match:
+        direction = pa_window_match.group(1)
+        n_raw = pa_window_match.group(2)
+        unit_raw = pa_window_match.group(3)
+        _word_nums = {
+            "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+            "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+            "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20,
+            "twenty-five": 25, "thirty": 30, "forty": 40, "fifty": 50,
+            "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+            "hundred": 100, "two hundred": 200,
+        }
+        n_val = int(n_raw) if n_raw.isdigit() else _word_nums.get(n_raw.replace(" ", " "))
+        if n_val and n_val >= 5:
+            # PA → games at ~4.2 PA/game (regular full-time hitter avg);
+            # AB → games at ~3.7 AB/game.
+            unit_compact = unit_raw.replace(" ", "").replace("-", "")
+            is_ab = unit_compact in ("ab", "abs", "atbats", "atbat")
+            per_game = 3.7 if is_ab else 4.2
+            import math
+            game_count = max(2, math.ceil(n_val / per_game))
+            unit_display = "at-bat" if is_ab else "plate appearance"
+            unit_plural = f"{unit_display}s"
+            # Build a reformulated SUGGEST by swapping the window phrase
+            # in the user's actual question for the game-equivalent.
+            window_phrase = pa_window_match.group(0)
+            game_phrase = f"{direction} {game_count} career games"
+            # Best-effort reformulation against the original casing.
+            reformulated = re.sub(
+                re.escape(window_phrase), game_phrase, trimmed,
+                count=1, flags=re.IGNORECASE,
+            )
+            if reformulated == trimmed:
+                # Fallback — present a generic pivot.
+                reformulated = f"{direction} {game_count} career games"
+            return (
+                f"__NO_COUNT__We don't have {unit_display}-level history at this "
+                f"granularity. Game logs aggregate per game (one row per player "
+                f"per game), so we can't compute exactly {n_val} {unit_plural} — "
+                f"game boundaries don't line up with PA/AB counts.\n\n"
+                f"_This search didn't count against your free queries._\n\n"
+                f"The closest equivalent we can answer is the same question over "
+                f"a comparable number of **games** (~{per_game:.1f} {unit_plural}/game, "
+                f"so {n_val} {unit_plural} ≈ {game_count} games):\n\n"
+                f"[SUGGEST]{reformulated}[/SUGGEST]"
+            )
+
     # 0a. Tonight preview — "how will Judge do tonight" (auto-resolve probable pitcher)
     tonight = nm.parse_tonight_preview(trimmed)
     if tonight:

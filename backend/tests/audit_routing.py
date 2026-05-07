@@ -161,6 +161,16 @@ TESTS: list[tuple[str, str, str]] = [
      "intercepted", "Per-game-each first"),
     ("Pitchers with 8+ K in each of their first 3 career starts",
      "intercepted", "Per-game-each career-debut"),
+    # PA / AB window queries — Phase 1 refuse + redirect (NO_COUNT). The
+    # interceptor returns a deterministic "we don't have at-bat granularity"
+    # message with a game-equivalent SUGGEST. Counts as intercepted (the
+    # response IS structurally generated locally, even though it's a refusal).
+    ("Highest batting avg in first 50 PA of a career",
+     "intercepted", "PA/AB window refuse"),
+    ("Most HR in first 100 plate appearances of a career",
+     "intercepted", "PA/AB window refuse"),
+    ("Best OBP through first 30 ABs of his career",
+     "intercepted", "PA/AB window refuse"),
 
     # ============================================================
     # Tier 10: Splits (single-player + leaderboard)
