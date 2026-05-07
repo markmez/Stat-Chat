@@ -127,7 +127,10 @@ def try_intercept(question: str):
         r'eleven|twelve|fifteen|twenty|twenty-five|thirty|forty|fifty|'
         r'sixty|seventy|eighty|ninety|hundred|two\s+hundred)\s+'
         r'(?:career\s+|of\s+)?'
-        r'(plate\s+appearances?|pas?|at[- ]?bats?|abs?)\b',
+        r'(plate\s+appearances?|pas?|at[- ]?bats?|abs?)\b'
+        # Consume trailing "of a/his/her/their career" / "in MLB" so the
+        # game-equivalent SUGGEST doesn't read "first 12 career games of a career".
+        r'(?:\s+(?:of\s+(?:a|his|her|their)\s+career|in\s+(?:mlb|the\s+majors|his|her|their\s+career)))?',
         lower,
     )
     if pa_window_match:
