@@ -2075,23 +2075,35 @@ def decompose(question: str) -> QueryPlan:
     #   - pitching + split_context  → OPS-against (split tables don't have ERA)
     #   - pitching, no split        → ERA
     #   - batting (default)         → OPS
+    # Pitching split tables that DO carry ERA directly (vs. _against rate cols).
+    # Used by the default-stat rule below to pick ERA over OPS for these
+    # specific tables. pitching_home_away_splits stores era/whip/k_per_9/baa
+    # directly; the count/risp/pitch_type/inning/TTO tables only carry
+    # _against rate columns and need OPS-against.
+    _PITCHING_SPLIT_TABLES_WITH_ERA = {"pitching_home_away_splits"}
+
     if (plan.query_type == "leaderboard"
             and plan.stat is None and plan.derived_stat is None
             and any(t in lower for t in ["best", "highest", "lowest", "top",
                                          "leaders", "leader", "leading", "most"])):
         if plan.is_pitching:
             if plan.split_context is not None:
-                plan.stat = stat_alias_map.get("ops")
+                if plan.split_context.table in _PITCHING_SPLIT_TABLES_WITH_ERA:
+                    plan.stat = stat_alias_map.get("era")
+                else:
+                    plan.stat = stat_alias_map.get("ops")
             else:
                 plan.stat = stat_alias_map.get("era")
         else:
             plan.stat = stat_alias_map.get("ops")
 
-    # Pitching split tables don't carry ERA — if we resolved to ERA via the
+    # Most pitching split tables don't carry ERA — if we resolved to ERA via the
     # fallback aliases ("best pitcher") AND a pitching split context is set,
     # swap to OPS. build_split_leaderboard maps to ops_against under the hood.
+    # Skip tables that DO have ERA — they want it kept.
     if (plan.split_context is not None
             and plan.split_context.is_pitching
+            and plan.split_context.table not in _PITCHING_SPLIT_TABLES_WITH_ERA
             and plan.stat is not None
             and plan.stat.db_column == "era"):
         plan.stat = stat_alias_map.get("ops")
