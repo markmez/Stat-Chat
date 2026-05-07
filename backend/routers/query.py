@@ -997,6 +997,12 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
         "his career", "her career", "their career",
     }
     if clean in career_phrases:
+        # Stat-less prior (current_form / streak / "doing lately"): rebuild
+        # from player so narrative triggers don't survive. _strip_time_scope
+        # only strips time phrases — it doesn't strip "doing lately" — so a
+        # naive append produces a query that re-routes to current_form.
+        if not stat and player:
+            return f"{player} career"
         cleaned = _strip_time_scope(ctx["query"])
         if cleaned:
             return f"{cleaned} career"
@@ -1173,6 +1179,9 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
     if _compound_match:
         split_key, time_suffix = _compound_match
         split = splits_patterns[split_key]
+        # Stat-less prior: rebuild from player (see Pattern 3 rationale).
+        if not stat and player:
+            return f"{player} {split} {time_suffix}".strip()
         # Strip time scope from prior, strip same-category split, then append both
         base = _strip_time_scope(ctx["query"])
         handedness = {"vs lefties", "vs righties"}
@@ -1196,26 +1205,37 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
 
     # --- Pattern 7: Time scope pivots (mutually-exclusive with career/ranges) ---
     # All strip any existing time scope from prior query and append the new one.
+    # Stat-less prior gets a rebuild from player so narrative triggers like
+    # "doing lately" don't override the new time scope. _strip_time_scope only
+    # strips time phrases.
 
     # "since 2010", "after 2010"
     m = _re.match(r'^(?:since|after)\s+(20[012]\d)$', clean)
     if m:
+        if not stat and player:
+            return f"{player} since {m.group(1)}".strip()
         cleaned = _strip_time_scope(ctx["query"])
         return f"{cleaned} since {m.group(1)}".strip()
 
     # "in 2023", "for 2023", bare "2023"
     m = _re.match(r'^(?:in|for)?\s*(20[012]\d)$', clean)
     if m and clean in (m.group(1), f"in {m.group(1)}", f"for {m.group(1)}"):
+        if not stat and player:
+            return f"{player} {m.group(1)}".strip()
         cleaned = _strip_time_scope(ctx["query"])
         return f"{cleaned} {m.group(1)}".strip()
 
     # "this season" / "this year"
     if clean in ("this season", "this year"):
+        if not stat and player:
+            return f"{player} this season".strip()
         cleaned = _strip_time_scope(ctx["query"])
         return f"{cleaned} this season".strip()
 
     # "last season" / "last year"
     if clean in ("last season", "last year"):
+        if not stat and player:
+            return f"{player} last season".strip()
         cleaned = _strip_time_scope(ctx["query"])
         return f"{cleaned} last season".strip()
 
@@ -1224,6 +1244,11 @@ def _local_followup_rewrite(question: str, history: list[dict]) -> Optional[str]
     if m:
         n_raw = m.group(1)
         n = int(n_raw) if n_raw.isdigit() else _NUM_WORDS.get(n_raw, 1)
+        # For stat-less priors (current_form / streak), rebuild as a current-form
+        # query for {player} over last N games — the natural-language version
+        # routes through parse_current_form with the slider preset to N.
+        if not stat and player:
+            return f"how is {player} doing over last {n} games".strip()
         cleaned = _strip_time_scope(ctx["query"])
         return f"{cleaned} last {n} games".strip()
 
