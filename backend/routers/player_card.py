@@ -1671,6 +1671,18 @@ async def player_card(
             len(game_logs), len(pitching),
             elapsed_ms,
         )
+        # Slow-request alert: any PLAYERCARD request over 500ms warrants a
+        # closer look. Tag with whether the cron pipeline is mid-write so
+        # the timing can be correlated with write contention. The pipeline
+        # lock file is created by deploy/refresh.sh and removed on exit.
+        if elapsed_ms > 500:
+            cron_active = os.path.exists("/tmp/statchat_pipeline.lock")
+            log.warning(
+                "PLAYERCARD_SLOW rid=%s name=%s elapsed_ms=%d cron_active=%s "
+                "bs=%d ss=%d gl=%d pit=%d",
+                rid, name, elapsed_ms, cron_active,
+                len(batting), len(season_splits), len(game_logs), len(pitching),
+            )
 
         return PlayerCardResponse(
             request_id=rid,
