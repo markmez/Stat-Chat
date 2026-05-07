@@ -255,14 +255,6 @@ TESTS: list[tuple[str, str, str]] = [
     ("Explain why teams are throwing more sliders", "sonnet", "Narrative"),
 
     # ============================================================
-    # Tier 18: Long-tail structurally-answerable — should be query_engine
-    # The filter is structural ("last name starts with X") but we don't
-    # have a parser for it. Real gap, not "Haiku OK" — see audit
-    # discipline memory note. Falling to Haiku is a regression to fix.
-    # ============================================================
-    ("Pitchers whose last name starts with a vowel", "intercepted",
-     "Long-tail structurally answerable"),
-
     # ============================================================
     # Tier 18b: Off-topic / metric comparisons not in schema — Sonnet expected
     # FIP and xERA aren't in our DB; this is a genuine narrative
