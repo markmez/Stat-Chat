@@ -1061,6 +1061,11 @@ def decompose(question: str) -> QueryPlan:
             "single month all time", "single month ever", "best single month",
             "best month all time", "best month ever",
             "monthly leaderboard",
+            # "in any one calendar month" / "in a single calendar month" /
+            # "in one calendar month" — natural phrasings that don't substring-
+            # match "in any one month" (because "calendar" intervenes).
+            "in any one calendar month", "in a single calendar month",
+            "in one calendar month",
         ]
         if any(t in lower for t in month_grouped_triggers):
             plan.month_grouped = True
@@ -1393,6 +1398,11 @@ def decompose(question: str) -> QueryPlan:
     if not plan.is_pitching and any(w in lower for w in ["pitcher", "pitchers", "pitching", "pitched"]):
         if not _stat_is_batting_only:
             plan.is_pitching = True
+    # Consume subject-noun forms once they've served their purpose flagging
+    # pitching context. Without this, possessives like "pitcher's" leak into
+    # plan.unexplained_words → valid=False → bail to Haiku ("first 10 career
+    # starts" should reach the career-window executor instead).
+    _add_consumed(plan, "pitcher pitchers pitching pitched pitcher's pitchers'")
     # NOTE: "players" / "player" intentionally excluded — they're generic
     # subjects that don't disambiguate batting vs pitching. With "players"
     # in this list, "Players with 3000 strikeouts" was being interpreted
@@ -1401,6 +1411,7 @@ def decompose(question: str) -> QueryPlan:
     # The other words ("batter", "hitting", "hitters") do uniquely signal
     # batting context.
     has_batting_context = any(w in lower for w in ["hitter", "hitters", "batter", "batters", "batting", "hitting"])
+    _add_consumed(plan, "hitter hitters batter batters batting hitting hitter's batter's")
     # Extra filters containing batting-only stats imply batting context
     # e.g., "fewest strikeouts with 30+ HR" — HR is batting-only, so K must be batting too
     if not has_batting_context and plan.extra_filters:
