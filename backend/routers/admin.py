@@ -1709,10 +1709,16 @@ async def debug_followup(
 @router.api_route("/ai-notable", methods=["GET", "POST"])
 async def ai_notable(
     dry_run: bool = True,
+    target_date: str | None = None,
     key: str | None = None,
     authorization: str | None = Header(None),
 ):
-    """Run AI-powered notable events detection. dry_run=true returns snapshot only."""
+    """Run AI-powered notable events detection. dry_run=true returns snapshot only.
+
+    target_date=YYYY-MM-DD: override the auto-detected latest_date so insights
+    generate against a specific past date. Used to backfill AI insights after
+    /admin/redetect with purge_all=true wiped them.
+    """
     verify_admin(authorization, key)
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -1720,14 +1726,17 @@ async def ai_notable(
         from services.ai_notable_events import generate_ai_insights
 
         season = date.today().year
-        latest_date = _get_latest_date(conn, season)
-        if not latest_date:
-            conn.close()
-            return {"status": "error", "message": "No game logs found"}
+        if target_date:
+            latest_date = target_date
+        else:
+            latest_date = _get_latest_date(conn, season)
+            if not latest_date:
+                conn.close()
+                return {"status": "error", "message": "No game logs found"}
 
         result = generate_ai_insights(conn, season, latest_date, dry_run=dry_run)
         conn.close()
-        return {"status": "ok", "dry_run": dry_run, **result}
+        return {"status": "ok", "dry_run": dry_run, "target_date": target_date, **result}
     except Exception as e:
         import traceback
         raise HTTPException(500, f"{str(e)}\n{traceback.format_exc()}")
