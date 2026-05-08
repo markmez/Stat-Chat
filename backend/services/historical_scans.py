@@ -532,14 +532,18 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
                 # match and the team gap is substantial on its own
                 if (mlb_season is None and team_gap >= 10) or (team_gap - mlb_gap >= 10):
                     mentioned.append(t_name)
+                    # "a" / "an" by first-letter vowel sound. Covers the four
+                    # vowel-starting MLB franchises (Astros, Angels, Athletics,
+                    # Orioles) cleanly; everything else stays "a".
+                    article = "an" if franchise_name and franchise_name[0].lower() in "aeio" else "a"
                     if t_len == current_length:
                         phrases.append(
-                            f"matching {t_name}'s {t_len}-game run as a "
+                            f"matching {t_name}'s {t_len}-game run as {article} "
                             f"{franchise_name} in {t_season}"
                         )
                     else:
                         phrases.append(
-                            f"the longest by a {franchise_name} player "
+                            f"the longest by {article} {franchise_name} player "
                             f"since {t_name}'s {t_len} in {t_season}"
                         )
 

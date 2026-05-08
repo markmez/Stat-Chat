@@ -375,6 +375,23 @@ def _player_name(conn, player_id):
     return row[0] if row else player_id
 
 
+def _a_or_an(word: str) -> str:
+    """Pick "a" or "an" based on the first sound of `word`.
+
+    Simple first-letter vowel check — covers MLB franchise names
+    cleanly (Athletics, Astros, Angels, Orioles all start with a
+    vowel; everything else with a consonant). Handles the empty/None
+    edge by defaulting to "a".
+
+    Edge cases NOT handled (none of which apply to MLB team names):
+    - "U" words that begin with a "you" sound ("a uniform")
+    - Silent-H words ("an honor")
+    """
+    if not word:
+        return "a"
+    return "an" if word[0].lower() in "aeio" else "a"
+
+
 def _continue_with_context(base: str, continuation: str) -> str:
     """Append a follow-up clause as a separate sentence rather than an
     em-dash continuation. Em-dash-as-connector reads AI-generated; period
@@ -622,17 +639,18 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
                 team_gap = current_year - t_year
                 mlb_gap = (current_year - mlb_year) if mlb_year else 9999
                 if (mlb_year is None and team_gap >= 10) or (team_gap - mlb_gap >= 10):
+                    article = _a_or_an(franchise_name)
                     if mlb_phrase:
                         # Don't repeat "{streak_label} streak" — MLB phrase
                         # already established the noun.
                         team_phrase = (
-                            f"the longest by a {franchise_name} player "
+                            f"the longest by {article} {franchise_name} player "
                             f"since {t_name}'s {t_run} in {t_year}."
                         )
                     else:
                         # Standalone — needs the full phrase with label.
                         team_phrase = (
-                            f"the longest {streak_label} streak by a {franchise_name} player "
+                            f"the longest {streak_label} streak by {article} {franchise_name} player "
                             f"since {t_name}'s {t_run} in {t_year}."
                         )
                     if secondary_names is not None and t_name:
@@ -2176,7 +2194,7 @@ def _pelt_streak_headline(name, num_games, quality, stats_phrase, mlb_comp, team
     if team_comp and franchise_name:
         n = min(num_games, team_comp.get("num_games", num_games))
         sentences.append(
-            f"Best OPS by a {franchise_name} over a {n}+ game stretch since {team_comp['name']} in {team_comp['season']}"
+            f"Best OPS by {_a_or_an(franchise_name)} {franchise_name} over a {n}+ game stretch since {team_comp['name']} in {team_comp['season']}"
         )
 
     # Join: first sentence ends at em-dash phrase, rest are separate sentences.
