@@ -3742,7 +3742,7 @@ def is_detection_locked():
     return True
 
 
-def detect_all(db_path=None, season=None, from_poll=False, force=False):
+def detect_all(db_path=None, season=None, from_poll=False, force=False, target_date=None):
     """Run all detectors, insert results, prune old events.
 
     from_poll=True: called from the 15-min poll. Will skip if the daily
@@ -3751,6 +3751,11 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False):
     force=True: bypass the "no new data since last detection" skip.
     Used by /admin/redetect for manual recovery — always re-runs detection
     even when nothing has changed since the last successful run.
+
+    target_date=YYYY-MM-DD: override the auto-detected latest_date so
+    detection runs against a specific past date. Used by /admin/redetect
+    to backfill events for a specific game date after a copy/logic fix.
+    Implies force=True.
     """
     if from_poll and is_detection_locked():
         print("  Detection locked (daily pipeline running) — skipping")
@@ -3769,13 +3774,17 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False):
         today = date.today()
         season = today.year
 
-    latest_date = _get_latest_date(conn, season)
-    if not latest_date:
-        print(f"  No game logs found for season {season}")
-        conn.close()
-        return 0
-
-    print(f"  Latest game date: {latest_date}")
+    if target_date:
+        latest_date = target_date
+        force = True  # Past-date redetection always bypasses the got-data skip
+        print(f"  Detection date (override): {latest_date}")
+    else:
+        latest_date = _get_latest_date(conn, season)
+        if not latest_date:
+            print(f"  No game logs found for season {season}")
+            conn.close()
+            return 0
+        print(f"  Latest game date: {latest_date}")
 
     # Got-data skip: if nothing has changed in the underlying game logs
     # since the last successful detection, the heavy pass would just

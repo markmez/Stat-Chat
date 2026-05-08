@@ -587,12 +587,26 @@ async def simulate_passing(
 @router.post("/redetect")
 async def redetect_events(
     clear_date: str | None = None,
+    target_date: str | None = None,
+    purge_all: bool = False,
     authorization: str | None = Header(None),
 ):
     """Re-run event detection without pulling new data. Fast (~30s).
 
-    Optional: clear_date=YYYY-MM-DD to delete existing events for that date
-    before re-detecting (forces fresh generation with latest code).
+    clear_date=YYYY-MM-DD: delete existing events for that date before
+        re-detecting. By default keeps career_first + onbase_streak
+        (those rotate gracefully). Set purge_all=true to delete every
+        event for the date — required when text-format fixes have
+        shipped and you want all event types refreshed.
+
+    target_date=YYYY-MM-DD: override which date detection runs against.
+        Without this, detect_all uses the most recent date in
+        game_batting_logs. Use to backfill events for a past date
+        after a copy/logic fix.
+
+    purge_all=true: bypass the keep-list when clearing — deletes every
+        event for clear_date regardless of detection_type. Combined with
+        target_date, lets you fully refresh a past date's events.
     """
     verify_admin(authorization)
     from services.notable_events import detect_all
@@ -600,11 +614,18 @@ async def redetect_events(
     if clear_date:
         conn = sqlite3.connect(DB_PATH, timeout=10)
         try:
-            # Keep career_first and onbase_streak (these are fine)
-            deleted = conn.execute("""
-                DELETE FROM notable_events
-                WHERE game_date = ? AND detection_type NOT IN ('career_first', 'onbase_streak')
-            """, (clear_date,)).rowcount
+            if purge_all:
+                deleted = conn.execute(
+                    "DELETE FROM notable_events WHERE game_date = ?",
+                    (clear_date,),
+                ).rowcount
+            else:
+                # Default: keep career_first + onbase_streak (these
+                # rotate gracefully without re-detection)
+                deleted = conn.execute("""
+                    DELETE FROM notable_events
+                    WHERE game_date = ? AND detection_type NOT IN ('career_first', 'onbase_streak')
+                """, (clear_date,)).rowcount
             conn.commit()
         finally:
             conn.close()
@@ -616,13 +637,15 @@ async def redetect_events(
     with contextlib.redirect_stdout(log_buffer):
         # force=True so the manual recovery always runs, even if the
         # got-data skip would otherwise short-circuit detection.
-        count = detect_all(DB_PATH, force=True)
+        count = detect_all(DB_PATH, force=True, target_date=target_date)
     log_output = log_buffer.getvalue()
     return {
         "status": "ok",
         "events_detected": count,
         "events_cleared": deleted,
         "clear_date": clear_date,
+        "target_date": target_date,
+        "purge_all": purge_all,
         "log": log_output,
     }
 
