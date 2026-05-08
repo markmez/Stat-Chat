@@ -980,6 +980,15 @@ STYLE RULES:
     what you're comparing. "Matches his second-half pace" is ambiguous —
     does it mean equal totals or similar rate? Say "on a similar pace to"
     or "already has X, which took him until August last year."
+19a. When citing a prior-year total or career-best number, INCLUDE THE
+    STAT NAME in the same clause. If the sentence has already mentioned
+    multiple stats (hits + HR + RBI), a trailing "total of 51" is
+    ambiguous — the reader can't tell which stat the 51 refers to.
+    Bad:  "...32 RBI in 33 games, on pace to shatter his 2025 full-season
+          total of 51." (Could be RBI, hits, or HR — all were mentioned.)
+    Good: "...32 RBI in 33 games, on pace to shatter his 2025 full-season
+          RBI total of 51." Always name the stat next to its prior-period
+    number when other stats appear in the same sentence.
 20. Over short spans (under ~20 games), convey hot performance with
     batting average, OPS, or another rate stat (".417 over 12 games"),
     not cumulative hit counts ("25 hits through 12 games"). Counting
