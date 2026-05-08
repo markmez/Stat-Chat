@@ -1479,6 +1479,13 @@ class GameLogEntry(BaseModel):
     walks: int
     strikeouts: int
     plate_appearances: int
+    # HBP + SF needed for correct OBP / OPS recomputation in the iOS
+    # slider's last-N-games path. Without these, OBP misses HBP in the
+    # numerator and the slider's OPS at-max-position diverges from the
+    # season aggregate (e.g. Ohtani at full season: .831 truth vs .806
+    # without HBP).
+    hit_by_pitch: int = 0
+    sacrifice_flies: int = 0
 
 
 class PitchingGameLogEntry(BaseModel):
@@ -1502,7 +1509,8 @@ def _fetch_batting_game_logs(conn, player_id, season):
         cur = conn.cursor()
         cur.execute("""
             SELECT g.date, g.opponent, g.at_bats, g.hits, g.doubles, g.triples,
-                   g.home_runs, g.runs, g.rbi, g.walks, g.strikeouts, g.plate_appearances
+                   g.home_runs, g.runs, g.rbi, g.walks, g.strikeouts, g.plate_appearances,
+                   COALESCE(g.hit_by_pitch, 0), COALESCE(g.sacrifice_flies, 0)
             FROM game_batting_logs g
             WHERE g.player_id = ? AND g.season = ?
             ORDER BY g.date DESC
@@ -1513,7 +1521,8 @@ def _fetch_batting_game_logs(conn, player_id, season):
             hits=_safe_int(r[3]), doubles=_safe_int(r[4]), triples=_safe_int(r[5]),
             home_runs=_safe_int(r[6]), runs=_safe_int(r[7]), rbi=_safe_int(r[8]),
             walks=_safe_int(r[9]), strikeouts=_safe_int(r[10]),
-            plate_appearances=_safe_int(r[11])
+            plate_appearances=_safe_int(r[11]),
+            hit_by_pitch=_safe_int(r[12]), sacrifice_flies=_safe_int(r[13]),
         ) for r in rows]
     except Exception:
         return []
