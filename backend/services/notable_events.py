@@ -443,7 +443,8 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
                         at_bat_filter="at_bats > 0",
                         player_team=None,
                         streak_label="hitting",
-                        current_date=None):
+                        current_date=None,
+                        secondary_names=None):
     """For streaks: find the last time someone had a consecutive-game streak
     of this length. Returns context string or empty.
 
@@ -462,6 +463,11 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
     exclude streaks that ended on or after the current event's date. Without
     it, the historical_streaks path falls back to filtering by end_season
     only — which can miss truly recent comparable streaks.
+
+    secondary_names: optional list that the function appends comparison
+    player names to (e.g., the "Ramírez" in "longest since Ramírez (39)").
+    Callers add these to the event's player_names array so iOS can auto-link
+    second/third mentions in the rendered feed text.
 
     For hitting and on-base streaks, the MLB-wide lookup queries the
     precomputed `historical_streaks` table — that table walks chronologically
@@ -594,6 +600,8 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
         mlb_year, mlb_pid, mlb_run = mlb_match
         name = _player_name(conn, mlb_pid)
         mlb_phrase = f"the longest {streak_label} streak since {name} ({mlb_run} games) in {mlb_year}."
+        if secondary_names is not None and name:
+            secondary_names.append(name)
 
     # Team
     team_phrase = ""
@@ -627,6 +635,8 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
                             f"the longest {streak_label} streak by a {franchise_name} player "
                             f"since {t_name}'s {t_run} in {t_year}."
                         )
+                    if secondary_names is not None and t_name:
+                        secondary_names.append(t_name)
 
     if mlb_phrase and team_phrase:
         return mlb_phrase.rstrip(".") + ", and " + team_phrase
@@ -802,12 +812,14 @@ def detect_hitting_streaks(conn, season, latest_date, min_games=8):
             team = _player_team_display(conn, pid, season)
             team_code = _player_team_code(conn, pid, season)
             game_line, _ = _get_game_line(conn, pid, latest_date, season)
+            secondary: list = []
             context = _historical_context(
                 conn, streak, "hits > 0",
                 exclude_season=season, exclude_player=pid,
                 player_team=team_code,
                 streak_label="hitting",
                 current_date=latest_date,
+                secondary_names=secondary,
             )
             intro = f"{name} went {game_line}" if game_line else name
             headline = f"{intro}, extending his hitting streak to {streak} straight games"
@@ -820,7 +832,7 @@ def detect_hitting_streaks(conn, season, latest_date, min_games=8):
                 "detail": "",
                 "category": "Streak",
                 "game_date": latest_date,
-                "player_names": [name],
+                "player_names": [name] + secondary,
                 "team_names": [team] if team else [],
                 "detection_type": "hitting_streak",
                 "priority": 1,
@@ -864,6 +876,7 @@ def detect_onbase_streaks(conn, season, latest_date, min_games=12):
             team = _player_team_display(conn, pid, season)
             team_code = _player_team_code(conn, pid, season)
             game_line, _ = _get_game_line(conn, pid, latest_date, season)
+            secondary: list = []
             context = _historical_context(
                 conn, streak,
                 "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
@@ -872,6 +885,7 @@ def detect_onbase_streaks(conn, season, latest_date, min_games=12):
                 player_team=team_code,
                 streak_label="on-base",
                 current_date=latest_date,
+                secondary_names=secondary,
             )
             intro = f"{name} went {game_line}" if game_line else name
             headline = f"{intro}, extending his on-base streak to {streak} straight games"
@@ -884,7 +898,7 @@ def detect_onbase_streaks(conn, season, latest_date, min_games=12):
                 "detail": "",
                 "category": "Streak",
                 "game_date": latest_date,
-                "player_names": [name],
+                "player_names": [name] + secondary,
                 "team_names": [],
                 "detection_type": "onbase_streak",
                 "priority": 1,
@@ -936,12 +950,14 @@ def detect_hr_streaks(conn, season, latest_date, min_games=4):
             hr_total = season_hr[0] if season_hr else 0
             team_code = _player_team_code(conn, pid, season)
             game_line, _ = _get_game_line(conn, pid, latest_date, season)
+            secondary: list = []
             context = _historical_context(
                 conn, streak, "home_runs > 0",
                 exclude_season=season, exclude_player=pid,
                 player_team=team_code,
                 streak_label="HR",
                 current_date=latest_date,
+                secondary_names=secondary,
             )
             # Build intro with HR number
             ordinal = f"his {_ordinal(hr_total)}" if hr_total else "a"
@@ -956,7 +972,7 @@ def detect_hr_streaks(conn, season, latest_date, min_games=4):
                 "detail": "",
                 "category": "Streak",
                 "game_date": latest_date,
-                "player_names": [name],
+                "player_names": [name] + secondary,
                 "team_names": [],
                 "detection_type": "hr_streak",
                 "priority": 1,
@@ -1090,6 +1106,7 @@ def _append_streak_end_event(conn, events, pid, season, latest_date, *,
     # Derive streak_label by stripping " streak" from `label`
     # ("hitting streak" → "hitting").
     streak_label = label.replace(" streak", "").strip() or "hitting"
+    secondary: list = []
     context = _historical_context(
         conn, streak, condition_sql,
         exclude_season=season, exclude_player=pid,
@@ -1097,6 +1114,7 @@ def _append_streak_end_event(conn, events, pid, season, latest_date, *,
         player_team=team_code,
         streak_label=streak_label,
         current_date=latest_date,
+        secondary_names=secondary,
     )
 
     intro = f"{name} went {game_line}" if game_line else name
@@ -1111,7 +1129,7 @@ def _append_streak_end_event(conn, events, pid, season, latest_date, *,
         "detail": "",
         "category": "Streak",
         "game_date": latest_date,
-        "player_names": [name],
+        "player_names": [name] + secondary,
         "team_names": [team] if team else [],
         "detection_type": detection_type,
         "priority": 1,
@@ -3074,11 +3092,13 @@ def detect_for_players(db_path, season, player_ids):
             if streak >= 8:
                 team = _player_team_display(conn, pid, season)
                 team_code = _player_team_code(conn, pid, season)
+                secondary: list = []
                 context = _historical_context(conn, streak, "hits > 0",
                                               exclude_season=season, exclude_player=pid,
                                               player_team=team_code,
                                               streak_label="hitting",
-                                              current_date=latest_date)
+                                              current_date=latest_date,
+                                              secondary_names=secondary)
                 headline = f"{name} has hit safely in {streak} straight games"
                 if context:
                     # context is already lowercase-leading; don't .lower()
@@ -3088,7 +3108,7 @@ def detect_for_players(db_path, season, player_ids):
                     headline += "."
                 events.append({
                     "headline": headline, "detail": "", "category": "Streak",
-                    "game_date": latest_date, "player_names": [name],
+                    "game_date": latest_date, "player_names": [name] + secondary,
                     "team_names": [team] if team else [],
                     "detection_type": "hitting_streak", "priority": 1,
                 })
@@ -3111,11 +3131,13 @@ def detect_for_players(db_path, season, player_ids):
             if ob_streak >= 12:
                 team = _player_team_display(conn, pid, season)
                 team_code = _player_team_code(conn, pid, season)
+                secondary: list = []
                 context = _historical_context(
                     conn, ob_streak, "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
                     exclude_season=season, exclude_player=pid,
                     player_team=team_code, streak_label="on-base",
-                    current_date=latest_date)
+                    current_date=latest_date,
+                    secondary_names=secondary)
                 headline = f"{name} has reached base in {ob_streak} straight games"
                 if context:
                     headline += f", {context}"
@@ -3123,7 +3145,7 @@ def detect_for_players(db_path, season, player_ids):
                     headline += "."
                 events.append({
                     "headline": headline, "detail": "", "category": "Streak",
-                    "game_date": latest_date, "player_names": [name],
+                    "game_date": latest_date, "player_names": [name] + secondary,
                     "team_names": [team] if team else [],
                     "detection_type": "onbase_streak", "priority": 1,
                 })
@@ -3142,10 +3164,12 @@ def detect_for_players(db_path, season, player_ids):
                     break
             if hr_streak >= 4:
                 team_code = _player_team_code(conn, pid, season)
+                secondary: list = []
                 context = _historical_context(conn, hr_streak, "home_runs > 0",
                                               exclude_season=season, exclude_player=pid,
                                               player_team=team_code, streak_label="HR",
-                                              current_date=latest_date)
+                                              current_date=latest_date,
+                                              secondary_names=secondary)
                 headline = f"{name} has homered in {hr_streak} straight games"
                 if context:
                     headline += f", {context}"
@@ -3153,7 +3177,7 @@ def detect_for_players(db_path, season, player_ids):
                     headline += "."
                 events.append({
                     "headline": headline, "detail": "", "category": "Streak",
-                    "game_date": latest_date, "player_names": [name],
+                    "game_date": latest_date, "player_names": [name] + secondary,
                     "team_names": [],
                     "detection_type": "hr_streak", "priority": 1,
                 })
