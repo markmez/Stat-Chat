@@ -130,5 +130,12 @@ def build(db_path):
 
 
 if __name__ == "__main__":
-    db = sys.argv[1] if len(sys.argv) > 1 else "/data/baseball_stats_full.db"
+    import argparse
+    p = argparse.ArgumentParser(description="Rebuild historical_streaks table")
+    p.add_argument("--db", default="/data/baseball_stats_full.db",
+                   help="Path to SQLite DB (default: /data/baseball_stats_full.db)")
+    # Accept positional too, for back-compat with prior callers.
+    p.add_argument("db_positional", nargs="?", default=None)
+    args = p.parse_args()
+    db = args.db_positional or args.db
     build(db)

@@ -52,5 +52,13 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # Career ranks for active players move at most 1-2 ranks per week, so weekly is fine.
 30 7 * * 2 statchat /opt/statchat/venv/bin/python /opt/statchat/repo/backend/data_pipeline/build_career_ranks.py --db /data/baseball_stats_full.db >> /data/refresh.log 2>&1
 
+# Weekly historical_streaks rebuild: Tuesday 3:45 AM ET (07:45 UTC).
+# Refreshes the all-time leaderboard of hitting + on-base streaks
+# (length >= 20/25). Used by the feed's "longest since X" lookup, so
+# without weekly refresh, recently-completed cross-season streaks
+# (e.g. Ohtani's 53-game Aug 2025 → Apr 2026) never show up as
+# comparison points for new active streaks.
+45 7 * * 2 statchat /opt/statchat/venv/bin/python /opt/statchat/repo/backend/data_pipeline/build_historical_streaks.py --db /data/baseball_stats_full.db >> /data/refresh.log 2>&1
+
 # Health monitor: every 5 min, pings Healthchecks.io if API + DB are up
 */5 * * * * statchat /opt/statchat/repo/deploy/healthcheck.sh
