@@ -206,6 +206,22 @@ def _redirect_alias(cursor, pid):
     return row[0] if row else pid
 
 
+# Preferred display names that override whatever MSF returns. Used when MSF's
+# legal-name format ("Jasrado Chisholm Jr.") differs from the universally-known
+# common name ("Jazz Chisholm Jr."). Without this, every pipeline refresh
+# overwrites the players.name column with the MSF version and the player-card
+# resolver can't find the player by their common name.
+PREFERRED_DISPLAY_NAMES = {
+    "chishj001": "Jazz Chisholm Jr.",  # MSF returns "Jasrado Chisholm Jr."
+}
+
+
+def _preferred_name(pid: str, msf_name: str) -> str:
+    """Return the preferred display name for `pid` if one is hardcoded;
+    otherwise return whatever MSF gave us."""
+    return PREFERRED_DISPLAY_NAMES.get(pid, msf_name)
+
+
 def find_or_create_player(cursor, player_info, team_abbrev, season):
     """Find existing player by name or create a new entry. Returns player_id.
     Uses accent-insensitive matching and temporal plausibility checks to avoid
@@ -252,9 +268,14 @@ def find_or_create_player(cursor, player_info, team_abbrev, season):
                     plausible_exact = [best]
 
         pid, pname = plausible_exact[0]
-        if pname != full_name:
+        # If a preferred display name is hardcoded for this player, keep it.
+        # MSF returns legal-name format for some players (e.g. "Jasrado
+        # Chisholm Jr.") while their common name ("Jazz Chisholm Jr.") is
+        # what every other site and our search aliases use.
+        target_name = _preferred_name(pid, full_name)
+        if pname != target_name:
             cursor.execute("UPDATE players SET name = ?, team = ? WHERE player_id = ?",
-                           (full_name, retro_team(team_abbrev), pid))
+                           (target_name, retro_team(team_abbrev), pid))
         else:
             cursor.execute("UPDATE players SET team = ? WHERE player_id = ?",
                            (retro_team(team_abbrev), pid))
