@@ -1727,10 +1727,10 @@ def template_facts(conn, facts, season, latest_date):
             if rank == 1:
                 if tied:
                     passed_str = ", ".join(f"{t['player']} ({t['season']})" for t in tied[:3])
-                    headline = f"{game_intro}, giving him the most {stat_label} ({val}) in a player's first {cg} career games in over 100 years, passing {passed_str}."
+                    headline = f"{game_intro} and now has the most {stat_label} ({val}) in a player's first {cg} career games in over 100 years, passing {passed_str}."
                     secondary_names.extend(t["player"] for t in tied[:3])
                 else:
-                    headline = f"{game_intro}, giving him the most {stat_label} ({val}) in a player's first {cg} career games in over 100 years."
+                    headline = f"{game_intro} and now has the most {stat_label} ({val}) in a player's first {cg} career games in over 100 years."
             else:
                 if ahead:
                     ahead_str = ", ".join(f"{a['player']} ({a['value']}, {a['season']})" for a in ahead[:3])
@@ -1879,7 +1879,16 @@ def template_facts(conn, facts, season, latest_date):
                 else:
                     took_verb = "but still took"
 
-            headline = f"{game_intro}, {took_verb} the {scope} lead in {stat_label} ({val_str}), passing {runner_up} ({ru_str})."
+            # Past-tense main verb instead of present-participle ("taking" →
+            # "took") so the second clause reads unambiguously as a past
+            # action that already happened. "but still took" / "but still
+            # took back" variants already carry their own conjunction, so
+            # those use comma-join; clean variants use "and"-join.
+            if took_verb.startswith("but still"):
+                headline = f"{game_intro}, {took_verb} the {scope} lead in {stat_label} ({val_str}), passing {runner_up} ({ru_str})."
+            else:
+                took_main = "took back" if took_verb == "taking back" else "took"
+                headline = f"{game_intro} and {took_main} the {scope} lead in {stat_label} ({val_str}), passing {runner_up} ({ru_str})."
             secondary_names.append(runner_up)
 
         elif f["type"] == "leaderboard_tie":
@@ -1888,7 +1897,7 @@ def template_facts(conn, facts, season, latest_date):
             stat_label = f["stat_label"]
             tied_with = f["tied_with"]
             if game_line:
-                headline = f"{player} went {game_line}, tying {tied_with} for the {scope} lead in {stat_label} ({val})."
+                headline = f"{player} went {game_line} and tied {tied_with} for the {scope} lead in {stat_label} ({val})."
             else:
                 headline = f"{player} tied {tied_with} for the {scope} lead in {stat_label} ({val})."
             secondary_names.append(tied_with)

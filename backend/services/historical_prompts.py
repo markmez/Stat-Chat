@@ -976,6 +976,22 @@ STYLE RULES:
 18. NEVER use dangling references — don't say "the 5 steals" or "the
     3 homers" unless those stats were already mentioned earlier in the
     same sentence. Every stat must be introduced before being referenced.
+18a. Every clause must have a clear predicate verb. Do NOT elide the
+    verb in noun-fragment constructions.
+    Bad:  "...with a homer, a double and 5 RBI — the 5 RBI mark his
+          career high, matching the total he set on June 23, 2021."
+          ("the 5 RBI mark his career high" is missing a verb — could
+          be "marked", "matched", or "was".)
+    Good: "...with a homer, a double and 5 RBI, matching his career
+          high in RBI (last set June 23, 2021)."
+    Or:   "...with a homer, a double and 5 RBI — his career high in
+          RBI, matching the total he set on June 23, 2021."
+18b. Do NOT use "the X mark" for single-game stat totals. That phrasing
+    is reserved for career milestones ("reached the 3,000-hit mark"),
+    not single-game numbers.
+    Bad:  "the 5 RBI mark"
+    Good: "his career high in RBI" / "his second 5-RBI game" /
+          "his fifth 4-hit game".
 19. When comparing current stats to a prior period, be explicit about
     what you're comparing. "Matches his second-half pace" is ambiguous —
     does it mean equal totals or similar rate? Say "on a similar pace to"
