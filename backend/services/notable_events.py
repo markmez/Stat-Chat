@@ -442,7 +442,8 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
                         exclude_season=None, exclude_player=None,
                         at_bat_filter="at_bats > 0",
                         player_team=None,
-                        streak_label="hitting"):
+                        streak_label="hitting",
+                        current_date=None):
     """For streaks: find the last time someone had a consecutive-game streak
     of this length. Returns context string or empty.
 
@@ -456,6 +457,19 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
     on the second sentence — "That's the longest on-base streak since X"
     instead of the antecedent-ambiguous "The longest since X."
 
+    current_date: optional ISO date string of the current event. Used by the
+    cross-season `historical_streaks` lookup (hitting + on-base only) to
+    exclude streaks that ended on or after the current event's date. Without
+    it, the historical_streaks path falls back to filtering by end_season
+    only — which can miss truly recent comparable streaks.
+
+    For hitting and on-base streaks, the MLB-wide lookup queries the
+    precomputed `historical_streaks` table — that table walks chronologically
+    across season boundaries, so cross-season runs (e.g., Ohtani's 53-game
+    on-base streak Aug 2025 → Apr 2026) are recognized. The legacy per-season
+    game-log scan misses these. Falls back to per-season scan for streak
+    types not in historical_streaks (e.g., HR streaks).
+
     Returned phrase starts lowercase so _continue_with_context prepends
     "That's" for the standalone-sentence form. Comma-join callers can use
     the string as-is without `.lower()` (which would also lowercase player
@@ -467,6 +481,47 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
 
     exclude_season = exclude_season or 0
     exclude_player = exclude_player or ""
+
+    # Map streak_label to historical_streaks.streak_type. None = no
+    # precomputed table coverage for this streak type — fall back to scan.
+    _HIST_STREAK_TYPE = {"hitting": "hitting", "on-base": "on_base"}
+    hist_type = _HIST_STREAK_TYPE.get(streak_label)
+
+    def _scan_historical_streaks():
+        """Cross-season MLB-wide lookup using the precomputed table.
+        Returns (end_season, pid, length) or None.
+
+        Filters by end_date when current_date is provided so streaks
+        ending on/after the current event don't show up as 'past' runs.
+        Falls back to end_season < exclude_season when no current_date,
+        which matches the per-season-scan semantics."""
+        if not hist_type:
+            return None
+        if current_date:
+            row = conn.execute("""
+                SELECT player_id, length, end_season
+                FROM historical_streaks
+                WHERE streak_type = ?
+                  AND length >= ?
+                  AND player_id != ?
+                  AND end_date < ?
+                ORDER BY end_date DESC, length DESC
+                LIMIT 1
+            """, (hist_type, streak_len, exclude_player, current_date)).fetchone()
+        else:
+            row = conn.execute("""
+                SELECT player_id, length, end_season
+                FROM historical_streaks
+                WHERE streak_type = ?
+                  AND length >= ?
+                  AND player_id != ?
+                  AND end_season < ?
+                ORDER BY end_date DESC, length DESC
+                LIMIT 1
+            """, (hist_type, streak_len, exclude_player, exclude_season)).fetchone()
+        if row:
+            return (row[2], row[0], row[1])
+        return None
 
     seasons = conn.execute(f"""
         SELECT DISTINCT season FROM {table}
@@ -527,8 +582,12 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
                 return (szn, best_pid, best_run)
         return None
 
-    # MLB-wide
-    mlb_match = _scan_seasons(None)
+    # MLB-wide. Prefer the precomputed historical_streaks table when
+    # available — it walks across season boundaries, so cross-season
+    # streaks (e.g. Ohtani Aug 2025 → Apr 2026) are recognized. Falls
+    # back to per-season game-log scan for streak types not in the
+    # table (currently only HR streaks fall back).
+    mlb_match = _scan_historical_streaks() or _scan_seasons(None)
     mlb_phrase = ""
     mlb_year = None
     if mlb_match:
@@ -748,6 +807,7 @@ def detect_hitting_streaks(conn, season, latest_date, min_games=8):
                 exclude_season=season, exclude_player=pid,
                 player_team=team_code,
                 streak_label="hitting",
+                current_date=latest_date,
             )
             intro = f"{name} went {game_line}" if game_line else name
             headline = f"{intro}, extending his hitting streak to {streak} straight games"
@@ -811,6 +871,7 @@ def detect_onbase_streaks(conn, season, latest_date, min_games=12):
                 at_bat_filter="(at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)",
                 player_team=team_code,
                 streak_label="on-base",
+                current_date=latest_date,
             )
             intro = f"{name} went {game_line}" if game_line else name
             headline = f"{intro}, extending his on-base streak to {streak} straight games"
@@ -880,6 +941,7 @@ def detect_hr_streaks(conn, season, latest_date, min_games=4):
                 exclude_season=season, exclude_player=pid,
                 player_team=team_code,
                 streak_label="HR",
+                current_date=latest_date,
             )
             # Build intro with HR number
             ordinal = f"his {_ordinal(hr_total)}" if hr_total else "a"
@@ -1034,6 +1096,7 @@ def _append_streak_end_event(conn, events, pid, season, latest_date, *,
         at_bat_filter=at_bat_filter,
         player_team=team_code,
         streak_label=streak_label,
+        current_date=latest_date,
     )
 
     intro = f"{name} went {game_line}" if game_line else name
@@ -3014,7 +3077,8 @@ def detect_for_players(db_path, season, player_ids):
                 context = _historical_context(conn, streak, "hits > 0",
                                               exclude_season=season, exclude_player=pid,
                                               player_team=team_code,
-                                              streak_label="hitting")
+                                              streak_label="hitting",
+                                              current_date=latest_date)
                 headline = f"{name} has hit safely in {streak} straight games"
                 if context:
                     # context is already lowercase-leading; don't .lower()
@@ -3050,7 +3114,8 @@ def detect_for_players(db_path, season, player_ids):
                 context = _historical_context(
                     conn, ob_streak, "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
                     exclude_season=season, exclude_player=pid,
-                    player_team=team_code, streak_label="on-base")
+                    player_team=team_code, streak_label="on-base",
+                    current_date=latest_date)
                 headline = f"{name} has reached base in {ob_streak} straight games"
                 if context:
                     headline += f", {context}"
@@ -3079,7 +3144,8 @@ def detect_for_players(db_path, season, player_ids):
                 team_code = _player_team_code(conn, pid, season)
                 context = _historical_context(conn, hr_streak, "home_runs > 0",
                                               exclude_season=season, exclude_player=pid,
-                                              player_team=team_code, streak_label="HR")
+                                              player_team=team_code, streak_label="HR",
+                                              current_date=latest_date)
                 headline = f"{name} has homered in {hr_streak} straight games"
                 if context:
                     headline += f", {context}"
