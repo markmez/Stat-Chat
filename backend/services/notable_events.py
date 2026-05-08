@@ -822,7 +822,7 @@ def detect_hitting_streaks(conn, season, latest_date, min_games=8):
                 secondary_names=secondary,
             )
             intro = f"{name} went {game_line}" if game_line else name
-            headline = f"{intro}, extending his hitting streak to {streak} straight games"
+            headline = f"{intro} and extended his hitting streak to {streak} straight games"
             if context:
                 headline = _continue_with_context(headline, context)
             else:
@@ -888,7 +888,7 @@ def detect_onbase_streaks(conn, season, latest_date, min_games=12):
                 secondary_names=secondary,
             )
             intro = f"{name} went {game_line}" if game_line else name
-            headline = f"{intro}, extending his on-base streak to {streak} straight games"
+            headline = f"{intro} and extended his on-base streak to {streak} straight games"
             if context:
                 headline = _continue_with_context(headline, context)
             else:
@@ -3364,12 +3364,12 @@ def detect_alltime_passing(conn, season, latest_date):
                 if game_line:
                     headline = (
                         f"{player_name} went {game_line}. "
-                        f"He now has {career_total} career {label}, "
+                        f"He now has {career_total:,} career {label}, "
                         f"passing {passed_name} for {ordinal} on the all-time list."
                     )
                 else:
                     headline = (
-                        f"{player_name} now has {career_total} career {label}, "
+                        f"{player_name} now has {career_total:,} career {label}, "
                         f"passing {passed_name} for {ordinal} on the all-time list."
                     )
 
@@ -3527,7 +3527,7 @@ def detect_alltime_passing(conn, season, latest_date):
                     )
                 else:
                     headline = (
-                        f"{player_name} now has {career_total} career {label}, "
+                        f"{player_name} now has {career_total:,} career {label}, "
                         f"passing {passed_name} for {ordinal} on the all-time list."
                     )
 

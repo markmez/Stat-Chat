@@ -1607,9 +1607,11 @@ def template_facts(conn, facts, season, latest_date):
             elif len(hist_phrases) == 1:
                 hist_suffix = ". That's " + hist_phrases[0]
             elif len(hist_phrases) == 2:
-                hist_suffix = ". That's " + hist_phrases[0] + " and " + hist_phrases[1]
+                # Oxford-style: comma before "and" so the second clause reads
+                # as a parallel item, not a run-on continuation.
+                hist_suffix = ". That's " + hist_phrases[0] + ", and " + hist_phrases[1]
             else:
-                # 3+: middle phrases as sentences, last two joined with "and"
+                # 3+: middle phrases as sentences, last two joined with ", and"
                 first = hist_phrases[0]
                 middle = [(p[0].upper() + p[1:]) for p in hist_phrases[1:-1]]
                 last = hist_phrases[-1]
@@ -1618,12 +1620,12 @@ def template_facts(conn, facts, season, latest_date):
                     last_middle = middle[-1]
                     sentences = ["That's " + first] + middle_minus_last
                     joined = ". ".join(sentences)
-                    hist_suffix = ". " + joined + ". " + last_middle + " and " + last
+                    hist_suffix = ". " + joined + ". " + last_middle + ", and " + last
                 else:
-                    hist_suffix = ". That's " + first + " and " + last
+                    hist_suffix = ". That's " + first + ", and " + last
 
             if game_line:
-                headline = f"{player} went {game_line}, extending the longest active {label} in MLB to {streak} games {ctx}{hist_suffix}."
+                headline = f"{player} went {game_line} and extended the longest active {label} in MLB to {streak} games {ctx}{hist_suffix}."
             else:
                 headline = f"{player} extended the longest active {label} in MLB to {streak} games {ctx}{hist_suffix}."
 
