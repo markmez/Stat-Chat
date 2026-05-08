@@ -441,14 +441,25 @@ def _player_team_code(conn, player_id, season):
 def _historical_context(conn, streak_len, condition_sql, table="game_batting_logs",
                         exclude_season=None, exclude_player=None,
                         at_bat_filter="at_bats > 0",
-                        player_team=None):
+                        player_team=None,
+                        streak_label="hitting"):
     """For streaks: find the last time someone had a consecutive-game streak
     of this length. Returns context string or empty.
 
-    Returns MLB-wide "longest since X" when streak >= 20, AND a
-    franchise-specific "longest by a {Team} player since X" when the team
-    match goes 10+ years deeper than the MLB match (or MLB is empty).
-    player_team: current player's team code (for franchise anchor).
+    Returns MLB-wide "the longest {label} streak since X" when streak >= 20,
+    AND a franchise-specific "the longest by a {Team} player since X" when
+    the team match goes 10+ years deeper than the MLB match (or MLB is
+    empty). player_team: current player's team code (for franchise anchor).
+
+    streak_label: noun-phrase fragment naming the streak type ("hitting",
+    "on-base", "HR"). Inserted into the phrase so users see a clear subject
+    on the second sentence — "That's the longest on-base streak since X"
+    instead of the antecedent-ambiguous "The longest since X."
+
+    Returned phrase starts lowercase so _continue_with_context prepends
+    "That's" for the standalone-sentence form. Comma-join callers can use
+    the string as-is without `.lower()` (which would also lowercase player
+    names — historic bug).
     """
     # Only add "longest since" context for genuinely rare streaks
     if streak_len < 20:
@@ -523,7 +534,7 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
     if mlb_match:
         mlb_year, mlb_pid, mlb_run = mlb_match
         name = _player_name(conn, mlb_pid)
-        mlb_phrase = f"The longest since {name} ({mlb_run} games) in {mlb_year}."
+        mlb_phrase = f"the longest {streak_label} streak since {name} ({mlb_run} games) in {mlb_year}."
 
     # Team
     team_phrase = ""
@@ -544,10 +555,19 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
                 team_gap = current_year - t_year
                 mlb_gap = (current_year - mlb_year) if mlb_year else 9999
                 if (mlb_year is None and team_gap >= 10) or (team_gap - mlb_gap >= 10):
-                    team_phrase = (
-                        f"the longest by a {franchise_name} player "
-                        f"since {t_name}'s {t_run} in {t_year}."
-                    )
+                    if mlb_phrase:
+                        # Don't repeat "{streak_label} streak" — MLB phrase
+                        # already established the noun.
+                        team_phrase = (
+                            f"the longest by a {franchise_name} player "
+                            f"since {t_name}'s {t_run} in {t_year}."
+                        )
+                    else:
+                        # Standalone — needs the full phrase with label.
+                        team_phrase = (
+                            f"the longest {streak_label} streak by a {franchise_name} player "
+                            f"since {t_name}'s {t_run} in {t_year}."
+                        )
 
     if mlb_phrase and team_phrase:
         return mlb_phrase.rstrip(".") + ", and " + team_phrase
@@ -727,6 +747,7 @@ def detect_hitting_streaks(conn, season, latest_date, min_games=8):
                 conn, streak, "hits > 0",
                 exclude_season=season, exclude_player=pid,
                 player_team=team_code,
+                streak_label="hitting",
             )
             intro = f"{name} went {game_line}" if game_line else name
             headline = f"{intro}, extending his hitting streak to {streak} straight games"
@@ -789,6 +810,7 @@ def detect_onbase_streaks(conn, season, latest_date, min_games=12):
                 exclude_season=season, exclude_player=pid,
                 at_bat_filter="(at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)",
                 player_team=team_code,
+                streak_label="on-base",
             )
             intro = f"{name} went {game_line}" if game_line else name
             headline = f"{intro}, extending his on-base streak to {streak} straight games"
@@ -857,6 +879,7 @@ def detect_hr_streaks(conn, season, latest_date, min_games=4):
                 conn, streak, "home_runs > 0",
                 exclude_season=season, exclude_player=pid,
                 player_team=team_code,
+                streak_label="HR",
             )
             # Build intro with HR number
             ordinal = f"his {_ordinal(hr_total)}" if hr_total else "a"
@@ -1000,12 +1023,17 @@ def _append_streak_end_event(conn, events, pid, season, latest_date, *,
 
     # Same historical-context machinery as the active-streak detectors.
     # The "longest since X" framing reads cleanly past-tense for an
-    # ended streak: "The X-game streak was the longest since Y in Z."
+    # ended streak: "...ending his 25-game on-base streak. That's the
+    # longest on-base streak since Y in Z."
+    # Derive streak_label by stripping " streak" from `label`
+    # ("hitting streak" → "hitting").
+    streak_label = label.replace(" streak", "").strip() or "hitting"
     context = _historical_context(
         conn, streak, condition_sql,
         exclude_season=season, exclude_player=pid,
         at_bat_filter=at_bat_filter,
         player_team=team_code,
+        streak_label=streak_label,
     )
 
     intro = f"{name} went {game_line}" if game_line else name
@@ -1621,7 +1649,12 @@ def detect_rarities(conn, season, latest_date):
                 elif use_first_this_season:
                     if _is_first_this_season(conn, check["history_sql"],
                                              "game_batting_logs", season, game_date):
-                        headline = _continue_with_context(headline, "the first this season")
+                        # Disambiguate the "first this season" subject so users
+                        # don't read it as antecedent-ambiguous. "first 3-HR,
+                        # 5+ RBI game this season" beats "first this season."
+                        label = check.get("label")
+                        suffix = f"the first {label} this season" if label else "the first this season"
+                        headline = _continue_with_context(headline, suffix)
 
                 events.append({
                     "headline": headline, "detail": "",
@@ -1675,26 +1708,31 @@ def detect_rarities(conn, season, latest_date):
         {
             "condition": "g.triples >= 2",
             "type": "2_triples", "history_sql": "triples >= 2",
+            "label": "2-triple game",
             "headline": lambda n, r: f"{n} hit 2 triples, going {r['h']}-for-{r['ab']}.",
         },
         {
             "condition": "g.home_runs >= 3 AND g.rbi >= 5",
             "type": "3hr_5rbi", "history_sql": "home_runs >= 3 AND rbi >= 5",
+            "label": "3-HR, 5+ RBI game",
             "headline": lambda n, r: f"{n} hit {r['hr']} home runs and drove in {r['rbi']} runs.",
         },
         {
             "condition": "g.hits >= 5 AND g.home_runs >= 1",
             "type": "5hit_hr", "history_sql": "hits >= 5 AND home_runs >= 1",
+            "label": "5-hit, HR game",
             "headline": lambda n, r: f"{n} went {r['h']}-for-{r['ab']} with a home run and {r['rbi']} RBI.",
         },
         {
             "condition": "g.rbi >= 7",
             "type": "7rbi_game", "history_sql": "rbi >= 7",
+            "label": "7+ RBI game",
             "headline": lambda n, r: f"{n} drove in {r['rbi']} runs, going {r['h']}-for-{r['ab']}.",
         },
         {
             "condition": "g.home_runs >= 3",
             "type": "3hr_game", "history_sql": "home_runs >= 3",
+            "label": "3-HR game",
             "headline": lambda n, r: f"{n} hit {r['hr']} home runs, going {r['h']}-for-{r['ab']} with {r['rbi']} RBI.",
         },
     ], category="Rarity", use_first_this_season=True)
@@ -2975,10 +3013,13 @@ def detect_for_players(db_path, season, player_ids):
                 team_code = _player_team_code(conn, pid, season)
                 context = _historical_context(conn, streak, "hits > 0",
                                               exclude_season=season, exclude_player=pid,
-                                              player_team=team_code)
+                                              player_team=team_code,
+                                              streak_label="hitting")
                 headline = f"{name} has hit safely in {streak} straight games"
                 if context:
-                    headline += f", {context.lower()}"
+                    # context is already lowercase-leading; don't .lower()
+                    # — that would lowercase player names too.
+                    headline += f", {context}"
                 else:
                     headline += "."
                 events.append({
@@ -3009,10 +3050,10 @@ def detect_for_players(db_path, season, player_ids):
                 context = _historical_context(
                     conn, ob_streak, "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0",
                     exclude_season=season, exclude_player=pid,
-                    player_team=team_code)
+                    player_team=team_code, streak_label="on-base")
                 headline = f"{name} has reached base in {ob_streak} straight games"
                 if context:
-                    headline += f", {context.lower()}"
+                    headline += f", {context}"
                 else:
                     headline += "."
                 events.append({
@@ -3038,10 +3079,10 @@ def detect_for_players(db_path, season, player_ids):
                 team_code = _player_team_code(conn, pid, season)
                 context = _historical_context(conn, hr_streak, "home_runs > 0",
                                               exclude_season=season, exclude_player=pid,
-                                              player_team=team_code)
+                                              player_team=team_code, streak_label="HR")
                 headline = f"{name} has homered in {hr_streak} straight games"
                 if context:
-                    headline += f", {context.lower()}"
+                    headline += f", {context}"
                 else:
                     headline += "."
                 events.append({
