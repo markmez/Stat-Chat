@@ -109,7 +109,24 @@ fi
 
 # 3. Healthy path.
 if [ "$DATA_STALE" -eq 0 ] && [ "$FEED_STALE" -eq 0 ]; then
-    ping_ok "ok data=${LATEST_GAME_DATE} feed=${FEED_LATEST}"
+    # Coverage check: catches under-detected dates that pass the
+    # data-stale + feed-stale gates because *some* events exist for
+    # recent dates — just far fewer than they should. Failure mode:
+    # detect_all ran while MSF was mid-publish, fired only the active-
+    # state detectors (streaks/current_form) on partial data, and never
+    # got a second pass once data completed. /admin/coverage-check
+    # scans the last few days and auto-redetects any date with full
+    # game logs but a sparse event bucket. Cheap (~1-2s when nothing
+    # needs fixing); only does heavy work when an under-detected date
+    # is found.
+    COVERAGE=$(curl -fsS -m 60 -X POST "$API_BASE/admin/coverage-check" -H "$AUTH_HDR" 2>&1 || true)
+    BACKFILLED=$(echo "$COVERAGE" | grep -oE '"backfilled":\[[^]]*\]' | grep -oE '"[0-9-]+"' | tr -d '"' | tr '\n' ' ' | sed 's/ $//')
+    if [ -n "$BACKFILLED" ]; then
+        echo "[healthcheck] coverage backfilled dates: $BACKFILLED" >&2
+        ping_ok "ok data=${LATEST_GAME_DATE} feed=${FEED_LATEST}; coverage backfilled ${BACKFILLED}"
+    else
+        ping_ok "ok data=${LATEST_GAME_DATE} feed=${FEED_LATEST}"
+    fi
     exit 0
 fi
 

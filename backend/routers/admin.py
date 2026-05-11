@@ -650,6 +650,100 @@ async def redetect_events(
     }
 
 
+@router.post("/coverage-check")
+async def coverage_check(
+    days: int = 4,
+    min_events: int = 10,
+    min_game_logs: int = 200,
+    auto_fix: bool = True,
+    authorization: str | None = Header(None),
+):
+    """Scan recent dates for under-detected event buckets and self-heal.
+
+    Catches the failure mode where game logs fully landed but events were
+    detected against a partial snapshot (e.g., MSF still publishing at
+    pipeline tick) and never refreshed once data completed. Standard
+    /health and feed-stale checks miss this because *some* events exist —
+    just far fewer than they should.
+
+    Algorithm: for each of the past `days` dates (excluding today, which
+    is always partial), check if event_count < min_events while
+    batting_log_count >= min_game_logs. If yes, the date has full data
+    but is under-detected — purge and redetect.
+
+    Defaults:
+      - days=4: today + past 3 game dates. Pipeline usually catches
+        regressions within a day or two; longer lookback risks racing
+        against detectors that legitimately produce sparse buckets.
+      - min_events=10: comfortably below typical 17-27 event range.
+      - min_game_logs=200: rules out partial days (<100 logs is normal
+        for in-progress dates).
+      - auto_fix=True: triggers redetect inline. Set false to inspect
+        without acting (useful for monitoring dashboards).
+    """
+    verify_admin(authorization)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    today_iso = date.today().isoformat()
+    checked: list = []
+    backfilled: list = []
+    try:
+        # Pull per-date event count + batting log count for the window.
+        ev_rows = conn.execute(f"""
+            SELECT game_date, COUNT(*) FROM notable_events
+            WHERE game_date >= date(?, '-{days} days') AND game_date < ?
+            GROUP BY game_date
+        """, (today_iso, today_iso)).fetchall()
+        log_rows = conn.execute(f"""
+            SELECT date, COUNT(*) FROM game_batting_logs
+            WHERE date >= date(?, '-{days} days') AND date < ?
+            GROUP BY date
+        """, (today_iso, today_iso)).fetchall()
+        ev_by_date = {d: c for d, c in ev_rows}
+        log_by_date = {d: c for d, c in log_rows}
+        # Iterate the union of dates with data on either side.
+        for d in sorted(set(ev_by_date) | set(log_by_date), reverse=True):
+            ev_count = ev_by_date.get(d, 0)
+            log_count = log_by_date.get(d, 0)
+            entry = {"date": d, "events": ev_count, "batting_logs": log_count}
+            checked.append(entry)
+            if log_count >= min_game_logs and ev_count < min_events:
+                entry["under_detected"] = True
+                if auto_fix:
+                    backfilled.append(d)
+    finally:
+        conn.close()
+
+    # Run the backfills outside the connection lifecycle so detect_all
+    # owns its own DB handle.
+    if auto_fix and backfilled:
+        from services.notable_events import detect_all
+        for d in backfilled:
+            # purge_all=True equivalent: clear every event for the date
+            # before re-detecting. Matches the manual /redetect recipe.
+            c = sqlite3.connect(DB_PATH, timeout=10)
+            try:
+                c.execute("DELETE FROM notable_events WHERE game_date = ?", (d,))
+                c.commit()
+            finally:
+                c.close()
+            try:
+                detect_all(DB_PATH, force=True, target_date=d)
+            except Exception as e:
+                # One backfill failure shouldn't block the others.
+                import logging as _lg
+                _lg.getLogger("statchat.admin").error(
+                    "coverage_check_backfill_error date=%s error=%s", d, e,
+                )
+
+    return {
+        "status": "ok",
+        "today": today_iso,
+        "checked": checked,
+        "backfilled": backfilled,
+        "thresholds": {"min_events": min_events, "min_game_logs": min_game_logs},
+    }
+
+
 @router.post("/rebuild-records")
 async def rebuild_records(authorization: str | None = Header(None)):
     """Rebuild team_records and mlb_records tables."""
