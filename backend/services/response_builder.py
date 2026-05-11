@@ -5657,28 +5657,69 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
 
         pa_filter = ""
         if stat_info.is_rate:
-            # Prorate split PA minimum based on season progress. Pull max games
-            # from the matching season-totals table so qualification scales with
-            # the league's actual progress rather than a hardcoded 162.
+            # Occurrence-rate floor:
+            #   split_pa_min = STANDARD_QUAL × occurrence_rate × (max_games / 162)
+            #
+            # The split's occurrence rate is derived from league-wide data
+            # (this split's share of total league PAs). Multiplied by the
+            # standard season qualifier (400 PA batting, ~650 BF / 486 outs
+            # pitching) and prorated by season progress. Self-tunes per split
+            # without hand-picked floors.
+            #
+            # Pulls denominator from the canonical season-stats table so
+            # single-split tables (e.g., first_pa_batting_splits) get a real
+            # occurrence rate (~25%) rather than 1.0 (which they'd get from
+            # summing only their own rows).
             qual_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
             cur.execute(f"SELECT MAX(games) FROM {qual_table} WHERE season = ?", (season,))
             r = cur.fetchone()
             max_games = int(r[0]) if r and r[0] else 162
-            # Pitching split qualifier needs a much higher floor than batting:
-            # a pitcher gets only ~3 PA/inning of work, so an inning-split or
-            # tight count-split sample size is tiny per pitcher. Without a
-            # higher floor, every reliever who pitched a clean 7th inning
-            # shows up at .000 OPS-against and floods the top of the
-            # leaderboard. Use ~3x the batting floor.
-            base_min = max(1, int(20 * max_games / 162))
-            split_pa_min = base_min * 3 if is_pitching else base_min
-            # pitching_home_away_splits stores ip_outs/era/whip directly (no
-            # plate_appearances column). Use ip_outs as the qualifier; ~1
-            # out per PA-equivalent so reuse split_pa_min as the outs floor.
-            if table == "pitching_home_away_splits":
-                pa_filter = f" AND t.ip_outs >= {split_pa_min}"
+
+            use_outs = (table == "pitching_home_away_splits")
+            qual_col = "ip_outs" if use_outs else "plate_appearances"
+
+            # Standard full-season qualifier in this column's units.
+            # Pitching: ~162 IP × 3 outs/inning = 486 outs; × ~4 BF/inning ≈ 650 BF.
+            if is_pitching:
+                standard_qual = 486 if use_outs else 650
             else:
-                pa_filter = f" AND t.plate_appearances >= {split_pa_min}"
+                standard_qual = 400
+
+            # Numerator: PAs/outs the split actually saw this season.
+            if filter_col and filter_values:
+                placeholders = ", ".join("?" * len(filter_values))
+                cur.execute(
+                    f"SELECT COALESCE(SUM({qual_col}), 0) FROM {table} "
+                    f"WHERE season = ? AND {filter_col} IN ({placeholders})",
+                    [season, *filter_values],
+                )
+            else:
+                # Table is itself a single slice (e.g., first_pa_batting_splits)
+                cur.execute(
+                    f"SELECT COALESCE(SUM({qual_col}), 0) FROM {table} WHERE season = ?",
+                    (season,),
+                )
+            in_split = cur.fetchone()[0] or 0
+
+            # Denominator: league universe from the canonical season totals.
+            if is_pitching and not use_outs:
+                # Pitching split tables store PA; season_pitching_stats stores BF.
+                canon_col = "batters_faced"
+            else:
+                canon_col = qual_col
+            cur.execute(
+                f"SELECT COALESCE(SUM({canon_col}), 0) FROM {qual_table} WHERE season = ?",
+                (season,),
+            )
+            total = cur.fetchone()[0] or 0
+
+            if total <= 0:
+                split_pa_min = 1  # fallback (no data yet)
+            else:
+                occurrence = in_split / total
+                split_pa_min = max(1, int(standard_qual * occurrence * max_games / 162))
+
+            pa_filter = f" AND t.{qual_col} >= {split_pa_min}"
 
         league_filter = ""
         league_label = ""
