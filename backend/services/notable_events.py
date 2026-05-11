@@ -613,12 +613,20 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
     mlb_match = _scan_historical_streaks() or _scan_seasons(None)
     mlb_phrase = ""
     mlb_year = None
+    mlb_length_lopsided = False
     if mlb_match:
         mlb_year, mlb_pid, mlb_run = mlb_match
-        name = _player_name(conn, mlb_pid)
-        mlb_phrase = f"the longest {streak_label} streak since {name} ({mlb_run} games) in {mlb_year}."
-        if secondary_names is not None and name:
-            secondary_names.append(name)
+        # If the matched prior streak is >=1.5x the current streak length,
+        # the "longest X since Y's MUCH-LONGER" framing reads as deflating
+        # rather than useful (e.g. 33-game streak comparing against
+        # Ohtani's 53). Drop the MLB-since phrase in that case and let
+        # the franchise anchor stand alone.
+        mlb_length_lopsided = mlb_run >= streak_len * 1.5
+        if not mlb_length_lopsided:
+            name = _player_name(conn, mlb_pid)
+            mlb_phrase = f"the longest {streak_label} streak since {name} ({mlb_run} games) in {mlb_year}."
+            if secondary_names is not None and name:
+                secondary_names.append(name)
 
     # Team
     team_phrase = ""
@@ -638,7 +646,15 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
                 current_year = exclude_season
                 team_gap = current_year - t_year
                 mlb_gap = (current_year - mlb_year) if mlb_year else 9999
-                if (mlb_year is None and team_gap >= 10) or (team_gap - mlb_gap >= 10):
+                # Fire team phrase when MLB had no match, the franchise
+                # gap is meaningfully deeper than MLB, or MLB got dropped
+                # for lopsided length — in which case the franchise is
+                # the primary comparable anchor.
+                if (
+                    (mlb_year is None and team_gap >= 10)
+                    or (team_gap - mlb_gap >= 10)
+                    or mlb_length_lopsided
+                ):
                     article = _a_or_an(franchise_name)
                     if mlb_phrase:
                         # Don't repeat "{streak_label} streak" — MLB phrase
@@ -648,7 +664,8 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
                             f"since {t_name}'s {t_run} in {t_year}."
                         )
                     else:
-                        # Standalone — needs the full phrase with label.
+                        # Standalone (MLB empty or dropped) — needs the
+                        # full phrase with label.
                         team_phrase = (
                             f"the longest {streak_label} streak by {article} {franchise_name} player "
                             f"since {t_name}'s {t_run} in {t_year}."
