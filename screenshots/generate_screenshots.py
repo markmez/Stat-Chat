@@ -7,15 +7,17 @@ Style: Snapchat — big screenshot, solid color, bold text, tight layout.
 import os
 from PIL import Image, ImageDraw, ImageFont
 
-CANVAS_W, CANVAS_H = 1320, 2868
+CANVAS_W, CANVAS_H = 1284, 2778  # App Store iPhone 6.7" Display slot
 
-# Screenshot: BIG. Fills most of the canvas.
-SCREEN_W = 1200
-SCREEN_H = 2300
-CORNER_R = 86  # generous, like Snapchat
+# Screenshot: BIG. Fills most of the canvas. All dimensions scaled
+# proportionally from the prior 1320×2868 layout (~97% width, ~97% height)
+# so the visual rhythm matches the original Snapchat-style framing.
+SCREEN_W = 1164
+SCREEN_H = 2225
+CORNER_R = 84  # generous, like Snapchat (was 86 at 1320 width)
 SIDE_PAD = (CANVAS_W - SCREEN_W) // 2  # 60px each side
 SCREEN_X = SIDE_PAD
-SCREEN_Y = CANVAS_H - SCREEN_H - 120  # blue strip at bottom
+SCREEN_Y = CANVAS_H - SCREEN_H - 116  # blue strip at bottom (was 120)
 
 # Colors — matches splash screen / app icon gradient
 ICON_DARK = (15, 31, 115)    # rgb(0.06, 0.12, 0.45) — top
@@ -27,7 +29,7 @@ FONT_PATH = "/System/Library/Fonts/SFNS.ttf"
 SCREENSHOTS = [
     {"file": "1_home.png",   "line1": "Quick, Verifiable",   "line2": "AI-Powered Answers"},
     {"file": "2_player.png", "line1": "Instant Access to",   "line2": "Every Player Stat"},
-    {"file": "3_splits.png", "line1": "Stat Breakdowns &",   "line2": "Season Projections"},
+    {"file": "3_splits.png", "line1": "Stat Breakdowns",   "line2": "In-Depth Splits"},
     {"file": "4_search.png", "line1": "Conversational",      "line2": "AI Search"},
 ]
 
@@ -63,10 +65,10 @@ def draw_text(canvas, line1, line2):
     draw = ImageDraw.Draw(canvas)
 
     try:
-        font = ImageFont.truetype(FONT_PATH, 104)
+        font = ImageFont.truetype(FONT_PATH, 101)
         font.set_variation_by_axes([100, 96, 400, 900])  # Black weight
     except Exception:
-        font = ImageFont.truetype(FONT_PATH, 104)
+        font = ImageFont.truetype(FONT_PATH, 101)
 
     bbox = draw.textbbox((0, 0), line1, font=font)
     line_h = bbox[3] - bbox[1]

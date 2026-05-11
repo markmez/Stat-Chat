@@ -1,5 +1,5 @@
 {
-  "version": 8,
+  "version": 9,
   "algorithm": {
     "impressionThreshold": 6,
     "poolSize": 12,
@@ -23,6 +23,11 @@
       "inSeasonText": "Top 10 in OPS this season"
     },
     {
+      "id": "d93",
+      "text": "Most HRs in any month ever",
+      "weight": 1.0
+    },
+    {
       "id": "d4",
       "text": "Stolen base leaders last season",
       "weight": 1.0,
@@ -41,6 +46,11 @@
       "inSeasonText": "Best hitter with 2 strikes this season"
     },
     {
+      "id": "d94",
+      "text": "Best hitters in 3-2 counts",
+      "weight": 1.0
+    },
+    {
       "id": "d6",
       "text": "Ohtani home runs last season",
       "weight": 0.9,
@@ -51,6 +61,11 @@
       "text": "Judge home vs away last season",
       "weight": 0.9,
       "inSeasonText": "Judge home vs away this season"
+    },
+    {
+      "id": "d95",
+      "text": "Best hitters in first at bat",
+      "weight": 1.0
     },
     {
       "id": "d8",

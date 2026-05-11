@@ -22,6 +22,30 @@ struct GameLog: Sendable {
     let walks: Int
     let strikeouts: Int
     let plateAppearances: Int
+    // HBP + SF: needed by the form slider's recomputeFormStats so OBP/OPS
+    // match the season aggregate when the slider is at max position.
+    // Default 0 so call sites that don't have this data (e.g. legacy
+    // local-DB path) still construct.
+    let hitByPitch: Int
+    let sacrificeFlies: Int
+
+    init(date: String, atBats: Int, hits: Int, doubles: Int, triples: Int,
+         homeRuns: Int, runs: Int, rbi: Int, walks: Int, strikeouts: Int,
+         plateAppearances: Int, hitByPitch: Int = 0, sacrificeFlies: Int = 0) {
+        self.date = date
+        self.atBats = atBats
+        self.hits = hits
+        self.doubles = doubles
+        self.triples = triples
+        self.homeRuns = homeRuns
+        self.runs = runs
+        self.rbi = rbi
+        self.walks = walks
+        self.strikeouts = strikeouts
+        self.plateAppearances = plateAppearances
+        self.hitByPitch = hitByPitch
+        self.sacrificeFlies = sacrificeFlies
+    }
 }
 
 struct PitchingSeasonData: Sendable {
@@ -3046,7 +3070,7 @@ enum PlayerCardService {
         } else {
             // Team overview sorted by OPS
             let sql = """
-                #imageLiteral(resourceName: "simulator_screenshot_BB683322-3664-4F78-80DC-D2EA7EAB435F.png")               SELECT p.name, s.games, s.batting_avg, s.home_runs, s.rbi, s.ops
+                SELECT p.name, s.games, s.batting_avg, s.home_runs, s.rbi, s.ops
                 FROM season_batting_stats s
                 JOIN players p ON s.player_id = p.player_id
                 WHERE (s.team = '\(teamCode)' OR s.team LIKE '\(teamCode)/%' OR s.team LIKE '%/\(teamCode)')

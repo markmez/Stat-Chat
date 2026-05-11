@@ -8,56 +8,54 @@ AI-Powered Baseball Stats
 
 ## Description (~4000 char limit)
 
-Ask any baseball question and get the real answer — instantly.
+StatChat answers your baseball stats questions in seconds. Just ask in your own words by typing or speaking. We use AI to understand your question, but real game records to give you reliable and quick answers.
 
-StatChat is the fastest way to look up baseball stats, compare players, and explore over 125 years of baseball history. Just type a question in plain English and get accurate, data-driven answers computed from real historical records.
+No forms to fill out, no spreadsheets to dig through, no headers that disappear as you scroll. Ask your question conversationally, get a quick, clean, readable answer.
 
-WHAT YOU CAN ASK:
-- "Who led the AL in home runs in 2024?"
-- "Compare Ohtani and Judge this season"
-- "What's Aaron Judge's OPS vs left-handed pitching?"
-- "Top 5 pitchers in ERA with 150+ innings"
-- "How is Soto doing lately?"
-- "Yankees batting stats this season"
+JUST ASK.
 
-REAL DATA, NEVER GUESSED
-Every stat is computed from actual game records — never generated, estimated, or hallucinated. StatChat uses advanced AI to translate your questions into precise database queries against a comprehensive baseball database spanning 1898 to today.
+"What's Aaron Judge's OPS vs left-handers?"
+"Best pitchers with 2 strikes"
+"Most home runs in a single month all time"
+"How is Soto doing lately?"
+
+Voice input works too — just tap the mic and ask out loud.
+
+DAILY EVENTS FEED
+Open the app to see what just happened: career milestones, streak crossings, leaderboard changes, "first since" facts, and insights from each day's games.
 
 PLAYER CARDS
-Tap any player name to see their complete profile: season stats, career totals, current form analysis, platoon splits (vs LHP/RHP), home/away splits, pitch type breakdowns, and more. Interactive streak detection shows hot and cold stretches throughout the season.
+Just search by player last name to see their full profile: season stats, career totals, hot/cold streak detection with an interactive slider to make your own streak dates. Look at splits across every dimension: vs LHP/RHP, home/away, by pitch type, by ball-strike count, and with runners in scoring position. Take any of these views and easily see how these stats would stack up over a full season.
 
-LIVE STATS
-Current-season stats update every four hours during the season, so you always have the latest numbers.
+Stats updated daily.
+
+FREE TO USE
+5 questions per week free. Unlimited for $2.99/month or $19.99/year.
 
 WHAT'S INCLUDED:
 - 125+ years of baseball history (1898-present)
 - Batting, pitching, and fielding stats
-- Platoon splits (vs LHP/RHP)
-- Home/away splits
-- Pitch type and count splits
-- RISP (runners in scoring position) splits
-- OPS+ (league-adjusted offense)
-- ERA+ (league-adjusted pitching)
-- Hot/cold streak detection
-- Current form analysis with projections
-- Player comparisons
-- Leaderboards with custom filters
+- Platoon splits (vs LHP/RHP) — batting AND pitching
+- Home/away, by-pitch, by-count, and RISP splits
+- OPS+ and ERA+ (league-adjusted)
+- Hot/cold streak detection with current form analysis
+- Career-window queries ("first 50 games of a career")
+- Single-month historical leaderboards
+- Player comparisons and matchup previews
+- Custom-filtered leaderboards (by handedness, age, position, league)
 - Team stats and rankings
 
-FREE TO USE
-Ask up to 5 questions per week for free. Upgrade to StatChat Pro for unlimited questions — $2.99/month or $19.99/year.
-
 DATA SOURCES
-Historical statistics provided by Retrosheet (retrosheet.org) and the Chadwick Baseball Bureau. Current-season data provided by MySportsFeeds. Powered by AI to deliver accurate baseball intelligence.
+Historical statistics from Retrosheet (retrosheet.org) and the Chadwick Baseball Bureau. Current-season data from MySportsFeeds. Powered by AI to deliver fast, accurate baseball intelligence.
 
 ## Promotional Text (170 char limit)
-Ask any baseball question and get the real answer — powered by AI and 125+ years of real data. Compare players, find leaders, explore splits.
+StatChat answers your baseball stats questions in seconds. Just ask in your own words. StatChat understands the question with AI; the answer comes from real game records.
 
 ## Keywords (100 char limit)
 baseball,stats,statistics,MLB,scores,player,batting,pitching,fantasy,sports,trivia,AI,compare
 
 ## What's New (v1.0)
-Welcome to StatChat! Ask any baseball question and get accurate, data-driven answers from 125+ years of real baseball records.
+Welcome to StatChat — our first release. Ask baseball stats questions in your own words; we use AI to understand and real game records to answer. 125+ years of history.
 
 ## Privacy Policy URL
 https://secondsignalapps.com/privacy.html

@@ -16,6 +16,7 @@
 		1ECE269D01C0E2A34FCDCE58 /* SearchHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72B1E47AF8FDA520F93D8DF4 /* SearchHistoryView.swift */; };
 		20D0946EF09755C58A946C8A /* ResultCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56A2A2E05C215D0A3ADAAAAD /* ResultCard.swift */; };
 		248A17CF0DF0ADAD96E56F39 /* PlayerNameExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 322E2B73CF90D427F012E146 /* PlayerNameExtractor.swift */; };
+		24F7CB741435CB6F73722E08 /* PlainSlider.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8C7E57BB77D9A5F98345334 /* PlainSlider.swift */; };
 		27359D246F5CF799D5EF74CA /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6788FF565D12FAFC3C30AD38 /* HomeView.swift */; };
 		27E8F31F18C8C0D76DE297ED /* LaunchAnimationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECFC73592230A429A6330F03 /* LaunchAnimationView.swift */; };
 		286335C24816EB8ECBD96E60 /* FTUEView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA55681F9D544F06DD447C1E /* FTUEView.swift */; };
@@ -101,6 +102,7 @@
 		C78343C60140872060772B21 /* StatGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatGridView.swift; sourceTree = "<group>"; };
 		CA55681F9D544F06DD447C1E /* FTUEView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FTUEView.swift; sourceTree = "<group>"; };
 		CD18464AB4C998AEF89D1ADC /* ResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultsView.swift; sourceTree = "<group>"; };
+		D8C7E57BB77D9A5F98345334 /* PlainSlider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlainSlider.swift; sourceTree = "<group>"; };
 		E2804060A7E9E5D9265E19EB /* StatDefinitions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatDefinitions.swift; sourceTree = "<group>"; };
 		E517A58248A8BCD73B86CF8E /* SuggestionConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuggestionConfig.swift; sourceTree = "<group>"; };
 		E5808AF2D60EBEB36D9CE0A5 /* TeamCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamCardView.swift; sourceTree = "<group>"; };
@@ -218,6 +220,7 @@
 				8CBC668CB3B717109518A293 /* LoadingIndicator.swift */,
 				262D29E44C5E2CBFC7226DB3 /* NotableEventsFeed.swift */,
 				A0FB15832BA10076377EBB0F /* PaywallView.swift */,
+				D8C7E57BB77D9A5F98345334 /* PlainSlider.swift */,
 				B51AB0AF7813417184FAF96B /* PlayerCardView.swift */,
 				56A2A2E05C215D0A3ADAAAAD /* ResultCard.swift */,
 				CD18464AB4C998AEF89D1ADC /* ResultsView.swift */,
@@ -333,6 +336,7 @@
 				345576D5B8C92C14734E83D3 /* Message.swift in Sources */,
 				64280373B64CE7D4706B86E0 /* NotableEventsFeed.swift in Sources */,
 				1987147EBAFFEC7CBDE9694E /* PaywallView.swift in Sources */,
+				24F7CB741435CB6F73722E08 /* PlainSlider.swift in Sources */,
 				BCD80DF57F31A72D219E38F0 /* PlayerCardService.swift in Sources */,
 				5015BF091371068EA3F0C963 /* PlayerCardView.swift in Sources */,
 				248A17CF0DF0ADAD96E56F39 /* PlayerNameExtractor.swift in Sources */,

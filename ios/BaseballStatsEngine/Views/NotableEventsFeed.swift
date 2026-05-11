@@ -41,7 +41,6 @@ struct NotableEventsFeed: View {
     var onQueryTap: ((String) -> Void)?    // Generic query — e.g. streak game-count links
     var showHeader: Bool = true
     @Binding var matchupPills: [String]
-    var hasExpandedTrayToday: Bool = false
     var trayExpanded: Bool = false
     var refreshTrigger: Bool = false
 
@@ -229,60 +228,72 @@ struct NotableEventsFeed: View {
                     return "\(lastName) tonight"
                 }
 
-            // Interleave matchup previews based on user engagement today:
-            // - First visit today: interleave (every 3rd slot among today's events)
-            // - Visited but not expanded tray: first matchup at top, interleave rest
-            // - Expanded tray: all matchups at top (user is engaged, wants tonight's games)
+            // Interleave matchup previews and on-this-date events into the
+            // most recent date that has REAL game events.
+            //
+            // Date convention reminder (feedback-feed-event-date-semantics.md):
+            // game-derived events (streak/milestone/rarity/AI insight) are
+            // always dated YESTERDAY when the user views the feed TODAY —
+            // because they're keyed to the game date, not the publish date.
+            // Today's bucket ONLY ever contains supplemental types (matchup
+            // preview, on-this-date). If we treat today as its own bucket,
+            // those events form a top-of-feed clump with nothing real to
+            // interleave against.
+            //
+            // The backend re-buckets today's MP + OTD into yesterday's bucket
+            // (commit 28c6622), but iOS still needs to honor that — preserve
+            // OTDs inside the "todayOthers" group rather than filtering them
+            // to "older" by their literal game_date.
             let isFirstVisitToday = !Self.hasVisitedToday()
             let previews = loaded.filter { $0.category == "Tonight" }
             let others = loaded.filter { $0.category != "Tonight" }
 
-            // Find the boundary between today's and older events
-            let todayDate = others.first?.gameDate ?? ""
-            let todayOthers = others.filter { $0.gameDate == todayDate }
-            let older = others.filter { $0.gameDate != todayDate }
-
-            var merged: [NotableEvent]
-            if hasExpandedTrayToday {
-                // All previews at top, then today's events, then older
-                merged = previews + todayOthers + older
-            } else if !isFirstVisitToday {
-                // First preview at top, interleave rest among today's events
-                var result: [NotableEvent] = []
-                var pi = 0
-                if !previews.isEmpty {
-                    result.append(previews[0])
-                    pi = 1
-                }
-                for (i, event) in todayOthers.enumerated() {
-                    if pi < previews.count && i > 0 && i % 3 == 2 {
-                        result.append(previews[pi])
-                        pi += 1
-                    }
-                    result.append(event)
-                }
-                while pi < previews.count {
-                    result.append(previews[pi])
-                    pi += 1
-                }
-                merged = result + older
-            } else {
-                // First visit: interleave all among today's events
-                var result: [NotableEvent] = []
-                var pi = 0
-                for (i, event) in todayOthers.enumerated() {
-                    if pi < previews.count && i > 0 && i % 3 == 2 {
-                        result.append(previews[pi])
-                        pi += 1
-                    }
-                    result.append(event)
-                }
-                while pi < previews.count {
-                    result.append(previews[pi])
-                    pi += 1
-                }
-                merged = result + older
+            // "todayDate" for iOS purposes = the most recent date with a
+            // real game event, NOT the gameDate of the first event. Today's
+            // OTDs have gameDate=today but should render alongside yesterday's
+            // real events, not in their own clump.
+            let todayDate = others.first(where: { $0.category != "On This Date" })?.gameDate
+                ?? others.first?.gameDate
+                ?? ""
+            // todayOthers includes OTDs from any date — they belong with the
+            // top group regardless of their literal gameDate, since the
+            // backend has already placed them in interleave order there.
+            let todayOthers = others.filter {
+                $0.gameDate == todayDate || $0.category == "On This Date"
             }
+            let older = others.filter {
+                $0.gameDate != todayDate && $0.category != "On This Date"
+            }
+
+            // Always interleave MPs at every 3rd slot. The previous
+            // "tray expanded → all at top" branch caused MP clumping at the
+            // top of the feed, which mirrored the OTD clumping bug — both
+            // surfaces converged on the same shape because the underlying
+            // bucketing was wrong. Now that buckets are right (OTDs join
+            // todayOthers), MPs just interleave consistently regardless of
+            // tray state.
+            var merged: [NotableEvent]
+            var result: [NotableEvent] = []
+            var pi = 0
+            // Optionally lead with one MP only when the user has just
+            // visited and isn't on first-visit (so they get an immediate
+            // matchup tease without a wall of them).
+            if !isFirstVisitToday && !previews.isEmpty {
+                result.append(previews[0])
+                pi = 1
+            }
+            for (i, event) in todayOthers.enumerated() {
+                if pi < previews.count && i > 0 && i % 3 == 2 {
+                    result.append(previews[pi])
+                    pi += 1
+                }
+                result.append(event)
+            }
+            while pi < previews.count {
+                result.append(previews[pi])
+                pi += 1
+            }
+            merged = result + older
 
             // Reorder: bubble unseen events to top within each feed group.
             // Today's previews/on-this-date share a group with the most recent

@@ -170,6 +170,11 @@ final class BackendService: Sendable {
         let walks: Int
         let strikeouts: Int
         let plate_appearances: Int
+        // HBP + SF needed for correct OBP/OPS in the slider recompute.
+        // Defaulted so older backend responses without these fields still
+        // decode (decoder will treat absence as 0 via the wrapper below).
+        let hit_by_pitch: Int?
+        let sacrifice_flies: Int?
     }
 
     struct PitchingGameLogEntryData: Decodable, Sendable {
@@ -318,6 +323,11 @@ final class BackendService: Sendable {
         let walks: Int
         let strikeouts: Int
         let plate_appearances: Int
+        // HBP + SF needed for correct OBP/SLG/OPS in the slider recompute.
+        // Optional so older backend responses without these fields still
+        // decode; call site coerces missing → 0.
+        let hit_by_pitch: Int?
+        let sacrifice_flies: Int?
     }
 
     struct PitchingGameLogData: Decodable, Sendable {

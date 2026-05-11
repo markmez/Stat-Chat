@@ -261,6 +261,20 @@ struct StatGridView: View {
         meta.totalGames - formNumGamesShown(meta: meta) + 1
     }
 
+    /// Look up a stat value (e.g., "OPS") from a row by header name.
+    /// Used to populate the slider's right floating chip during drag.
+    /// Returns nil if the header isn't present, the row is empty, or the
+    /// value is blank/placeholder. Mirrors PlayerCardView.statValue but
+    /// works against this view's [Row] (where headers come from `grid`).
+    private static func statValue(in rows: [StatGridParser.StatGrid.Row],
+                                  headers: [String], header: String) -> String? {
+        guard let idx = headers.firstIndex(of: header),
+              let row = rows.first,
+              idx < row.values.count else { return nil }
+        let v = row.values[idx]
+        return v.isEmpty || v == "--" ? nil : v
+    }
+
     /// Date string for the start of the current form window
     private func formStartDate(meta: StatGridParser.StatGrid.FormMetadata) -> String {
         if let logs = formGameLogs, !logs.isEmpty {
@@ -410,7 +424,7 @@ struct StatGridView: View {
                             .padding(.horizontal, 14)
                     }
 
-                    Slider(
+                    PlainSlider(
                         value: Binding<Double>(
                             get: { Double(numGames) },
                             set: { newValue in
@@ -425,10 +439,13 @@ struct StatGridView: View {
                                 }
                             }
                         ),
-                        in: 1...Double(max(meta.totalGames, 2)),
-                        step: 1
+                        range: 1...Double(max(meta.totalGames, 2)),
+                        step: 1,
+                        trackTint: deepBlue,
+                        isDisabled: meta.totalGames < 2 || formGameLogs == nil,
+                        leftChipText: "\(numGames) games",
+                        rightChipText: Self.statValue(in: activeDisplayRows, headers: grid.headers, header: "OPS").map { "\($0) OPS" }
                     )
-                    .tint(deepBlue)
                     .padding(.horizontal, 14)
                 }
                 .padding(.top, 10)

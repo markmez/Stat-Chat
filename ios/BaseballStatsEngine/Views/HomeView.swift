@@ -353,7 +353,6 @@ struct HomeView: View {
                         },
                         showHeader: false,
                         matchupPills: $matchupPills,
-                        hasExpandedTrayToday: NotableEventsFeed.hasExpandedTray(),
                         trayExpanded: feedExpanded,
                         refreshTrigger: feedRefreshTrigger
                     )
