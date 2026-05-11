@@ -77,6 +77,21 @@ _DETECTION_TYPE_STAT = {
 }
 
 
+# Impact clauses whose subject is the achievement, not the player. Attaching
+# a "By [player verb-ing], ..." lead-in to one of these creates a dangling
+# participle ("By driving in 7 runs, that's the first 7+ RBI game..." — the
+# gerund implies the player as subject, but "that's" refers to the game).
+# When the body matches, we drop the lead-in and emit the impact standalone.
+_ACHIEVEMENT_SUBJECT_PREFIX = re.compile(
+    r"^(?:that's|that was|the (?:first|last|most|only)\b)",
+    re.I,
+)
+
+
+def _impact_is_achievement_subject(text: str) -> bool:
+    return bool(text and _ACHIEVEMENT_SUBJECT_PREFIX.match(text.strip()))
+
+
 # Stat key → lead-in builder. Takes today's count, returns "By [verb-ing] ...".
 # Singular forms read more naturally: "By picking up a hit" beats "By collecting 1 hit".
 def _lead_in_for_stat(stat, count):
@@ -668,7 +683,7 @@ def _merge_player_events(conn, group, player_name, game_date):
             mid = ", ".join(_strip_subject_pronoun(i) for i in raw_impacts[1:-1])
             body = first + ", " + mid + ", and " + _strip_subject_pronoun(raw_impacts[-1])
 
-        if lead_in:
+        if lead_in and not _impact_is_achievement_subject(body):
             if body and body[0].isupper():
                 body = body[0].lower() + body[1:]
             sentence = f"{lead_in}, {body}"

@@ -1752,7 +1752,14 @@ def detect_rarities(conn, season, latest_date):
                         # don't read it as antecedent-ambiguous. "first 3-HR,
                         # 5+ RBI game this season" beats "first this season."
                         label = check.get("label")
-                        suffix = f"the first {label} this season" if label else "the first this season"
+                        # "Leaguewide" disambiguates scope. _is_first_this_season
+                        # queries the whole table (no player_id filter), so this
+                        # is genuinely the first occurrence by any player this
+                        # season — not the player's first.
+                        suffix = (
+                            f"the first {label} leaguewide this season"
+                            if label else "the first this season leaguewide"
+                        )
                         headline = _continue_with_context(headline, suffix)
 
                 events.append({
@@ -1819,7 +1826,7 @@ def detect_rarities(conn, season, latest_date):
         {
             "condition": "g.hits >= 5 AND g.home_runs >= 1",
             "type": "5hit_hr", "history_sql": "hits >= 5 AND home_runs >= 1",
-            "label": "5-hit, HR game",
+            "label": "5-hit game with a home run",
             "headline": lambda n, r: f"{n} went {r['h']}-for-{r['ab']} with a home run and {r['rbi']} RBI.",
         },
         {
