@@ -279,7 +279,14 @@ def _build_stat_line(conn, player_name, game_date):
         if t: parts.append(f"{t} 3B")
         if bb: parts.append(f"{bb} BB")
         if sb: parts.append(f"{sb} SB")
-        extras = " with " + ", ".join(parts) if parts else ""
+        if not parts:
+            extras = ""
+        elif len(parts) == 1:
+            extras = " with " + parts[0]
+        elif len(parts) == 2:
+            extras = " with " + parts[0] + " and " + parts[1]
+        else:
+            extras = " with " + ", ".join(parts[:-1]) + ", and " + parts[-1]
         return f"{player_name} went {h}-for-{ab}{extras}"
 
     # Pitching — include W/L/SV in the line

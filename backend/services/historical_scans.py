@@ -464,7 +464,18 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
     phrases = []
     mentioned: list[str] = []
 
-    # (1) "Longest since X's Y in YEAR" — MLB-wide most recent prior streak
+    # Human-readable streak noun for the phrasing referent. Without this,
+    # "the longest by any player since X's 53" leaves the reader asking
+    # "longest WHAT?" — the noun lives in the main headline but the
+    # follow-on sentence breaks the antecedent chain.
+    _STREAK_NOUN = {"hitting": "hitting streak", "on_base": "on-base streak"}
+    noun = _STREAK_NOUN.get(streak_type, "streak")
+
+    # (1) "Longest since X's Y in YEAR" — MLB-wide most recent prior streak.
+    # Skip when the prior match is significantly longer than the current
+    # streak (>=1.5x), since "the longest X since Y's MUCH-LONGER in YEAR"
+    # reads as deflating rather than informative. The franchise anchor
+    # below picks up the slack in those cases.
     try:
         start_year = int(current_start_date[:4])
         one_year_before = f"{start_year - 1}" + current_start_date[4:]
@@ -478,14 +489,17 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
         LIMIT 1
     """, (streak_type, current_length, one_year_before)).fetchone()
     mlb_season = None
+    mlb_length_lopsided = False
     if mlb_prior:
         pname, plen, pend, pseason = mlb_prior
         mlb_season = pseason
-        mentioned.append(pname)
-        if plen == current_length:
-            phrases.append(f"matching {pname}'s {plen}-game run from {pseason}")
-        else:
-            phrases.append(f"the longest by any player since {pname}'s {plen} in {pseason}")
+        mlb_length_lopsided = plen >= current_length * 1.5
+        if not mlb_length_lopsided:
+            mentioned.append(pname)
+            if plen == current_length:
+                phrases.append(f"matching {pname}'s {plen}-game {noun} from {pseason}")
+            else:
+                phrases.append(f"the longest {noun} by any player since {pname}'s {plen} in {pseason}")
 
     # (2) Nth-longest (MLB-wide)
     longer_count = conn.execute("""
@@ -494,7 +508,7 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
     """, (streak_type, current_length, current_start_date)).fetchone()[0]
     rank = longer_count + 1
     if rank <= 100:
-        phrases.append(f"{_format_ordinal(rank)}-longest in the last 100+ years")
+        phrases.append(f"the {_format_ordinal(rank)}-longest {noun} in the last 100+ years")
 
     # (3) Team-since anchor: "the longest by a {Franchise} player since X in Y"
     # Only when team history goes meaningfully deeper than MLB (10+ yr delta).
@@ -530,7 +544,17 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
                 mlb_gap = (current_year - mlb_season) if mlb_season is not None else 9999
                 # Fire team phrase if the delta is meaningful OR MLB had no
                 # match and the team gap is substantial on its own
-                if (mlb_season is None and team_gap >= 10) or (team_gap - mlb_gap >= 10):
+                # Fire team phrase when:
+                #  - MLB had no qualifying match, or
+                #  - franchise time-gap is meaningfully deeper than MLB, or
+                #  - the MLB match length was lopsided (much longer than
+                #    current) and got dropped above — franchise anchor then
+                #    becomes the primary comparable reference.
+                if (
+                    (mlb_season is None and team_gap >= 10)
+                    or (team_gap - mlb_gap >= 10)
+                    or mlb_length_lopsided
+                ):
                     mentioned.append(t_name)
                     # "a" / "an" by first-letter vowel sound. Covers the four
                     # vowel-starting MLB franchises (Astros, Angels, Athletics,
@@ -538,12 +562,12 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
                     article = "an" if franchise_name and franchise_name[0].lower() in "aeio" else "a"
                     if t_len == current_length:
                         phrases.append(
-                            f"matching {t_name}'s {t_len}-game run as {article} "
+                            f"matching {t_name}'s {t_len}-game {noun} as {article} "
                             f"{franchise_name} in {t_season}"
                         )
                     else:
                         phrases.append(
-                            f"the longest by {article} {franchise_name} player "
+                            f"the longest {noun} by {article} {franchise_name} player "
                             f"since {t_name}'s {t_len} in {t_season}"
                         )
 
