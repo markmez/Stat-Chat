@@ -1114,13 +1114,19 @@ def decompose(question: str) -> QueryPlan:
             # match "in any one month" (because "calendar" intervenes).
             "in any one calendar month", "in a single calendar month",
             "in one calendar month",
+            # Plural "months" + history/ever phrasings — "best HR months in
+            # history" / "top RBI months ever" / "best months in history".
+            # Different shape than singular variants but same query intent.
+            "months in history", "months ever", "months all time",
+            "best months ever", "best months in history", "best months all time",
+            "top months ever", "top months in history", "top months all time",
         ]
         if any(t in lower for t in month_grouped_triggers):
             plan.month_grouped = True
             plan.query_type = "leaderboard"
             plan.threshold = None
             _add_consumed(plan,
-                "in a single any one calendar month monthly leaderboard best ever all time")
+                "in a single any one calendar month months monthly leaderboard best ever all time")
 
     # Career-game-window: "first/last N (career) games", "first N starts".
     # Aggregates across the first/last N rows of each player's chronologically
