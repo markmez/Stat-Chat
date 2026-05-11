@@ -12,7 +12,7 @@ StatChat answers your baseball stats questions in seconds. Just ask in your own 
 
 No forms to fill out, no spreadsheets to dig through, no headers that disappear as you scroll. Ask your question conversationally, get a quick, clean, readable answer.
 
-JUST ASK.
+JUST ASK:
 
 "What's Aaron Judge's OPS vs left-handers?"
 "Best pitchers with 2 strikes"
@@ -21,11 +21,11 @@ JUST ASK.
 
 Voice input works too — just tap the mic and ask out loud.
 
+PLAYER CARDS
+Just search by player last name to see their full profile: season stats, career totals, hot/cold streak detection with an interactive slider to make your own streak dates. Look at splits across every dimension: vs LHP/RHP, home/away, by pitch type, by ball-strike count, and with runners in scoring position. Take any of these views and easily see how these stats would stack up over a full season. Quick game log access, career milestones and awards, and more.
+
 DAILY EVENTS FEED
 Open the app to see what just happened: career milestones, streak crossings, leaderboard changes, "first since" facts, and insights from each day's games.
-
-PLAYER CARDS
-Just search by player last name to see their full profile: season stats, career totals, hot/cold streak detection with an interactive slider to make your own streak dates. Look at splits across every dimension: vs LHP/RHP, home/away, by pitch type, by ball-strike count, and with runners in scoring position. Take any of these views and easily see how these stats would stack up over a full season.
 
 Stats updated daily.
 
@@ -36,17 +36,27 @@ WHAT'S INCLUDED:
 - 125+ years of baseball history (1898-present)
 - Batting, pitching, and fielding stats
 - Platoon splits (vs LHP/RHP) — batting AND pitching
-- Home/away, by-pitch, by-count, and RISP splits
-- OPS+ and ERA+ (league-adjusted)
-- Hot/cold streak detection with current form analysis
+- Splits by Home/away, pitch type, count, RISP and more
+- Interactive hot/cold streak detection
 - Career-window queries ("first 50 games of a career")
-- Single-month historical leaderboards
 - Player comparisons and matchup previews
 - Custom-filtered leaderboards (by handedness, age, position, league)
 - Team stats and rankings
 
+SUBSCRIPTION DETAILS
+
+StatChat Pro is an auto-renewing subscription that unlocks unlimited questions:
+
+• $2.99 / month
+• $19.99 / year
+
+Payment is charged to your iTunes account at confirmation of purchase. Subscriptions automatically renew unless auto-renew is turned off at least 24 hours before the end of the current period. Your account will be charged for renewal within 24 hours prior to the end of the current period. You can manage your subscriptions and turn off auto-renewal in your iTunes Account Settings after purchase.
+
+Privacy Policy: https://secondsignalapps.com/privacy.html
+Terms of Use: https://secondsignalapps.com/terms.html
+
 DATA SOURCES
-Historical statistics from Retrosheet (retrosheet.org) and the Chadwick Baseball Bureau. Current-season data from MySportsFeeds. Powered by AI to deliver fast, accurate baseball intelligence.
+The information used here was obtained free of charge from and is copyrighted by Retrosheet. Interested parties may contact Retrosheet at www.retrosheet.org. Additional historical statistics from the Chadwick Baseball Bureau. Current-season data from MySportsFeeds. Powered by AI to deliver fast, accurate baseball intelligence.
 
 ## Promotional Text (170 char limit)
 StatChat answers your baseball stats questions in seconds. Just ask in your own words. StatChat understands the question with AI; the answer comes from real game records.

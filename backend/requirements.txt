@@ -7,4 +7,5 @@ python-dotenv>=1.0.0
 requests>=2.31.0
 numpy>=1.24.0
 ruptures>=1.1.0
+app-store-server-library>=1.0.0
 
