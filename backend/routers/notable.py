@@ -795,22 +795,55 @@ async def get_notable_events(limit: int = QueryParam(50, le=200)):
     finally:
         conn.close()
 
-    # Interleave by detection_type within each game_date group
-    # so no two consecutive events share the same type
+    # Bucket events for round-robin interleaving. Key insight from
+    # feedback-feed-event-date-semantics.md: game-derived events are always
+    # dated to YESTERDAY (when the games were played), even though they
+    # appear in the feed TODAY. Today's bucket only ever has supplemental
+    # types (matchup_preview, on_this_date). If we let "today" be its own
+    # bucket, those events clump at the top of the feed with nothing real
+    # to interleave against. Re-bucket today's supplemental events into
+    # the most recent date that actually has game events.
+    SUPPLEMENTAL_TYPES = {"matchup_preview", "on_this_date"}
+    real_event_dates = sorted({
+        e["game_date"] for e in filtered
+        if e["_type"] not in SUPPLEMENTAL_TYPES
+    }, reverse=True)
+    most_recent_real = real_event_dates[0] if real_event_dates else None
+
+    # Assign each event to a bucket date (may differ from game_date).
+    # Supplemental events more recent than the latest real date get
+    # re-bucketed into that real date so they interleave with game events
+    # rather than forming their own top-of-feed clump.
+    buckets: dict = {}
+    bucket_order: list = []  # preserve descending date order
+    for e in filtered:
+        if (e["_type"] in SUPPLEMENTAL_TYPES
+                and most_recent_real
+                and e["game_date"] > most_recent_real):
+            bd = most_recent_real
+        else:
+            bd = e["game_date"]
+        if bd not in buckets:
+            buckets[bd] = []
+            bucket_order.append(bd)
+        buckets[bd].append(e)
+    # Re-sort bucket_order in case re-bucketing changed positions
+    bucket_order = sorted(set(bucket_order), reverse=True)
+
+    # Interleave by detection_type within each bucket
     interleaved = []
-    from itertools import groupby
-    for game_date, group in groupby(filtered, key=lambda e: e["game_date"]):
-        bucket = list(group)
-        # Suppress OTD-only dates: OTD is supplemental, not a standalone day.
-        # Once any other event type fires for the date, OTD will interleave in.
-        if all(e["_type"] == "on_this_date" for e in bucket):
+    for bucket_date in bucket_order:
+        bucket = buckets[bucket_date]
+        # Suppress all-supplemental buckets: nothing real to anchor them to
+        # (this catches old historical dates that somehow have only OTD).
+        if all(e["_type"] in SUPPLEMENTAL_TYPES for e in bucket):
             continue
         # Round-robin by type: pick one from each type in rotation
         by_type = {}
         for e in bucket:
             by_type.setdefault(e["_type"], []).append(e)
         result = []
-        # Sort types: matchup previews first, on_this_date last within today's group
+        # Sort types: matchup previews first, on_this_date last
         type_order = {"matchup_preview": 0, "on_this_date": 99}
         type_keys = sorted(by_type.keys(), key=lambda t: type_order.get(t, 50))
         while any(by_type.values()):
