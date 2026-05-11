@@ -114,11 +114,17 @@ def validate_signed_transaction(
 
     # Try the requested environment first, then fall back to the other in
     # case iOS got the hint wrong (e.g., TestFlight build but signed Production).
-    env_order = (
-        [Environment.PRODUCTION, Environment.SANDBOX]
-        if environment_hint.lower().startswith("p")
-        else [Environment.SANDBOX, Environment.PRODUCTION]
-    )
+    # Skip Production entirely when APP_APPLE_ID isn't configured — the
+    # library refuses to verify Production transactions without one, and
+    # pre-launch / dev environments won't have the App Store numeric ID
+    # yet. Once the app is published, set APP_APPLE_ID env var and
+    # Production verification activates automatically.
+    if APP_APPLE_ID is None:
+        env_order = [Environment.SANDBOX]
+    elif environment_hint.lower().startswith("p"):
+        env_order = [Environment.PRODUCTION, Environment.SANDBOX]
+    else:
+        env_order = [Environment.SANDBOX, Environment.PRODUCTION]
 
     last_error: Optional[Exception] = None
     decoded = None
