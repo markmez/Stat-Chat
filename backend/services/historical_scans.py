@@ -431,7 +431,7 @@ def _format_ordinal(n):
 
 
 def get_streak_historical_context(conn, streak_type, current_length, current_start_date,
-                                   player_team=None):
+                                   player_team=None, latest_date=None):
     """Rank a currently-active streak against the historical_streaks table.
 
     Returns (phrases, mentioned_player_names). Phrases are the prose for
@@ -473,26 +473,28 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
 
     # (1) "Longest since X's Y in YEAR" — MLB-wide most recent prior streak.
     #
-    # Filter is `end_date < current_start_date` so we catch ANY prior streak
-    # that ended before the current one began — including very recent ones
-    # (e.g., Ohtani's 53-game on-base streak ending April 2026 is a valid
-    # comparable for a streak starting later that month). An older version
-    # of this query filtered `end_date < one_year_before`, which excluded
-    # recent priors entirely and would fall back to older, SHORTER streaks
-    # (Lindor 35 in 2024) while ignoring longer recent ones (Ohtani 53 in
-    # 2026). That produced factually wrong "longest since" claims.
+    # Cutoff is `latest_date` (today) when provided, so we catch any prior
+    # streak that has ENDED BY NOW — including ones that overlapped with
+    # the start of the current streak (e.g., Ohtani's 53-game on-base
+    # streak Aug 2025 → Apr 21 2026 overlapped with Kurtz's Apr 3 2026
+    # start; using start_date as the cutoff missed Ohtani entirely and
+    # fell back to older shorter streaks). The natural reading of
+    # "longest since X" is "no one else has reached this length since X's
+    # run ended" — that depends on end_date relative to TODAY, not
+    # relative to the current streak's start.
     #
     # When the prior match is significantly longer than the current streak
     # (>=1.5x), the lopsided-drop below removes the MLB-since phrase
     # entirely rather than framing the current streak against something
     # much bigger. The franchise anchor picks up the slack there.
+    cutoff = latest_date or current_start_date
     mlb_prior = conn.execute("""
         SELECT player_name, length, end_date, end_season
         FROM historical_streaks
         WHERE streak_type = ? AND length >= ? AND end_date < ?
         ORDER BY end_date DESC
         LIMIT 1
-    """, (streak_type, current_length, current_start_date)).fetchone()
+    """, (streak_type, current_length, cutoff)).fetchone()
     mlb_season = None
     mlb_length_lopsided = False
     if mlb_prior:
@@ -666,7 +668,8 @@ def scan_cross_season_streaks(conn, season, latest_date):
             if pt_row and pt_row[0]:
                 player_team = pt_row[0].split("/")[0].strip() or None
             historical_context, hist_mentioned = get_streak_historical_context(
-                conn, streak_type_key, streak, streak_start, player_team=player_team
+                conn, streak_type_key, streak, streak_start,
+                player_team=player_team, latest_date=latest_date,
             )
 
             facts.append({
