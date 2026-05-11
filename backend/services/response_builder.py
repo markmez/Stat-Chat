@@ -5776,7 +5776,18 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
         parts.append("[/LEADERBOARD]")
 
         if stat_info.is_rate:
-            parts.append("\n_Min. 20 PA in split._")
+            # Show the ACTUAL qualifier value, not a hardcoded full-season
+            # one. The PA floor prorates by season progress (max_games/162)
+            # so mid-May max_games≈40 → split_pa_min≈5. Hardcoding "20"
+            # read as a hard 20-PA floor when the real filter was much
+            # looser — a #1 result with 17 PA in split surfaced and made
+            # the label look wrong. Use the same number the filter uses.
+            if table == "pitching_home_away_splits":
+                # split_pa_min is in ip_outs here; convert to IP for readability.
+                ip_min = split_pa_min / 3
+                parts.append(f"\n_Min. {ip_min:.1f} IP in split._")
+            else:
+                parts.append(f"\n_Min. {split_pa_min} PA in split._")
 
         # Cross-side pivot: when a counterpart split table exists, surface a
         # tappable pill that flips between hitters/pitchers without making the
