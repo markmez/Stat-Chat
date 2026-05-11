@@ -242,6 +242,37 @@ def try_intercept(question: str):
         # Fall through to other parsers if query_engine couldn't handle it
         # (rare — usually means the stat itself wasn't recognized)
 
+    # Award queries — force-route to query_engine before the player-name
+    # parsers fire. "How many Gold Gloves does Aaron Judge have" otherwise
+    # falls through to the career-lookup path and returns Judge's stat grid
+    # instead of a Gold Glove count. Gate on award keyword present AND no
+    # stat keyword (so "most HR by an MVP" still hits the stat-filtered
+    # leaderboard route).
+    _award_kw = ("mvp", "cy young", "rookie of the year", " roy ",
+                 "all-star", "all star", "allstar",
+                 "gold glove", "silver slugger",
+                 "hall of fame", " hof ")
+    _stat_kw_re = re.compile(
+        r'\b(?:home runs?|hr|rbi|hits?|avg|average|ops|obp|slg|era|whip|'
+        r'strikeouts?|stolen bases?|wins?|saves?|innings)\b',
+        re.I,
+    )
+    if any(kw in f" {lower} " for kw in _award_kw) and not _stat_kw_re.search(lower):
+        from services.query_engine import decompose, execute as qe_execute
+        try:
+            plan = decompose(trimmed)
+        except Exception as e:
+            logger.error("query_engine_decompose_error question=%r error=%s", trimmed, e)
+            plan = None
+        if plan and plan.is_valid and plan.query_type in (
+            "award_lookup", "award_intersection",
+        ):
+            response = qe_execute(plan)
+            if response:
+                logger.info("query_engine_handled_award question=%r", trimmed)
+                return response
+        # Fall through if query_engine didn't recognize it.
+
     # 0a-perfect. Perfect games — hand-curated JSON list. Must come before the
     # leaderboard/threshold parsers so "perfect games since 2010" doesn't get
     # parsed as a threshold query on "games".
