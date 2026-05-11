@@ -906,7 +906,19 @@ async def get_notable_events(limit: int = QueryParam(50, le=200)):
     # Re-sort bucket_order in case re-bucketing changed positions
     bucket_order = sorted(set(bucket_order), reverse=True)
 
-    # Interleave by detection_type within each bucket
+    # Interleave by detection_type within each bucket. Goal: each type's
+    # items spread roughly evenly across the bucket's length rather than
+    # clustering at the start (which is what plain round-robin produces
+    # once smaller types deplete — e.g., OTDs ended up paired 1:1 with
+    # historical events for a long stretch, reading as one big OTD clump).
+    #
+    # Algorithm: assign each event a fractional position within its own
+    # type (i + 0.5) / count_in_type, then sort all events across types
+    # by position. Items in a sparse type get spaced wider; dense types
+    # stay closer together. Within-type ordering is preserved (positions
+    # are monotonic with index). Matchup previews keep front-pinning by
+    # using negative positions; on_this_date stays a normal type but its
+    # natural spread now pushes it through the full bucket.
     interleaved = []
     for bucket_date in bucket_order:
         bucket = buckets[bucket_date]
@@ -914,22 +926,25 @@ async def get_notable_events(limit: int = QueryParam(50, le=200)):
         # (this catches old historical dates that somehow have only OTD).
         if all(e["_type"] in SUPPLEMENTAL_TYPES for e in bucket):
             continue
-        # Round-robin by type: pick one from each type in rotation
-        by_type = {}
+        by_type: dict = {}
         for e in bucket:
             by_type.setdefault(e["_type"], []).append(e)
-        result = []
-        # Sort types: matchup previews first, on_this_date last
         type_order = {"matchup_preview": 0, "on_this_date": 99}
-        type_keys = sorted(by_type.keys(), key=lambda t: type_order.get(t, 50))
-        while any(by_type.values()):
-            for t in type_keys:
-                if by_type.get(t):
-                    result.append(by_type[t].pop(0))
-            # Remove empty types
-            by_type = {t: v for t, v in by_type.items() if v}
-            type_keys = [t for t in type_keys if t in by_type]
-        interleaved.extend(result)
+        scored: list = []
+        for t, evts in by_type.items():
+            n = len(evts)
+            pri = type_order.get(t, 50)
+            if pri == 0:
+                # Front-pin matchup previews: use negative positions so they
+                # sort ahead of every other type, in their natural order.
+                for i, e in enumerate(evts):
+                    scored.append((-1.0 + i * 0.001, pri, e))
+            else:
+                for i, e in enumerate(evts):
+                    pos = (i + 0.5) / n
+                    scored.append((pos, pri, e))
+        scored.sort(key=lambda x: (x[0], x[1]))
+        interleaved.extend([e for (_, _, e) in scored])
 
     # Strip internal _type field and apply limit. Also normalize terminal
     # punctuation: some detection paths (career_first, certain AI-narrative

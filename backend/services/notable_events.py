@@ -856,8 +856,15 @@ def detect_hitting_streaks(conn, season, latest_date, min_games=8):
                 current_date=latest_date,
                 secondary_names=secondary,
             )
-            intro = f"{name} went {game_line}" if game_line else name
-            headline = f"{intro} and extended his hitting streak to {streak} straight games"
+            # Separate stat readout from the accomplishment with a period
+            # boundary. The run-on "{intro} and extended..." reads too
+            # abruptly — the user is moving from "here is what happened in
+            # the box" to "and as a result, this milestone." A sentence
+            # break gives that transition room to breathe.
+            if game_line:
+                headline = f"{name} went {game_line}. He extended his hitting streak to {streak} straight games"
+            else:
+                headline = f"{name} extended his hitting streak to {streak} straight games"
             if context:
                 headline = _continue_with_context(headline, context)
             else:
@@ -922,8 +929,12 @@ def detect_onbase_streaks(conn, season, latest_date, min_games=12):
                 current_date=latest_date,
                 secondary_names=secondary,
             )
-            intro = f"{name} went {game_line}" if game_line else name
-            headline = f"{intro} and extended his on-base streak to {streak} straight games"
+            # Sentence-break the stat readout from the streak extension —
+            # same rationale as hitting_streak above.
+            if game_line:
+                headline = f"{name} went {game_line}. He extended his on-base streak to {streak} straight games"
+            else:
+                headline = f"{name} extended his on-base streak to {streak} straight games"
             if context:
                 headline = _continue_with_context(headline, context)
             else:
