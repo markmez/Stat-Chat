@@ -2125,15 +2125,21 @@ def decompose(question: str) -> QueryPlan:
     # actually ran on a string containing those phrases. If we got here with
     # no stat (e.g. a leaderboard trigger like "best" or "highest" with the
     # stat noun not matching anything), fall back by intent:
-    #   - pitching + split_context  → OPS-against (split tables don't have ERA)
-    #   - pitching, no split        → ERA
+    #   - pitching + split_context  → BAA (split tables don't have ERA, and
+    #                                  BAA is the closest single-stat analog —
+    #                                  same lower-is-better feel, single
+    #                                  dimension, more parallel than OPS)
+    #   - pitching, no split        → ERA (the open-ended pitching standard)
     #   - batting (default)         → OPS
     # Pitching split tables that DO carry ERA directly (vs. _against rate cols).
-    # Used by the default-stat rule below to pick ERA over OPS for these
+    # Used by the default-stat rule below to pick ERA over BAA for these
     # specific tables. pitching_home_away_splits stores era/whip/k_per_9/baa
     # directly; the count/risp/pitch_type/inning/TTO tables only carry
-    # _against rate columns and need OPS-against.
+    # _against rate columns and need BAA.
     _PITCHING_SPLIT_TABLES_WITH_ERA = {"pitching_home_away_splits"}
+
+    def _baa_alias():
+        return stat_alias_map.get("batting average") or stat_alias_map.get("avg")
 
     if (plan.query_type == "leaderboard"
             and plan.stat is None and plan.derived_stat is None
@@ -2144,7 +2150,7 @@ def decompose(question: str) -> QueryPlan:
                 if plan.split_context.table in _PITCHING_SPLIT_TABLES_WITH_ERA:
                     plan.stat = stat_alias_map.get("era")
                 else:
-                    plan.stat = stat_alias_map.get("ops")
+                    plan.stat = _baa_alias()
             else:
                 plan.stat = stat_alias_map.get("era")
         else:
@@ -2152,14 +2158,14 @@ def decompose(question: str) -> QueryPlan:
 
     # Most pitching split tables don't carry ERA — if we resolved to ERA via the
     # fallback aliases ("best pitcher") AND a pitching split context is set,
-    # swap to OPS. build_split_leaderboard maps to ops_against under the hood.
-    # Skip tables that DO have ERA — they want it kept.
+    # swap to BAA. build_split_leaderboard maps to batting_avg_against under
+    # the hood. Skip tables that DO have ERA — they want it kept.
     if (plan.split_context is not None
             and plan.split_context.is_pitching
             and plan.split_context.table not in _PITCHING_SPLIT_TABLES_WITH_ERA
             and plan.stat is not None
             and plan.stat.db_column == "era"):
-        plan.stat = stat_alias_map.get("ops")
+        plan.stat = _baa_alias()
 
     return plan
 
