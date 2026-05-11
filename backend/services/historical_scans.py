@@ -472,22 +472,27 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
     noun = _STREAK_NOUN.get(streak_type, "streak")
 
     # (1) "Longest since X's Y in YEAR" — MLB-wide most recent prior streak.
-    # Skip when the prior match is significantly longer than the current
-    # streak (>=1.5x), since "the longest X since Y's MUCH-LONGER in YEAR"
-    # reads as deflating rather than informative. The franchise anchor
-    # below picks up the slack in those cases.
-    try:
-        start_year = int(current_start_date[:4])
-        one_year_before = f"{start_year - 1}" + current_start_date[4:]
-    except (ValueError, IndexError):
-        one_year_before = current_start_date
+    #
+    # Filter is `end_date < current_start_date` so we catch ANY prior streak
+    # that ended before the current one began — including very recent ones
+    # (e.g., Ohtani's 53-game on-base streak ending April 2026 is a valid
+    # comparable for a streak starting later that month). An older version
+    # of this query filtered `end_date < one_year_before`, which excluded
+    # recent priors entirely and would fall back to older, SHORTER streaks
+    # (Lindor 35 in 2024) while ignoring longer recent ones (Ohtani 53 in
+    # 2026). That produced factually wrong "longest since" claims.
+    #
+    # When the prior match is significantly longer than the current streak
+    # (>=1.5x), the lopsided-drop below removes the MLB-since phrase
+    # entirely rather than framing the current streak against something
+    # much bigger. The franchise anchor picks up the slack there.
     mlb_prior = conn.execute("""
         SELECT player_name, length, end_date, end_season
         FROM historical_streaks
         WHERE streak_type = ? AND length >= ? AND end_date < ?
         ORDER BY end_date DESC
         LIMIT 1
-    """, (streak_type, current_length, one_year_before)).fetchone()
+    """, (streak_type, current_length, current_start_date)).fetchone()
     mlb_season = None
     mlb_length_lopsided = False
     if mlb_prior:
