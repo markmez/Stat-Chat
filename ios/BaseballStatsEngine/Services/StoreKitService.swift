@@ -51,6 +51,9 @@ final class StoreKitService {
                 let transaction = try checkVerified(verification)
                 await transaction.finish()
                 await updateSubscriptionStatus()
+                // Push the signed JWS to the backend so device_quota.is_paid
+                // flips and metering bypasses the 5/week limit.
+                await syncEntitlementToBackend()
                 let plan = product.id == Self.monthlyID ? "monthly" : "yearly"
                 AnalyticsService.trackSubscription(plan: plan)
                 return true
@@ -91,6 +94,36 @@ final class StoreKitService {
         }
         isSubscribed = hasEntitlement
         UserDefaults.standard.set(isSubscribed, forKey: Self.subscribedKey)
+        // After local state settles, re-sync with backend so the
+        // device_quota.is_paid flag matches reality. Cheap idempotent call
+        // — the backend just re-verifies the same JWS and re-UPDATEs the
+        // row. Catches the case where a user switched devices, reinstalled,
+        // or the backend lost state for any reason.
+        if hasEntitlement {
+            await syncEntitlementToBackend()
+        }
+    }
+
+    /// Push every active entitlement's JWS to the backend so it can flip
+    /// device_quota.is_paid. The backend cryptographically verifies the JWS
+    /// against Apple's cert chain — failures here mean the user can still
+    /// use the app subscribed locally, but they'll hit the metering limit
+    /// server-side until the next sync succeeds.
+    private func syncEntitlementToBackend() async {
+        for await result in Transaction.currentEntitlements {
+            guard let transaction = try? checkVerified(result),
+                  Self.productIDs.contains(transaction.productID) else { continue }
+            do {
+                _ = try await BackendService().validateReceipt(
+                    deviceId: AppState.deviceId,
+                    signedTransaction: result.jwsRepresentation,
+                    environment: transaction.environment.rawValue
+                )
+            } catch {
+                // Don't escalate — local isSubscribed is the source of
+                // truth for UI gating; backend will catch up on next sync.
+            }
+        }
     }
 
     // MARK: - Transaction Listener

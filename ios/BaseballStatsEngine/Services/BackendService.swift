@@ -102,6 +102,50 @@ final class BackendService: Sendable {
         return QueryResult(text: fullText, intercepted: wasIntercepted, rewrittenQuery: rewrittenQuery)
     }
 
+    // MARK: - Subscription validation
+
+    struct ValidateReceiptResult: Decodable, Sendable {
+        let valid: Bool
+        let product_id: String?
+        let expires_at: String?
+        let environment: String?
+    }
+
+    /// Verify a StoreKit2 signed transaction with the backend so it can
+    /// flip device_quota.is_paid = 1 for this device. Called after a
+    /// successful purchase, on app launch when an entitlement exists, and
+    /// when Transaction.updates emits a renewal/refund/etc.
+    ///
+    /// Non-blocking from the UI's perspective: caller should treat
+    /// failures as "backend will catch up next launch" rather than
+    /// surfacing an error. iOS already knows the user is subscribed from
+    /// the local StoreKit check.
+    func validateReceipt(
+        deviceId: String,
+        signedTransaction: String,
+        environment: String
+    ) async throws -> ValidateReceiptResult {
+        let url = baseURL.appendingPathComponent("validate-receipt")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "device_id": deviceId,
+            "signed_transaction": signedTransaction,
+            "environment": environment,
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown"
+            throw ServiceError.serverError(
+                "validate-receipt HTTP \(http.statusCode): \(errorBody)"
+            )
+        }
+        return try JSONDecoder().decode(ValidateReceiptResult.self, from: data)
+    }
+
     // MARK: - Player Card
 
     /// Structured JSON response from /player-card endpoint.
