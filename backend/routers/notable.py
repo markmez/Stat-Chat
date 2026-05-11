@@ -508,19 +508,39 @@ def _ensure_subject(text, *, active_state: bool = False):
     return text
 
 
+def _normalize_for_dedup(text: str) -> str:
+    """Strip leading discourse markers ("that's", "that was", "and") so the
+    substring dedup can detect content-equivalent impacts that differ only
+    in their sentence-position prefix. Without this, Path A's standalone
+    "That's the longest …Athletics player…" doesn't match the same chunk
+    embedded mid-sentence in Path B as "…, and the longest …Athletics
+    player…", and both survive into the merged headline."""
+    t = text.lower().strip()
+    for prefix in ("that's ", "that was ", "and "):
+        if t.startswith(prefix):
+            t = t[len(prefix):]
+            break
+    return t
+
+
 def _dedupe_by_substring(impacts):
     """Drop impacts whose content is entirely contained in another impact.
     Handles overlap between hot_streak_pelt ('.364/.533/.955 with 4 HR...')
     and an ai_insight that includes the same phrase embedded in richer
     narrative ('extended his red-hot stretch to .364/.533/.955 with 4 HR...').
+    Also handles cross-detector overlap where two streak detectors emit
+    the same franchise-since claim with different discourse-position
+    prefixes ("That's the longest …" vs "…, and the longest …").
     """
     if len(impacts) <= 1:
         return impacts
     kept = []
     for i, a in enumerate(impacts):
-        # Drop if any OTHER impact's normalized form contains this one's
-        a_norm = a.lower().strip()
-        if any(i != j and a_norm in b.lower().strip() and a_norm != b.lower().strip()
+        # Drop if any OTHER impact's normalized form contains this one's,
+        # after stripping leading discourse markers so position-of-sentence
+        # variants ("That's X" vs "and X") don't block the match.
+        a_norm = _normalize_for_dedup(a)
+        if any(i != j and a_norm in _normalize_for_dedup(b) and a_norm != _normalize_for_dedup(b)
                for j, b in enumerate(impacts)):
             continue
         kept.append(a)
