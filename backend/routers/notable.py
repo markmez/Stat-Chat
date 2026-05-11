@@ -877,9 +877,17 @@ async def get_notable_events(limit: int = QueryParam(50, le=200)):
             type_keys = [t for t in type_keys if t in by_type]
         interleaved.extend(result)
 
-    # Strip internal _type field and apply limit
+    # Strip internal _type field and apply limit. Also normalize terminal
+    # punctuation: some detection paths (career_first, certain AI-narrative
+    # outputs) build headlines without trailing periods, which surfaces in
+    # the UI as bare-looking sentences ("X hit his first career home run").
+    # Defensive fix here covers existing rows immediately, without waiting
+    # for re-detection.
     for e in interleaved:
         e.pop("_type", None)
+        h = e.get("headline", "")
+        if h and not h.rstrip().endswith((".", "!", "?", "\"", "'")):
+            e["headline"] = h.rstrip().rstrip(",;: ") + "."
 
     return interleaved[:limit]
 

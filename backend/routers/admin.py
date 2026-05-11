@@ -4506,7 +4506,7 @@ def _simulate_records_for_date(conn, target_date):
                 events.append({
                     "type": "career_first",
                     "player": pname, "team": team_name,
-                    "detail": f"{pname} hit his first career home run",
+                    "detail": f"{pname} hit his first career home run.",
                 })
 
         # First career win (skip early season noise)
@@ -4519,7 +4519,7 @@ def _simulate_records_for_date(conn, target_date):
                 events.append({
                     "type": "career_first",
                     "player": pname, "team": team_name,
-                    "detail": f"{pname} earned his first career win",
+                    "detail": f"{pname} earned his first career win.",
                 })
 
         # First career save — removed, usually flukey, not prospect-driven
@@ -4667,7 +4667,7 @@ def _simulate_records_for_date(conn, target_date):
                         events.append({
                             "type": "record_crossing",
                             "player": pname, "team": team_name,
-                            "detail": f"{pname} passed {rec[1]} for the {team_name} career {label} record ({int(career_total)} vs {int(rec[0])})",
+                            "detail": f"{pname} passed {rec[1]} for the {team_name} career {label} record ({int(career_total)} vs {int(rec[0])}).",
                         })
 
         for stat_col, game_col, label, _ in PITCH_COUNTING:
@@ -4704,7 +4704,7 @@ def _simulate_records_for_date(conn, target_date):
                         events.append({
                             "type": "record_crossing",
                             "player": pname, "team": team_name,
-                            "detail": f"{pname} passed {rec[1]} for the {team_name} career {label} record ({int(career_total)} vs {int(rec[0])})",
+                            "detail": f"{pname} passed {rec[1]} for the {team_name} career {label} record ({int(career_total)} vs {int(rec[0])}).",
                         })
 
         # ===== SEASON RECORD APPROACHES (only later in season) =====
@@ -4737,7 +4737,7 @@ def _simulate_records_for_date(conn, target_date):
                         events.append({
                             "type": "season_record_approach",
                             "player": pname, "team": team_name,
-                            "detail": f"{pname} has {int(sv)} {label} — {diff} from {team_name} single-season record ({rec[1]}, {rec[2]}: {int(rec[0])})",
+                            "detail": f"{pname} has {int(sv)} {label} — {diff} from {team_name} single-season record ({rec[1]}, {rec[2]}: {int(rec[0])}).",
                         })
 
         # ===== SEASON MILESTONE THRESHOLDS =====
