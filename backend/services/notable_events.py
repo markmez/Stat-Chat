@@ -392,7 +392,7 @@ def _a_or_an(word: str) -> str:
     return "an" if word[0].lower() in "aeio" else "a"
 
 
-def _continue_with_context(base: str, continuation: str) -> str:
+def _continue_with_context(base: str, continuation: str, *, past_tense: bool = False) -> str:
     """Append a follow-up clause as a separate sentence rather than an
     em-dash continuation. Em-dash-as-connector reads AI-generated; period
     boundaries flow more like sportswriter prose.
@@ -400,7 +400,9 @@ def _continue_with_context(base: str, continuation: str) -> str:
     - Preserves base's terminal punctuation (! stays !, ? stays ?).
     - If the continuation begins lowercase (a noun/participial fragment
       like "the most since X" or "matching his career high"), prepends
-      "That's" so it parses as a complete sentence.
+      "That's" (present) or "That was" (past) so it parses as a complete
+      sentence. Use past_tense=True for "On This Date" / historical
+      context where the event happened in a prior year.
     - If the continuation already begins capitalized, treats it as a
       complete sentence and appends as-is.
     - Strips redundant trailing punctuation on `continuation` and adds
@@ -415,7 +417,8 @@ def _continue_with_context(base: str, continuation: str) -> str:
     if cont[0].isupper():
         sentence = cont + "."
     else:
-        sentence = "That's " + cont + "."
+        intro = "That was " if past_tense else "That's "
+        sentence = intro + cont + "."
     return base.rstrip() + boundary + sentence
 
 
@@ -2924,7 +2927,8 @@ def detect_on_this_date(conn, season, latest_date, target_date=None, attach_date
         headline += f", going {h}-for-{ab} with {rbi or 0} RBI"
         headline = _continue_with_context(
             headline,
-            f"tied the MLB single-game record (only {total_4hr} times ever)",
+            f"one of only {total_4hr} games ever to tie the MLB single-game record",
+            past_tense=True,
         )
         _append(headline, [name], [opp_name] if opp_name else [])
 
@@ -2958,7 +2962,8 @@ def detect_on_this_date(conn, season, latest_date, target_date=None, attach_date
         headline += f", going {h}-for-{ab} with {rbi or 0} RBI"
         headline = _continue_with_context(
             headline,
-            f"tied the MLB single-game extra-base hit record (only {total_5xbh} times ever)",
+            f"one of only {total_5xbh} games ever to tie the MLB single-game extra-base hit record",
+            past_tense=True,
         )
         _append(headline, [name], [opp_name] if opp_name else [])
 
@@ -2983,7 +2988,8 @@ def detect_on_this_date(conn, season, latest_date, target_date=None, attach_date
         if opp_name:
             headline += f" against the {opp_name}"
         headline = _continue_with_context(
-            headline, f"one of only {total_18k} 18+ K games in MLB history"
+            headline, f"one of only {total_18k} 18+ K games in MLB history",
+            past_tense=True,
         )
         _append(headline, [name], [opp_name] if opp_name else [])
 
@@ -3027,7 +3033,7 @@ def detect_on_this_date(conn, season, latest_date, target_date=None, attach_date
             rarity = f"one of only {n} games ever with {rbi}+ RBI"
         else:
             rarity = f"one of only {total_10rbi} 10+ RBI games in MLB history"
-        headline = _continue_with_context(headline, rarity)
+        headline = _continue_with_context(headline, rarity, past_tense=True)
         _append(headline, [name], [opp_name] if opp_name else [])
 
     # Iconic career milestone crossings on this date — from historic_moments table.
@@ -3053,7 +3059,7 @@ def detect_on_this_date(conn, season, latest_date, target_date=None, attach_date
             rank_phrase = _rank_phrase(rank_, total_, stat, threshold)
             headline = f"On this date in {yr}, {pname} {context}."
             if rank_phrase:
-                headline = _continue_with_context(headline, rank_phrase)
+                headline = _continue_with_context(headline, rank_phrase, past_tense=True)
             events.append({
                 "headline": headline,
                 "detail": "",
