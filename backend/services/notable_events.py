@@ -859,13 +859,15 @@ def detect_hitting_streaks(conn, season, latest_date, min_games=8):
                 current_date=latest_date,
                 secondary_names=secondary,
             )
-            # Separate stat readout from the accomplishment with a period
-            # boundary. The run-on "{intro} and extended..." reads too
-            # abruptly — the user is moving from "here is what happened in
-            # the box" to "and as a result, this milestone." A sentence
-            # break gives that transition room to breathe.
+            # Participle-absolute join — the streak extension is a
+            # consequence of the box-score line, not a separate beat. The
+            # period-split form ("...went 2-for-4. He extended his streak")
+            # reads as two facts when it's really cause→consequence.
+            # Sportswriter style: "Judge homered in the 9th, lifting the
+            # Yankees to a 3-2 win." The participle modifies the past-tense
+            # verb's time frame and reads as past consequence.
             if game_line:
-                headline = f"{name} went {game_line}. He extended his hitting streak to {streak} straight games"
+                headline = f"{name} went {game_line}, extending his hitting streak to {streak} straight games"
             else:
                 headline = f"{name} extended his hitting streak to {streak} straight games"
             if context:
@@ -932,10 +934,9 @@ def detect_onbase_streaks(conn, season, latest_date, min_games=12):
                 current_date=latest_date,
                 secondary_names=secondary,
             )
-            # Sentence-break the stat readout from the streak extension —
-            # same rationale as hitting_streak above.
+            # Participle-absolute join — same rationale as hitting_streak.
             if game_line:
-                headline = f"{name} went {game_line}. He extended his on-base streak to {streak} straight games"
+                headline = f"{name} went {game_line}, extending his on-base streak to {streak} straight games"
             else:
                 headline = f"{name} extended his on-base streak to {streak} straight games"
             if context:

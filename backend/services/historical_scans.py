@@ -1652,10 +1652,11 @@ def template_facts(conn, facts, season, latest_date):
                 else:
                     hist_suffix = ". That's " + first + ", and " + last
 
-            # Period-split the stat readout from the streak claim so the
-            # transition doesn't read as a run-on.
+            # Participle-absolute join — the streak claim is a consequence
+            # of the box-score line. Compact sportswriter style: "X went
+            # 4-for-4, extending the longest active hitting streak..."
             if game_line:
-                headline = f"{player} went {game_line}. He extended the longest active {label} in MLB to {streak} games {ctx}{hist_suffix}."
+                headline = f"{player} went {game_line}, extending the longest active {label} in MLB to {streak} games {ctx}{hist_suffix}."
             else:
                 headline = f"{player} extended the longest active {label} in MLB to {streak} games {ctx}{hist_suffix}."
 
@@ -1911,22 +1912,13 @@ def template_facts(conn, facts, season, latest_date):
 
             # Past-tense main verb instead of present-participle ("taking" →
             # "took") so the second clause reads unambiguously as a past
-            # action that already happened. "but still took" / "but still
-            # took back" variants already carry their own conjunction, so
-            # those use comma-join; clean variants use "and"-join.
-            if took_verb.startswith("but still"):
-                # "but still" carries its own contrast conjunction; comma-join
-                # reads naturally for this case ("went 0-for-3, but still
-                # took the AL lead in OPS").
-                headline = f"{game_intro}, {took_verb} the {scope} lead in {stat_label} ({val_str}), passing {runner_up} ({ru_str})."
-            else:
-                # Period-break the stat readout from the lead change so the
-                # transition reads as two distinct beats rather than a
-                # breathless run-on. "{game_intro} and took the lead" felt
-                # too sudden — the box-score sentence and the milestone
-                # sentence are conceptually separate.
-                took_main = "took back" if took_verb == "taking back" else "took"
-                headline = f"{game_intro}. He {took_main} the {scope} lead in {stat_label} ({val_str}), passing {runner_up} ({ru_str})."
+            # Comma + participle absolute — the lead change is a consequence
+            # of the box-score line, not a separate beat. Participle form
+            # captures cause→consequence naturally (compact sportswriter
+            # style: "X went 1-for-4, taking the NL lead in slugging").
+            # The "but still" variant keeps its finite past-tense verb
+            # since the "but" contrast conjunction needs one.
+            headline = f"{game_intro}, {took_verb} the {scope} lead in {stat_label} ({val_str}), passing {runner_up} ({ru_str})."
             secondary_names.append(runner_up)
 
         elif f["type"] == "leaderboard_tie":
@@ -1935,8 +1927,8 @@ def template_facts(conn, facts, season, latest_date):
             stat_label = f["stat_label"]
             tied_with = f["tied_with"]
             if game_line:
-                # Period-split same as the lead-change template above.
-                headline = f"{player} went {game_line}. He tied {tied_with} for the {scope} lead in {stat_label} ({val})."
+                # Participle-absolute form same as the lead-change template.
+                headline = f"{player} went {game_line}, tying {tied_with} for the {scope} lead in {stat_label} ({val})."
             else:
                 headline = f"{player} tied {tied_with} for the {scope} lead in {stat_label} ({val})."
             secondary_names.append(tied_with)
