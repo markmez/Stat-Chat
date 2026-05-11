@@ -1403,10 +1403,14 @@ def detect_season_pace(conn, season, latest_date=None):
                     else:
                         game_intro = ""
                     projected = int(stat_val * 162 / games)
+                    # Include stat name in the pace phrase so it survives the
+                    # strip when merged with another event ("By going deep,
+                    # he is on pace for 54 HR this season" instead of the
+                    # ambiguous "on pace for 54 this season").
                     if game_intro:
-                        pace_line = f"{game_intro}He now has {stat_val} {abbrev} and is on pace for {projected}."
+                        pace_line = f"{game_intro}He now has {stat_val} {abbrev} and is on pace for {projected} {abbrev} this season."
                     else:
-                        pace_line = f"{name} now has {stat_val} {abbrev} and is on pace for {projected}."
+                        pace_line = f"{name} now has {stat_val} {abbrev} and is on pace for {projected} {abbrev} this season."
                     events.append({
                         "headline": pace_line,
                         "detail": "",

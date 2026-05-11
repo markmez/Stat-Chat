@@ -146,6 +146,14 @@ def _to_past_tense(text):
     return text
 
 
+# Stat-token shape used inside the restatement patterns below. Matches
+# either "{N} {stat}" or "a {homer/triple/double/walk/hit/stolen base}".
+# Tight set so the restatement strip doesn't eat richer prose (game
+# context like "in the win against Boston") by accident.
+_STAT_PART = (
+    r"(?:\d+\s+\w+|a\s+(?:homer|triple|double|walk|hit|stolen\s+base))"
+)
+
 # Patterns that match the "stat-line restatement" prefix Sonnet/detectors put
 # before the actual impact. We strip these so the lead-in carries the stat.
 _REDUNDANT_PREFIX_PATTERNS = [
@@ -160,6 +168,19 @@ _REDUNDANT_PREFIX_PATTERNS = [
     # because rule-based detectors emit past tense; without that branch, a
     # restated stat line survives ahead of the impact.
     re.compile(r"^He went \d+-for-\d+(?:\s+with[^,]+(?:,\s+\d+\s+\w+)*)?,\s*(?=taking|passing|reaching|tying|matching|joining|extending|setting|marking|took|passed|reached|tied|matched|joined|extended|set\b|marked)", re.I),
+    # Variant of the above where the pivot is introduced by " and PIVOT"
+    # with no leading comma. Historical_scan output: "He went 2-for-4 with
+    # a homer and 2 RBI and tied Aranda for the AL lead in RBI." Restricted
+    # to stat-shaped tokens in the "with" portion so we don't accidentally
+    # eat game-context prose ("in the win against Boston").
+    re.compile(
+        rf"^He went \d+-for-\d+\s+with\s+"
+        rf"{_STAT_PART}(?:(?:\s*,\s*|\s+and\s+){_STAT_PART})*"
+        rf"\s+and\s+"
+        rf"(?=took|passed|reached|tied|matched|joined|extended|set\b|marked|"
+        rf"taking|passing|reaching|tying|matching|joining|extending|setting|marking)",
+        re.I,
+    ),
     re.compile(r"^He threw [\d.]+ (?:scoreless\s+)?(?:IP|innings)(?:\s+with[^,]+)?,\s*(?=taking|passing|reaching|tying|matching|joining|extending|setting|marking|took|passed|reached|tied|matched|joined|extended|set\b|marked)", re.I),
     # "He went 5.2 IP, 2 H, 0 ER, 8 K, W, taking the lead"
     re.compile(r"^He went [\d.]+\s+IP[,\s\d\w]*?,\s*(?=taking|passing|reaching|tying|matching|joining|took|passed|reached|tied|matched|joined)", re.I),
