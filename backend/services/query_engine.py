@@ -74,6 +74,10 @@ _ASG_DATES = {
 }
 
 
+def _current_year() -> int:
+    return date.today().year
+
+
 def _detect_half_window(lower: str) -> Optional[dict]:
     """Detect "first half" / "second half" date window — either single-season
     (closed range within one year) or multi-season recurring (the equivalent
@@ -498,6 +502,7 @@ class QueryPlan:
     execution_error: Optional[str] = None  # Set by execute() if an exception occurred
     compare_years: Optional[tuple] = None  # (year1, year2) for year-over-year comparison
     award_filter: Optional[str] = None  # "MVP", "CY", "ROY", "ALL_STAR", "GG", "SS", "HOF"
+    award_filter_secondary: Optional[str] = None  # For "won X and Y in the same season" intersection
     unexplained_words: list = field(default_factory=list)
     consumed_words: set = field(default_factory=set)
 
@@ -508,6 +513,8 @@ class QueryPlan:
             return False  # Handled by specialized parsers
         if self.query_type == "award_lookup":
             return self.award_filter is not None
+        if self.query_type == "award_intersection":
+            return self.award_filter is not None and self.award_filter_secondary is not None
         if self.query_type == "streak_sequence":
             return len(self.streak_conditions) > 0 and len(self.unexplained_words) == 0
         if self.query_type == "year_comparison":
@@ -765,6 +772,40 @@ def decompose(question: str) -> QueryPlan:
     _has_stat_keyword = bool(re.search(
         r'\b(?:home runs?|hr|rbi|hits?|avg|ops|obp|slg|era|whip|strikeouts?|stolen bases?|wins?|saves?|innings)\b',
         lower))
+
+    # --- Two-award same-season intersection ---
+    # "every player who has won both MVP and Gold Glove in the same season",
+    # "MVP and Gold Glove same year", "won X and Y in the same season".
+    # Trigger requires both award names AND a same-season qualifier — without
+    # the qualifier, "won X and Y" could mean career-spanning and we leave
+    # that to the single-award lookup (which picks one and answers it).
+    if not _has_stat_keyword and ("same season" in lower or "same year" in lower):
+        matched_codes: list = []
+        seen_codes: set = set()
+        for award_text, award_code in sorted(_AWARD_LOOKUP_PATTERNS.items(), key=lambda x: -len(x[0])):
+            if award_text in lower and award_code not in seen_codes:
+                seen_codes.add(award_code)
+                matched_codes.append(award_code)
+                if len(matched_codes) == 2:
+                    break
+        if len(matched_codes) == 2:
+            plan.query_type = "award_intersection"
+            plan.award_filter = matched_codes[0]
+            plan.award_filter_secondary = matched_codes[1]
+            # Optional season scope ("in 2024", "this year")
+            year_match = re.search(r'\b(1[89]\d{2}|20[0-3]\d)\b', lower)
+            if year_match:
+                plan.season = int(year_match.group(1))
+            elif "last year" in lower or "last season" in lower:
+                plan.season = _current_year() - 1
+            elif "this year" in lower or "this season" in lower:
+                plan.season = _current_year()
+            if re.search(r'\bal\b', lower):
+                plan.league = "AL"
+            elif re.search(r'\bnl\b', lower):
+                plan.league = "NL"
+            return plan
+
     if not _has_stat_keyword:
         for award_text, award_code in sorted(_AWARD_LOOKUP_PATTERNS.items(), key=lambda x: -len(x[0])):
             if award_text in lower:
@@ -788,7 +829,8 @@ def decompose(question: str) -> QueryPlan:
                 player = _nm.find_player_in_text(lower)
                 if player:
                     plan.player_name = player
-                plan.is_valid = True
+                # is_valid is a @property; QueryPlan.is_valid returns True
+                # when query_type == "award_lookup" and award_filter is set.
                 return plan
 
     # --- Multi-stat detection ---
@@ -2603,6 +2645,13 @@ def execute(plan: QueryPlan) -> Optional[str]:
                 return result
             conn.close()
             return None
+        if plan.query_type == "award_intersection":
+            result = _execute_award_intersection(conn, plan)
+            if result:
+                conn.close()
+                return result
+            conn.close()
+            return None
         if plan.query_type == "year_comparison":
             result = _execute_year_comparison(conn, plan)
         elif plan.query_type == "streak_sequence":
@@ -3088,6 +3137,61 @@ def _execute_award_lookup(conn, plan: QueryPlan) -> Optional[str]:
         league_str = f" ({league})" if league else ""
         parts.append(f"{season}{league_str}: **{name}**")
     return f"Recent {display} winners:\n" + "\n".join(parts)
+
+
+def _execute_award_intersection(conn, plan: QueryPlan) -> Optional[str]:
+    """Players who won two awards in the same season.
+
+    Powers "every player who has won both MVP and Gold Glove in the same
+    season" and similar two-award same-season questions.
+    """
+    a1 = plan.award_filter
+    a2 = plan.award_filter_secondary
+    _AWARD_DISPLAY = {
+        "MVP": "MVP", "CY": "Cy Young", "ROY": "Rookie of the Year",
+        "ALL_STAR": "All-Star", "GG": "Gold Glove", "SS": "Silver Slugger",
+        "HOF": "Hall of Fame", "WS_MVP": "World Series MVP",
+        "ALCS_MVP": "ALCS MVP", "NLCS_MVP": "NLCS MVP",
+    }
+    d1 = _AWARD_DISPLAY.get(a1, a1)
+    d2 = _AWARD_DISPLAY.get(a2, a2)
+    cur = conn.cursor()
+
+    where_extra = ""
+    params: list = [a1, a2]
+    if plan.season:
+        where_extra += " AND a1.season = ?"
+        params.append(plan.season)
+    if plan.league:
+        where_extra += " AND a1.league = ?"
+        params.append(plan.league)
+
+    cur.execute(f"""
+        SELECT p.name, a1.season, a1.league
+        FROM awards a1
+        JOIN awards a2 ON a1.player_id = a2.player_id AND a1.season = a2.season
+        JOIN players p ON a1.player_id = p.player_id
+        WHERE a1.award = ? AND a2.award = ?{where_extra}
+        ORDER BY a1.season DESC, p.name
+    """, params)
+    rows = cur.fetchall()
+    if not rows:
+        scope = f" in {plan.season}" if plan.season else ""
+        return f"No player has won both {d1} and {d2} in the same season{scope}."
+
+    # Group identical (name, season) pairs across leagues if any (rare).
+    parts = []
+    last_year = None
+    for name, season, league in rows:
+        league_str = f" ({league})" if league else ""
+        if season != last_year:
+            parts.append(f"\n**{season}**: {name}{league_str}")
+            last_year = season
+        else:
+            parts[-1] += f", {name}{league_str}"
+
+    header = f"Players who won both {d1} and {d2} in the same season ({len(rows)} total):"
+    return header + "".join(parts)
 
 
 def _execute_recurring_half_leaderboard(conn, plan: QueryPlan) -> Optional[str]:

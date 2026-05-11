@@ -87,11 +87,13 @@ def try_intercept(question: str):
                     "\n[SUGGEST]OPS leaders this season[/SUGGEST]"
                     "\n[SUGGEST]best ERA this season[/SUGGEST]")
 
-    # Advanced fielding metrics — proprietary, never in our DB
+    # Advanced fielding metrics — proprietary, never in our DB.
+    # "Gold Glove" is NOT in this list: it's an award we store in the
+    # awards table and answer via award_lookup / award_intersection.
     _adv_fielding_keywords = ["uzr", "ultimate zone", "drs", "defensive runs saved",
                               "oaa", "outs above average", "range factor", "zone rating",
                               "framing", "catcher framing", "arm strength", "pop time",
-                              "gold glove", "defensive value"]
+                              "defensive value"]
     if any(kw in lower for kw in _adv_fielding_keywords):
         return ("__NO_COUNT__We don't have advanced defensive metrics (UZR, DRS, OAA, framing, etc.) "
                 "in our database — these are proprietary to FanGraphs, Sports Info Solutions, and Statcast. "
