@@ -132,10 +132,16 @@ def validate_signed_transaction(
         except VerificationException as e:
             last_error = e
             continue
+        except Exception as e:
+            # Catch structural / decoding errors too (malformed JWS,
+            # missing claims, etc.) so they surface as 400-class
+            # ReceiptValidationError rather than 500.
+            last_error = e
+            continue
 
     if decoded is None:
         raise ReceiptValidationError(
-            f"JWS verification failed in both environments: {last_error}"
+            f"JWS verification failed: {last_error}"
         )
 
     # App-level claim checks beyond what the library enforces (the library
