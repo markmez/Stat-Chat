@@ -914,15 +914,21 @@ def decompose(question: str) -> QueryPlan:
         plan.has_team_context = True
         _add_consumed(plan, "team teams")
 
-    # Sort direction
+    # Sort direction (worst/fewest invert default sort order)
     if any(t in lower for t in ["worst", "fewest"]):
         plan.sort_asc = True
         _add_consumed(plan, "worst fewest")
+    # Leaderboard intent — any ranking trigger. "worst" and "fewest" are
+    # included here so they activate leaderboard mode (they already set
+    # sort_asc above; without leaderboard-mode the plan would be invalid
+    # and the query falls through to Sonnet, producing "I'm not sure"
+    # for queries like "worst hitters first at bat").
     if any(t in lower for t in ["best", "highest", "most", "top", "leaders", "leader",
-                                  "leaderboard", "lowest", "who led", "who leads", "leading"]):
+                                  "leaderboard", "lowest", "who led", "who leads", "leading",
+                                  "worst", "fewest"]):
         if plan.query_type not in ("count", "superlative", "team_ranking", "per_team_leaders"):
             plan.query_type = "leaderboard"
-        _add_consumed(plan, "best highest most top leaders leader leaderboard lowest who led leads leading")
+        _add_consumed(plan, "best highest most top leaders leader leaderboard lowest who led leads leading worst fewest")
 
     # "Lowest" for rate stats is actually best (not worst)
     if "lowest" in lower:
@@ -2146,7 +2152,8 @@ def decompose(question: str) -> QueryPlan:
     if (plan.query_type == "leaderboard"
             and plan.stat is None and plan.derived_stat is None
             and any(t in lower for t in ["best", "highest", "lowest", "top",
-                                         "leaders", "leader", "leading", "most"])):
+                                         "leaders", "leader", "leading", "most",
+                                         "worst", "fewest"])):
         if plan.is_pitching:
             if plan.split_context is not None:
                 if plan.split_context.table in _PITCHING_SPLIT_TABLES_WITH_ERA:
@@ -5277,9 +5284,12 @@ def _execute_superlative(conn, plan: QueryPlan) -> Optional[str]:
 
 def _execute_split_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     """Leaderboard from a split table."""
-    from .response_builder import build_split_leaderboard
+    from .response_builder import build_split_leaderboard  # type: ignore
     season = plan.season or datetime.now().year
-    return build_split_leaderboard(plan.stat, plan.split_context, season, plan.limit, plan.league)
+    return build_split_leaderboard(
+        plan.stat, plan.split_context, season, plan.limit, plan.league,
+        sort_asc=plan.sort_asc,
+    )
 
 
 def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:

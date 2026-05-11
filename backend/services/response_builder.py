@@ -5681,7 +5681,8 @@ def build_count_query(stat_info: StatInfo, threshold: float, season: Optional[in
 # ===================================================================
 
 def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
-                            limit: int = 50, league: Optional[str] = None) -> Optional[str]:
+                            limit: int = 50, league: Optional[str] = None,
+                            sort_asc: bool = False) -> Optional[str]:
     """Build a leaderboard from a split table (count, pitch type, RISP, home/away, platoon, TTO, first-PA).
 
     Branches on `split_context.is_pitching`:
@@ -5726,8 +5727,15 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
         if col not in valid_cols:
             return None
 
-        # Rate stats sort lower-is-better for pitching, higher-is-better for batting
-        sort_dir = "ASC" if (is_pitching and stat_info.is_rate) else "DESC"
+        # Natural sort: pitching rate ASC (lower=better), batting rate DESC
+        # (higher=better), counting DESC. "Worst" / "fewest" (sort_asc=True)
+        # inverts whatever the natural direction was, so:
+        #   batting rate: DESC (best) → ASC (worst)
+        #   pitching rate: ASC (best) → DESC (worst)
+        natural_asc = is_pitching and stat_info.is_rate
+        # XOR: flip natural when sort_asc=True
+        final_asc = natural_asc != sort_asc
+        sort_dir = "ASC" if final_asc else "DESC"
 
         pa_filter = ""
         if stat_info.is_rate:
@@ -5821,7 +5829,13 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
                       else stat_info.display_name)
         header_stat = (f"{stat_info.display_abbrev} Allowed" if is_pitching and stat_info.is_rate
                        else stat_info.display_abbrev)
-        title = f"**{season} {title_stat} Leaders {label}{league_label}**\n"
+        # "Worst" prefix for sort_asc=True (counting → "Fewest"). Drops the
+        # "Leaders" suffix since "Worst X Leaders" reads contradictorily.
+        if sort_asc:
+            direction = "Fewest " if not stat_info.is_rate else "Worst "
+            title = f"**{season} {direction}{title_stat} {label}{league_label}**\n"
+        else:
+            title = f"**{season} {title_stat} Leaders {label}{league_label}**\n"
         parts = [title]
         parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
         parts.append("[LEADERBOARD]")
