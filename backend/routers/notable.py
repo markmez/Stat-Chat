@@ -77,19 +77,32 @@ _DETECTION_TYPE_STAT = {
 }
 
 
-# Impact clauses whose subject is the achievement, not the player. Attaching
-# a "By [player verb-ing], ..." lead-in to one of these creates a dangling
-# participle ("By driving in 7 runs, that's the first 7+ RBI game..." — the
-# gerund implies the player as subject, but "that's" refers to the game).
-# When the body matches, we drop the lead-in and emit the impact standalone.
-_ACHIEVEMENT_SUBJECT_PREFIX = re.compile(
-    r"^(?:that's|that was|the (?:first|last|most|only)\b)",
+# Impact clauses where a "By [player verb-ing], ..." lead-in shouldn't
+# precede the impact. Two categories:
+#
+#   1. Achievement-subjected ("that's the first 7+ RBI game...") — the
+#      gerund implies the player as subject, but "that's" refers to the
+#      game/at-bat. The lead-in produces a dangling participle.
+#
+#   2. Trajectory observations ("is now on pace for 54 HR this season")
+#      — pace is a season-long projection, not a discrete consequence
+#      of today's specific action. The lead-in implies a false causal
+#      link ("by hitting today's HR he is suddenly on pace for 54"),
+#      when really the pace is the season trend that includes today.
+#
+# In both cases, drop the lead-in and emit the impact as its own sentence.
+_NO_LEAD_IN_PREFIX = re.compile(
+    r"^(?:"
+    r"that's|that was|"
+    r"the (?:first|last|most|only)\b|"
+    r"(?:he\s+)?is\s+(?:now\s+)?on\s+pace\s+for"
+    r")",
     re.I,
 )
 
 
-def _impact_is_achievement_subject(text: str) -> bool:
-    return bool(text and _ACHIEVEMENT_SUBJECT_PREFIX.match(text.strip()))
+def _impact_should_skip_lead_in(text: str) -> bool:
+    return bool(text and _NO_LEAD_IN_PREFIX.match(text.strip()))
 
 
 # Stat key → lead-in builder. Takes today's count, returns "By [verb-ing] ...".
@@ -160,7 +173,7 @@ _REDUNDANT_PREFIX_PATTERNS = [
     # "He now has N career stat, passing/reaching/etc."
     re.compile(r"^He now has [\d,]+ career (?:home runs|hits|RBI|strikeouts|stolen bases|doubles|wins|saves|walks)(?:\s+as a [^,]+)?,?\s*", re.I),
     # "He now has N HR/SB/etc and is on pace for M" — keep the "on pace for M" tail
-    re.compile(r"^He now has \d+ \w+ and (?=is on pace)", re.I),
+    re.compile(r"^He now has \d+ \w+ and (?=is (?:now )?on pace)", re.I),
     # "That's his Nth career multi-HR games, passing X" — Schwarber-style
     re.compile(r"^That's his \d+(?:st|nd|rd|th) career [\w-]+(?: games)?,\s*", re.I),
     # "He went X-for-Y[ with anything], taking the lead" — strip stat line
@@ -711,7 +724,7 @@ def _merge_player_events(conn, group, player_name, game_date):
             mid = ", ".join(_strip_subject_pronoun(i) for i in raw_impacts[1:-1])
             body = first + ", " + mid + ", and " + _strip_subject_pronoun(raw_impacts[-1])
 
-        if lead_in and not _impact_is_achievement_subject(body):
+        if lead_in and not _impact_should_skip_lead_in(body):
             if body and body[0].isupper():
                 body = body[0].lower() + body[1:]
             sentence = f"{lead_in}, {body}"
