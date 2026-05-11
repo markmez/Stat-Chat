@@ -27,6 +27,11 @@
               # Ensure QE error healthcheck UUID is in env
               grep -q QE_ERROR_HC_UUID /opt/statchat/.env 2>/dev/null || \
                 echo 'QE_ERROR_HC_UUID=d3f0c82b-235a-477f-8ed5-3f6ac4c6daa7' | sudo tee -a /opt/statchat/.env > /dev/null
+              # Ensure App Store Connect Apple ID is in env (activates
+              # Production-environment verification in /validate-receipt;
+              # without this the verifier falls back to Sandbox-only).
+              grep -q APP_APPLE_ID /opt/statchat/.env 2>/dev/null || \
+                echo 'APP_APPLE_ID=6763139565' | sudo tee -a /opt/statchat/.env > /dev/null
               # Update service file. If ExecStart changed (e.g. new gunicorn flags),
               # we need a full restart — gunicorn HUP re-reads code but keeps the
               # ORIGINAL ExecStart from when the master was launched. Diff the file
