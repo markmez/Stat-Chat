@@ -216,7 +216,7 @@ struct NotableEventsFeed: View {
     private func loadEvents() async {
         do {
             let data = try await BackendService().fetchNotableEvents()
-            var loaded = data.map { NotableEvent(from: $0) }
+            let loaded = data.map { NotableEvent(from: $0) }
 
 
             // Extract matchup pill strings from "Tonight" events
