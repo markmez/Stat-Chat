@@ -42,7 +42,6 @@ struct PlayerCardView: View {
     // Floating search bar state
     @State private var searchText = ""
     @FocusState private var isSearchFocused: Bool
-    @State private var searchPlayerName: String? = nil
     @State private var searchQuestion: String? = nil
     @State private var searchInputMethod: String = "keyboard"
     @State private var voice = VoiceInputService()
@@ -212,7 +211,7 @@ struct PlayerCardView: View {
                                                 .foregroundStyle(.secondary)
                                         }
                                         Button {
-                                            searchPlayerName = name
+                                            navigationPath.append(PlayerCardDestination(name: name))
                                         } label: {
                                             Text(name)
                                                 .foregroundStyle(deepBlue)
@@ -353,12 +352,6 @@ struct PlayerCardView: View {
             TeamCardView(teamCode: selectedTeamCode ?? "", navigationPath: $navigationPath)
         }
         .navigationDestination(isPresented: Binding(
-            get: { searchPlayerName != nil },
-            set: { if !$0 { searchPlayerName = nil } }
-        )) {
-            PlayerCardView(playerName: searchPlayerName ?? "", navigationPath: $navigationPath)
-        }
-        .navigationDestination(isPresented: Binding(
             get: { searchQuestion != nil },
             set: { if !$0 { searchQuestion = nil } }
         )) {
@@ -412,8 +405,8 @@ struct PlayerCardView: View {
         searchText = ""
 
         switch PlayerNameMatcher.resolveSearch(trimmed, history: appState) {
-        case .player(let name, _):
-            searchPlayerName = name
+        case .player(let name, let alts):
+            navigationPath.append(PlayerCardDestination(name: name, alternatives: alts, source: "search"))
         case .team(let code):
             selectedTeamCode = code
         case .question(let query):
