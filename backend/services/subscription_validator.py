@@ -17,6 +17,7 @@ We add a thin app-specific layer on top: bundle-id check, product-id
 allowlist, expiry check, and the DB update.
 """
 
+import logging
 import os
 import sqlite3
 from datetime import date, datetime, timezone
@@ -29,6 +30,18 @@ from appstoreserverlibrary.signed_data_verifier import (
 from appstoreserverlibrary.models.Environment import Environment
 
 from services.metering import METERING_DB_PATH
+
+logger = logging.getLogger("statchat.subscription_validator")
+
+
+def _ensure_original_transaction_id_column(conn: sqlite3.Connection) -> None:
+    """Idempotent ALTER to add original_transaction_id column to device_quota.
+    Lets us look up the device by Apple's originalTransactionId claim when
+    server-side notifications arrive (refunds, revokes, renewals)."""
+    try:
+        conn.execute("ALTER TABLE device_quota ADD COLUMN original_transaction_id TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
 
 # --- App-specific configuration ---
 
@@ -171,25 +184,29 @@ def validate_signed_transaction(
     is_active = expires_dt.date() >= date.today()
 
     # Update device_quota. Insert if the device isn't in the table yet.
+    # Also store original_transaction_id so server-side notifications from
+    # Apple (refunds, revokes, renewals) can look up the device by their
+    # originalTransactionId claim.
     conn = sqlite3.connect(METERING_DB_PATH)
     try:
+        _ensure_original_transaction_id_column(conn)
         existing = conn.execute(
             "SELECT 1 FROM device_quota WHERE device_id = ?", (device_id,)
         ).fetchone()
         if existing:
             conn.execute(
                 "UPDATE device_quota "
-                "SET is_paid = ?, paid_expires_at = ? "
+                "SET is_paid = ?, paid_expires_at = ?, original_transaction_id = ? "
                 "WHERE device_id = ?",
-                (1 if is_active else 0, expires_iso, device_id),
+                (1 if is_active else 0, expires_iso, decoded.originalTransactionId, device_id),
             )
         else:
             conn.execute(
                 "INSERT INTO device_quota "
-                "(device_id, week_start, query_count, is_paid, paid_expires_at) "
-                "VALUES (?, ?, 0, ?, ?)",
+                "(device_id, week_start, query_count, is_paid, paid_expires_at, original_transaction_id) "
+                "VALUES (?, ?, 0, ?, ?, ?)",
                 (device_id, date.today().isoformat(),
-                 1 if is_active else 0, expires_iso),
+                 1 if is_active else 0, expires_iso, decoded.originalTransactionId),
             )
         conn.commit()
     finally:
@@ -201,4 +218,165 @@ def validate_signed_transaction(
         "expires_at": expires_iso,
         "environment": used_env.value if used_env else None,
         "original_transaction_id": decoded.originalTransactionId,
+    }
+
+
+# ---------------------------------------------------------------------------
+# App Store Server Notifications V2
+# ---------------------------------------------------------------------------
+#
+# When subscription state changes server-side (refund, revoke, renewal,
+# expiration, etc.), Apple POSTs a JWS-signed notification to our endpoint.
+# We verify the signature with the same cert chain we use for receipts, then
+# update device_quota based on the notification type.
+#
+# This is the canonical mechanism for catching refunds — without it, a user
+# who gets refunded but never reopens the app would keep `is_paid = 1` until
+# the original JWS expiry runs out (up to a year for yearly subs).
+#
+# Notification types we act on (others are logged but no state change):
+#   REFUND            — Apple refunded the customer → revoke
+#   REVOKE            — Apple revoked the subscription → revoke
+#   EXPIRED           — Subscription expired without renewal → revoke
+#   DID_RENEW         — Successful renewal → extend paid_expires_at
+#   GRACE_PERIOD_EXPIRED — Billing grace period ended → revoke
+#
+# We DON'T act on DID_CHANGE_RENEWAL_STATUS (user toggled auto-renew). The
+# user still has access until expiry; the subsequent EXPIRED notification
+# (or DID_RENEW if they re-enable) will drive the state change.
+
+# Notification types that should revoke the entitlement immediately.
+_REVOKE_TYPES = {"REFUND", "REVOKE", "EXPIRED", "GRACE_PERIOD_EXPIRED"}
+
+# Notification types that should refresh the entitlement with new expiry.
+_RENEW_TYPES = {"DID_RENEW", "SUBSCRIBED", "OFFER_REDEEMED"}
+
+
+def _decode_notification_with_fallback(signed_payload: str):
+    """Verify a notification JWS, trying Production and Sandbox verifiers.
+    Apple sends notifications signed by the same cert chain as transactions,
+    but the environment in the payload tells us which verifier to use. We
+    try both because the payload's environment field is buried inside the
+    JWS body — we can't read it before verifying."""
+    if not _APPLE_ROOTS:
+        raise ReceiptValidationError(
+            "Server misconfiguration: Apple root CA certs not found"
+        )
+
+    if APP_APPLE_ID is None:
+        env_order = [Environment.SANDBOX]
+    else:
+        env_order = [Environment.PRODUCTION, Environment.SANDBOX]
+
+    last_error: Optional[Exception] = None
+    for env in env_order:
+        try:
+            verifier = _make_verifier(env)
+            return verifier.verify_and_decode_notification(signed_payload), env
+        except VerificationException as e:
+            last_error = e
+            continue
+        except Exception as e:
+            last_error = e
+            continue
+    raise ReceiptValidationError(f"notification JWS verification failed: {last_error}")
+
+
+def handle_signed_notification(signed_payload: str) -> dict:
+    """Verify and process an App Store Server Notification V2.
+
+    Apple posts these to our /storekit-notification endpoint when subscription
+    state changes. The signed_payload is a JWS containing notificationType,
+    subtype, and data with embedded signedTransactionInfo (also JWS).
+
+    Returns a dict describing what action was taken — purely for logging /
+    response, the real side effect is the device_quota update.
+
+    Idempotent: replaying the same notification is a no-op for revoke (already
+    revoked) and updates expiry to the same value for renew.
+    """
+    decoded_notification, env = _decode_notification_with_fallback(signed_payload)
+
+    notification_type = str(decoded_notification.notificationType.value
+                            if hasattr(decoded_notification.notificationType, "value")
+                            else decoded_notification.notificationType)
+    subtype = None
+    if decoded_notification.subtype is not None:
+        subtype = str(decoded_notification.subtype.value
+                      if hasattr(decoded_notification.subtype, "value")
+                      else decoded_notification.subtype)
+
+    # Inner transaction info is also a JWS — decode and verify it.
+    inner_payload = decoded_notification.data and decoded_notification.data.signedTransactionInfo
+    if not inner_payload:
+        logger.info("notification type=%s subtype=%s (no signedTransactionInfo, ignored)",
+                    notification_type, subtype)
+        return {"action": "ignored", "reason": "no transaction info",
+                "notification_type": notification_type}
+
+    verifier = _make_verifier(env)
+    inner_decoded = verifier.verify_and_decode_signed_transaction(inner_payload)
+
+    if inner_decoded.bundleId != BUNDLE_ID:
+        # Defensive — should never happen since the verifier checks bundle_id.
+        raise ReceiptValidationError(
+            f"notification bundle_id mismatch: {inner_decoded.bundleId}"
+        )
+
+    original_tx_id = inner_decoded.originalTransactionId
+    expires_ms = inner_decoded.expiresDate or 0
+    expires_dt = datetime.fromtimestamp(expires_ms / 1000, tz=timezone.utc) if expires_ms else None
+
+    # Determine the action.
+    action = "noop"
+    if notification_type in _REVOKE_TYPES:
+        new_is_paid = 0
+        new_expires = date.today().isoformat()
+        action = "revoke"
+    elif notification_type in _RENEW_TYPES:
+        if expires_dt is None:
+            action = "ignored"
+            return {"action": action, "reason": "no expiresDate on renewal",
+                    "notification_type": notification_type}
+        new_is_paid = 1 if expires_dt.date() >= date.today() else 0
+        new_expires = expires_dt.date().isoformat()
+        action = "renew"
+    else:
+        # Logged-only types (DID_CHANGE_RENEWAL_STATUS, etc.) — no DB change.
+        logger.info("notification type=%s subtype=%s original_tx=%s (no action)",
+                    notification_type, subtype, original_tx_id)
+        return {"action": "noop", "notification_type": notification_type,
+                "subtype": subtype, "original_transaction_id": original_tx_id}
+
+    # Update device_quota by original_transaction_id. There may be more than
+    # one device on the same subscription (user signed into multiple devices);
+    # flip them all.
+    conn = sqlite3.connect(METERING_DB_PATH)
+    try:
+        _ensure_original_transaction_id_column(conn)
+        cur = conn.execute(
+            "UPDATE device_quota SET is_paid = ?, paid_expires_at = ? "
+            "WHERE original_transaction_id = ?",
+            (new_is_paid, new_expires, original_tx_id),
+        )
+        conn.commit()
+        rows_affected = cur.rowcount
+    finally:
+        conn.close()
+
+    logger.info(
+        "notification type=%s subtype=%s original_tx=%s action=%s rows=%d "
+        "new_is_paid=%d new_expires=%s",
+        notification_type, subtype, original_tx_id, action,
+        rows_affected, new_is_paid, new_expires,
+    )
+
+    return {
+        "action": action,
+        "notification_type": notification_type,
+        "subtype": subtype,
+        "original_transaction_id": original_tx_id,
+        "rows_affected": rows_affected,
+        "new_is_paid": new_is_paid,
+        "new_expires_at": new_expires,
     }

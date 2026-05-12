@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from services.subscription_validator import (
     ReceiptValidationError,
+    handle_signed_notification,
     validate_signed_transaction,
 )
 
@@ -64,5 +65,44 @@ async def validate_receipt(body: ValidateReceiptRequest):
             body.device_id[:8] if body.device_id else "?",
         )
         raise HTTPException(500, "receipt validation failed")
+
+    return result
+
+
+class StoreKitNotificationRequest(BaseModel):
+    signedPayload: str  # JWS-signed App Store Server Notification V2
+
+
+@router.post("/storekit-notification")
+async def storekit_notification(body: StoreKitNotificationRequest):
+    """Receive an App Store Server Notification V2 from Apple.
+
+    Apple POSTs here when subscription state changes server-side (refunds,
+    revokes, renewals, expirations). Configured in App Store Connect under
+    App Information → App Store Server Notifications → Production/Sandbox
+    Server URL.
+
+    No admin auth — the JWS signature IS the auth. We verify against Apple's
+    cert chain in handle_signed_notification.
+
+    Must return 200 quickly; Apple retries with backoff on non-2xx. Heavy
+    processing should be async — for now, all our handlers are sub-100ms
+    SQLite UPDATEs so synchronous is fine.
+    """
+    if not body.signedPayload:
+        raise HTTPException(400, "signedPayload is required")
+
+    try:
+        result = handle_signed_notification(body.signedPayload)
+    except ReceiptValidationError as e:
+        logger.warning("notification_validation_failed error=%s", e)
+        # Return 400 — Apple will retry, but if the signature is genuinely
+        # bad there's no point.
+        raise HTTPException(400, str(e))
+    except Exception:
+        logger.exception("notification_unexpected_error")
+        # Return 500 — Apple will retry, which is what we want for transient
+        # errors (DB locked, etc.)
+        raise HTTPException(500, "notification handling failed")
 
     return result
