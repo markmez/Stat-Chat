@@ -57,6 +57,7 @@
 		F1227A844E80C4AEF7A632A1 /* SwipeBackGesture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46EE2001B470FD5EC03920D6 /* SwipeBackGesture.swift */; };
 		F2584B2D7FC768E5C8D7E5C2 /* VoiceInputService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B841E3891DA11F3A5C632B /* VoiceInputService.swift */; };
 		F41238CACD8719488CD332C1 /* baseball_stats.db in Resources */ = {isa = PBXBuildFile; fileRef = FB9F66CC0E8964519268C478 /* baseball_stats.db */; };
+		FF258DC1236FABF071661D56 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = FB8D5473BC11E6744DF1CF97 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -109,6 +110,7 @@
 		ECFC73592230A429A6330F03 /* LaunchAnimationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAnimationView.swift; sourceTree = "<group>"; };
 		F91684173936C656325701F4 /* DrawerScrollView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrawerScrollView.swift; sourceTree = "<group>"; };
 		FAD8EDD4EE7274139F6B565D /* PlayerCardService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerCardService.swift; sourceTree = "<group>"; };
+		FB8D5473BC11E6744DF1CF97 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		FB9F66CC0E8964519268C478 /* baseball_stats.db */ = {isa = PBXFileReference; path = baseball_stats.db; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -158,6 +160,7 @@
 				4293560F253FA1568A32F30E /* all_players.json */,
 				A161890890E908E9407731BF /* Assets.xcassets */,
 				FB9F66CC0E8964519268C478 /* baseball_stats.db */,
+				FB8D5473BC11E6744DF1CF97 /* PrivacyInfo.xcprivacy */,
 				6B50FD15492CCE031A905488 /* stat_config.json */,
 				8A33F22FD3998B78C251B18E /* StatChat.storekit */,
 				694155992A032023CEC3C780 /* suggestions_config.json */,
@@ -302,6 +305,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7980858E751450598B53AA57 /* Assets.xcassets in Resources */,
+				FF258DC1236FABF071661D56 /* PrivacyInfo.xcprivacy in Resources */,
 				497301EF41FE610D0BE621E8 /* StatChat.storekit in Resources */,
 				11B5072DDF250B89211A446B /* all_players.json in Resources */,
 				F41238CACD8719488CD332C1 /* baseball_stats.db in Resources */,

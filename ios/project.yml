@@ -31,6 +31,8 @@ targets:
         buildPhase: resources
       - path: BaseballStatsEngine/Resources/StatChat.storekit
         buildPhase: resources
+      - path: BaseballStatsEngine/Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: Mixpanel
         product: Mixpanel

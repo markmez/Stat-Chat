@@ -4,11 +4,11 @@
 StatChat
 
 ## Subtitle (30 char limit)
-AI-Powered Baseball Stats
+Ask Like AI, Fast Real Answers
 
 ## Description (~4000 char limit)
 
-StatChat answers your baseball stats questions in seconds. Just ask in your own words by typing or speaking. We use AI to understand your question, but real game records to give you reliable and quick answers.
+StatChat answers your baseball stats questions in seconds. Just ask in your own words by typing or speaking. We use AI to understand your question and real game data to give you reliable, quick answers.
 
 No forms to fill out, no spreadsheets to dig through, no headers that disappear as you scroll. Ask your question conversationally, get a quick, clean, readable answer.
 
@@ -59,10 +59,10 @@ DATA SOURCES
 The information used here was obtained free of charge from and is copyrighted by Retrosheet. Interested parties may contact Retrosheet at www.retrosheet.org. Additional historical statistics from the Chadwick Baseball Bureau. Current-season data from MySportsFeeds. Powered by AI to deliver fast, accurate baseball intelligence.
 
 ## Promotional Text (170 char limit)
-StatChat answers your baseball stats questions in seconds. Just ask in your own words. StatChat understands the question with AI; the answer comes from real game records.
+StatChat answers your baseball stats questions in seconds. Just ask in your own words. We use AI to understand your question and real game data for reliable answers.
 
 ## Keywords (100 char limit)
-baseball,stats,statistics,MLB,scores,player,batting,pitching,fantasy,sports,trivia,AI,compare
+statistics,MLB,scores,player,batting,pitching,fantasy,sports,trivia,compare,leaders,ops,era,rookie
 
 ## What's New (v1.0)
 Welcome to StatChat — our first release. Ask baseball stats questions in your own words; we use AI to understand and real game records to answer. 125+ years of history.
