@@ -2302,6 +2302,21 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
     if any(t in lower for t in team_aggregate_triggers):
         return None
 
+    # Reject "player single-season max" queries — when a specific player is
+    # named AND the single-season-max pattern is present, the query is about
+    # THAT player's career-best season, not an all-time leaderboard. Handled
+    # by parse_player_single_season_max (step 25b in interceptor). Without
+    # this guard, "Most home runs Hank Aaron ever hit in a season" matches
+    # here and returns the all-time HR leaderboard, ignoring Aaron.
+    has_single_season_max_phrase = (
+        re.search(r'\bever\b', lower)
+        or re.search(r'\bin (?:a|one|any|a single) season\b', lower)
+        or re.search(r'\b(?:best|highest|peak|top|worst|lowest)\s+(?:season|year)\b', lower)
+        or re.search(r'\bcareer[- ]?(?:high|best|worst|low|lowest|highest)\b', lower)
+    )
+    if has_single_season_max_phrase and find_player_in_text(lower):
+        return None
+
     # Detect split context (count, pitch type, RISP, home/away, platoon)
     # This is handled by the split leaderboard builder, not a bail-out.
     split_context = _detect_split_context(lower)
