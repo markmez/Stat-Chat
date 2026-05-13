@@ -32,9 +32,15 @@ struct ResultCard: View {
         }
     }
 
-    // User question — with back chevron on the first one and a pencil edit
-    // affordance for voice-input queries (since transcription may have gotten
-    // it wrong and we auto-submit before the user can review).
+    // User question — with back chevron on the first one and an inline edit
+    // pencil for voice-input queries (since transcription may have gotten it
+    // wrong and we auto-submit before the user can review).
+    //
+    // The pencil is rendered as an inline glyph inside the question Text via
+    // Text concatenation so it flows with the text — same-line if there's
+    // room, wrapping to the next line if not — instead of reserving fixed
+    // trailing space on every line. The whole question becomes the tap
+    // target for editing; the pencil is the affordance hint.
     private var userQuery: some View {
         HStack(alignment: .top, spacing: 10) {
             if isFirstUser, let onBack {
@@ -46,25 +52,28 @@ struct ResultCard: View {
                 .padding(.top, 2)
             }
 
-            Text(message.content)
-                .font(.system(.title3, design: .rounded, weight: .semibold))
-                .foregroundStyle(.primary)
-
             if message.inputMethod == "mic", let onEditVoice {
                 Button {
                     onEditVoice(message.content)
                 } label: {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .padding(6)
-                        .contentShape(Rectangle())
+                    (Text(message.content)
+                        .font(.system(.title3, design: .rounded, weight: .semibold))
+                        .foregroundColor(.primary)
+                     + Text("  ")
+                     + Text(Image(systemName: "square.and.pencil"))
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.secondary))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .multilineTextAlignment(.leading)
                 }
+                .buttonStyle(.plain)
                 .accessibilityLabel("Edit voice question")
-                .padding(.top, 1)
+            } else {
+                Text(message.content)
+                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-
-            Spacer()
         }
         .padding(.horizontal, 20)
         .padding(.top, 4)
