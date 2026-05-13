@@ -2112,6 +2112,13 @@ def decompose(question: str) -> QueryPlan:
         ]
         unexplained_str = " ".join(_cleaned_tokens)
         matched = match_player(unexplained_str)
+        # Fallback: match_player wants the whole input to BE a player name.
+        # When unexplained still contains non-name words like "issued",
+        # "recorded", "had", etc., that fails. find_player_in_text scans
+        # for embedded names so it handles "greg maddux issued" → Maddux.
+        if not matched:
+            from . import name_matcher as _nm
+            matched = _nm.find_player_in_text(unexplained_str)
         if matched:
             plan.player_name = matched
             # Remove matched name words from unexplained
