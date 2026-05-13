@@ -74,6 +74,25 @@ TESTS: list[tuple[str, str, str]] = [
     ("Most strikeouts by a pitcher in a season", "intercepted", "All-time single-season"),
 
     # ============================================================
+    # Tier 2b: Player single-season max (career-best single-season).
+    # Same shape as Tier 2 but with a named player — the answer is THIS
+    # player's career-best single season, not the all-time leaderboard.
+    # Added 2026-05-13 after a long QA cycle uncovered three parsers
+    # (parse_season_lookup, parse_leaderboard, parse_single_stat_lookup)
+    # all claiming these queries before query_engine.decompose got them.
+    # ============================================================
+    ("Most home runs Hank Aaron ever hit in a season", "intercepted", "Player single-season max"),
+    ("Most home runs Hank Aaron ever hit", "intercepted", "Player single-season max"),
+    ("most home runs by hank aaron ever", "intercepted", "Player single-season max"),
+    ("Best HR season Babe Ruth ever had", "intercepted", "Player single-season max"),
+    ("Mike Trout's best HR season", "intercepted", "Player single-season max"),
+    ("Albert Pujols best RBI season", "intercepted", "Player single-season max"),
+    ("Greg Maddux's lowest WHIP", "intercepted", "Player single-season max"),
+    ("Lowest ERA Pedro Martinez ever had", "intercepted", "Player single-season max"),
+    ("Most strikeouts Nolan Ryan ever recorded", "intercepted", "Player single-season max"),
+    ("Fewest walks Greg Maddux ever issued", "intercepted", "Player single-season max"),
+
+    # ============================================================
     # Tier 3: Single-player career + season + slash line
     # ============================================================
     ("Aaron Judge career stats", "intercepted", "Single-player career"),
