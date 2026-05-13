@@ -20,7 +20,9 @@ HC_PING_URL="https://hc-ping.com/f69f410b-1774-4af4-9bb4-c57136cc59ff"
 API_BASE="https://api.secondsignalapps.com"
 STALE_MARKER=/tmp/statchat_health_stale_since
 RECOVERY_MARKER=/tmp/statchat_health_recovery_at
+COVERAGE_ISSUE_MARKER=/tmp/statchat_coverage_issue_since
 RECOVERY_COOLDOWN=1800   # 30 min
+COVERAGE_PERSIST_THRESHOLD=1800   # 30 min — coverage issue persisting this long pages
 
 # Pull ADMIN_KEY for admin endpoint calls.
 if [ -f /opt/statchat/.env ]; then
@@ -122,14 +124,34 @@ if [ "$DATA_STALE" -eq 0 ] && [ "$FEED_STALE" -eq 0 ]; then
     COVERAGE=$(curl -fsS -m 60 -X POST "$API_BASE/admin/coverage-check" -H "$AUTH_HDR" 2>&1 || true)
     BACKFILLED=$(echo "$COVERAGE" | grep -oE '"backfilled":\[[^]]*\]' | grep -oE '"[0-9-]+"' | tr -d '"' | tr '\n' ' ' | sed 's/ $//')
     REFRESH_NEEDED=$(echo "$COVERAGE" | grep -oE '"refresh_needed":\[[^]]*\]' | grep -oE '"[0-9-]+"' | tr -d '"' | tr '\n' ' ' | sed 's/ $//')
+
     if [ -n "$REFRESH_NEEDED" ]; then
-        # Partial-load detected (game logs short of MLB schedule). Coverage
-        # check already kicked off pull_live_stats — start the recovery
-        # cooldown so we don't trample it on the next 5-min tick.
-        echo "[healthcheck] coverage partial-load on: $REFRESH_NEEDED — pipeline refresh triggered" >&2
-        mark_recovery
-        ping_ok "ok data=${LATEST_GAME_DATE} feed=${FEED_LATEST}; partial load on ${REFRESH_NEEDED}, refresh triggered"
-    elif [ -n "$BACKFILLED" ]; then
+        # Partial-load detected (game logs short of MLB schedule).
+        # Coverage-check already kicked off pull_live_stats async.
+        #
+        # Track persistence — only PAGE (ping_fail) once the issue has
+        # persisted past COVERAGE_PERSIST_THRESHOLD (30 min). Multiple
+        # healthcheck ticks within that window are silent (ping_ok) so
+        # we don't spam during normal self-heal latency.
+        if [ ! -f "$COVERAGE_ISSUE_MARKER" ]; then
+            date +%s > "$COVERAGE_ISSUE_MARKER"
+        fi
+        ISSUE_FOR=$(( $(date +%s) - $(cat "$COVERAGE_ISSUE_MARKER") ))
+        mark_recovery   # block stale-path recovery from trampling pull_live_stats
+        if [ "$ISSUE_FOR" -gt "$COVERAGE_PERSIST_THRESHOLD" ]; then
+            # Self-heal has been attempting for 30+ min and still hasn't
+            # closed the gap. Page — this needs a human.
+            ping_fail "MSF data coverage incomplete for ${REFRESH_NEEDED} — self-heal running ${ISSUE_FOR}s, still partial. Check /data/refresh.log + MSF status."
+        else
+            ping_ok "ok data=${LATEST_GAME_DATE} feed=${FEED_LATEST}; partial load on ${REFRESH_NEEDED}, self-healing (${ISSUE_FOR}s)"
+        fi
+        exit 0
+    fi
+
+    # No active coverage issue — clear the persistence marker.
+    rm -f "$COVERAGE_ISSUE_MARKER"
+
+    if [ -n "$BACKFILLED" ]; then
         echo "[healthcheck] coverage backfilled dates: $BACKFILLED" >&2
         ping_ok "ok data=${LATEST_GAME_DATE} feed=${FEED_LATEST}; coverage backfilled ${BACKFILLED}"
     else
