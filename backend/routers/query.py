@@ -164,10 +164,37 @@ def _is_rate_2(col: str) -> bool:
     return any(p in lower for p in _RATE_2_PATTERNS)
 
 
+_TEAM_CODE_COLUMNS = {"team", "team_code", "team_abbr", "team_abbreviation"}
+
+
+def _maybe_team_name(col: str, val) -> Optional[str]:
+    """If `col` looks like a team-code column and `val` is a known Retrosheet
+    code, return the friendly name (e.g., 'KCA' -> 'Kansas City Royals').
+    Otherwise return None and the caller falls through to default formatting."""
+    if col.lower() not in _TEAM_CODE_COLUMNS:
+        return None
+    s = str(val).strip()
+    if not s or len(s) > 4:
+        return None
+    try:
+        from services.response_builder import _team_full_name
+        translated = _team_full_name(s)
+        # _team_full_name returns the input unchanged if unknown; only return
+        # the translation when it actually mapped.
+        return translated if translated != s else None
+    except Exception:
+        return None
+
+
 def _fmt_val(col: str, val) -> str:
     """Format a single value for display."""
     if val is None or val == "NULL" or str(val).strip() == "":
         return "--"
+    # Team code → friendly name (NYA → Yankees, KCA → Royals). Applied early
+    # so the rest of the formatter sees the readable string.
+    team_name = _maybe_team_name(col, val)
+    if team_name is not None:
+        return team_name
     lower_col = col.lower()
     if _is_rate_3(col):
         try:
@@ -452,7 +479,12 @@ def _format_structured_rows_to_grid(
         label_parts = []
         if has_name:
             name = row.get("name", "")
-            team = f" ({row.get('team', '')})" if use_team_in_label and row.get("team") else ""
+            if use_team_in_label and row.get("team"):
+                raw_team = row.get("team", "")
+                team_display = _maybe_team_name("team", raw_team) or raw_team
+                team = f" ({team_display})"
+            else:
+                team = ""
             label_parts.append(f"{name}{team}")
         # Show season as its own column, not merged into the name label
         # (handled by stat_cols if season is in columns)
