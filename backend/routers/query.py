@@ -453,7 +453,14 @@ def _format_structured_rows_to_grid(
     # Deprioritize computed/derived columns (gap, diff, shortfall) and date columns.
     _low_priority_cols = {"date", "game_date", "start_date", "end_date",
                           "gap", "gap_to_400", "gap_from_400", "shortfall",
-                          "diff", "difference", "delta"}
+                          "diff", "difference", "delta",
+                          # Raw counters — useful for context but not the
+                          # primary insight. Drop these first when the grid
+                          # needs to shed columns so rate stats (OPS, ERA,
+                          # etc.) stay visible.
+                          "ab", "at_bats", "pa", "plate_appearances",
+                          "ip", "ip_outs", "innings_pitched", "g", "games",
+                          "tbf", "batters_faced"}
     if multi_row and len(stat_cols) > 4:
         high = [c for c in stat_cols if c.lower() not in _low_priority_cols]
         low = [c for c in stat_cols if c.lower() in _low_priority_cols]

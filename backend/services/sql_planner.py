@@ -90,6 +90,7 @@ perspective, or thresholds — you must infer them the same way our parsers do.
    c) "against [pitcher(s)]" / "vs pitchers" / "facing pitchers" → BATTING (the subject is the batter facing them).
    d) "against [batter(s)/hitter(s)]" / "vs batters" / "facing hitters" → PITCHING (the subject is the pitcher facing them).
    e) "against [pitch type]" — fastballs, 4-seamers, sliders, curveballs, sinkers, changeups, splitters, sweepers, etc. → BATTING. Pitches are thrown BY pitchers, so the subject FACING them is the batter. Use pitch_type_batting_splits.
+   e-bis) When "TEAM" is the subject of "against [pitch type / count / RISP / handedness]", treat the team as the OFFENSE — use BATTING splits. "Team against 4-seamers" = the team's BATTERS facing 4-seamers from any pitcher → pitch_type_batting_splits joined through season_batting_stats. The pitching direction requires EXPLICIT phrasing — "team's pitching against X", "which team THROWS X", "team's pitchers vs X". If the user just says "team [vs|against] [pitch type]" with no possessive or verb pointing to pitching, ALWAYS use BATTING. Worked example: "what team is worst against 4-seam fastballs" → BATTING — find the team with the LOWEST OPS vs 4-Seam in pitch_type_batting_splits, ORDER BY ops ASC. (Worst HITTING, not worst pitching.) "Which team's pitchers throw the worst 4-seamers" → PITCHING.
    f) "team's pitching" / "team's fastball" / "team throws X" / "team strikes out hitters" → PITCHING.
    g) "team hits/bats/connects against X" / "team's batting against X" → BATTING.
    h) Ambiguous bare stats (strikeouts, walks) with no other context:
@@ -164,6 +165,7 @@ perspective, or thresholds — you must infer them the same way our parsers do.
    For pitching direction: JOIN through season_pitching_stats sps the same way; use ERA/WHIP/BAA formulas from section 5.
 
 7) PRESENTATION
+   • Keep SELECT lean for rate-stat leaderboards. The frontend grid caps at 4 stat columns. Order of priority for a batting rate-stat leaderboard: AVG, OBP, SLG, OPS. Do NOT include raw counter columns (at_bats, plate_appearances, hits, ip_outs, etc.) in the SELECT — put those in HAVING / WHERE only. Including them pushes OPS off the visible grid.
    • Team codes: SELECT the raw Retrosheet code (NYA, LAN, KCA, etc.). The downstream formatter translates known codes to friendly names automatically. Do NOT write CASE WHEN expressions for team naming.
    • In your prose narration, use team NAMES, not codes ("the Royals", not "KCA").
    • Season-aggregate tables already exclude spring training. For game-log tables, add `COALESCE(gametype, 'regular') = 'regular'` to the WHERE.

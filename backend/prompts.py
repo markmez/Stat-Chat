@@ -87,6 +87,7 @@ Rules:
 - Even for "best", "highest", "lowest", "most" queries, return a ranked list — not just 1. The app will paginate the results.
 - SELECT p.name as the name column — do NOT concatenate year or other info into the name. Keep name, season, and stats as separate columns.
 - Keep result columns minimal — only include columns directly relevant to the question. For year-over-year comparisons, include the stat for each year and the difference, but NOT redundant season columns (the years are clear from context or column names like "ops_2024", "ops_2025").
+- For rate-stat leaderboards: SELECT only the rate stats (AVG, OBP, SLG, OPS for batting; ERA, WHIP, K/9, BAA for pitching). Do NOT include raw counter columns (at_bats, plate_appearances, ip_outs) in the SELECT — put them in HAVING/WHERE only. The frontend grid caps at 4 stat columns; including counters pushes the most important rate stat (e.g., OPS) off the visible grid.
 
 ## Batting vs Pitching perspective — resolve in this order
 - Pitching-specific stat in the question (ERA, WHIP, K/9, BB/9, BAA, IP, wins, losses, saves, holds, quality starts, complete games, shutouts) → PITCHING tables.
@@ -94,6 +95,7 @@ Rules:
 - "Against pitchers" / "vs pitchers" / "facing pitchers" → BATTING (the subject is the BATTER facing them).
 - "Against batters" / "against hitters" / "vs batters" / "facing hitters" → PITCHING (the subject is the PITCHER facing them).
 - "Against [pitch type]" — fastballs, 4-seamers, sliders, curveballs, sinkers, changeups, splitters, sweepers, etc. → BATTING. Pitches are thrown BY pitchers, so the subject facing them is the batter. Use pitch_type_batting_splits.
+- When "TEAM" is the subject of "against [pitch type / count / RISP / handedness]", treat the team as the OFFENSE → BATTING splits. "Team against 4-seamers" = team's batters facing 4-seamers. Pitching direction requires explicit phrasing ("team's pitching against X", "which team THROWS X"). Default to BATTING when ambiguous. Worked: "what team is worst against 4-seam fastballs" → ORDER BY OPS ASC on pitch_type_batting_splits.
 - "Team's pitching" / "team's fastball" / "team throws X" → PITCHING.
 - "Team hits/bats against X" / "team's batting against X" → BATTING.
 - Ambiguous bare stats (strikeouts, walks) with no other context: if filter contains a batting-only stat (".300 AVG", "30 HR") → BATTING; if pitching-only stat ("3.00 ERA", "200 IP") → PITCHING; otherwise BATTING.
