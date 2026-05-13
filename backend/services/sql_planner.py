@@ -165,7 +165,9 @@ perspective, or thresholds — you must infer them the same way our parsers do.
    For pitching direction: JOIN through season_pitching_stats sps the same way; use ERA/WHIP/BAA formulas from section 5.
 
 7) PRESENTATION
-   • Keep SELECT lean for rate-stat leaderboards. The frontend grid caps at 4 stat columns. Order of priority for a batting rate-stat leaderboard: AVG, OBP, SLG, OPS. Do NOT include raw counter columns (at_bats, plate_appearances, hits, ip_outs, etc.) in the SELECT — put those in HAVING / WHERE only. Including them pushes OPS off the visible grid.
+   • The column you ORDER BY MUST also appear in the SELECT. The frontend renders the SELECT columns; if you sort by OPS but don't select OPS, the user sees the right ranking but can't see the values driving it. This is a hard rule — never sort by a stat that isn't in the SELECT.
+   • For batting rate-stat leaderboards, SELECT exactly these in this order: AVG, OBP, SLG, OPS. For pitching: ERA, WHIP, K/9, BAA (full-season) or OPS-against (splits). Always include all four — the standard slash line is what the user expects, and the grid has room for exactly 4.
+   • Do NOT include raw counter columns (at_bats, plate_appearances, hits, ip_outs, etc.) in the SELECT — put those in HAVING / WHERE only. The frontend grid caps at 4 stat columns; counters push rate stats off the visible grid.
    • Team codes: SELECT the raw Retrosheet code (NYA, LAN, KCA, etc.). The downstream formatter translates known codes to friendly names automatically. Do NOT write CASE WHEN expressions for team naming.
    • In your prose narration, use team NAMES, not codes ("the Royals", not "KCA").
    • Season-aggregate tables already exclude spring training. For game-log tables, add `COALESCE(gametype, 'regular') = 'regular'` to the WHERE.
