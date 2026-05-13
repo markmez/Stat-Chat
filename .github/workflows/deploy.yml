@@ -61,15 +61,13 @@
                 sleep 2
                 sudo kill -KILL $ORPHAN_PIDS 2>/dev/null || true
               fi
-              if [ $SERVICE_CHANGED -eq 1 ] || [ ! -f /data/statchat.pid ] || ! sudo kill -0 $(cat /data/statchat.pid) 2>/dev/null; then
-                # Service file changed OR no running process → full restart
-                sudo systemctl restart statchat
-                sleep 8
-              else
-                # Code-only change → graceful HUP, reuses existing ExecStart
-                sudo kill -HUP $(cat /data/statchat.pid)
-                sleep 5
-              fi
+              # Always restart cleanly. Gunicorn HUP is documented to reload the
+              # WSGI app for new workers when --preload is OFF (it is), but
+              # empirically code changes were not picked up after HUP — debug fixes
+              # to interceptor parsers stayed inert on the live backend until a
+              # systemctl restart. Restart cost is ~8s downtime; correctness wins.
+              sudo systemctl restart statchat
+              sleep 8
               curl -sf --max-time 15 http://127.0.0.1:8000/health || {
                 echo "Health check failed, checking logs..."
                 sudo journalctl -u statchat --no-pager -n 30
