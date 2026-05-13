@@ -86,16 +86,33 @@ if ! echo "$HEALTH" | grep -q '"status":"ok"'; then
     exit 0
 fi
 
-# 2. Freshness check — only enforced after MSF lag window has cleared.
+# 2. Freshness check — only enforced after the last morning cron should
+# have finished. Thresholds match the cron schedule:
+#   Weekday last morning cron: 10:00 AM ET (14:00 UTC), ~30 min runtime
+#     → enforce at 14:45 UTC (10:45 AM EDT / 9:45 AM EST)
+#   Weekend last morning cron: 11:30 AM ET (15:30 UTC), ~30 min runtime
+#     → enforce at 16:15 UTC (12:15 PM EDT / 11:15 AM EST)
+# Enforcing earlier would fire false alarms during a healthy in-progress
+# refresh.
 HOUR_UTC=$(date -u +%H)
+MIN_UTC=$(date -u +%M)
+DOW_UTC=$(date -u +%u)   # 1=Mon..7=Sun (ISO week day)
 TODAY_UTC=$(date -u +%Y-%m-%d)
 YESTERDAY_UTC=$(date -u -d "yesterday" +%Y-%m-%d)
 
-# Before 14 UTC (10 AM EDT / 9 AM EST), MSF may not have published last
-# night's box scores yet. Pipeline cascades run through 8 AM ET; 10 AM
-# ET is the panic threshold — anything missing then is a real issue.
-if [ "$HOUR_UTC" -lt 14 ]; then
-    ping_ok "ok (pre-10am ET, freshness unenforced)"
+if [ "$DOW_UTC" -le 5 ]; then
+    THRESHOLD_HOUR=14
+    THRESHOLD_MIN=45
+    WINDOW_LABEL="pre-10:45am ET (weekday)"
+else
+    THRESHOLD_HOUR=16
+    THRESHOLD_MIN=15
+    WINDOW_LABEL="pre-12:15pm ET (weekend)"
+fi
+NOW_MINUTES=$(( 10#$HOUR_UTC * 60 + 10#$MIN_UTC ))
+THRESHOLD_MINUTES=$(( THRESHOLD_HOUR * 60 + THRESHOLD_MIN ))
+if [ "$NOW_MINUTES" -lt "$THRESHOLD_MINUTES" ]; then
+    ping_ok "ok (${WINDOW_LABEL}, freshness unenforced)"
     exit 0
 fi
 

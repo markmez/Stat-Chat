@@ -722,7 +722,15 @@ async def coverage_check(
     conn = sqlite3.connect(DB_PATH, timeout=10)
     today_iso = date.today().isoformat()
     yesterday_iso = (date.today() - timedelta(days=1)).isoformat()
-    enforce_yesterday = _now_et.hour >= 10  # 10 AM ET = panic time
+    # Enforcement threshold aligned with the cron schedule (matches
+    # deploy/healthcheck.sh):
+    #   Weekday last morning cron: 10:00 AM ET, ~30 min runtime → 10:45 AM ET
+    #   Weekend last morning cron: 11:30 AM ET, ~30 min runtime → 12:15 PM ET
+    # weekday() returns 0=Mon..6=Sun
+    _is_weekday = _now_et.weekday() <= 4
+    _now_minutes = _now_et.hour * 60 + _now_et.minute
+    _threshold = (10 * 60 + 45) if _is_weekday else (12 * 60 + 15)
+    enforce_yesterday = _now_minutes >= _threshold
     checked: list = []
     backfilled: list = []
     refresh_needed: list = []
