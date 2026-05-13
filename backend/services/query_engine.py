@@ -2144,6 +2144,16 @@ def decompose(question: str) -> QueryPlan:
     _has_career_total = bool(re.search(
         r'\bcareer\s+(?:total|totals|stat|stats|statistics|number|numbers|sum|sums)\b', lower
     ))
+    # Explicit time qualifiers — if the question names a year ("2024") or
+    # uses "this year"/"last year"/etc., the user wants a specific season,
+    # NOT the player's career-best. Used to gate the bare-possessive trigger
+    # below. (plan.season may have been defaulted to current year by other
+    # decompose logic even when the user didn't specify — so don't rely on
+    # that as the signal.)
+    _has_explicit_year = bool(re.search(r'\b(?:19|20)\d{2}\b', lower)) or any(
+        p in lower for p in ("this year", "this season", "current season",
+                              "last year", "last season", "previous season", "prior season",
+                              "two years ago", "three years ago"))
     # Naked possessive — "Maddux's lowest WHIP", "Trout's best OPS", "Aaron's most HR".
     # When the user says "[player]'s [superlative] [stat]" with no other scope cue,
     # the natural reading is "his career-best single-season value." Plays well
@@ -2157,9 +2167,9 @@ def decompose(question: str) -> QueryPlan:
             or _has_best_season
             or _has_career_best
             # Bare possessive form: superlative + player + stat with no
-            # specific year and no career-total phrasing. Default to single-
-            # season max (the natural reading of "Maddux's lowest WHIP").
-            or (_has_superlative and plan.season is None)
+            # explicit year/time qualifier and no career-total phrasing.
+            # Default to single-season max ("Maddux's lowest WHIP").
+            or (_has_superlative and not _has_explicit_year)
         )
     )
     if _is_player_ssn_max and plan.query_type in ("leaderboard", "threshold"):
