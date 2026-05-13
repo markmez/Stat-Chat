@@ -2103,13 +2103,23 @@ def decompose(question: str) -> QueryPlan:
 
     # Try to match unexplained words as a player name
     if plan.unexplained_words:
-        unexplained_str = " ".join(plan.unexplained_words)
+        # Strip possessive "'s" from each token before matching — "maddux's"
+        # → "maddux". match_player itself only strips trailing "'s" from the
+        # whole input, so an embedded possessive ("greg maddux's lowest")
+        # blocks the lookup. Apply token-level cleaning here.
+        _cleaned_tokens = [
+            re.sub(r"'s\b|’s\b", "", w) for w in plan.unexplained_words
+        ]
+        unexplained_str = " ".join(_cleaned_tokens)
         matched = match_player(unexplained_str)
         if matched:
             plan.player_name = matched
             # Remove matched name words from unexplained
             matched_words = set(matched.lower().split())
-            plan.unexplained_words = [w for w in plan.unexplained_words if w not in matched_words]
+            plan.unexplained_words = [
+                w for w in plan.unexplained_words
+                if re.sub(r"'s\b|’s\b", "", w) not in matched_words
+            ]
 
     # Player single-season-max detection. The user asking "Most X player ever"
     # or "best X season player ever had" or "player's career-high in X" wants
