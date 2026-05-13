@@ -16,7 +16,13 @@
 
 set -uo pipefail
 
-HC_PING_URL="https://hc-ping.com/f69f410b-1774-4af4-9bb4-c57136cc59ff"
+# Pings the MSF cron monitor — its notification rule is already set up
+# in the Healthchecks.io account. /ok on clean ticks keeps the monitor
+# "Up" (suppresses the no-longer-needed cron-down alerts that fired
+# when refresh.sh's cron timing slipped). /fail fires only on persistent
+# coverage issues per the COVERAGE_PERSIST_THRESHOLD logic below — the
+# actionable signal.
+HC_PING_URL="https://hc-ping.com/d3f0c82b-235a-477f-8ed5-3f6ac4c6daa7"
 API_BASE="https://api.secondsignalapps.com"
 STALE_MARKER=/tmp/statchat_health_stale_since
 RECOVERY_MARKER=/tmp/statchat_health_recovery_at
