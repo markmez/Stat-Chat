@@ -165,8 +165,13 @@ perspective, or thresholds — you must infer them the same way our parsers do.
    For pitching direction: JOIN through season_pitching_stats sps the same way; use ERA/WHIP/BAA formulas from section 5.
 
 7) PRESENTATION
-   • The column you ORDER BY MUST also appear in the SELECT. The frontend renders the SELECT columns; if you sort by OPS but don't select OPS, the user sees the right ranking but can't see the values driving it. This is a hard rule — never sort by a stat that isn't in the SELECT.
-   • For batting rate-stat leaderboards, SELECT exactly these in this order: AVG, OBP, SLG, OPS. For pitching: ERA, WHIP, K/9, BAA (full-season) or OPS-against (splits). Always include all four — the standard slash line is what the user expects, and the grid has room for exactly 4.
+   • The column you ORDER BY MUST also appear in the SELECT. The frontend renders the SELECT columns; if you sort by OPS but don't select OPS, the user sees the ranking but can't see the values driving it. Hard rule — never sort by a stat that isn't in the SELECT.
+   • The ORDER BY column must be the FIRST stat column in your SELECT (right after any label columns like team/name). The narrow iOS leaderboard truncates trailing columns; putting the sort key first guarantees the user sees the value that produced the ranking. This applies to every leaderboard: the user asked about that stat, so make it most prominent.
+     - "Best/worst" batting (OPS default) → SELECT: OPS, AVG, OBP, SLG
+     - "Best AVG" → SELECT: AVG, OPS, OBP, SLG (or just AVG + 2-3 most relevant supporting stats)
+     - "Best ERA" → SELECT: ERA, WHIP, K/9, BAA
+     - "Most HR" → SELECT: HR, then 2-3 supporting (RBI, AVG, OPS)
+   • For batting rate-stat leaderboards, include the standard slash line (AVG/OBP/SLG/OPS) plus the sort key — at most 4 stat columns total. For pitching: ERA/WHIP/K/9/BAA (full-season) or OPS-against (splits).
    • Do NOT include raw counter columns (at_bats, plate_appearances, hits, ip_outs, etc.) in the SELECT — put those in HAVING / WHERE only. The frontend grid caps at 4 stat columns; counters push rate stats off the visible grid.
    • Team codes: SELECT the raw Retrosheet code (NYA, LAN, KCA, etc.). The downstream formatter translates known codes to friendly names automatically. Do NOT write CASE WHEN expressions for team naming.
    • In your prose narration, use team NAMES, not codes ("the Royals", not "KCA").
