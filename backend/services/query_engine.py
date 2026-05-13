@@ -2111,16 +2111,34 @@ def decompose(question: str) -> QueryPlan:
             matched_words = set(matched.lower().split())
             plan.unexplained_words = [w for w in plan.unexplained_words if w not in matched_words]
 
-    # Player + single-season-records scope → THIS player's career-best single
-    # season (not an all-time leaderboard ignoring them). Triggers when
-    # scope=all_time was set by "in a season" / "single season" / "in a year"
-    # AND a specific player is named. Without this, "Most home runs Hank Aaron
-    # ever hit in a season" returns the all-time single-season HR leaderboard
-    # without Aaron in it. With it, the query returns Aaron's 1971 47-HR
-    # career-best season.
-    if (plan.scope == "all_time" and plan.player_name
-            and (plan.stat or plan.derived_stat)
-            and plan.query_type in ("leaderboard", "threshold")):
+    # Player single-season-max detection. The user asking "Most X player ever"
+    # or "best X season player ever had" or "player's career-high in X" wants
+    # THIS player's career-best single season — NOT an all-time leaderboard
+    # (ignoring the player) and NOT a career total. Triggers:
+    #   - scope=all_time (set above by "in a season" / "single season")
+    #   - OR superlative ("most/best/highest/fewest/worst/lowest") + "ever"
+    #   - OR "best/worst [season|year]" phrase
+    #   - OR "career high/best/low" phrase
+    # Combined with a named player + stat. Without this expansion, "Most home
+    # runs Hank Aaron ever hit" hits scope=career and returns the all-time
+    # career HR leaderboard (Bonds 762, Aaron 755, ...) — Aaron isn't even
+    # the answer to his own question.
+    _has_superlative = bool(re.search(r'\b(?:most|best|highest|peak|top|fewest|worst|lowest|least)\b', lower))
+    _has_ever = bool(re.search(r'\bever\b', lower))
+    _has_best_season = bool(re.search(r'\b(?:best|highest|peak|top|worst|lowest)\s+(?:season|year)\b', lower))
+    _has_career_best = bool(re.search(r'\bcareer[- ]?(?:high|best|worst|low|lowest|highest)\b', lower))
+    _is_player_ssn_max = (
+        plan.player_name and (plan.stat or plan.derived_stat)
+        and (
+            plan.scope == "all_time"
+            or (_has_superlative and _has_ever)
+            or _has_best_season
+            or _has_career_best
+        )
+        # Never override explicit "career total" / "career stats" intent.
+        and not re.search(r'\bcareer\s+(?:total|totals|stat|stats|statistics|number|numbers|sum|sums)\b', lower)
+    )
+    if _is_player_ssn_max and plan.query_type in ("leaderboard", "threshold"):
         plan.query_type = "player_single_season_max"
 
     # Final overrides for date_range scope — must run last since earlier steps
