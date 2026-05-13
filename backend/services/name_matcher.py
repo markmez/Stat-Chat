@@ -3266,9 +3266,88 @@ def parse_player_game_window(input_str: str) -> Optional[dict]:
     }
 
 
+def parse_player_single_season_max(input_str: str) -> Optional[dict]:
+    """Detect "[player]'s career-best single-season [stat]" queries.
+
+    Returns dict with name, stat, direction ("max" or "min"), or None.
+
+    Matches phrasings like:
+      - "Most home runs Hank Aaron ever hit in a season"
+      - "Most HR Hank Aaron ever hit"
+      - "What's the most HR Aaron Judge ever had"
+      - "Best HR season Babe Ruth ever had"
+      - "Aaron Judge's career high in HR"
+      - "Aaron Judge's career-best OPS"
+      - "Lowest ERA Pedro Martinez ever had"
+      - "Fewest strikeouts Greg Maddux ever had in a season"
+
+    NOT matched (handled by other parsers):
+      - "Hank Aaron career home runs" → career total (parse_career_lookup)
+      - "Hank Aaron home runs" → most recent season (parse_single_stat_lookup)
+    """
+    lower = input_str.strip().lower()
+
+    # Need a superlative — "most" / "best" / "highest" / "fewest" / "worst" / "lowest" / "career high"
+    has_high_super = bool(re.search(r'\b(?:most|best|highest|peak|top)\b', lower))
+    has_low_super = bool(re.search(r'\b(?:fewest|worst|lowest|least)\b', lower))
+    has_career_super = bool(re.search(r'\bcareer[- ]?(?:high|best|worst|low|lowest|highest)\b', lower))
+    if not (has_high_super or has_low_super or has_career_super):
+        return None
+
+    # Need single-season-max context — at least one of these signals:
+    #   "ever", "in a season", "in one season", "in any season", "in a single season",
+    #   "best season", "highest season", "peak season", "career high", "career best"
+    has_ever = bool(re.search(r'\bever\b', lower))
+    has_in_season_phrase = bool(re.search(r'\bin (?:a|one|any|a single) season\b', lower))
+    has_best_season_phrase = bool(re.search(r'\b(?:best|highest|peak|top|worst|lowest)\s+(?:season|year)\b', lower))
+    if not (has_ever or has_in_season_phrase or has_best_season_phrase or has_career_super):
+        return None
+
+    # Must NOT be a career-total query (career SUM, not career MAX)
+    # "career home runs" / "career stats" → career total via parse_career_lookup
+    # But "career high HR" / "career best HR" → single-season max (this parser).
+    if contains_word("career", lower) and not has_career_super:
+        return None
+
+    # Find player and stat
+    name = find_player_in_text(lower)
+    if not name:
+        return None
+    stat = match_stat(lower)
+    if not stat:
+        return None
+
+    # Direction: "lowest/fewest/worst/least" → MIN.
+    # "best" alone is ambiguous — defer to stat's "lower is better" property
+    # if available. Default: MAX.
+    direction = "min" if has_low_super else "max"
+    # For lower-is-better rate stats (ERA/WHIP/BAA/etc.), "best" actually means MIN.
+    lower_is_better = stat.db_column in (
+        "era", "whip", "bb_per_9", "hits_per_9", "hr_per_9", "baa",
+        "batting_avg_against", "obp_against", "slg_against", "ops_against",
+    )
+    if lower_is_better:
+        if "best" in lower or "lowest" in lower:
+            direction = "min"
+        elif "worst" in lower or "highest" in lower:
+            direction = "max"
+
+    return {"name": name, "stat": stat, "direction": direction}
+
+
 def parse_catch_all_player_stat(input_str: str) -> Optional[dict]:
     """Last-resort parser: player name + stat keyword. Returns dict with name, stat, season, is_career."""
     lower = input_str.strip().lower()
+
+    # Reject "player single-season max" patterns — handled by parse_player_single_season_max.
+    # Belt-and-suspenders in case wiring order changes.
+    if re.search(r'\b(?:most|best|highest|fewest|worst|lowest|peak|top|least)\b', lower) and (
+        re.search(r'\bever\b', lower)
+        or re.search(r'\bin (?:a|one|any|a single) season\b', lower)
+        or re.search(r'\b(?:best|highest|peak|top|worst|lowest)\s+(?:season|year)\b', lower)
+        or re.search(r'\bcareer[- ]?(?:high|best|worst|low|lowest|highest)\b', lower)
+    ):
+        return None
 
     # Reject queries where the player name is context, not the subject.
     # Questions starting with interrogative words are asking about the stat broadly,

@@ -1333,6 +1333,84 @@ def build_career_lookup(name: str, stat_info: Optional[StatInfo] = None) -> Opti
 
 
 # ===================================================================
+# 8b. build_player_single_season_max
+# ===================================================================
+
+def build_player_single_season_max(name: str, stat_info: StatInfo, direction: str = "max",
+                                    is_pitching: bool = False) -> Optional[str]:
+    """Find the single season where this player had their max (or min) for the given stat.
+
+    Used by queries like "Most home runs Hank Aaron ever hit (in a season)" — wants the
+    BEST single-season tally, not the career sum, not the most recent season.
+
+    For counting stats: ORDER BY stat DESC (or ASC for min) LIMIT 1.
+    For rate stats: apply qualification minimum (per CLAUDE.md PA / IP rules) so we
+    don't surface a 12-AB .500 BA fluke as the player's "best".
+    """
+    conn = _get_db()
+    try:
+        display_name, _ = _get_player_info(conn, name)
+        col = stat_info.db_column
+        order = "ASC" if direction == "min" else "DESC"
+
+        cur = conn.cursor()
+        if is_pitching:
+            # Pitching qualification: 162 IP full season = ip_outs >= 486.
+            # For partial-season early-career or short stints, this would
+            # exclude them — but for "career-best single season" we WANT
+            # qualified seasons. Use the standard threshold.
+            qual_clause = ""
+            if stat_info.is_rate:
+                qual_clause = " AND s.ip_outs >= 300"  # 100 IP minimum
+            cur.execute(
+                f"SELECT s.season, s.{col}, s.team "
+                f"FROM season_pitching_stats s "
+                f"JOIN players p ON s.player_id = p.player_id "
+                f"WHERE p.name = ? AND s.{col} IS NOT NULL{qual_clause} "
+                f"ORDER BY s.{col} {order}, s.season ASC LIMIT 1",
+                (_sanitize(name),),
+            )
+        else:
+            qual_clause = ""
+            if stat_info.is_rate:
+                qual_clause = " AND s.plate_appearances >= 400"
+            cur.execute(
+                f"SELECT s.season, s.{col}, s.team "
+                f"FROM season_batting_stats s "
+                f"JOIN players p ON s.player_id = p.player_id "
+                f"WHERE p.name = ? AND s.{col} IS NOT NULL{qual_clause} "
+                f"ORDER BY s.{col} {order}, s.season ASC LIMIT 1",
+                (_sanitize(name),),
+            )
+        row = cur.fetchone()
+        if not row:
+            return None
+        season, value, team = row
+        if value is None:
+            return None
+
+        formatted = _format_rate(str(value)) if stat_info.is_rate else f"{int(value):,}"
+        abbr = stat_info.display_abbrev
+        direction_label = "fewest" if direction == "min" else "most"
+        if stat_info.is_rate:
+            adj = "lowest" if direction == "min" else "highest"
+            sentence = f"**{display_name}**'s {adj} {abbr} in a single season was **{formatted}** in **{season}** ({_team_full_name(team)})."
+        else:
+            sentence = f"**{display_name}** had his {direction_label} {stat_info.display_name} in a single season in **{season}**: **{formatted}** ({_team_full_name(team)})."
+
+        parts = [sentence]
+        # Useful follow-ups
+        stat_name = stat_info.pill_name
+        parts.append(f"\n[SUGGEST]{display_name} career {stat_name}[/SUGGEST]")
+        parts.append(f"[SUGGEST]{display_name} {season} stats[/SUGGEST]")
+        if stat_info.is_rate:
+            parts.append(f"[SUGGEST]all-time single-season {stat_name} leaders[/SUGGEST]")
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
+# ===================================================================
 # 9. build_pitching_career_lookup
 # ===================================================================
 

@@ -652,6 +652,19 @@ def try_intercept(question: str):
             response += f"\n\n[SUGGEST]{stat_name} leaders[/SUGGEST]\n[SUGGEST]career {stat_name} leaders[/SUGGEST]"
         return response
 
+    # 25b. Player single-season max — "most HR Aaron ever hit", "career-best OPS"
+    # Must run BEFORE the catch-all so "Most HR Hank Aaron ever hit in a season"
+    # doesn't get silently routed to a most-recent-season lookup.
+    single_season_max = nm.parse_player_single_season_max(trimmed)
+    if single_season_max:
+        name = single_season_max["name"]
+        stat = single_season_max["stat"]
+        direction = single_season_max["direction"]
+        is_pitching = nm.is_pitcher(name) or nm.is_pitching_stat(stat)
+        response = rb.build_player_single_season_max(name, stat, direction=direction, is_pitching=is_pitching)
+        if response:
+            return response
+
     # 26. Catch-all — any query with a recognizable player name + stat keyword
     catch_all = nm.parse_catch_all_player_stat(trimmed)
     if catch_all:
