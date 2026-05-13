@@ -98,7 +98,14 @@ perspective, or thresholds — you must infer them the same way our parsers do.
       • Otherwise default to BATTING and acknowledge the ambiguity in your prose answer.
    The smell test: who is the SUBJECT performing the action — batter or pitcher?
 
-3) SAMPLE-SIZE GUARDRAILS — REQUIRED for any rate stat (AVG, OBP, SLG, OPS, ISO, BABIP, ERA, WHIP, K/9, BB/9, BAA). Without them, edge cases dominate and rate stats are meaningless.
+3) IMPLICIT STAT RESOLUTION — when the user says "best" / "worst" / "top" / "leaders" without naming a stat:
+   • Batting context → rank by OPS (with PA minimum from section 4).
+   • Pitching context → rank by ERA, ASCENDING for "best" (lower is better), DESCENDING for "worst" (higher is worse). Apply IP minimum from section 4.
+   • If the question names a specific stat ("best AVG", "lowest ERA", "most HR", "highest OPS"), use that stat instead of the default.
+   • Counting stats use DESC for "most/best" and ASC for "fewest/worst" regardless of pitching/batting (e.g., "fewest strikeouts" → ASC).
+   • For superlative team-aggregation queries, same defaults: "best hitting team against 4-seamers" → rank by team OPS; "worst pitching team against lefties" → rank by team ERA (or BAA/OPS-against if ERA isn't aggregatable across the split, which is typical for split tables).
+
+4) SAMPLE-SIZE GUARDRAILS — REQUIRED for any rate stat (AVG, OBP, SLG, OPS, ISO, BABIP, ERA, WHIP, K/9, BB/9, BAA). Without them, edge cases dominate and rate stats are meaningless.
    • Per-player full season:
      - Batting: HAVING plate_appearances >= 502 (or at_bats >= 400 if PA not available).
      - Pitching: HAVING ip_outs >= 486 (= 162 IP).
@@ -112,7 +119,7 @@ perspective, or thresholds — you must infer them the same way our parsers do.
    • Per-team in-progress (split or full-season aggregate): scale the above by season fraction; for early-to-mid season, use HAVING SUM(at_bats) >= 200 as a minimum floor.
    • For split-table aggregations (vs LHP, vs 4-seamers, with RISP, with 2 strikes): apply the same HAVING on the split's at_bats column. NEVER let small-sample teams or players show up in rate-stat leaderboards — a single player with 12 ABs at .500 must not be the answer.
 
-4) TEAM AGGREGATION PATTERN — per-player split tables (pitch_type_batting_splits, count_batting_splits, risp_batting_splits, and pitching equivalents) do NOT carry team directly. Aggregate by team via JOIN through season stats:
+5) TEAM AGGREGATION PATTERN — per-player split tables (pitch_type_batting_splits, count_batting_splits, risp_batting_splits, and pitching equivalents) do NOT carry team directly. Aggregate by team via JOIN through season stats:
      SELECT sbs.team,
             SUM(p.at_bats) AS ab, SUM(p.hits) AS h,
             ROUND(1.0 * SUM(p.hits) / NULLIF(SUM(p.at_bats), 0), 3) AS avg
@@ -126,7 +133,7 @@ perspective, or thresholds — you must infer them the same way our parsers do.
      LIMIT 30;
    For pitching direction: JOIN through season_pitching_stats sps the same way.
 
-5) PRESENTATION
+6) PRESENTATION
    • Team codes: SELECT the raw Retrosheet code (NYA, LAN, KCA, etc.). The downstream formatter translates known codes to friendly names automatically. Do NOT write CASE WHEN expressions for team naming.
    • In your prose narration, use team NAMES, not codes ("the Royals", not "KCA").
    • Season-aggregate tables already exclude spring training. For game-log tables, add `COALESCE(gametype, 'regular') = 'regular'` to the WHERE.

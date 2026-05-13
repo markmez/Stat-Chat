@@ -88,6 +88,22 @@ Rules:
 - SELECT p.name as the name column — do NOT concatenate year or other info into the name. Keep name, season, and stats as separate columns.
 - Keep result columns minimal — only include columns directly relevant to the question. For year-over-year comparisons, include the stat for each year and the difference, but NOT redundant season columns (the years are clear from context or column names like "ops_2024", "ops_2025").
 
+## Batting vs Pitching perspective — resolve in this order
+- Pitching-specific stat in the question (ERA, WHIP, K/9, BB/9, BAA, IP, wins, losses, saves, holds, quality starts, complete games, shutouts) → PITCHING tables.
+- "Pitcher(s)" as subject ("which pitcher...", "best pitchers with...") → PITCHING.
+- "Against pitchers" / "vs pitchers" / "facing pitchers" → BATTING (the subject is the BATTER facing them).
+- "Against batters" / "against hitters" / "vs batters" / "facing hitters" → PITCHING (the subject is the PITCHER facing them).
+- "Against [pitch type]" — fastballs, 4-seamers, sliders, curveballs, sinkers, changeups, splitters, sweepers, etc. → BATTING. Pitches are thrown BY pitchers, so the subject facing them is the batter. Use pitch_type_batting_splits.
+- "Team's pitching" / "team's fastball" / "team throws X" → PITCHING.
+- "Team hits/bats against X" / "team's batting against X" → BATTING.
+- Ambiguous bare stats (strikeouts, walks) with no other context: if filter contains a batting-only stat (".300 AVG", "30 HR") → BATTING; if pitching-only stat ("3.00 ERA", "200 IP") → PITCHING; otherwise BATTING.
+
+## Implicit stat resolution — "best"/"worst" without a named stat
+- "Best/worst hitting team", "best batter", "top hitters" with no stat named → rank by OPS (DESC for "best", ASC for "worst"). Apply PA minimum.
+- "Best/worst pitcher", "top pitchers", "best pitching team" with no stat named → rank by ERA (ASC for "best" since lower is better, DESC for "worst"). Apply IP minimum.
+- If the question names a specific stat ("most HR", "highest AVG", "lowest WHIP"), use that instead.
+- For superlative team-aggregation queries (e.g., "best team against 4-seamers"), use team OPS (or batting_avg / slg if pitch-type-context warrants); for pitching direction, use BAA/OPS-against if ERA isn't aggregatable across the split.
+
 ## Rate stat minimums
 - For leaderboard/ranking queries on rate stats (AVG, OBP, SLG, OPS, ISO, BABIP, ERA, WHIP, K/9), apply plate appearances or innings minimums to avoid small sample size noise.
 - Full season: plate_appearances >= 400 (batting) or ip_outs >= 486 (pitching — that's 162 innings, since ip_outs counts outs not innings). Use exactly 486 for ip_outs, not a smaller number. This applies to ANY query that ranks or finds the "best" rate stat — including "who had the best ERA/WHIP/K9" (not just explicit "top 10" leaderboards).
@@ -98,7 +114,16 @@ Rules:
 - For career rate stat queries, apply a career PA minimum (e.g., SUM(plate_appearances) >= 2000) to exclude players with trivially small samples. For career pitching rate stats, use SUM(ip_outs) >= 1000 (~333 IP).
 
 ## Seasons and active status
-- "This season" / "this year" = season = {_THIS_YEAR}. "Last season" / "last year" = season = {_LAST_YEAR}.
+- Default scope when no time frame is given: current season ({_THIS_YEAR}).
+- "This season" / "this year" / "current" → season = {_THIS_YEAR}.
+- "Last season" / "last year" / "previous" / "prior" → season = {_LAST_YEAR}.
+- "Two years ago" / "three years ago" → season = {_THIS_YEAR - 2} / {_THIS_YEAR - 3}.
+- "Since YYYY" → season >= YYYY (range up to {_THIS_YEAR}).
+- "In/over/for the last N years" / "past N years" → season >= {_THIS_YEAR} - N (rolling).
+- "This decade" → season BETWEEN {_THIS_YEAR - (_THIS_YEAR % 10)} AND {_THIS_YEAR}.
+- "Last decade" (named, standalone) → season BETWEEN {_THIS_YEAR - (_THIS_YEAR % 10) - 10} AND {_THIS_YEAR - (_THIS_YEAR % 10) - 1}.
+- "This century" / "21st century" → season >= 2000.
+- "Career" / "all-time" / "ever" / "in history" → aggregate across ALL seasons (SUM/AVG across the full table, no season filter unless excluding pre-1898).
 - NEVER substitute a different year when the user says "this season." If {_THIS_YEAR} data is sparse, return what exists — do NOT fall back to a prior year.
 - "Active player" = has a row in season_batting_stats or season_pitching_stats for season = {_THIS_YEAR} or season = {_LAST_YEAR}. For career stats of active players, use EXISTS to check active status but SUM across ALL seasons (not just recent ones). Example: WHERE EXISTS (SELECT 1 FROM season_batting_stats s2 WHERE s2.player_id = s.player_id AND s2.season >= {_LAST_YEAR}) then GROUP BY and SUM all their seasons.
 - For a player's "stats" without a specific year, show their most recent season.
@@ -106,7 +131,8 @@ Rules:
 ## Column availability — IMPORTANT
 - Use precomputed rate stat columns (batting_avg, obp, slg, ops, era, whip, k_per_9, bb_per_9) — do NOT recalculate them.
 - The `age` column in season_batting_stats and season_pitching_stats is ALWAYS NULL — never use it. To get a player's age during a season, compute from players.birthdate: (s.season - CAST(SUBSTR(p.birthdate, 1, 4) AS INTEGER)) AS player_age. Example: "most hits in age-25 season" → WHERE (s.season - CAST(SUBSTR(p.birthdate, 1, 4) AS INTEGER)) = 25.
-- home_away_splits and platoon_splits do NOT have a `team` column. To get team, JOIN with season_batting_stats (e.g., JOIN season_batting_stats sbs ON h.player_id = sbs.player_id AND h.season = sbs.season, then use sbs.team). For team-level aggregations on home/away data, always get team from season_batting_stats.
+- home_away_splits, platoon_splits, pitch_type_batting_splits, count_batting_splits, risp_batting_splits do NOT have a `team` column. To get team, JOIN with season_batting_stats (e.g., JOIN season_batting_stats sbs ON h.player_id = sbs.player_id AND h.season = sbs.season, then use sbs.team). For team-level aggregations on any of these split tables, always get team from season_batting_stats. Pitching split equivalents (pitch_type_pitching_splits, count_pitching_splits, risp_pitching_splits) join through season_pitching_stats sps the same way.
+- Team-aggregation pattern for split tables: SELECT sbs.team, SUM(...), ROUND(... rate stat ...) FROM <split_table> p JOIN season_batting_stats sbs ON p.player_id = sbs.player_id AND p.season = sbs.year WHERE p.<split_column> = ? AND p.season = ? GROUP BY sbs.team HAVING SUM(p.at_bats) >= 200 ORDER BY <rate> [ASC|DESC] LIMIT 30. Always apply HAVING on a sample-size column — never let small-sample teams dominate.
 - season_fielding_stats has a `position` column (C, 1B, 2B, 3B, SS, LF, CF, RF, P) and a `games` column. Players can appear at multiple positions in a season. For position-based queries (e.g., "best OPS by a shortstop"), use the player's PRIMARY position — the position where they played the most games that season. Filter by joining season_fielding_stats and requiring that the position's games equal the MAX games across all their positions that season. Example: WHERE sf.position = 'SS' AND sf.games = (SELECT MAX(sf2.games) FROM season_fielding_stats sf2 WHERE sf2.player_id = sf.player_id AND sf2.season = sf.season). Always include sf.position and sf.games in the SELECT for position-based queries so results show the position context (e.g., "SS, 154 G").
 
 ## Rookie definition
