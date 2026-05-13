@@ -11,6 +11,10 @@ struct ResultCard: View {
     var onTeamTap: ((String) -> Void)? = nil
     var onQueryTap: ((String) -> Void)? = nil
     var onDrilldownTap: ((String) -> Void)? = nil
+    /// Called when the user taps the edit pencil next to a voice-input query.
+    /// The caller pre-fills the input bar with the supplied text so the user
+    /// can correct a mistranscription without re-typing from scratch.
+    var onEditVoice: ((String) -> Void)? = nil
 
     private let deepBlue = Color.brandDeepBlue
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
@@ -28,7 +32,9 @@ struct ResultCard: View {
         }
     }
 
-    // User question — with back chevron on the first one
+    // User question — with back chevron on the first one and a pencil edit
+    // affordance for voice-input queries (since transcription may have gotten
+    // it wrong and we auto-submit before the user can review).
     private var userQuery: some View {
         HStack(alignment: .top, spacing: 10) {
             if isFirstUser, let onBack {
@@ -43,6 +49,20 @@ struct ResultCard: View {
             Text(message.content)
                 .font(.system(.title3, design: .rounded, weight: .semibold))
                 .foregroundStyle(.primary)
+
+            if message.inputMethod == "mic", let onEditVoice {
+                Button {
+                    onEditVoice(message.content)
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(6)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Edit voice question")
+                .padding(.top, 1)
+            }
 
             Spacer()
         }

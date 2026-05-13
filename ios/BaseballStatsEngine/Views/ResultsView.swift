@@ -65,6 +65,13 @@ struct ResultsView: View {
             },
             onDrilldownTap: { query in
                 drilldownQuery = query
+            },
+            onEditVoice: { text in
+                // Pre-fill the input bar with the (mis)transcribed text and
+                // focus it so the user can correct a single character / word
+                // without re-typing the whole question.
+                inputText = text
+                isInputFocused = true
             }
         )
     }
