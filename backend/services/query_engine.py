@@ -5897,34 +5897,9 @@ def _execute_player_single_season_max(plan: QueryPlan) -> Optional[str]:
         direction = "max"
 
     is_pitching = _nm.is_pitcher(plan.player_name) or _nm.is_pitching_stat(plan.stat)
-    try:
-        result = build_player_single_season_max(
-            plan.player_name, plan.stat, direction=direction, is_pitching=is_pitching
-        )
-        # TEMP diagnostic: log the path taken so we can see why some queries
-        # fall through to Haiku when they should be handled here.
-        try:
-            from services.metering import log_server_error as _lse
-            _lse(source="player_ssn_max_debug",
-                 error_type="executed",
-                 error_message=f"player={plan.player_name!r} stat={plan.stat.db_column!r} "
-                               f"direction={direction} is_pitching={is_pitching} "
-                               f"result_len={len(result) if result else 0}")
-        except Exception:
-            pass
-        return result
-    except Exception as e:
-        import traceback as _tb
-        try:
-            from services.metering import log_server_error as _lse
-            _lse(source="player_ssn_max_executor",
-                 error_type=type(e).__name__,
-                 error_message=str(e),
-                 context={"player": plan.player_name, "stat": plan.stat.db_column if plan.stat else None,
-                          "traceback": _tb.format_exc()[-1500:]})
-        except Exception:
-            pass
-        raise
+    return build_player_single_season_max(
+        plan.player_name, plan.stat, direction=direction, is_pitching=is_pitching
+    )
 
 
 def _execute_team_ranking(conn, plan: QueryPlan) -> Optional[str]:

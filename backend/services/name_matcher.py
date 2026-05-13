@@ -1278,48 +1278,55 @@ def match_team_exact(input_str: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 def is_pitcher(name: str) -> bool:
-    """Check if a player is primarily a pitcher (has pitching stats, not a two-way player)."""
-    sanitized = name.replace("'", "''")
+    """Check if a player is primarily a pitcher.
+
+    Mirrors the player profile's rule (player_card._is_pitcher and _is_two_way):
+    the player's `positions` field must start with "P" AND they must have at
+    least one row in season_pitching_stats, AND they must not be a two-way
+    player by the Ohtani rule (any season with PA >= 130 AND any season with
+    ip_outs >= 90, mirrored from player_card._is_two_way).
+
+    Using positions field as the authoritative source (consistent with player
+    cards) avoids edge cases like position players who threw a single
+    mop-up inning in a blowout being misclassified as pitchers.
+    """
     try:
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
-        # Check pitching stats
-        cur.execute("""
-            SELECT COALESCE(SUM(sp.games_started), 0), COALESCE(SUM(sp.innings_pitched), 0)
-            FROM season_pitching_stats sp
-            JOIN players p ON sp.player_id = p.player_id
-            WHERE p.name = ?
-        """, (name,))
+        cur.execute(
+            "SELECT positions FROM players WHERE name = ? LIMIT 1",
+            (name,),
+        )
         row = cur.fetchone()
-        if not row or (row[0] == 0 and row[1] == 0):
+        if not row or not row[0] or not row[0].startswith("P"):
             conn.close()
             return False
-        pitching_gs = row[0]
-        pitching_ip = float(row[1]) if row[1] else 0
-
-        # Two-way player rule: 130 PA AND 30 IP IN THE SAME SEASON.
-        # Aggregate-across-careers misclassifies pitchers who batted in
-        # non-DH eras (Nolan Ryan as a Met/Astro, Bob Gibson, Greg Maddux, etc.)
-        # — they accumulate >= 500 career PA from pitcher at-bats but are
-        # clearly pitchers, not two-way players. The Ohtani rule is about
-        # doing both jobs simultaneously, which is a per-season fact.
         cur.execute("""
-            SELECT 1
-            FROM season_batting_stats sb
-            JOIN season_pitching_stats sp
-              ON sp.player_id = sb.player_id AND sp.season = sb.season
-            JOIN players p ON sb.player_id = p.player_id
-            WHERE p.name = ?
-              AND (sb.at_bats + sb.walks + sb.hit_by_pitch) >= 130
-              AND sp.ip_outs >= 90
-            LIMIT 1
+            SELECT 1 FROM season_pitching_stats sp
+            JOIN players p ON sp.player_id = p.player_id
+            WHERE p.name = ? LIMIT 1
         """, (name,))
-        is_two_way = cur.fetchone() is not None
-        conn.close()
-
-        if is_two_way:
+        if cur.fetchone() is None:
+            conn.close()
             return False
-
+        # Two-way player (Ohtani rule, mirrored from player_card._is_two_way):
+        # any season with PA >= 130 AND any season with ip_outs >= 90.
+        cur.execute("""
+            SELECT 1 FROM season_batting_stats sb
+            JOIN players p ON sb.player_id = p.player_id
+            WHERE p.name = ? AND sb.plate_appearances >= 130 LIMIT 1
+        """, (name,))
+        has_bat = cur.fetchone() is not None
+        if has_bat:
+            cur.execute("""
+                SELECT 1 FROM season_pitching_stats sp
+                JOIN players p ON sp.player_id = p.player_id
+                WHERE p.name = ? AND sp.ip_outs >= 90 LIMIT 1
+            """, (name,))
+            if cur.fetchone() is not None:
+                conn.close()
+                return False  # two-way player
+        conn.close()
         return True
     except Exception:
         return False
