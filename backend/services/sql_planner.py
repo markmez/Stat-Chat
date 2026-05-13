@@ -155,7 +155,7 @@ perspective, or thresholds — you must infer them the same way our parsers do.
             , 3) AS ops
      FROM pitch_type_batting_splits p
      JOIN season_batting_stats sbs
-       ON p.player_id = sbs.player_id AND p.season = sbs.year
+       ON p.player_id = sbs.player_id AND p.season = sbs.season
      WHERE p.pitch_type = '4-Seam' AND p.season = {date.today().year}
      GROUP BY sbs.team
      HAVING SUM(p.at_bats) >= 200      -- in-progress season floor
