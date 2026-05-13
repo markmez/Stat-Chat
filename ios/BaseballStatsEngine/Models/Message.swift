@@ -5,6 +5,10 @@ struct Message: Identifiable {
     let role: Role
     let content: String
     let timestamp = Date()
+    /// How the user entered this message ("keyboard" or "mic"). Only meaningful
+    /// on `.user` messages — drives the pencil-edit affordance for voice queries
+    /// where speech recognition may have mistranscribed.
+    var inputMethod: String = "keyboard"
 
     enum Role {
         case user

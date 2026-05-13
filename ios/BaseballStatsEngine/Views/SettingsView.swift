@@ -8,28 +8,38 @@ struct SettingsView: View {
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
     private let freeLimit = 5
 
+    @State private var dataFreshness: Date? = nil
+
     var body: some View {
         ScrollView {
             VStack(spacing: 28) {
                 // App header
-                VStack(spacing: 8) {
-                    HStack(spacing: 10) {
-                        Text("StatChat")
-                            .font(.system(size: 28, weight: .bold))
-                            .foregroundStyle(
-                                LinearGradient(
-                                    colors: [lightBlue, deepBlue],
-                                    startPoint: .leading, endPoint: .trailing
-                                )
+                HStack(spacing: 10) {
+                    Text("StatChat")
+                        .font(.system(size: 28, weight: .bold))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [lightBlue, deepBlue],
+                                startPoint: .leading, endPoint: .trailing
                             )
+                        )
 
-                        Image(systemName: "sparkle")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(lightBlue)
-                    }
-
+                    Image(systemName: "baseball.fill")
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(lightBlue)
                 }
                 .padding(.top, 12)
+
+                // Data freshness — its own element between header and first module.
+                // Negative vertical padding tightens spacing by ~35% (28pt VStack
+                // gap → effective ~18pt above and below).
+                if let updated = dataFreshness {
+                    Text("Stats updated each morning, most recently \(Self.relativeFreshness(updated))")
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, -10)
+                }
 
                 // Subscription
                 subscriptionSection
@@ -37,14 +47,11 @@ struct SettingsView: View {
                 // Appearance
                 appearanceSection
 
-                // AI Disclosure
-                infoSection(title: "Powered by AI") {
-                    Text("StatChat uses advanced AI to translate your questions into precise database queries. Every stat is computed from real historical data \u{2014} never generated or estimated.")
-                }
-
-                // Data Sources
-                infoSection(title: "Data Sources") {
+                // Where answers come from — verified data + clearly-flagged AI fallback
+                infoSection(title: "Our Answer Engine") {
                     VStack(alignment: .leading, spacing: 16) {
+                        Text("We use AI to understand your question, and real game data to answer it. The data comes from the sources below, among others. Responses derived from AI are clearly marked.")
+
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Retrosheet")
                                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
@@ -58,7 +65,7 @@ struct SettingsView: View {
                             Text("Chadwick Baseball Bureau")
                                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
                                 .foregroundStyle(.primary)
-                            Text("Platoon split data provided by the Chadwick Baseball Bureau, available under the Open Database License.")
+                            Text("Data provided by the Chadwick Baseball Bureau, available under the Open Database License.")
                                 .font(.system(.caption, design: .rounded))
                                 .foregroundStyle(.secondary)
                         }
@@ -67,7 +74,7 @@ struct SettingsView: View {
                             Text("Lahman Baseball Database")
                                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
                                 .foregroundStyle(.primary)
-                            Text("Awards and honors data from the Lahman Baseball Database, available under the Creative Commons Attribution-ShareAlike 3.0 license.")
+                            Text("Data from the Lahman Baseball Database, available under the Creative Commons Attribution-ShareAlike 3.0 license.")
                                 .font(.system(.caption, design: .rounded))
                                 .foregroundStyle(.secondary)
                         }
@@ -141,6 +148,26 @@ struct SettingsView: View {
         .background(Color(uiColor: .systemBackground))
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            dataFreshness = await BackendService().fetchDataFreshness()
+        }
+    }
+
+    /// Format "data last updated" in the user's local timezone with a
+    /// friendly relative-ish phrasing. "today at 5:13 AM", "yesterday at
+    /// 11:30 PM", or an absolute date for anything older.
+    private static func relativeFreshness(_ date: Date) -> String {
+        let cal = Calendar.current
+        let timeFmt = DateFormatter()
+        timeFmt.dateStyle = .none
+        timeFmt.timeStyle = .short  // honors user's 12h/24h preference
+        let time = timeFmt.string(from: date)
+        if cal.isDateInToday(date) { return "today at \(time)" }
+        if cal.isDateInYesterday(date) { return "yesterday at \(time)" }
+        let dateFmt = DateFormatter()
+        dateFmt.dateStyle = .medium
+        dateFmt.timeStyle = .short
+        return dateFmt.string(from: date)
     }
 
     // MARK: - Subscription

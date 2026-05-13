@@ -565,6 +565,25 @@ final class BackendService: Sendable {
         let game_context: String?
     }
 
+    /// Fetch when live stats data was last refreshed (for the Settings
+    /// page's "Data updated" line). Returns the parsed UTC Date or nil if
+    /// the endpoint is unreachable / unparseable.
+    func fetchDataFreshness() async -> Date? {
+        let url = baseURL.appendingPathComponent("admin/freshness")
+        guard let (data, response) = try? await URLSession.shared.data(from: url),
+              let http = response as? HTTPURLResponse, http.statusCode == 200
+        else { return nil }
+        struct Freshness: Decodable { let last_updated: String? }
+        guard let parsed = try? JSONDecoder().decode(Freshness.self, from: data),
+              let stamp = parsed.last_updated else { return nil }
+        // Server stores "YYYY-MM-DD HH:MM:SS" in UTC.
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        fmt.timeZone = TimeZone(identifier: "UTC")
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        return fmt.date(from: stamp)
+    }
+
     func fetchNotableEvents(limit: Int = 50) async throws -> [NotableEventData] {
         var components = URLComponents(url: baseURL.appendingPathComponent("notable-events"),
                                        resolvingAgainstBaseURL: false)!

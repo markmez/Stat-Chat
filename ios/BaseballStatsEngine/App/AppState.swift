@@ -115,7 +115,7 @@ final class AppState: SearchHistoryTracking {
             if PlayerNameMatcher.matchStat(defn.abbrev) != nil {
                 response += "\n\n[SUGGEST]\(statName) leaders[/SUGGEST]\n[SUGGEST]career \(statName) leaders[/SUGGEST]"
             }
-            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .user, content: trimmed, inputMethod: inputMethod))
             messages.append(Message(role: .assistant, content: response))
             addToConversationHistory(question: trimmed, answer: response)
             AnalyticsService.trackQuery(text: trimmed, type: .localStatDefinition)
@@ -169,7 +169,7 @@ final class AppState: SearchHistoryTracking {
             pendingDisambiguation = (query: trimmed, lastName: ambiguousLast)
             let links = sorted.map { "[\($0)](statchat://player/\($0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? $0))" }
             let response = "Multiple players match:\n\n" + links.joined(separator: "\n\n")
-            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .user, content: trimmed, inputMethod: inputMethod))
             messages.append(Message(role: .assistant, content: response))
             AnalyticsService.trackQuery(text: trimmed, type: .localDisambiguation)
             return
@@ -189,12 +189,12 @@ final class AppState: SearchHistoryTracking {
             pendingDisambiguation = (query: trimmed, lastName: "")
             let links = sorted.map { "[\($0)](statchat://player/\($0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? $0))" }
             let response = "Did you mean?\n\n" + links.joined(separator: "\n\n")
-            messages.append(Message(role: .user, content: trimmed))
+            messages.append(Message(role: .user, content: trimmed, inputMethod: inputMethod))
             messages.append(Message(role: .assistant, content: response))
             return
         }
 
-        messages.append(Message(role: .user, content: trimmed))
+        messages.append(Message(role: .user, content: trimmed, inputMethod: inputMethod))
         isLoading = true
         currentStreamingText = ""
         streamingBuffer = ""
