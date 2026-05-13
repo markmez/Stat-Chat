@@ -1667,14 +1667,26 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
 
     # Reject "player single-season max" queries — those want the BEST single
     # season across the player's career, not the most recent season. Handled
-    # by parse_player_single_season_max (step 25b in interceptor). Without
-    # this guard, "Most home runs Hank Aaron ever hit in a season" silently
-    # matches here and returns Aaron's final-season stat line.
-    if re.search(r'\b(?:most|best|highest|fewest|worst|lowest|peak|top|least)\b', lower) and (
+    # in query_engine.decompose() (preferred) and parse_player_single_season_max
+    # (fallback). Without this guard, "Most home runs Hank Aaron ever hit in
+    # a season" silently matches here and returns Aaron's final-season stat
+    # line.
+    _has_super = bool(re.search(r'\b(?:most|best|highest|fewest|worst|lowest|peak|top|least)\b', lower))
+    _has_explicit_year = bool(re.search(r'\b(?:19|20)\d{2}\b', lower)) or any(
+        p in lower for p in ("this year", "this season", "current season",
+                              "last year", "last season", "previous season", "prior season",
+                              "two years ago", "three years ago"))
+    _has_career_total = bool(re.search(
+        r'\bcareer\s+(?:total|totals|stat|stats|statistics|number|numbers|sum|sums)\b', lower))
+    if _has_super and (
         re.search(r'\bever\b', lower)
         or re.search(r'\bin (?:a|one|any|a single) season\b', lower)
-        or re.search(r'\b(?:best|highest|peak|top|worst|lowest)\s+(?:season|year)\b', lower)
+        or re.search(r'\b(?:best|highest|peak|top|worst|lowest)\b(?:\s+\w+){0,3}\s+(?:season|year)\b', lower)
         or re.search(r'\bcareer[- ]?(?:high|best|worst|low|lowest|highest)\b', lower)
+        # Bare possessive: "Maddux's lowest WHIP", "Trout's best OPS" — no
+        # explicit "ever" or "in a season", but superlative + no specific
+        # year + no career-total phrasing = single-season max intent.
+        or (not _has_explicit_year and not _has_career_total)
     ):
         return None
 
@@ -2318,7 +2330,7 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
     has_single_season_max_phrase = bool(
         re.search(r'\bever\b', lower)
         or re.search(r'\bin (?:a|one|any|a single) season\b', lower)
-        or re.search(r'\b(?:best|highest|peak|top|worst|lowest)\s+(?:season|year)\b', lower)
+        or re.search(r'\b(?:best|highest|peak|top|worst|lowest)\b(?:\s+\w+){0,3}\s+(?:season|year)\b', lower)
         or re.search(r'\bcareer[- ]?(?:high|best|worst|low|lowest|highest)\b', lower)
     )
     if has_single_season_max_phrase and find_player_in_text(lower):
@@ -3334,7 +3346,7 @@ def parse_player_single_season_max(input_str: str) -> Optional[dict]:
     #   "best season", "highest season", "peak season", "career high", "career best"
     has_ever = bool(re.search(r'\bever\b', lower))
     has_in_season_phrase = bool(re.search(r'\bin (?:a|one|any|a single) season\b', lower))
-    has_best_season_phrase = bool(re.search(r'\b(?:best|highest|peak|top|worst|lowest)\s+(?:season|year)\b', lower))
+    has_best_season_phrase = bool(re.search(r'\b(?:best|highest|peak|top|worst|lowest)\b(?:\s+\w+){0,3}\s+(?:season|year)\b', lower))
     if not (has_ever or has_in_season_phrase or has_best_season_phrase or has_career_super):
         return None
 
@@ -3379,7 +3391,7 @@ def parse_catch_all_player_stat(input_str: str) -> Optional[dict]:
     if re.search(r'\b(?:most|best|highest|fewest|worst|lowest|peak|top|least)\b', lower) and (
         re.search(r'\bever\b', lower)
         or re.search(r'\bin (?:a|one|any|a single) season\b', lower)
-        or re.search(r'\b(?:best|highest|peak|top|worst|lowest)\s+(?:season|year)\b', lower)
+        or re.search(r'\b(?:best|highest|peak|top|worst|lowest)\b(?:\s+\w+){0,3}\s+(?:season|year)\b', lower)
         or re.search(r'\bcareer[- ]?(?:high|best|worst|low|lowest|highest)\b', lower)
     ):
         return None
