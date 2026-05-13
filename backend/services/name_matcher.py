@@ -2314,17 +2314,8 @@ def parse_leaderboard(input_str: str) -> Optional[dict]:
         or re.search(r'\b(?:best|highest|peak|top|worst|lowest)\s+(?:season|year)\b', lower)
         or re.search(r'\bcareer[- ]?(?:high|best|worst|low|lowest|highest)\b', lower)
     )
-    if has_single_season_max_phrase:
-        _player_found = find_player_in_text(lower)
-        try:
-            from services.metering import log_server_error as _lse
-            _lse(source="parse_leaderboard_debug",
-                 error_type="single_season_max_check",
-                 error_message=f"phrase={has_single_season_max_phrase} player={_player_found!r} lower={lower!r}")
-        except Exception:
-            pass
-        if _player_found:
-            return None
+    if has_single_season_max_phrase and find_player_in_text(lower):
+        return None
 
     # Detect split context (count, pitch type, RISP, home/away, platoon)
     # This is handled by the split leaderboard builder, not a bail-out.

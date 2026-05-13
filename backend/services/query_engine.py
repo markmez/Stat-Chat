@@ -2111,6 +2111,18 @@ def decompose(question: str) -> QueryPlan:
             matched_words = set(matched.lower().split())
             plan.unexplained_words = [w for w in plan.unexplained_words if w not in matched_words]
 
+    # Player + single-season-records scope → THIS player's career-best single
+    # season (not an all-time leaderboard ignoring them). Triggers when
+    # scope=all_time was set by "in a season" / "single season" / "in a year"
+    # AND a specific player is named. Without this, "Most home runs Hank Aaron
+    # ever hit in a season" returns the all-time single-season HR leaderboard
+    # without Aaron in it. With it, the query returns Aaron's 1971 47-HR
+    # career-best season.
+    if (plan.scope == "all_time" and plan.player_name
+            and (plan.stat or plan.derived_stat)
+            and plan.query_type in ("leaderboard", "threshold")):
+        plan.query_type = "player_single_season_max"
+
     # Final overrides for date_range scope — must run last since earlier steps
     # may have set threshold from date numbers (e.g. "16" from "june 16")
     # and reclassified query_type to "threshold"
@@ -2690,6 +2702,8 @@ def execute(plan: QueryPlan) -> Optional[str]:
             result = _execute_team_ranking(conn, plan)
         elif plan.query_type == "per_team_leaders":
             result = _execute_per_team_leaders(conn, plan)
+        elif plan.query_type == "player_single_season_max":
+            result = _execute_player_single_season_max(plan)
         elif plan.team_context is not None:
             result = _execute_team_context_leaderboard(conn, plan)
         elif plan.split_context is not None:
@@ -5808,6 +5822,41 @@ def _execute_per_team_leaders(conn, plan: QueryPlan) -> Optional[str]:
     parts.append("[/LEADERBOARD]")
 
     return "\n".join(parts)
+
+
+def _execute_player_single_season_max(plan: QueryPlan) -> Optional[str]:
+    """A specific player's career-best single season for a stat.
+
+    Triggered when `decompose()` sees `scope=all_time` (single-season records
+    semantics) combined with a `player_name`. Delegates to
+    response_builder.build_player_single_season_max, which does the SQL.
+
+    Direction maps from the plan's sort_asc + lower-is-better flag the same
+    way the leaderboard executor does:
+      - sort_asc=False, !lower_better → max (e.g., "most HR")
+      - sort_asc=False,  lower_better → min (e.g., "best ERA")
+      - sort_asc=True,  !lower_better → min (e.g., "fewest HR")
+      - sort_asc=True,   lower_better → max (e.g., "worst ERA")
+    """
+    if not plan.player_name or not plan.stat:
+        return None
+    from .response_builder import build_player_single_season_max
+    from . import name_matcher as _nm
+
+    is_lower_better = plan.stat.db_column in _LOWER_IS_BETTER
+    if plan.sort_asc and is_lower_better:
+        direction = "max"
+    elif plan.sort_asc:
+        direction = "min"
+    elif is_lower_better:
+        direction = "min"
+    else:
+        direction = "max"
+
+    is_pitching = _nm.is_pitcher(plan.player_name) or _nm.is_pitching_stat(plan.stat)
+    return build_player_single_season_max(
+        plan.player_name, plan.stat, direction=direction, is_pitching=is_pitching
+    )
 
 
 def _execute_team_ranking(conn, plan: QueryPlan) -> Optional[str]:
