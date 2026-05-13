@@ -363,6 +363,24 @@ def _format_structured_rows_to_grid(
         sample = str(data_rows[0].get(first_col, ""))
         if " " in sample and not sample.replace(" ", "").replace("(", "").replace(")", "").isdigit():
             name_col = first_col
+
+    # Team-aggregation fallback: when there's no player name column but
+    # there IS a team column, promote team to the row label. Otherwise
+    # 'team' sits in stat_cols and competes with rate stats for the
+    # 4-column cap — pushing OPS off the visible grid for team queries
+    # like "best team OPS vs 4-seamers". Also translate the code to a
+    # readable name right now (NYA → Yankees) since after the rename
+    # below the column is called 'name', not 'team', so the formatter's
+    # later team-code translation won't fire.
+    if not name_col:
+        team_col = next((c for c in columns if c.lower() in ("team", "team_code", "team_abbr", "team_abbreviation")), None)
+        if team_col and data_rows:
+            name_col = team_col
+            for row in data_rows:
+                raw = row.get(team_col)
+                friendly = _maybe_team_name("team", raw)
+                if friendly is not None:
+                    row[team_col] = friendly
     has_name = name_col is not None
     # Normalize name column to "name" for downstream processing
     if has_name and name_col != "name":
