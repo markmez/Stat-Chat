@@ -2174,17 +2174,13 @@ def decompose(question: str) -> QueryPlan:
     )
     if _is_player_ssn_max and plan.query_type in ("leaderboard", "threshold"):
         plan.query_type = "player_single_season_max"
-        # Sweep the marker words out of unexplained_words so plan.is_valid
-        # returns True. "season"/"year"/"ever"/"best"/etc. were the signals
-        # we used to identify intent — by definition they're consumed.
-        _markers = {"season", "year", "ever", "best", "highest", "peak",
-                    "top", "worst", "lowest", "most", "fewest", "least",
-                    "career-best", "career-high", "career-low",
-                    "single-season", "single"}
-        if plan.unexplained_words:
-            plan.unexplained_words = [
-                w for w in plan.unexplained_words if w.lower() not in _markers
-            ]
+        # We've confidently identified single-season-max intent (superlative +
+        # player + stat + context like "ever" / "best season" / "career
+        # high"). Any leftover unexplained words are decorative — verbs like
+        # "had", "hit", "issued", "threw", "recorded", or just dangling
+        # adjectives. Clear them so plan.is_valid returns True and the
+        # executor can produce the right answer.
+        plan.unexplained_words = []
 
     # Final overrides for date_range scope — must run last since earlier steps
     # may have set threshold from date numbers (e.g. "16" from "june 16")
