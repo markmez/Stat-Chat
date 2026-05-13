@@ -59,10 +59,9 @@ struct ResultCard: View {
                     (Text(message.content)
                         .font(.system(.title3, design: .rounded, weight: .semibold))
                         .foregroundColor(.primary)
-                     + Text("  ")
-                     + Text(Image(systemName: "square.and.pencil"))
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.secondary))
+                     + Text("   Edit")
+                        .font(.system(.subheadline, design: .rounded, weight: .medium))
+                        .foregroundColor(lightBlue))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .multilineTextAlignment(.leading)
                 }
