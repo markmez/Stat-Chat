@@ -100,10 +100,10 @@ perspective, or thresholds — you must infer them the same way our parsers do.
 
 3) IMPLICIT STAT RESOLUTION — when the user says "best" / "worst" / "top" / "leaders" without naming a stat:
    • Batting context → rank by OPS (with PA minimum from section 4).
-   • Pitching context → rank by ERA, ASCENDING for "best" (lower is better), DESCENDING for "worst" (higher is worse). Apply IP minimum from section 4.
-   • If the question names a specific stat ("best AVG", "lowest ERA", "most HR", "highest OPS"), use that stat instead of the default.
+   • Pitching context, FULL SEASON (season_pitching_stats) → rank by ERA, ASC for "best" (lower is better), DESC for "worst". Apply IP minimum.
+   • Pitching context, SPLIT TABLE (pitch_type_pitching_splits, count_pitching_splits, risp_pitching_splits, etc.) → rank by OPS-against (or BAA). ERA is NOT computable from split tables — they don't carry earned_runs or ip_outs, only batter-perspective columns (at_bats, hits, walks, etc.). Do NOT attempt SUM(earned_runs) on a split table; the column doesn't exist there.
+   • If the question names a specific stat ("best AVG", "lowest ERA", "most HR"), use that stat instead of the default.
    • Counting stats use DESC for "most/best" and ASC for "fewest/worst" regardless of pitching/batting (e.g., "fewest strikeouts" → ASC).
-   • For superlative team-aggregation queries, same defaults: "best hitting team against 4-seamers" → rank by team OPS; "worst pitching team against lefties" → rank by team ERA (or BAA/OPS-against if ERA isn't aggregatable across the split, which is typical for split tables).
 
 4) SAMPLE-SIZE GUARDRAILS — REQUIRED for any rate stat (AVG, OBP, SLG, OPS, ISO, BABIP, ERA, WHIP, K/9, BB/9, BAA). Without them, edge cases dominate and rate stats are meaningless.
    • Per-player full season:
@@ -135,7 +135,8 @@ perspective, or thresholds — you must infer them the same way our parsers do.
      BAA = SUM(hits_allowed) / NULLIF(SUM(at_bats_against), 0)
      K/9 = 9.0 * SUM(strikeouts) / NULLIF(SUM(ip_outs) / 3.0, 0)
      BB/9 = 9.0 * SUM(walks) / NULLIF(SUM(ip_outs) / 3.0, 0)
-   For SPLIT tables (pitch_type_batting_splits, etc.), the SUM columns are the same names — at_bats, hits, doubles, triples, home_runs, walks, hit_by_pitch, sacrifice_flies, strikeouts. Pitching splits use batting_avg_against, etc., but the raw counters (hits, walks, etc.) are still summable for ad-hoc recomputation.
+   For SPLIT tables (pitch_type_batting_splits, etc.), the SUM columns are the same names — at_bats, hits, doubles, triples, home_runs, walks, hit_by_pitch, sacrifice_flies, strikeouts.
+   IMPORTANT — Pitching split tables (pitch_type_pitching_splits, count_pitching_splits, risp_pitching_splits) contain batter-perspective columns ONLY (at_bats, hits, walks, etc.) — they do NOT carry earned_runs or ip_outs. So ERA/WHIP cannot be computed from a split table. For pitching split aggregations, recompute OPS-against / BAA from the same component SUMs (treating "hits" as hits allowed, "at_bats" as at-bats against, etc.). Use the BATTING formulas above — same column names, just remember the perspective.
 
 6) TEAM AGGREGATION PATTERN — per-player split tables (pitch_type_batting_splits, count_batting_splits, risp_batting_splits, and pitching equivalents) do NOT carry team directly. Aggregate by team via JOIN through season stats. Example using OPS (the implicit default for "best/worst" hitting):
      SELECT sbs.team,

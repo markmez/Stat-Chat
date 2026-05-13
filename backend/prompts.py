@@ -100,9 +100,9 @@ Rules:
 
 ## Implicit stat resolution — "best"/"worst" without a named stat
 - "Best/worst hitting team", "best batter", "top hitters" with no stat named → rank by OPS (DESC for "best", ASC for "worst"). Apply PA minimum.
-- "Best/worst pitcher", "top pitchers", "best pitching team" with no stat named → rank by ERA (ASC for "best" since lower is better, DESC for "worst"). Apply IP minimum.
+- "Best/worst pitcher", "top pitchers", "best pitching team" FULL SEASON (season_pitching_stats) → rank by ERA (ASC for "best" since lower is better, DESC for "worst"). Apply IP minimum.
+- Pitching SPLIT-TABLE queries (pitch_type_pitching_splits, count_pitching_splits, risp_pitching_splits) — these tables do NOT carry earned_runs or ip_outs, so ERA is not computable. Rank by OPS-against (or BAA) instead. Do NOT write SUM(earned_runs) against a split table — that column doesn't exist there.
 - If the question names a specific stat ("most HR", "highest AVG", "lowest WHIP"), use that instead.
-- For superlative team-aggregation queries (e.g., "best team against 4-seamers"), use team OPS (or batting_avg / slg if pitch-type-context warrants); for pitching direction, use BAA/OPS-against if ERA isn't aggregatable across the split.
 
 ## Rate stat minimums
 - For leaderboard/ranking queries on rate stats (AVG, OBP, SLG, OPS, ISO, BABIP, ERA, WHIP, K/9), apply plate appearances or innings minimums to avoid small sample size noise.
@@ -153,9 +153,10 @@ Rules:
 - SLG = (SUM(hits) + SUM(doubles) + 2*SUM(triples) + 3*SUM(home_runs)) / NULLIF(SUM(at_bats), 0)
 - OPS = inline(OBP) + inline(SLG) — write both expressions in-place, do not reference an alias inside the same SELECT
 - ISO = SLG - AVG (or directly: (SUM(doubles) + 2*SUM(triples) + 3*SUM(home_runs)) / NULLIF(SUM(at_bats), 0))
-- ERA = 9.0 * SUM(earned_runs) / NULLIF(SUM(ip_outs) / 3.0, 0)
-- WHIP = (SUM(walks) + SUM(hits_allowed)) / NULLIF(SUM(ip_outs) / 3.0, 0)
+- ERA = 9.0 * SUM(earned_runs) / NULLIF(SUM(ip_outs) / 3.0, 0)  -- ONLY works on tables with earned_runs + ip_outs (season_pitching_stats, game_pitching_logs)
+- WHIP = (SUM(walks) + SUM(hits_allowed)) / NULLIF(SUM(ip_outs) / 3.0, 0)  -- same — needs ip_outs
 - BAA = SUM(hits_allowed) / NULLIF(SUM(at_bats_against), 0)
+- PITCHING SPLIT TABLES (pitch_type_pitching_splits, count_pitching_splits, risp_pitching_splits) have ONLY batter-perspective columns (at_bats, hits, walks, doubles, triples, home_runs, hit_by_pitch, sacrifice_flies). They do NOT have earned_runs or ip_outs. For pitching split aggregations, recompute OPS-against using the BATTING formulas above (the columns share names: SUM(hits), SUM(walks), etc., just interpreted as "allowed"). Do NOT attempt ERA/WHIP — those columns don't exist.
 - This applies to team-level aggregation, multi-season player aggregation (career rate stats), and split-table aggregation. When the implicit-stat default is OPS but the query SUMs across rows, ALWAYS write the OPS expression — never skip it because it's "complex."
 
 ## Row limits
