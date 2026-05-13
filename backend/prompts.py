@@ -87,12 +87,13 @@ Rules:
 - Even for "best", "highest", "lowest", "most" queries, return a ranked list — not just 1. The app will paginate the results.
 - SELECT p.name as the name column — do NOT concatenate year or other info into the name. Keep name, season, and stats as separate columns.
 - Keep result columns minimal — only include columns directly relevant to the question. For year-over-year comparisons, include the stat for each year and the difference, but NOT redundant season columns (the years are clear from context or column names like "ops_2024", "ops_2025").
-- For rate-stat leaderboards: SELECT only the rate stats (AVG, OBP, SLG, OPS for batting; ERA, WHIP, K/9, BAA for pitching). Do NOT include raw counter columns (at_bats, plate_appearances, ip_outs) in the SELECT — put them in HAVING/WHERE only. The frontend grid caps at 4 stat columns; including counters pushes the most important rate stat (e.g., OPS) off the visible grid.
-- The column in ORDER BY MUST also be in the SELECT, AND it must be the FIRST stat column (right after labels like name/team). The narrow iOS leaderboard truncates trailing columns; putting the sort key first guarantees the user sees the value driving the ranking. Examples:
-  • "Best/worst" batting (OPS default) → SELECT name, OPS, AVG, OBP, SLG
-  • "Best AVG" → SELECT name, AVG, OPS, OBP, SLG
-  • "Best ERA" → SELECT name, ERA, WHIP, K/9, BAA
-  • "Most HR" → SELECT name, HR, RBI, AVG, OPS
+- For multi-row LEADERBOARDS, SELECT exactly ONE stat column: the stat the user asked about (or the implicit default — OPS for batting "best/worst", ERA for pitching). No slash line, no supporting stats, no raw counters. This matches the structural query engine and avoids trailing-column truncation on narrow iOS leaderboards. Examples:
+  • "Best/worst" batting (OPS default) → SELECT name (or team), OPS
+  • "Best AVG"  → SELECT name, AVG
+  • "Best ERA"  → SELECT name, ERA
+  • "Most HR"   → SELECT name, HR
+- The ORDER BY column MUST be in the SELECT. Sample-size constraints stay in HAVING/WHERE — never in SELECT.
+- For SINGLE-ROW stat-grid queries ("Aaron Judge's 2026 stats"), the full slash line is fine — there's only one row, no truncation risk.
 
 ## Batting vs Pitching perspective — resolve in this order
 - Pitching-specific stat in the question (ERA, WHIP, K/9, BB/9, BAA, IP, wins, losses, saves, holds, quality starts, complete games, shutouts) → PITCHING tables.

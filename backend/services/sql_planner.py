@@ -164,16 +164,21 @@ perspective, or thresholds — you must infer them the same way our parsers do.
      LIMIT 30;
    For pitching direction: JOIN through season_pitching_stats sps the same way; use ERA/WHIP/BAA formulas from section 5.
 
-7) PRESENTATION
-   • The column you ORDER BY MUST also appear in the SELECT. The frontend renders the SELECT columns; if you sort by OPS but don't select OPS, the user sees the ranking but can't see the values driving it. Hard rule — never sort by a stat that isn't in the SELECT.
-   • The ORDER BY column must be the FIRST stat column in your SELECT (right after any label columns like team/name). The narrow iOS leaderboard truncates trailing columns; putting the sort key first guarantees the user sees the value that produced the ranking. This applies to every leaderboard: the user asked about that stat, so make it most prominent.
-     - "Best/worst" batting (OPS default) → SELECT: OPS, AVG, OBP, SLG
-     - "Best AVG" → SELECT: AVG, OPS, OBP, SLG (or just AVG + 2-3 most relevant supporting stats)
-     - "Best ERA" → SELECT: ERA, WHIP, K/9, BAA
-     - "Most HR" → SELECT: HR, then 2-3 supporting (RBI, AVG, OPS)
-   • For batting rate-stat leaderboards, include the standard slash line (AVG/OBP/SLG/OPS) plus the sort key — at most 4 stat columns total. For pitching: ERA/WHIP/K/9/BAA (full-season) or OPS-against (splits).
-   • Do NOT include raw counter columns (at_bats, plate_appearances, hits, ip_outs, etc.) in the SELECT — put those in HAVING / WHERE only. The frontend grid caps at 4 stat columns; counters push rate stats off the visible grid.
-   • Team codes: SELECT the raw Retrosheet code (NYA, LAN, KCA, etc.). The downstream formatter translates known codes to friendly names automatically. Do NOT write CASE WHEN expressions for team naming.
+7) PRESENTATION — LEADERBOARDS (multi-row ranked results)
+   For leaderboards, SELECT exactly ONE stat column: the stat the user asked about (or the implicit default — OPS for batting "best/worst", ERA for pitching). No slash line, no supporting stats, no raw counters. This matches the structural query engine's pattern and avoids the trailing-column truncation that plagues narrow iOS leaderboards.
+     - "Best/worst" batting (OPS default) → SELECT name (or team), OPS — ONLY.
+     - "Best AVG" → SELECT name, AVG — ONLY.
+     - "Best ERA" → SELECT name, ERA — ONLY.
+     - "Most HR" → SELECT name, HR — ONLY.
+   The user came for one number. Show them that one number, big and clean. If they want the full slash line they'll tap into a player card.
+   Sample-size constraints (HAVING ... at_bats >= 400, etc.) still apply — they belong in HAVING/WHERE, not SELECT.
+   The ORDER BY column MUST also appear in the SELECT (hard rule).
+   Team codes: SELECT the raw Retrosheet code (NYA, LAN, KCA). The downstream formatter translates known codes to friendly names. Do NOT write CASE WHEN.
+
+   PRESENTATION — STAT GRIDS (single-row / single-entity detail)
+   For single-player or single-team detail queries ("Aaron Judge's 2026 stats", "Yankees season stats"), the full slash line / standard stat set is welcome since there's only one row to display. No truncation risk.
+
+   PRESENTATION — GENERAL
    • In your prose narration, use team NAMES, not codes ("the Royals", not "KCA").
    • Season-aggregate tables already exclude spring training. For game-log tables, add `COALESCE(gametype, 'regular') = 'regular'` to the WHERE.
 
