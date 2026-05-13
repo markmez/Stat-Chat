@@ -2125,18 +2125,32 @@ def decompose(question: str) -> QueryPlan:
     # the answer to his own question.
     _has_superlative = bool(re.search(r'\b(?:most|best|highest|peak|top|fewest|worst|lowest|least)\b', lower))
     _has_ever = bool(re.search(r'\bever\b', lower))
-    _has_best_season = bool(re.search(r'\b(?:best|highest|peak|top|worst|lowest)\s+(?:season|year)\b', lower))
+    # "best season" / "best HR season" / "worst ERA year" — allow up to 3 words
+    # between the superlative and season/year for "best [stat] season" patterns.
+    _has_best_season = bool(re.search(
+        r'\b(?:best|highest|peak|top|worst|lowest)\b(?:\s+\w+){0,3}\s+(?:season|year)\b', lower
+    ))
     _has_career_best = bool(re.search(r'\bcareer[- ]?(?:high|best|worst|low|lowest|highest)\b', lower))
+    _has_career_total = bool(re.search(
+        r'\bcareer\s+(?:total|totals|stat|stats|statistics|number|numbers|sum|sums)\b', lower
+    ))
+    # Naked possessive — "Maddux's lowest WHIP", "Trout's best OPS", "Aaron's most HR".
+    # When the user says "[player]'s [superlative] [stat]" with no other scope cue,
+    # the natural reading is "his career-best single-season value." Plays well
+    # with the player_name + stat already detected by decompose.
     _is_player_ssn_max = (
         plan.player_name and (plan.stat or plan.derived_stat)
+        and not _has_career_total
         and (
             plan.scope == "all_time"
             or (_has_superlative and _has_ever)
             or _has_best_season
             or _has_career_best
+            # Bare possessive form: superlative + player + stat with no
+            # specific year and no career-total phrasing. Default to single-
+            # season max (the natural reading of "Maddux's lowest WHIP").
+            or (_has_superlative and plan.season is None)
         )
-        # Never override explicit "career total" / "career stats" intent.
-        and not re.search(r'\bcareer\s+(?:total|totals|stat|stats|statistics|number|numbers|sum|sums)\b', lower)
     )
     if _is_player_ssn_max and plan.query_type in ("leaderboard", "threshold"):
         plan.query_type = "player_single_season_max"

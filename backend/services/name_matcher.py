@@ -1297,20 +1297,27 @@ def is_pitcher(name: str) -> bool:
         pitching_gs = row[0]
         pitching_ip = float(row[1]) if row[1] else 0
 
-        # Check batting stats (two-way player rule: PA >= 130 AND IP >= 30 = two-way)
+        # Two-way player rule: 130 PA AND 30 IP IN THE SAME SEASON.
+        # Aggregate-across-careers misclassifies pitchers who batted in
+        # non-DH eras (Nolan Ryan as a Met/Astro, Bob Gibson, Greg Maddux, etc.)
+        # — they accumulate >= 500 career PA from pitcher at-bats but are
+        # clearly pitchers, not two-way players. The Ohtani rule is about
+        # doing both jobs simultaneously, which is a per-season fact.
         cur.execute("""
-            SELECT COALESCE(SUM(s.at_bats + s.walks + s.hit_by_pitch), 0)
-            FROM season_batting_stats s
-            JOIN players p ON s.player_id = p.player_id
+            SELECT 1
+            FROM season_batting_stats sb
+            JOIN season_pitching_stats sp
+              ON sp.player_id = sb.player_id AND sp.season = sb.season
+            JOIN players p ON sb.player_id = p.player_id
             WHERE p.name = ?
+              AND (sb.at_bats + sb.walks + sb.hit_by_pitch) >= 130
+              AND sp.ip_outs >= 90
+            LIMIT 1
         """, (name,))
-        bat_row = cur.fetchone()
+        is_two_way = cur.fetchone() is not None
         conn.close()
-        total_pa = bat_row[0] if bat_row else 0
 
-        # Two-way player (like Ohtani): significant batting AND pitching
-        # Not classified as "pitcher" — returns False so batting builders are used
-        if total_pa >= 500 and pitching_ip >= 100:
+        if is_two_way:
             return False
 
         return True
