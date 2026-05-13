@@ -3380,7 +3380,9 @@ def parse_catch_all_player_stat(input_str: str) -> Optional[dict]:
     # Reject queries where the player name is context, not the subject.
     # Questions starting with interrogative words are asking about the stat broadly,
     # not about the specific player mentioned.
-    import re
+    # (re is already imported at module level — the redundant local import
+    # below was creating a function-scope `re` that shadowed the module-level
+    # one and tripped UnboundLocalError on the guard above.)
     if re.match(r'^(who|what|how|when|has anyone|has any|have any|is there|are there|which)\b', lower):
         return None
     # "closest to", "since [player]" — comparative/historical
