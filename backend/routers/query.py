@@ -452,6 +452,53 @@ def _format_structured_rows_to_grid(
     if season_cols and non_season:
         stat_cols = non_season[:1] + season_cols + non_season[1:]
 
+    # Promote the sort-key column to position 0. The narrow iOS
+    # leaderboard truncates trailing columns; if Sonnet ordered by OPS
+    # but put OPS last in the SELECT, the user sees the sorted ranking
+    # without being able to read the value that drove it.
+    # Heuristic: among numeric stat columns, the sort key is the one
+    # whose values are monotonically increasing or decreasing across
+    # rows. With enough rows the sort key is uniquely monotonic; ties
+    # broken by a priority list of common ranking stats.
+    if multi_row and len(data_rows) >= 3:
+        candidates: list[str] = []
+        for c in stat_cols:
+            vals: list[float] = []
+            ok = True
+            for row in data_rows[:10]:
+                v = row.get(c)
+                if v is None or v == "" or v == "NULL":
+                    ok = False
+                    break
+                try:
+                    vals.append(float(v))
+                except (ValueError, TypeError):
+                    ok = False
+                    break
+            if not ok or len(vals) < 3:
+                continue
+            is_asc = all(vals[i] <= vals[i+1] for i in range(len(vals)-1))
+            is_desc = all(vals[i] >= vals[i+1] for i in range(len(vals)-1))
+            if (is_asc or is_desc) and len(set(vals)) > 1:
+                candidates.append(c)
+        sort_key: Optional[str] = None
+        if len(candidates) == 1:
+            sort_key = candidates[0]
+        elif candidates:
+            # Multiple monotonic columns (rare — happens when stats
+            # correlate). Prefer common explicit ranking stats.
+            priority = ["ops", "era", "ops_against", "baa", "hr", "rbi",
+                        "wins", "losses", "saves", "avg", "obp", "slg"]
+            for p in priority:
+                match = next((c for c in candidates if c.lower() == p), None)
+                if match:
+                    sort_key = match
+                    break
+            if sort_key is None:
+                sort_key = candidates[0]
+        if sort_key and sort_key in stat_cols and stat_cols[0] != sort_key:
+            stat_cols = [sort_key] + [c for c in stat_cols if c != sort_key]
+
     # Strip columns where every row has the same value (no information)
     if multi_row and len(data_rows) > 1:
         constant_cols = set()
