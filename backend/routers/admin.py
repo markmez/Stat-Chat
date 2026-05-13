@@ -11,7 +11,8 @@ import os
 import sqlite3
 import subprocess
 import sys
-from datetime import date
+from datetime import date, timedelta
+from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import HTMLResponse
@@ -650,42 +651,81 @@ async def redetect_events(
     }
 
 
+def _mlb_schedule_games(date_iso: str) -> Optional[int]:
+    """Return the number of completed games on `date_iso` per MLB Stats API.
+    Returns None on API error (caller decides whether to skip the date)."""
+    import requests as _req
+    try:
+        resp = _req.get(
+            "https://statsapi.mlb.com/api/v1/schedule",
+            params={"sportId": 1, "date": date_iso},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        games = (data.get("dates", [{}])[0] or {}).get("games", []) if data.get("dates") else []
+        return sum(
+            1 for g in games
+            if g.get("status", {}).get("abstractGameState") == "Final"
+        )
+    except Exception:
+        return None
+
+
 @router.post("/coverage-check")
 async def coverage_check(
     days: int = 4,
-    min_events: int = 10,
-    min_game_logs: int = 200,
     auto_fix: bool = True,
     authorization: str | None = Header(None),
 ):
     """Scan recent dates for under-detected event buckets and self-heal.
 
-    Catches the failure mode where game logs fully landed but events were
-    detected against a partial snapshot (e.g., MSF still publishing at
-    pipeline tick) and never refreshed once data completed. Standard
-    /health and feed-stale checks miss this because *some* events exist —
-    just far fewer than they should.
+    Self-healing for two failure modes:
+      (a) Game logs partially loaded — MSF pull failed mid-day or the cron
+          didn't complete. Triggers full /admin/refresh-style repull.
+      (b) Game logs complete but events under-detected — detect_all ran
+          against a partial snapshot and never re-ran. Triggers redetect.
 
-    Algorithm: for each of the past `days` dates (excluding today, which
-    is always partial), check if event_count < min_events while
-    batting_log_count >= min_game_logs. If yes, the date has full data
-    but is under-detected — purge and redetect.
+    Algorithm — schedule-aware:
+      1. For each date in the window, fetch MLB Stats API to learn how
+         many games were COMPLETED (Final) that day.
+      2. Compute expected counts:
+           expected_logs   ≈ completed_games × 20
+           expected_events ≈ max(2, completed_games × 0.5)
+      3. Two checks per date:
+           - actual_logs < expected_logs × 0.85 → PARTIAL LOAD (needs refresh)
+           - actual_logs ≥ expected_logs × 0.85 AND actual_events < expected_events
+             → UNDER-DETECTED (needs redetect)
+
+    Timing: dates older than yesterday are always enforced. Yesterday is
+    enforced only after 10 AM ET — pipeline cascade runs through 8 AM ET
+    so post-10 is "everything should be in or it's a real issue."
+
+    Schedule-relative thresholds replace the previous fixed
+    `min_events=10` / `min_game_logs=200` defaults — those gated out
+    light-schedule days like Mondays (only 6 games scheduled), which
+    appeared "partial" by the old log count but were actually complete.
 
     Defaults:
-      - days=4: today + past 3 game dates. Pipeline usually catches
-        regressions within a day or two; longer lookback risks racing
-        against detectors that legitimately produce sparse buckets.
-      - min_events=10: comfortably below typical 17-27 event range.
-      - min_game_logs=200: rules out partial days (<100 logs is normal
-        for in-progress dates).
-      - auto_fix=True: triggers redetect inline. Set false to inspect
-        without acting (useful for monitoring dashboards).
+      - days=4: today + past 3 game dates.
+      - auto_fix=True: triggers refresh / redetect inline. Set false to
+        inspect without acting (useful for monitoring).
     """
     verify_admin(authorization)
+    from datetime import datetime as _dt
+    try:
+        from zoneinfo import ZoneInfo
+        _now_et = _dt.now(ZoneInfo("America/New_York"))
+    except Exception:
+        # Fallback for systems without zoneinfo data
+        _now_et = _dt.utcnow()
     conn = sqlite3.connect(DB_PATH, timeout=10)
     today_iso = date.today().isoformat()
+    yesterday_iso = (date.today() - timedelta(days=1)).isoformat()
+    enforce_yesterday = _now_et.hour >= 10  # 10 AM ET = panic time
     checked: list = []
     backfilled: list = []
+    refresh_needed: list = []
     try:
         # Pull per-date event count + batting log count for the window.
         ev_rows = conn.execute(f"""
@@ -702,11 +742,34 @@ async def coverage_check(
         log_by_date = {d: c for d, c in log_rows}
         # Iterate the union of dates with data on either side.
         for d in sorted(set(ev_by_date) | set(log_by_date), reverse=True):
+            # Skip yesterday before 10 AM ET — pipeline still cascading.
+            if d == yesterday_iso and not enforce_yesterday:
+                continue
             ev_count = ev_by_date.get(d, 0)
             log_count = log_by_date.get(d, 0)
-            entry = {"date": d, "events": ev_count, "batting_logs": log_count}
+            # Ask MLB how many games actually completed on this date.
+            completed_games = _mlb_schedule_games(d)
+            entry = {
+                "date": d,
+                "events": ev_count,
+                "batting_logs": log_count,
+                "scheduled_games": completed_games,
+            }
             checked.append(entry)
-            if log_count >= min_game_logs and ev_count < min_events:
+            if completed_games is None or completed_games == 0:
+                # Schedule API failed or genuinely no games — can't assess.
+                continue
+            expected_logs = completed_games * 20
+            expected_events = max(2, int(completed_games * 0.5))
+            # Partial load: logs short of expected. Needs a data refresh,
+            # not just a redetect.
+            if log_count < expected_logs * 0.85:
+                entry["partial_load"] = True
+                if auto_fix:
+                    refresh_needed.append(d)
+                continue
+            # Under-detected: logs there, events sparse. Just redetect.
+            if ev_count < expected_events:
                 entry["under_detected"] = True
                 if auto_fix:
                     backfilled.append(d)
@@ -735,12 +798,32 @@ async def coverage_check(
                     "coverage_check_backfill_error date=%s error=%s", d, e,
                 )
 
+    # Partial-load refresh — kick off the live pipeline asynchronously.
+    # Per-date refresh isn't supported by pull_live_stats.py; it always
+    # refreshes the current season as a whole. Triggering it once handles
+    # all partial dates in the window. Run in background subprocess so the
+    # HTTP response returns promptly.
+    refresh_triggered = False
+    if auto_fix and refresh_needed:
+        try:
+            import subprocess
+            cmd = [sys.executable, PIPELINE_SCRIPT, "--db", DB_PATH]
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            refresh_triggered = True
+        except Exception as e:
+            import logging as _lg
+            _lg.getLogger("statchat.admin").error(
+                "coverage_check_refresh_error error=%s", e,
+            )
+
     return {
         "status": "ok",
         "today": today_iso,
+        "enforce_yesterday": enforce_yesterday,
         "checked": checked,
         "backfilled": backfilled,
-        "thresholds": {"min_events": min_events, "min_game_logs": min_game_logs},
+        "refresh_needed": refresh_needed,
+        "refresh_triggered": refresh_triggered,
     }
 
 

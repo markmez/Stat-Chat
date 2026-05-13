@@ -83,11 +83,11 @@ HOUR_UTC=$(date -u +%H)
 TODAY_UTC=$(date -u +%Y-%m-%d)
 YESTERDAY_UTC=$(date -u -d "yesterday" +%Y-%m-%d)
 
-# Before 12 UTC (8 AM ET), MSF may not have published last night's box
-# scores yet. Don't enforce data-freshness in that window — server is
-# still healthy even if data is one day behind.
-if [ "$HOUR_UTC" -lt 12 ]; then
-    ping_ok "ok (pre-noon UTC, freshness unenforced)"
+# Before 14 UTC (10 AM EDT / 9 AM EST), MSF may not have published last
+# night's box scores yet. Pipeline cascades run through 8 AM ET; 10 AM
+# ET is the panic threshold — anything missing then is a real issue.
+if [ "$HOUR_UTC" -lt 14 ]; then
+    ping_ok "ok (pre-10am ET, freshness unenforced)"
     exit 0
 fi
 
@@ -121,7 +121,15 @@ if [ "$DATA_STALE" -eq 0 ] && [ "$FEED_STALE" -eq 0 ]; then
     # is found.
     COVERAGE=$(curl -fsS -m 60 -X POST "$API_BASE/admin/coverage-check" -H "$AUTH_HDR" 2>&1 || true)
     BACKFILLED=$(echo "$COVERAGE" | grep -oE '"backfilled":\[[^]]*\]' | grep -oE '"[0-9-]+"' | tr -d '"' | tr '\n' ' ' | sed 's/ $//')
-    if [ -n "$BACKFILLED" ]; then
+    REFRESH_NEEDED=$(echo "$COVERAGE" | grep -oE '"refresh_needed":\[[^]]*\]' | grep -oE '"[0-9-]+"' | tr -d '"' | tr '\n' ' ' | sed 's/ $//')
+    if [ -n "$REFRESH_NEEDED" ]; then
+        # Partial-load detected (game logs short of MLB schedule). Coverage
+        # check already kicked off pull_live_stats — start the recovery
+        # cooldown so we don't trample it on the next 5-min tick.
+        echo "[healthcheck] coverage partial-load on: $REFRESH_NEEDED — pipeline refresh triggered" >&2
+        mark_recovery
+        ping_ok "ok data=${LATEST_GAME_DATE} feed=${FEED_LATEST}; partial load on ${REFRESH_NEEDED}, refresh triggered"
+    elif [ -n "$BACKFILLED" ]; then
         echo "[healthcheck] coverage backfilled dates: $BACKFILLED" >&2
         ping_ok "ok data=${LATEST_GAME_DATE} feed=${FEED_LATEST}; coverage backfilled ${BACKFILLED}"
     else
