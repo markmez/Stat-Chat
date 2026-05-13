@@ -1844,6 +1844,7 @@ def parse_single_stat_lookup(input_str: str) -> Optional[dict]:
 
     # Exclude leaderboard patterns
     leaderboard_words = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest", "lowest",
+                         "fewest", "worst", "least",
                          "who led", "who leads", "who hit the most", "who had the most", "leading"]
     if any(w in lower for w in leaderboard_words):
         return None
@@ -1885,6 +1886,7 @@ def parse_career_lookup(input_str: str) -> Optional[dict]:
 
     # Exclude leaderboard patterns
     leaderboard_words = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest", "lowest",
+                         "fewest", "worst", "least",
                          "who led", "who leads", "who hit the most", "who had the most", "leading"]
     if any(w in lower for w in leaderboard_words):
         return None
@@ -2293,6 +2295,7 @@ def parse_month_query(input_str: str) -> Optional[dict]:
 
     # Exclude leaderboard patterns
     leaderboard_words = ["leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest", "lowest",
+                         "fewest", "worst", "least",
                          "who led", "who leads", "who hit the most", "who had the most", "leading"]
     if any(w in lower for w in leaderboard_words):
         return None

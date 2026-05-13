@@ -620,20 +620,6 @@ def try_intercept(question: str):
                      trimmed, e, type(e).__name__)
         _ping_qe_error(trimmed, f"decompose: {type(e).__name__}: {e}")
         return None
-    # TEMP outer trace
-    if "maddux" in trimmed.lower() and "ever" in trimmed.lower():
-        try:
-            from services.metering import log_server_error as _lse
-            _lse(source="interceptor_maddux_trace",
-                 error_type="decompose_returned",
-                 error_message=("player=" + repr(plan.player_name) +
-                                " stat=" + (plan.stat.db_column if plan.stat else "None") +
-                                " qtype=" + repr(plan.query_type) +
-                                " valid=" + repr(plan.is_valid) +
-                                " unexpl=" + repr(plan.unexplained_words) +
-                                " scope=" + repr(plan.scope)))
-        except Exception:
-            pass
     logger.info("query_engine_plan question=%r valid=%s scope=%s stat=%s unexplained=%s active=%s since_date=%s",
                 trimmed, plan.is_valid, plan.scope, plan.stat, plan.unexplained_words, plan.active_only, plan.since_date)
     if plan.is_valid:

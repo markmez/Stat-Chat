@@ -2188,17 +2188,6 @@ def decompose(question: str) -> QueryPlan:
         # adjectives. Clear them so plan.is_valid returns True and the
         # executor can produce the right answer.
         plan.unexplained_words = []
-    # TEMP diagnostic
-    if "maddux" in lower and "ever" in lower:
-        try:
-            from services.metering import log_server_error as _lse
-            _lse(source="decompose_maddux_debug",
-                 error_type="trace",
-                 error_message=f"player={plan.player_name!r} stat={plan.stat.db_column if plan.stat else None!r} "
-                               f"qtype={plan.query_type!r} unexpl={plan.unexplained_words!r} "
-                               f"is_ssn={_is_player_ssn_max} scope={plan.scope!r}")
-        except Exception:
-            pass
 
     # Final overrides for date_range scope — must run last since earlier steps
     # may have set threshold from date numbers (e.g. "16" from "june 16")
