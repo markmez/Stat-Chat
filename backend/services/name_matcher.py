@@ -1658,6 +1658,19 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
         if re.search(pat, lower):
             return None
 
+    # Reject "player single-season max" queries — those want the BEST single
+    # season across the player's career, not the most recent season. Handled
+    # by parse_player_single_season_max (step 25b in interceptor). Without
+    # this guard, "Most home runs Hank Aaron ever hit in a season" silently
+    # matches here and returns Aaron's final-season stat line.
+    if re.search(r'\b(?:most|best|highest|fewest|worst|lowest|peak|top|least)\b', lower) and (
+        re.search(r'\bever\b', lower)
+        or re.search(r'\bin (?:a|one|any|a single) season\b', lower)
+        or re.search(r'\b(?:best|highest|peak|top|worst|lowest)\s+(?:season|year)\b', lower)
+        or re.search(r'\bcareer[- ]?(?:high|best|worst|low|lowest|highest)\b', lower)
+    ):
+        return None
+
     # Reject narrative / interrogative / opinion shapes. These ask about
     # WHY / HOW / a player's story — not their stat line. Returning a
     # season summary drops the actual question and ships an answer the
