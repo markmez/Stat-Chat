@@ -119,21 +119,50 @@ perspective, or thresholds — you must infer them the same way our parsers do.
    • Per-team in-progress (split or full-season aggregate): scale the above by season fraction; for early-to-mid season, use HAVING SUM(at_bats) >= 200 as a minimum floor.
    • For split-table aggregations (vs LHP, vs 4-seamers, with RISP, with 2 strikes): apply the same HAVING on the split's at_bats column. NEVER let small-sample teams or players show up in rate-stat leaderboards — a single player with 12 ABs at .500 must not be the answer.
 
-5) TEAM AGGREGATION PATTERN — per-player split tables (pitch_type_batting_splits, count_batting_splits, risp_batting_splits, and pitching equivalents) do NOT carry team directly. Aggregate by team via JOIN through season stats:
+5) RATE-STAT AGGREGATION FORMULAS — when grouping across players/seasons/splits, NEVER use AVG() on the precomputed per-row rate column (e.g., AVG(ops)). That gives a row-weighted average, not the true aggregate. Recompute from raw components:
+
+   Batting:
+     AVG = SUM(hits) / NULLIF(SUM(at_bats), 0)
+     OBP = (SUM(hits) + SUM(walks) + SUM(hit_by_pitch))
+           / NULLIF(SUM(at_bats) + SUM(walks) + SUM(hit_by_pitch) + SUM(sacrifice_flies), 0)
+     SLG = (SUM(hits) + SUM(doubles) + 2*SUM(triples) + 3*SUM(home_runs))
+           / NULLIF(SUM(at_bats), 0)
+     OPS = OBP + SLG  (inline both expressions)
+     ISO = SLG - AVG
+   Pitching:
+     ERA = 9.0 * SUM(earned_runs) / NULLIF(SUM(ip_outs) / 3.0, 0)
+     WHIP = (SUM(walks) + SUM(hits_allowed)) / NULLIF(SUM(ip_outs) / 3.0, 0)
+     BAA = SUM(hits_allowed) / NULLIF(SUM(at_bats_against), 0)
+     K/9 = 9.0 * SUM(strikeouts) / NULLIF(SUM(ip_outs) / 3.0, 0)
+     BB/9 = 9.0 * SUM(walks) / NULLIF(SUM(ip_outs) / 3.0, 0)
+   For SPLIT tables (pitch_type_batting_splits, etc.), the SUM columns are the same names — at_bats, hits, doubles, triples, home_runs, walks, hit_by_pitch, sacrifice_flies, strikeouts. Pitching splits use batting_avg_against, etc., but the raw counters (hits, walks, etc.) are still summable for ad-hoc recomputation.
+
+6) TEAM AGGREGATION PATTERN — per-player split tables (pitch_type_batting_splits, count_batting_splits, risp_batting_splits, and pitching equivalents) do NOT carry team directly. Aggregate by team via JOIN through season stats. Example using OPS (the implicit default for "best/worst" hitting):
      SELECT sbs.team,
-            SUM(p.at_bats) AS ab, SUM(p.hits) AS h,
-            ROUND(1.0 * SUM(p.hits) / NULLIF(SUM(p.at_bats), 0), 3) AS avg
+            SUM(p.at_bats) AS ab,
+            ROUND(1.0 * SUM(p.hits) / NULLIF(SUM(p.at_bats), 0), 3) AS avg,
+            ROUND(1.0 * (SUM(p.hits) + SUM(p.walks) + SUM(p.hit_by_pitch))
+                  / NULLIF(SUM(p.at_bats) + SUM(p.walks) + SUM(p.hit_by_pitch) + SUM(p.sacrifice_flies), 0), 3) AS obp,
+            ROUND(1.0 * (SUM(p.hits) + SUM(p.doubles) + 2*SUM(p.triples) + 3*SUM(p.home_runs))
+                  / NULLIF(SUM(p.at_bats), 0), 3) AS slg,
+            ROUND(
+              1.0 * (SUM(p.hits) + SUM(p.walks) + SUM(p.hit_by_pitch))
+                    / NULLIF(SUM(p.at_bats) + SUM(p.walks) + SUM(p.hit_by_pitch) + SUM(p.sacrifice_flies), 0)
+              +
+              1.0 * (SUM(p.hits) + SUM(p.doubles) + 2*SUM(p.triples) + 3*SUM(p.home_runs))
+                    / NULLIF(SUM(p.at_bats), 0)
+            , 3) AS ops
      FROM pitch_type_batting_splits p
      JOIN season_batting_stats sbs
        ON p.player_id = sbs.player_id AND p.season = sbs.year
      WHERE p.pitch_type = '4-Seam' AND p.season = {date.today().year}
      GROUP BY sbs.team
      HAVING SUM(p.at_bats) >= 200      -- in-progress season floor
-     ORDER BY avg ASC                  -- ASC for "worst", DESC for "best"
+     ORDER BY ops ASC                  -- ASC for "worst", DESC for "best"
      LIMIT 30;
-   For pitching direction: JOIN through season_pitching_stats sps the same way.
+   For pitching direction: JOIN through season_pitching_stats sps the same way; use ERA/WHIP/BAA formulas from section 5.
 
-6) PRESENTATION
+7) PRESENTATION
    • Team codes: SELECT the raw Retrosheet code (NYA, LAN, KCA, etc.). The downstream formatter translates known codes to friendly names automatically. Do NOT write CASE WHEN expressions for team naming.
    • In your prose narration, use team NAMES, not codes ("the Royals", not "KCA").
    • Season-aggregate tables already exclude spring training. For game-log tables, add `COALESCE(gametype, 'regular') = 'regular'` to the WHERE.

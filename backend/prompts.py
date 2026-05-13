@@ -146,6 +146,18 @@ Rules:
 - TB = hits+doubles+2*triples+3*home_runs, XBH = doubles+triples+home_runs
 - FIP = (13*home_runs+3*(walks+hit_by_pitch)-2*strikeouts)/(ip_outs/3.0)+3.10
 
+## Rate-stat aggregation (multi-row SUMs)
+- NEVER use AVG() on a precomputed rate column (avg, obp, slg, ops, era, whip) when grouping across rows — it gives a row-weighted average, not the true aggregate. Recompute from raw component SUMs:
+- AVG = SUM(hits) / NULLIF(SUM(at_bats), 0)
+- OBP = (SUM(hits) + SUM(walks) + SUM(hit_by_pitch)) / NULLIF(SUM(at_bats) + SUM(walks) + SUM(hit_by_pitch) + SUM(sacrifice_flies), 0)
+- SLG = (SUM(hits) + SUM(doubles) + 2*SUM(triples) + 3*SUM(home_runs)) / NULLIF(SUM(at_bats), 0)
+- OPS = inline(OBP) + inline(SLG) — write both expressions in-place, do not reference an alias inside the same SELECT
+- ISO = SLG - AVG (or directly: (SUM(doubles) + 2*SUM(triples) + 3*SUM(home_runs)) / NULLIF(SUM(at_bats), 0))
+- ERA = 9.0 * SUM(earned_runs) / NULLIF(SUM(ip_outs) / 3.0, 0)
+- WHIP = (SUM(walks) + SUM(hits_allowed)) / NULLIF(SUM(ip_outs) / 3.0, 0)
+- BAA = SUM(hits_allowed) / NULLIF(SUM(at_bats_against), 0)
+- This applies to team-level aggregation, multi-season player aggregation (career rate stats), and split-table aggregation. When the implicit-stat default is OPS but the query SUMs across rows, ALWAYS write the OPS expression — never skip it because it's "complex."
+
 ## Row limits
 - For "how many" / counting questions AND threshold questions ("who has done X", "players with X"): return the matching rows with LIMIT 100. Do NOT use SELECT COUNT(*) — the app needs the actual rows to display examples. The app will compute the total count and display it.
 - For leaderboard/ranking queries ("top N", "best", "most"): LIMIT 50 unless a specific number is requested.
