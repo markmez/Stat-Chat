@@ -5679,3 +5679,24 @@ async def audit_detection_types(
     except Exception as e:
         raise HTTPException(500, str(e))
 
+
+@router.post("/revalidate-subscriptions")
+async def revalidate_subscriptions(
+    authorization: str | None = Header(None),
+    key: str | None = None,
+):
+    """Refund leak backstop: poll Apple's App Store Server API for every paid
+    device and downgrade any whose subscription is no longer Active or in a
+    grace period. Catches refunds/revokes that the Server Notifications V2
+    webhook missed (delivery failure, signature drift, brief outage, etc.).
+
+    Idempotent. Safe to run daily. Requires APP_STORE_KEY_ID,
+    APP_STORE_ISSUER_ID, and APP_STORE_PRIVATE_KEY_PATH env vars.
+    """
+    verify_admin(authorization, key)
+    from services.subscription_validator import revalidate_paid_devices
+    try:
+        return revalidate_paid_devices()
+    except Exception as e:
+        raise HTTPException(500, str(e))
+

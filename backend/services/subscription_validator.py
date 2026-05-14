@@ -380,3 +380,180 @@ def handle_signed_notification(signed_payload: str) -> dict:
         "new_is_paid": new_is_paid,
         "new_expires_at": new_expires,
     }
+
+
+# ---------------------------------------------------------------------------
+# App Store Server API — Periodic Revalidation (Refund Leak Backstop)
+# ---------------------------------------------------------------------------
+#
+# Server Notifications V2 (Apple → our /storekit-notification endpoint) is
+# the primary path for catching refunds and revocations. It's reliable in
+# production but not always in sandbox. As a backstop, we periodically poll
+# Apple's App Store Server API for each currently-paid device's subscription
+# status. If Apple says the subscription is no longer active (refunded,
+# revoked, or expired) and our DB still says is_paid=1, we downgrade.
+#
+# Worst-case window for a refund leak: cron cadence (daily) instead of the
+# JWS natural-expiry ceiling (up to 1 year for yearly subs).
+
+APP_STORE_KEY_ID = os.getenv("APP_STORE_KEY_ID", "")
+APP_STORE_ISSUER_ID = os.getenv("APP_STORE_ISSUER_ID", "")
+APP_STORE_PRIVATE_KEY_PATH = os.getenv(
+    "APP_STORE_PRIVATE_KEY_PATH", "/opt/statchat/AppStoreServerAPI.p8"
+)
+
+
+def _make_server_api_client(environment: Environment):
+    """Build an AppStoreServerAPIClient for the given environment, or None
+    if credentials aren't configured. Caller falls through to the other
+    environment on per-OTID basis."""
+    if not (APP_STORE_KEY_ID and APP_STORE_ISSUER_ID
+            and os.path.exists(APP_STORE_PRIVATE_KEY_PATH)):
+        return None
+    try:
+        from appstoreserverlibrary.api_client import AppStoreServerAPIClient
+    except ImportError:
+        return None
+    with open(APP_STORE_PRIVATE_KEY_PATH, "rb") as f:
+        signing_key = f.read()
+    return AppStoreServerAPIClient(
+        signing_key=signing_key,
+        key_id=APP_STORE_KEY_ID,
+        issuer_id=APP_STORE_ISSUER_ID,
+        bundle_id=BUNDLE_ID,
+        environment=environment,
+    )
+
+
+def _is_status_active(status_value: int) -> bool:
+    """App Store subscription status enum:
+       1 = Active, 2 = Expired, 3 = Billing retry, 4 = Grace period, 5 = Revoked
+    Treat Active and Grace Period as "still has access." Others downgrade."""
+    return status_value in (1, 4)
+
+
+def revalidate_paid_devices() -> dict:
+    """Re-validate every paid device against Apple's App Store Server API.
+
+    Catches refunds / revokes that didn't reach us via Server Notifications V2.
+    For each unique original_transaction_id in device_quota where is_paid=1,
+    queries /inApps/v1/subscriptions/{originalTransactionId} and downgrades
+    any whose subscription status is not Active or Grace Period.
+
+    Tries Production first; falls back to Sandbox per-OTID. (We don't store
+    environment per row, so this dual-attempt is needed until we do.)
+
+    Returns a summary dict: checked count, downgraded list, error count.
+    """
+    summary = {
+        "checked": 0,
+        "downgraded": [],
+        "errors": [],
+        "skipped_reason": None,
+    }
+
+    # Verify credentials present before opening DB.
+    if not (APP_STORE_KEY_ID and APP_STORE_ISSUER_ID
+            and os.path.exists(APP_STORE_PRIVATE_KEY_PATH)):
+        summary["skipped_reason"] = "credentials_missing"
+        return summary
+
+    conn = sqlite3.connect(METERING_DB_PATH)
+    try:
+        _ensure_original_transaction_id_column(conn)
+        rows = conn.execute("""
+            SELECT DISTINCT original_transaction_id
+            FROM device_quota
+            WHERE is_paid = 1
+              AND original_transaction_id IS NOT NULL
+              AND original_transaction_id != ''
+        """).fetchall()
+        otids = [r[0] for r in rows]
+    finally:
+        conn.close()
+
+    if not otids:
+        return summary
+
+    prod_client = _make_server_api_client(Environment.PRODUCTION)
+    sandbox_client = _make_server_api_client(Environment.SANDBOX)
+
+    for otid in otids:
+        summary["checked"] += 1
+        is_active = None
+        last_error: Optional[Exception] = None
+        # Try Production first, then Sandbox. The library raises on
+        # environment mismatch — we catch and move on.
+        for client in (prod_client, sandbox_client):
+            if client is None:
+                continue
+            try:
+                resp = client.get_all_subscription_statuses(otid)
+            except Exception as e:
+                last_error = e
+                continue
+            # Inspect statuses across the products in our allowlist.
+            found_active = False
+            for group in (resp.data or []):
+                for tx in (group.lastTransactions or []):
+                    product_id = (tx.signedTransactionInfo and
+                                  _decode_jws_product_id(tx.signedTransactionInfo))
+                    if product_id not in ALLOWED_PRODUCT_IDS:
+                        continue
+                    status_int = tx.status if hasattr(tx, "status") else (
+                        tx.status.value if hasattr(tx.status, "value") else 0
+                    )
+                    if isinstance(status_int, int) and _is_status_active(status_int):
+                        found_active = True
+                        break
+                if found_active:
+                    break
+            is_active = found_active
+            break  # client responded — don't try the other environment
+
+        if is_active is None:
+            summary["errors"].append({
+                "otid": otid,
+                "error": f"{type(last_error).__name__}: {last_error}" if last_error else "no client response",
+            })
+            continue
+
+        if is_active:
+            continue  # subscription still active — nothing to do
+
+        # Downgrade all device_quota rows for this OTID.
+        conn = sqlite3.connect(METERING_DB_PATH)
+        try:
+            today_iso = date.today().isoformat()
+            cur = conn.execute(
+                "UPDATE device_quota SET is_paid = 0, paid_expires_at = ? "
+                "WHERE original_transaction_id = ? AND is_paid = 1",
+                (today_iso, otid),
+            )
+            conn.commit()
+            summary["downgraded"].append({
+                "otid": otid,
+                "rows_affected": cur.rowcount,
+            })
+        finally:
+            conn.close()
+
+    return summary
+
+
+def _decode_jws_product_id(signed_jws: str) -> Optional[str]:
+    """Cheap product-id extraction from a JWS without full verification.
+    Used in revalidation to identify which product a subscription record
+    refers to. Full verification isn't necessary here — Apple's API call
+    is the authoritative source for status; we just need to filter to our
+    allowlist."""
+    import base64
+    import json
+    try:
+        payload_b64 = signed_jws.split(".")[1]
+        # Add padding if needed
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        payload_json = base64.urlsafe_b64decode(payload_b64).decode("utf-8")
+        return json.loads(payload_json).get("productId")
+    except Exception:
+        return None

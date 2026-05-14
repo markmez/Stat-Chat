@@ -13,11 +13,14 @@
       runs-on: ubuntu-latest
       steps:                                                                                                         
         - name: Deploy to Lightsail
-          uses: appleboy/ssh-action@v1                                                                               
-          with:                                                                                                    
+          uses: appleboy/ssh-action@v1
+          env:
+            APP_STORE_SERVER_API_KEY: ${{ secrets.APP_STORE_SERVER_API_KEY }}
+          with:
             host: 3.223.208.21
             username: ubuntu
             key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
+            envs: APP_STORE_SERVER_API_KEY
             script: |
               cd /opt/statchat/repo
               sudo -u statchat git pull
@@ -32,6 +35,24 @@
               # without this the verifier falls back to Sandbox-only).
               grep -q APP_APPLE_ID /opt/statchat/.env 2>/dev/null || \
                 echo 'APP_APPLE_ID=6763139565' | sudo tee -a /opt/statchat/.env > /dev/null
+              # App Store Server API credentials for the daily refund-leak
+              # backstop (services/subscription_validator.revalidate_paid_devices).
+              # Key ID and Issuer ID are inlined (not secrets — they only
+              # identify the key, can't sign anything). The .p8 IS the secret
+              # and is written from the APP_STORE_SERVER_API_KEY GitHub Secret.
+              grep -q APP_STORE_KEY_ID /opt/statchat/.env 2>/dev/null || \
+                echo 'APP_STORE_KEY_ID=V28MR95GA8' | sudo tee -a /opt/statchat/.env > /dev/null
+              grep -q APP_STORE_ISSUER_ID /opt/statchat/.env 2>/dev/null || \
+                echo 'APP_STORE_ISSUER_ID=524ee267-62fb-4c70-882d-689bd4d36e42' | sudo tee -a /opt/statchat/.env > /dev/null
+              grep -q APP_STORE_PRIVATE_KEY_PATH /opt/statchat/.env 2>/dev/null || \
+                echo 'APP_STORE_PRIVATE_KEY_PATH=/opt/statchat/AppStoreServerAPI.p8' | sudo tee -a /opt/statchat/.env > /dev/null
+              # Write the .p8 if the secret is present. Idempotent — overwrites
+              # each deploy so rotations propagate automatically.
+              if [ -n "$APP_STORE_SERVER_API_KEY" ]; then
+                echo "$APP_STORE_SERVER_API_KEY" | sudo tee /opt/statchat/AppStoreServerAPI.p8 > /dev/null
+                sudo chown statchat:statchat /opt/statchat/AppStoreServerAPI.p8
+                sudo chmod 600 /opt/statchat/AppStoreServerAPI.p8
+              fi
               # Update service file. If ExecStart changed (e.g. new gunicorn flags),
               # we need a full restart — gunicorn HUP re-reads code but keeps the
               # ORIGINAL ExecStart from when the master was launched. Diff the file

@@ -60,5 +60,11 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # comparison points for new active streaks.
 45 7 * * 2 statchat /opt/statchat/venv/bin/python /opt/statchat/repo/backend/data_pipeline/build_historical_streaks.py --db /data/baseball_stats_full.db >> /data/refresh.log 2>&1
 
+# Daily subscription revalidation: 4:45 AM ET (08:45 UTC) — refund leak backstop.
+# Polls Apple's App Store Server API for every paid device and downgrades any
+# whose subscription is no longer Active/grace. Catches refunds/revokes that
+# the SN V2 webhook missed. Lightweight curl, ~1s per paid device.
+45 8 * * * statchat curl -sS -X POST "http://127.0.0.1:8000/admin/revalidate-subscriptions" -H "Authorization: Bearer $(grep ^ADMIN_KEY= /opt/statchat/.env | cut -d= -f2-)" >> /data/refresh.log 2>&1
+
 # Health monitor: every 5 min, pings Healthchecks.io if API + DB are up
 */5 * * * * statchat /opt/statchat/repo/deploy/healthcheck.sh
