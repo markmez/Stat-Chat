@@ -11,6 +11,7 @@ struct ResultsView: View {
     @State private var drilldownQuery: String? = nil
     @State private var voice = VoiceInputService()
     @State private var voiceUsedThisQuery: Bool = false
+    @State private var sharePayload: ShareableImage? = nil
     let initialQuestion: String
     var initialInputMethod: String = "keyboard"
     @Binding var navigationPath: NavigationPath
@@ -152,7 +153,19 @@ struct ResultsView: View {
                             )
                     }
                 }
+
+                if canShare {
+                    shareButton
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        .padding(.trailing, 16)
+                        .padding(.bottom, inline ? 16 : 88)
+                        .allowsHitTesting(true)
+                }
             }
+        }
+        .sheet(item: $sharePayload) { payload in
+            ActivityShareView(activityItems: [payload.uiImage, ShareImage.shareMessage])
+                .presentationDetents([.medium, .large])
         }
         .navigationBarBackButtonHidden(true)
         .swipeBack()
@@ -246,6 +259,34 @@ struct ResultsView: View {
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             appState.clearConversation()
         }
+    }
+
+    /// Share is available once a completed (non-streaming, non-empty) assistant
+    /// answer exists. Hidden during loading so the rasterizer never captures
+    /// a partial stream.
+    private var canShare: Bool {
+        guard !appState.isLoading else { return false }
+        return visibleMessages.contains { $0.role == .assistant && !$0.content.isEmpty }
+    }
+
+    private var shareButton: some View {
+        Button {
+            sharePayload = ShareImage.render(.answer(messages: visibleMessages))
+        } label: {
+            Image(systemName: "square.and.arrow.up")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 46, height: 46)
+                .background(
+                    LinearGradient(
+                        colors: [lightBlue, deepBlue],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    ),
+                    in: Circle()
+                )
+                .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 3)
+        }
+        .accessibilityLabel("Share answer")
     }
 
     private var inputAndSuggestions: some View {

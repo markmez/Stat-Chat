@@ -47,6 +47,8 @@ struct PlayerCardView: View {
     @State private var voice = VoiceInputService()
     @State private var voiceUsedThisQuery: Bool = false
 
+    @State private var sharePayload: ShareableImage? = nil
+
     private let deepBlue = Color.brandDeepBlue
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
@@ -343,6 +345,22 @@ struct PlayerCardView: View {
                     }
                 }
             }
+            if let card = playerCard, !isLoading {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        sharePayload = ShareImage.render(.player(card: card))
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(deepBlue)
+                    }
+                    .accessibilityLabel("Share player card")
+                }
+            }
+        }
+        .sheet(item: $sharePayload) { payload in
+            ActivityShareView(activityItems: [payload.uiImage, ShareImage.shareMessage])
+                .presentationDetents([.medium, .large])
         }
         .swipeBack()
         .navigationDestination(isPresented: Binding(
