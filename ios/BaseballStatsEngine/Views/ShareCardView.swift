@@ -17,6 +17,23 @@ struct ShareCardView: View {
     /// Fixed render width — share images are screenshot-style portraits.
     static let renderWidth: CGFloat = 380
 
+    /// Row cap for long lists (leaderboards, game logs) in the share image.
+    /// Keeps the rendered card in a shareable aspect ratio so iMessage and
+    /// Twitter previews don't crop out the header/footer/branding.
+    static let shareRowCap = 10
+
+    /// Returns the grid trimmed to the top `shareRowCap` rows plus the count
+    /// of rows that were hidden. Hidden count is 0 if no trim was needed.
+    static func capLeaderboard(_ grid: StatGridParser.StatGrid) -> (StatGridParser.StatGrid, Int) {
+        guard grid.rows.count > shareRowCap else { return (grid, 0) }
+        let capped = StatGridParser.StatGrid(
+            headers: grid.headers,
+            rows: Array(grid.rows.prefix(shareRowCap)),
+            formMetadata: grid.formMetadata
+        )
+        return (capped, grid.rows.count - shareRowCap)
+    }
+
     private let deepBlue = Color.brandDeepBlueFixed
     private let lightBlue = Color.brandLightBlueFixed
 
@@ -179,6 +196,13 @@ struct ShareCardView: View {
         }
     }
 
+    private func moreInAppLine(_ text: String) -> some View {
+        Text(text)
+            .font(.system(.footnote, design: .rounded, weight: .medium))
+            .foregroundStyle(deepBlue.opacity(0.75))
+            .padding(.top, 2)
+    }
+
     @ViewBuilder
     private func answerSegments(_ segments: [StatGridParser.Segment], emphasis: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -207,7 +231,13 @@ struct ShareCardView: View {
             StatGridView(grid: grid)
 
         case .leaderboard(let grid):
-            LeaderboardView(grid: grid)
+            let (capped, hiddenCount) = Self.capLeaderboard(grid)
+            VStack(alignment: .leading, spacing: 6) {
+                LeaderboardView(grid: capped)
+                if hiddenCount > 0 {
+                    moreInAppLine("+\(hiddenCount) more in app")
+                }
+            }
 
         case .context(let text):
             Text(text)
@@ -222,7 +252,14 @@ struct ShareCardView: View {
                 .foregroundStyle(.secondary)
 
         case .gameLogs(let entries):
-            GameLogsResultView(entries: entries)
+            let cappedEntries = Array(entries.prefix(Self.shareRowCap))
+            let hidden = entries.count - cappedEntries.count
+            VStack(alignment: .leading, spacing: 6) {
+                GameLogsResultView(entries: cappedEntries)
+                if hidden > 0 {
+                    moreInAppLine("+\(hidden) more in app")
+                }
+            }
 
         // Skip pills, see-also, drilldown, tips, AI disclaimer — share card
         // shouldn't carry interactive affordances or auxiliary noise.
