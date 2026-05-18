@@ -38,7 +38,7 @@ struct ShareableImage: Transferable, Identifiable {
     var image: Image { Image(uiImage: uiImage) }
 
     static var transferRepresentation: some TransferRepresentation {
-        DataRepresentation(exportedContentType: .png) { item in
+        DataRepresentation(contentType: .png) { item in
             item.pngData
         } importing: { data in
             ShareableImage(

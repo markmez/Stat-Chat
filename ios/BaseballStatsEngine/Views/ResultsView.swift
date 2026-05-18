@@ -154,18 +154,7 @@ struct ResultsView: View {
                     }
                 }
 
-                if canShare {
-                    shareButton
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                        .padding(.trailing, 16)
-                        .padding(.bottom, inline ? 16 : 88)
-                        .allowsHitTesting(true)
-                }
             }
-        }
-        .sheet(item: $sharePayload) { payload in
-            ActivityShareView(activityItems: [payload.uiImage, ShareImage.shareMessage])
-                .presentationDetents([.medium, .large])
         }
         .navigationBarBackButtonHidden(true)
         .swipeBack()
@@ -215,6 +204,38 @@ struct ResultsView: View {
                     }
                 }
             }
+            if canShare {
+                if #available(iOS 26.0, *) {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            sharePayload = ShareImage.render(.answer(messages: visibleMessages))
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(deepBlue)
+                                .offset(y: -4)
+                        }
+                        .accessibilityLabel("Share answer")
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            sharePayload = ShareImage.render(.answer(messages: visibleMessages))
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(deepBlue)
+                                .offset(y: -4)
+                        }
+                        .accessibilityLabel("Share answer")
+                    }
+                }
+            }
+        }
+        .sheet(item: $sharePayload) { payload in
+            ActivityShareView(activityItems: [payload.uiImage, ShareImage.shareMessage])
+                .presentationDetents([.medium, .large])
         }
         .navigationDestination(isPresented: Binding(
             get: { selectedPlayerName != nil },
@@ -267,26 +288,6 @@ struct ResultsView: View {
     private var canShare: Bool {
         guard !appState.isLoading else { return false }
         return visibleMessages.contains { $0.role == .assistant && !$0.content.isEmpty }
-    }
-
-    private var shareButton: some View {
-        Button {
-            sharePayload = ShareImage.render(.answer(messages: visibleMessages))
-        } label: {
-            Image(systemName: "square.and.arrow.up")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 46, height: 46)
-                .background(
-                    LinearGradient(
-                        colors: [lightBlue, deepBlue],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
-                    ),
-                    in: Circle()
-                )
-                .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 3)
-        }
-        .accessibilityLabel("Share answer")
     }
 
     private var inputAndSuggestions: some View {

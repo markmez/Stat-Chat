@@ -346,15 +346,31 @@ struct PlayerCardView: View {
                 }
             }
             if let card = playerCard, !isLoading {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        sharePayload = ShareImage.render(.player(card: card))
-                    } label: {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(deepBlue)
+                if #available(iOS 26.0, *) {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            sharePayload = ShareImage.render(.player(card: card))
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(deepBlue)
+                                .offset(y: -4)
+                        }
+                        .accessibilityLabel("Share player card")
                     }
-                    .accessibilityLabel("Share player card")
+                    .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            sharePayload = ShareImage.render(.player(card: card))
+                        } label: {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(deepBlue)
+                                .offset(y: -4)
+                        }
+                        .accessibilityLabel("Share player card")
+                    }
                 }
             }
         }
