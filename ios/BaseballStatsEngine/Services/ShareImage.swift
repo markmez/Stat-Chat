@@ -8,9 +8,10 @@ import UniformTypeIdentifiers
 /// `ShareLink` (via PNG data representation).
 @MainActor
 enum ShareImage {
-    /// App Store URL — mirrors the placeholder in `UpdateBannerView`. Update
-    /// both once the real app ID is available.
-    static let appStoreURL = URL(string: "https://apps.apple.com/app/statchat")!
+    /// App Store URL — mirrored in `UpdateBannerView.appStoreURL`. Keep both
+    /// in sync. 404s until the app passes review and goes live, then resolves
+    /// automatically with no code change.
+    static let appStoreURL = URL(string: "https://apps.apple.com/app/id6763139565")!
 
     /// The text component included alongside the image in the share payload.
     /// Twitter/X uses this as the tweet draft body; iMessage shows the URL

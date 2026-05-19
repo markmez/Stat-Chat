@@ -8,8 +8,8 @@ struct UpdateBannerView: View {
     private let iconDark = Color(red: 0.06, green: 0.12, blue: 0.45)
     private let iconLight = Color(red: 0.12, green: 0.28, blue: 0.75)
 
-    // TODO: Replace with actual App Store URL once app ID is available
-    private let appStoreURL = URL(string: "https://apps.apple.com/app/statchat")!
+    // Mirrored in ShareImage.appStoreURL — keep both in sync.
+    private let appStoreURL = URL(string: "https://apps.apple.com/app/id6763139565")!
 
     var body: some View {
         ZStack {
