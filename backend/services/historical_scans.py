@@ -1953,11 +1953,22 @@ def template_facts(conn, facts, season, latest_date):
             continue
 
         all_names = ([player] if player else []) + secondary_names
+        # Tag cross-season hitting/on-base streaks with a distinct detection_type
+        # so detect_all (and the poll path) can suppress the breadth-tier
+        # notable_events streak event for the same player — otherwise the feed
+        # merge concatenates two versions of the same streak. Other historical
+        # facts keep the generic "historical_scan" type (set by the caller).
+        evt_detection_type = None
+        if f.get("type", "").startswith("cross_season_"):
+            stk = f.get("streak_type_key")  # "hitting" or "on_base"
+            if stk in ("hitting", "on_base"):
+                evt_detection_type = f"cross_season_streak_{stk}"
         events.append({
             "headline": headline,
             "category": "historical",
             "player_names": all_names,
             "team_names": [team] if team else [],
+            "detection_type": evt_detection_type,
         })
         if pid:
             seen_players.add(pid)

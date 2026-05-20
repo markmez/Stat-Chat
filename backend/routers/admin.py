@@ -3306,6 +3306,8 @@ async def dashboard(
             "historical_scan": "Historical",
             "hitting_streak": "Streak",
             "onbase_streak": "Streak",
+            "cross_season_streak_hitting": "Streak",
+            "cross_season_streak_on_base": "Streak",
             "scoreless_streak": "Streak",
             "hr_streak": "Streak",
             "pitching_streak": "Streak",

@@ -3131,6 +3131,23 @@ def detect_for_players(db_path, season, player_ids):
 
     print(f"  Targeted detection for {len(player_ids)} players, latest_date={latest_date}")
 
+    # Players already covered by a richer cross-season streak event from the full
+    # pipeline. Skip the breadth-tier hitting/on-base duplicate here, or a poll
+    # refresh reintroduces the merge-concatenation bug (the full run's dedup
+    # only runs in detect_all). Keyed by (player_name, notable_events type).
+    covered_streaks = set()
+    for _dt, _key in (("cross_season_streak_hitting", "hitting_streak"),
+                      ("cross_season_streak_on_base", "onbase_streak")):
+        for (_pn_json,) in conn.execute(
+            "SELECT player_names FROM notable_events WHERE game_date = ? AND detection_type = ?",
+            (latest_date, _dt)).fetchall():
+            try:
+                _nm = json.loads(_pn_json)
+                if _nm:
+                    covered_streaks.add((_nm[0], _key))
+            except Exception:
+                pass
+
     events = []
 
     # Streaks — only for the specific players
@@ -3153,7 +3170,7 @@ def detect_for_players(db_path, season, player_ids):
                     streak += 1
                 else:
                     break
-            if streak >= 8:
+            if streak >= 8 and (name, "hitting_streak") not in covered_streaks:
                 team = _player_team_display(conn, pid, season)
                 team_code = _player_team_code(conn, pid, season)
                 secondary: list = []
@@ -3192,7 +3209,7 @@ def detect_for_players(db_path, season, player_ids):
                     ob_streak += 1
                 else:
                     break
-            if ob_streak >= 12:
+            if ob_streak >= 12 and (name, "onbase_streak") not in covered_streaks:
                 team = _player_team_display(conn, pid, season)
                 team_code = _player_team_code(conn, pid, season)
                 secondary: list = []
@@ -3990,7 +4007,7 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False, target_d
                 "game_date": latest_date,
                 "player_names": he.get("player_names", []),
                 "team_names": he.get("team_names", []),
-                "detection_type": "historical_scan",
+                "detection_type": he.get("detection_type") or "historical_scan",
                 "priority": 1,
             })
         print(f"    Historical: {len(hist_events)} events")
@@ -4085,6 +4102,33 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False, target_d
         DELETE FROM notable_events WHERE game_date = ? AND detection_type != 'ai_insight'
     """, (latest_date,))
     conn.commit()
+
+    # Suppress breadth-tier notable_events streak events that duplicate a richer
+    # cross-season historical scan for the same player+streak-type. Without this
+    # the feed merge concatenates both into one headline with conflicting
+    # franchise anchors (the historical scan reads the cross-season-aware
+    # historical_streaks table; the notable_events scan reads per-season game
+    # logs — see the Foxx-vs-Joost bug). The historical scan wins: it counts
+    # across seasons and adds "Nth-longest in 100+ years". HR/pitching/ending/
+    # PELT streaks have no cross-season counterpart and are untouched.
+    _DUP_STREAK_OWNER = {
+        "hitting_streak": "cross_season_streak_hitting",
+        "onbase_streak": "cross_season_streak_on_base",
+    }
+    _cross_season_covered = set()
+    for e in events:
+        if e.get("detection_type") in ("cross_season_streak_hitting", "cross_season_streak_on_base"):
+            names = e.get("player_names") or []
+            if names:
+                _cross_season_covered.add((names[0], e["detection_type"]))
+    events = [
+        e for e in events
+        if not (
+            e.get("detection_type") in _DUP_STREAK_OWNER
+            and ((e.get("player_names") or [None])[0],
+                 _DUP_STREAK_OWNER[e["detection_type"]]) in _cross_season_covered
+        )
+    ]
 
     # Suppress hot_streak_pelt for players who already have other events today
     players_with_events = set()
