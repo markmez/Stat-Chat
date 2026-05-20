@@ -3218,11 +3218,6 @@ def detect_for_players(db_path, season, player_ids):
         if not name:
             continue
 
-        # Prefer hitting over on-base: if this player gets a hitting streak
-        # event below, skip the on-base one (same run, hitting is the more
-        # prestigious claim) — mirrors the detect_all dedup.
-        player_got_hitting = False
-
         # Hitting streak
         games = conn.execute("""
             SELECT date, hits, at_bats FROM game_batting_logs
@@ -3237,7 +3232,32 @@ def detect_for_players(db_path, season, player_ids):
                     streak += 1
                 else:
                     break
-            if streak >= 8 and (name, "hitting_streak") not in covered_streaks:
+
+            # On-base streak length (computed up front so the prefer-hitting
+            # decision can compare the two run lengths).
+            ob_games = conn.execute("""
+                SELECT date, hits, walks, COALESCE(hit_by_pitch, 0) as hbp
+                FROM game_batting_logs
+                WHERE player_id = ? AND season = ?
+                    AND (at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)
+                ORDER BY date DESC
+            """, (pid, season)).fetchall()
+            ob_streak = 0
+            for gd, hits, walks, hbp in ob_games:
+                if (hits + walks + hbp) > 0:
+                    ob_streak += 1
+                else:
+                    break
+
+            # Prefer hitting when both qualify (more prestigious, same games),
+            # UNLESS the on-base streak is >= 10 games longer — then it's a
+            # distinct marquee run, so emit on-base instead. Mirrors detect_all.
+            hitting_ok = streak >= 8 and (name, "hitting_streak") not in covered_streaks
+            onbase_ok = ob_streak >= 12 and (name, "onbase_streak") not in covered_streaks
+            emit_onbase = onbase_ok and (not hitting_ok or ob_streak >= streak + 10)
+            emit_hitting = hitting_ok and not emit_onbase
+
+            if emit_hitting:
                 team = _player_team_display(conn, pid, season)
                 team_code = _player_team_code(conn, pid, season)
                 secondary: list = []
@@ -3260,24 +3280,8 @@ def detect_for_players(db_path, season, player_ids):
                     "team_names": [team] if team else [],
                     "detection_type": "hitting_streak", "priority": 1,
                 })
-                player_got_hitting = True
 
-            # On-base streak
-            ob_games = conn.execute("""
-                SELECT date, hits, walks, COALESCE(hit_by_pitch, 0) as hbp
-                FROM game_batting_logs
-                WHERE player_id = ? AND season = ?
-                    AND (at_bats > 0 OR walks > 0 OR COALESCE(hit_by_pitch, 0) > 0)
-                ORDER BY date DESC
-            """, (pid, season)).fetchall()
-
-            ob_streak = 0
-            for gd, hits, walks, hbp in ob_games:
-                if (hits + walks + hbp) > 0:
-                    ob_streak += 1
-                else:
-                    break
-            if ob_streak >= 12 and not player_got_hitting and (name, "onbase_streak") not in covered_streaks:
+            if emit_onbase:
                 team = _player_team_display(conn, pid, season)
                 team_code = _player_team_code(conn, pid, season)
                 secondary: list = []
@@ -4198,24 +4202,43 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False, target_d
         )
     ]
 
-    # Prefer hitting over on-base: a hitting streak is the more prestigious
-    # claim, and a qualifying on-base streak for the same player is essentially
-    # the same run (on-base length is always >= hitting length). When a player
-    # has both, drop the on-base event so the feed doesn't stack two streak
-    # sentences for one player. Marquee on-base-ONLY streaks (a long on-base run
-    # with no qualifying hitting streak — e.g. a walk-heavy run) are unaffected:
-    # the player has no hitting event, so nothing suppresses the on-base one.
+    # Prefer hitting over on-base when a player has both: a hitting streak is
+    # the more prestigious claim and the on-base run is essentially the same
+    # games (on-base length is always >= hitting length), so the feed shouldn't
+    # stack two streak sentences for one player. EXCEPTION: if the on-base
+    # streak is >= ON_BASE_MARGIN games longer, it's a distinct marquee
+    # achievement — keep it and drop the hitting one instead. Marquee
+    # on-base-ONLY streaks (no qualifying hitting streak, e.g. a walk-heavy run
+    # like Kurtz's 41) are unaffected — there's no hitting event to compare.
     _HITTING_TYPES = {"hitting_streak", "cross_season_streak_hitting"}
     _ONBASE_TYPES = {"onbase_streak", "cross_season_streak_on_base"}
-    players_with_hitting = {
-        (e.get("player_names") or [None])[0]
-        for e in events if e.get("detection_type") in _HITTING_TYPES
-    }
-    events = [
-        e for e in events
-        if not (e.get("detection_type") in _ONBASE_TYPES
-                and (e.get("player_names") or [None])[0] in players_with_hitting)
-    ]
+    ON_BASE_MARGIN = 10
+
+    def _streak_games(headline):
+        # Streak length is the first "N games" / "N straight games" in the
+        # headline (the box-score-derived run), before any "since X (M games)"
+        # comparison clause. Returns 0 if not found (→ defaults to prefer-hitting).
+        m = re.search(r"\b(\d+)\s+(?:straight\s+)?games\b", headline or "")
+        return int(m.group(1)) if m else 0
+
+    _hit_by_player, _ob_by_player = {}, {}
+    for e in events:
+        dt = e.get("detection_type")
+        p = (e.get("player_names") or [None])[0]
+        if dt in _HITTING_TYPES:
+            _hit_by_player[p] = e
+        elif dt in _ONBASE_TYPES:
+            _ob_by_player[p] = e
+    _drop_ids = set()
+    for p, he in _hit_by_player.items():
+        oe = _ob_by_player.get(p)
+        if not oe:
+            continue
+        if _streak_games(oe["headline"]) >= _streak_games(he["headline"]) + ON_BASE_MARGIN:
+            _drop_ids.add(id(he))   # on-base is the marquee — drop hitting
+        else:
+            _drop_ids.add(id(oe))   # prefer hitting — drop on-base
+    events = [e for e in events if id(e) not in _drop_ids]
 
     # Suppress hot_streak_pelt for players who already have other events today
     players_with_events = set()
