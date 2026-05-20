@@ -3218,6 +3218,11 @@ def detect_for_players(db_path, season, player_ids):
         if not name:
             continue
 
+        # Prefer hitting over on-base: if this player gets a hitting streak
+        # event below, skip the on-base one (same run, hitting is the more
+        # prestigious claim) — mirrors the detect_all dedup.
+        player_got_hitting = False
+
         # Hitting streak
         games = conn.execute("""
             SELECT date, hits, at_bats FROM game_batting_logs
@@ -3255,6 +3260,7 @@ def detect_for_players(db_path, season, player_ids):
                     "team_names": [team] if team else [],
                     "detection_type": "hitting_streak", "priority": 1,
                 })
+                player_got_hitting = True
 
             # On-base streak
             ob_games = conn.execute("""
@@ -3271,7 +3277,7 @@ def detect_for_players(db_path, season, player_ids):
                     ob_streak += 1
                 else:
                     break
-            if ob_streak >= 12 and (name, "onbase_streak") not in covered_streaks:
+            if ob_streak >= 12 and not player_got_hitting and (name, "onbase_streak") not in covered_streaks:
                 team = _player_team_display(conn, pid, season)
                 team_code = _player_team_code(conn, pid, season)
                 secondary: list = []
@@ -4190,6 +4196,25 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False, target_d
             and ((e.get("player_names") or [None])[0],
                  _DUP_STREAK_OWNER[e["detection_type"]]) in _cross_season_covered
         )
+    ]
+
+    # Prefer hitting over on-base: a hitting streak is the more prestigious
+    # claim, and a qualifying on-base streak for the same player is essentially
+    # the same run (on-base length is always >= hitting length). When a player
+    # has both, drop the on-base event so the feed doesn't stack two streak
+    # sentences for one player. Marquee on-base-ONLY streaks (a long on-base run
+    # with no qualifying hitting streak — e.g. a walk-heavy run) are unaffected:
+    # the player has no hitting event, so nothing suppresses the on-base one.
+    _HITTING_TYPES = {"hitting_streak", "cross_season_streak_hitting"}
+    _ONBASE_TYPES = {"onbase_streak", "cross_season_streak_on_base"}
+    players_with_hitting = {
+        (e.get("player_names") or [None])[0]
+        for e in events if e.get("detection_type") in _HITTING_TYPES
+    }
+    events = [
+        e for e in events
+        if not (e.get("detection_type") in _ONBASE_TYPES
+                and (e.get("player_names") or [None])[0] in players_with_hitting)
     ]
 
     # Suppress hot_streak_pelt for players who already have other events today
