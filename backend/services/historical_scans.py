@@ -488,11 +488,13 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
     # entirely rather than framing the current streak against something
     # much bigger. The franchise anchor picks up the slack there.
     cutoff = latest_date or current_start_date
-    # Require the anchor be a COMPLETED streak (a breaking game exists after
-    # end_date), so an active/ongoing run is never cited as a finished "since
-    # X" prior. Staleness-proof: checks the game log for a break, not the
-    # snapshot end_date. (Leader path is already safe since nobody active is
-    # longer, but this defends the tie/edge cases.)
+    # Require the anchor be a COMPLETED streak so an active/ongoing run is
+    # never cited as a finished "since X" prior. A streak is completed if it's
+    # from a PRIOR season (history is always completed) OR current-season with
+    # a breaking game after end_date. Staleness-proof (reads the game log), and
+    # the prior-season carve-out keeps career-end historical streaks (no later
+    # games in the data) eligible as anchors instead of misreading them active.
+    _cur_season = int((latest_date or current_start_date or "0")[:4] or 0)
     _cond = {"hitting": "hits > 0",
              "on_base": "(hits + walks + COALESCE(hit_by_pitch, 0)) > 0"}.get(streak_type, "hits > 0")
     _filt = {"hitting": "plate_appearances > 0",
@@ -501,12 +503,12 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
         SELECT player_name, length, end_date, end_season
         FROM historical_streaks
         WHERE streak_type = ? AND length >= ? AND end_date < ?
-          AND EXISTS (
+          AND (historical_streaks.end_season != {_cur_season} OR EXISTS (
               SELECT 1 FROM game_batting_logs
               WHERE game_batting_logs.player_id = historical_streaks.player_id
                 AND game_batting_logs.date > historical_streaks.end_date
                 AND ({_filt}) AND NOT ({_cond})
-          )
+          ))
         ORDER BY end_date DESC
         LIMIT 1
     """, (streak_type, current_length, cutoff)).fetchone()

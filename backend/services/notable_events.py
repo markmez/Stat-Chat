@@ -513,27 +513,32 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
     _HIST_STREAK_TYPE = {"hitting": "hitting", "on-base": "on_base"}
     hist_type = _HIST_STREAK_TYPE.get(streak_label)
 
-    # A streak in historical_streaks is COMPLETED only if the player has a
-    # breaking game after end_date — a game where they appeared but did not
-    # extend the streak. This is staleness-proof: it checks the actual game
-    # logs for a break rather than trusting the snapshot end_date. An ACTIVE
-    # (ongoing) streak has no such break and must not be cited as a completed
-    # "prior" (e.g., Kurtz's active run wrongly anchoring another player).
+    # A streak counts as COMPLETED if it is from a PRIOR season (history is
+    # always completed) OR it is current-season with a breaking game after
+    # end_date — a game where the player appeared but did not extend it. Only
+    # a current-season streak with no break is ACTIVE (ongoing). The break
+    # check is staleness-proof (reads the game log, not the snapshot end_date),
+    # and the prior-season carve-out prevents a career-end historical streak
+    # (no later games in the data, e.g. Shoeless Joe Jackson 1920) from being
+    # misread as "active." Active runs must not be cited as a completed prior.
+    _cur_season = int(exclude_season or 0)
     _completed_clause = f"""
-        AND EXISTS (
+        AND (historical_streaks.end_season != {_cur_season} OR EXISTS (
             SELECT 1 FROM {table}
             WHERE {table}.player_id = historical_streaks.player_id
               AND {table}.date > historical_streaks.end_date
               AND ({at_bat_filter}) AND NOT ({condition_sql})
-        )"""
+        ))"""
 
     def _scan_active_leader():
         """Another player currently on a LONGER active streak of this type.
-        Active = NOT completed (no breaking game after end_date). Returns
-        (pid, length) of the longest such streak, or None. When present, the
-        current player is behind an active leader, so we anchor on that
-        leader's *current* streak rather than a completed historical one."""
-        if not hist_type:
+        Active = CURRENT-season streak with no breaking game after end_date.
+        Returns (pid, length) of the longest such streak, or None. When
+        present, the current player is behind an active leader, so we anchor
+        on that leader's *current* streak rather than a completed historical
+        one. Restricted to the current season so historical career-end
+        streaks (false 'active' due to no later games) can't be cited."""
+        if not hist_type or not _cur_season:
             return None
         row = conn.execute(f"""
             SELECT player_id, length
@@ -541,6 +546,7 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
             WHERE streak_type = ?
               AND length > ?
               AND player_id != ?
+              AND end_season = {_cur_season}
               AND NOT EXISTS (
                   SELECT 1 FROM {table}
                   WHERE {table}.player_id = historical_streaks.player_id
