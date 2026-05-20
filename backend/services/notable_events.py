@@ -513,35 +513,77 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
     _HIST_STREAK_TYPE = {"hitting": "hitting", "on-base": "on_base"}
     hist_type = _HIST_STREAK_TYPE.get(streak_label)
 
+    # A streak in historical_streaks is COMPLETED only if the player has a
+    # breaking game after end_date — a game where they appeared but did not
+    # extend the streak. This is staleness-proof: it checks the actual game
+    # logs for a break rather than trusting the snapshot end_date. An ACTIVE
+    # (ongoing) streak has no such break and must not be cited as a completed
+    # "prior" (e.g., Kurtz's active run wrongly anchoring another player).
+    _completed_clause = f"""
+        AND EXISTS (
+            SELECT 1 FROM {table}
+            WHERE {table}.player_id = historical_streaks.player_id
+              AND {table}.date > historical_streaks.end_date
+              AND ({at_bat_filter}) AND NOT ({condition_sql})
+        )"""
+
+    def _scan_active_leader():
+        """Another player currently on a LONGER active streak of this type.
+        Active = NOT completed (no breaking game after end_date). Returns
+        (pid, length) of the longest such streak, or None. When present, the
+        current player is behind an active leader, so we anchor on that
+        leader's *current* streak rather than a completed historical one."""
+        if not hist_type:
+            return None
+        row = conn.execute(f"""
+            SELECT player_id, length
+            FROM historical_streaks
+            WHERE streak_type = ?
+              AND length > ?
+              AND player_id != ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM {table}
+                  WHERE {table}.player_id = historical_streaks.player_id
+                    AND {table}.date > historical_streaks.end_date
+                    AND ({at_bat_filter}) AND NOT ({condition_sql})
+              )
+            ORDER BY length DESC
+            LIMIT 1
+        """, (hist_type, streak_len, exclude_player)).fetchone()
+        return (row[0], row[1]) if row else None
+
     def _scan_historical_streaks():
-        """Cross-season MLB-wide lookup using the precomputed table.
-        Returns (end_season, pid, length) or None.
+        """Cross-season MLB-wide lookup for the most recent COMPLETED streak
+        of qualifying length. Returns (end_season, pid, length) or None.
 
         Filters by end_date when current_date is provided so streaks
         ending on/after the current event don't show up as 'past' runs.
         Falls back to end_season < exclude_season when no current_date,
-        which matches the per-season-scan semantics."""
+        which matches the per-season-scan semantics. Requires the streak be
+        completed (see _completed_clause) so active runs aren't cited."""
         if not hist_type:
             return None
         if current_date:
-            row = conn.execute("""
+            row = conn.execute(f"""
                 SELECT player_id, length, end_season
                 FROM historical_streaks
                 WHERE streak_type = ?
                   AND length >= ?
                   AND player_id != ?
                   AND end_date < ?
+                  {_completed_clause}
                 ORDER BY end_date DESC, length DESC
                 LIMIT 1
             """, (hist_type, streak_len, exclude_player, current_date)).fetchone()
         else:
-            row = conn.execute("""
+            row = conn.execute(f"""
                 SELECT player_id, length, end_season
                 FROM historical_streaks
                 WHERE streak_type = ?
                   AND length >= ?
                   AND player_id != ?
                   AND end_season < ?
+                  {_completed_clause}
                 ORDER BY end_date DESC, length DESC
                 LIMIT 1
             """, (hist_type, streak_len, exclude_player, exclude_season)).fetchone()
@@ -608,28 +650,42 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
                 return (szn, best_pid, best_run)
         return None
 
-    # MLB-wide. Prefer the precomputed historical_streaks table when
-    # available — it walks across season boundaries, so cross-season
-    # streaks (e.g. Ohtani Aug 2025 → Apr 2026) are recognized. Falls
-    # back to per-season game-log scan for streak types not in the
-    # table (currently only HR streaks fall back).
-    mlb_match = _scan_historical_streaks() or _scan_seasons(None)
+    # MLB-wide anchor. First check whether another player is currently on a
+    # LONGER ACTIVE streak — if so, this player is behind that active leader,
+    # and the honest framing anchors on the leader's *current* streak rather
+    # than a completed historical one (avoids "longest since X" when X is
+    # shorter/active and a longer run is right there). When this player IS the
+    # active leader (nobody active is longer), fall through to the most recent
+    # COMPLETED streak of qualifying length.
     mlb_phrase = ""
     mlb_year = None
     mlb_length_lopsided = False
-    if mlb_match:
-        mlb_year, mlb_pid, mlb_run = mlb_match
-        # If the matched prior streak is >=1.5x the current streak length,
-        # the "longest X since Y's MUCH-LONGER" framing reads as deflating
-        # rather than useful (e.g. 33-game streak comparing against
-        # Ohtani's 53). Drop the MLB-since phrase in that case and let
-        # the franchise anchor stand alone.
-        mlb_length_lopsided = mlb_run >= streak_len * 1.5
-        if not mlb_length_lopsided:
-            name = _player_name(conn, mlb_pid)
-            mlb_phrase = f"the longest {streak_label} streak since {name} ({mlb_run} games) in {mlb_year}."
-            if secondary_names is not None and name:
+    active_leader = _scan_active_leader()
+    if active_leader:
+        leader_pid, _leader_run = active_leader
+        name = _player_name(conn, leader_pid)
+        if name:
+            mlb_phrase = f"the longest {streak_label} streak since {name}'s current streak."
+            if secondary_names is not None:
                 secondary_names.append(name)
+    else:
+        # Prefer the precomputed historical_streaks table (cross-season aware,
+        # completed-only); fall back to per-season game-log scan for streak
+        # types not in the table (HR streaks).
+        mlb_match = _scan_historical_streaks() or _scan_seasons(None)
+        if mlb_match:
+            mlb_year, mlb_pid, mlb_run = mlb_match
+            # If the matched prior streak is >=1.5x the current streak length,
+            # the "longest X since Y's MUCH-LONGER" framing reads as deflating
+            # rather than useful (e.g. 33-game streak comparing against
+            # Ohtani's 53). Drop the MLB-since phrase in that case and let
+            # the franchise anchor stand alone.
+            mlb_length_lopsided = mlb_run >= streak_len * 1.5
+            if not mlb_length_lopsided:
+                name = _player_name(conn, mlb_pid)
+                mlb_phrase = f"the longest {streak_label} streak since {name} ({mlb_run} games) in {mlb_year}."
+                if secondary_names is not None and name:
+                    secondary_names.append(name)
 
     # Team
     team_phrase = ""
