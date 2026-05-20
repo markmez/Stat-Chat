@@ -468,11 +468,13 @@ enum PlayerNameMatcher {
             }
         }
 
-        // First name only — must be unambiguous (exactly one match)
-        if let matches = firstNameIndex[ascii], matches.count == 1 {
-            return matches[0]
-        }
-
+        // First name is intentionally NOT a definitive resolution here. Last
+        // name is the advertised search rule; a first-name match must never
+        // beat or pre-empt a last-name match (e.g. "Rosario" should surface
+        // the Rosarios by prominence, not jump to first-name "Rosario
+        // Rodriguez"). First name lives in the suggestion tier instead — see
+        // fuzzyMatch — so it still helps catch intent without short-circuiting
+        // prominence ranking and the See-also fallback.
         return nil
     }
 
@@ -854,7 +856,9 @@ enum PlayerNameMatcher {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .question(trimmed) }
 
-        // Exact player name match
+        // Exact player name match — full name or unique last name, both
+        // unambiguous, so no "See also". The escape hatch belongs only to the
+        // ambiguous-last-name path below, where the system picks for you.
         if let name = matchPlayer(trimmed) {
             trackSearch(trimmed, history: history)
             return .player(name: name, alternatives: [])
@@ -1823,6 +1827,15 @@ enum PlayerNameMatcher {
         // return those players rather than fuzzy-matching to something unrelated
         if let exactPlayers = lastNameIndex[ascii], !exactPlayers.isEmpty {
             return exactPlayers
+        }
+
+        // Exact first name — suggestion-tier signal only. matchPlayer no longer
+        // resolves by first name (last name takes precedence), so this is where
+        // a bare first name like "Shohei" surfaces, routed through the
+        // did-you-mean flow (auto-resolves when there's a single dominant
+        // match). Placed after the exact last-name check so last name wins.
+        if let exactFirst = firstNameIndex[ascii], !exactFirst.isEmpty {
+            return exactFirst
         }
 
         // Check against full names first (accent-insensitive) — single best match
