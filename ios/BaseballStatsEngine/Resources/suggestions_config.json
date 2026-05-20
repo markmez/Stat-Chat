@@ -1,5 +1,5 @@
 {
-  "version": 9,
+  "version": 10,
   "algorithm": {
     "impressionThreshold": 6,
     "poolSize": 12,
@@ -94,13 +94,6 @@
       "text": "Tucker vs lefties last season",
       "weight": 0.8,
       "inSeasonText": "Tucker vs lefties this season"
-    },
-    {
-      "id": "d13",
-      "text": "Turner hot streaks last season",
-      "weight": 0.8,
-      "inSeasonText": "Turner hot streaks this season",
-      "seasonFilter": "afterApril12"
     },
     {
       "id": "d14",
