@@ -3062,6 +3062,91 @@ def build_month_stats(name: str, month: int, season: int) -> Optional[str]:
         conn.close()
 
 
+def build_player_date_range(name: str, since_date: Optional[str] = None,
+                            end_date: Optional[str] = None) -> Optional[str]:
+    """Aggregate a player's batting game logs over a date range.
+
+    Generalizes build_month_stats to an arbitrary [since_date, end_date]
+    window (either bound may be None for open-ended). Powers "stats after
+    June 30", "since the all-star break", "in the last 30 days". Batting
+    only (matches build_month_stats); returns None if no batting rows so
+    pitchers fall through to Haiku.
+    """
+    if not since_date and not end_date:
+        return None
+    conn = _get_db()
+    try:
+        display_name, _ = _get_player_info(conn, name)
+        where = ["p.name = ?"]
+        params: list = [_sanitize(name)]
+        if since_date:
+            where.append("g.date >= ?"); params.append(since_date)
+        if end_date:
+            where.append("g.date <= ?"); params.append(end_date)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) as g, "
+            "SUM(g.at_bats) as ab, SUM(g.hits) as h, SUM(g.doubles) as d2b, "
+            "SUM(g.triples) as d3b, SUM(g.home_runs) as hr, "
+            "SUM(g.runs) as r, SUM(g.rbi) as rbi, "
+            "SUM(g.walks) as bb, SUM(g.strikeouts) as so, "
+            "SUM(g.plate_appearances) as pa, "
+            "SUM(g.hit_by_pitch) as hbp, SUM(g.sacrifice_flies) as sf "
+            "FROM game_batting_logs g "
+            "JOIN players p ON g.player_id = p.player_id "
+            "WHERE " + " AND ".join(where),
+            params,
+        )
+        row = cur.fetchone()
+        if not row or not row[0] or int(row[0]) == 0:
+            return None
+
+        games = int(row[0]); ab = int(row[1] or 0); h = int(row[2] or 0)
+        d2b = int(row[3] or 0); d3b = int(row[4] or 0); hr = int(row[5] or 0)
+        r = int(row[6] or 0); rbi = int(row[7] or 0); bb = int(row[8] or 0)
+        so = int(row[9] or 0); hbp = int(row[11] or 0); sf = int(row[12] or 0)
+
+        avg = h / ab if ab > 0 else 0.0
+        obp_denom = ab + bb + hbp + sf
+        obp = (h + bb + hbp) / obp_denom if obp_denom > 0 else 0.0
+        tb = h + d2b + 2 * d3b + 3 * hr
+        slg = tb / ab if ab > 0 else 0.0
+        ops = obp + slg
+        avg_s = _format_rate(f"{avg:.3f}"); obp_s = _format_rate(f"{obp:.3f}")
+        slg_s = _format_rate(f"{slg:.3f}"); ops_s = _format_rate(f"{ops:.3f}")
+
+        from datetime import datetime as _dt
+        def _fmt(d):
+            try:
+                return _dt.strptime(d, "%Y-%m-%d").strftime("%b %-d, %Y")
+            except Exception:
+                return d
+        if since_date and end_date:
+            label = f"{_fmt(since_date)} – {_fmt(end_date)}"
+        elif since_date:
+            label = f"since {_fmt(since_date)}"
+        else:
+            label = f"through {_fmt(end_date)}"
+
+        parts = []
+        parts.append(f"**{display_name}** — {label}\n")
+        parts.append("[STATGRID]")
+        parts.append("HEADER: G, AB, R, H, 2B, 3B, HR, RBI, BB, SO, AVG, OBP, SLG, OPS")
+        parts.append(
+            f"ROW: {games}, {ab}, {r}, {h}, {d2b}, {d3b}, {hr}, {rbi}, "
+            f"{bb}, {so}, {avg_s}, {obp_s}, {slg_s}, {ops_s}"
+        )
+        parts.append("[/STATGRID]")
+        szn = (since_date or end_date or "")[:4]
+        if szn:
+            parts.append(f"\n[SUGGEST]{display_name} {szn}[/SUGGEST]")
+        if _is_active_player(conn, name):
+            parts.append(f"[SUGGEST]how is {display_name} doing lately[/SUGGEST]")
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
 # ===================================================================
 # 25. build_leaderboard
 # ===================================================================

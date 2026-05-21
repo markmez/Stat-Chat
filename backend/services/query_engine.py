@@ -155,8 +155,12 @@ def _detect_since_date(lower: str) -> Optional[str]:
 
     # "since [Month] [day], [year]" or "since [Month] [day] [year]"
     # or "since [Month] [year]" or "since [Month] [day]"
+    # "after"/"from" are treated as "since" synonyms — an open-ended lower
+    # bound on the date range. (The rigid month parser used to grab the bare
+    # month name here and drop the qualifier; this lets the query engine claim
+    # "stats after June 30" as a real date slice instead.)
     since_match = re.search(
-        r'\bsince\s+([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\s*,?\s*(\d{4})\b', lower
+        r'\b(?:since|after|from)\s+([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\s*,?\s*(\d{4})\b', lower
     )
     if since_match:
         month_str, day, year = since_match.group(1), int(since_match.group(2)), int(since_match.group(3))
@@ -166,7 +170,7 @@ def _detect_since_date(lower: str) -> Optional[str]:
 
     # "since [Month] [day]" (no year — assume current season)
     since_md = re.search(
-        r'\bsince\s+([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b', lower
+        r'\b(?:since|after|from)\s+([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b', lower
     )
     if since_md:
         month_str, day = since_md.group(1), int(since_md.group(2))
@@ -177,7 +181,7 @@ def _detect_since_date(lower: str) -> Optional[str]:
 
     # "since [Month] [year]" (no day — first of month)
     since_my = re.search(
-        r'\bsince\s+([a-z]+)\.?\s+(\d{4})\b', lower
+        r'\b(?:since|after|from)\s+([a-z]+)\.?\s+(\d{4})\b', lower
     )
     if since_my:
         month_str, year = since_my.group(1), int(since_my.group(2))
@@ -186,9 +190,9 @@ def _detect_since_date(lower: str) -> Optional[str]:
             return f"{year}-{month:02d}-01"
 
     # "since [Month]" (no day, no year — first of that month, current year)
-    since_m = re.search(r'\bsince\s+([a-z]+)\.?\s*$', lower)
+    since_m = re.search(r'\b(?:since|after|from)\s+([a-z]+)\.?\s*$', lower)
     if not since_m:
-        since_m = re.search(r'\bsince\s+([a-z]+)\b', lower)
+        since_m = re.search(r'\b(?:since|after|from)\s+([a-z]+)\b', lower)
     if since_m:
         month_str = since_m.group(1)
         month = _MONTH_MAP.get(month_str)

@@ -2270,6 +2270,140 @@ def parse_pitching_tto(input_str: str) -> Optional[dict]:
     return {"name": name, "tto": tto, "season": season}
 
 
+# ---------------------------------------------------------------------------
+# Unexplained-words guard (shared) — the broad fix for "parser stopped reading
+# the rest of the query." A simple parser declares the substrings it consumed
+# (player name, stat phrase, season, its trigger words); anything meaningful
+# left over means it ignored a qualifier and should bail to the query engine /
+# Haiku rather than return a confident partial answer. Filler is TRUE filler
+# only — scope qualifiers (after/before/vs/with/without/over/under/most…),
+# numbers, and stray stat words are deliberately NOT filler, so leaving one
+# triggers a bail.
+# ---------------------------------------------------------------------------
+_GUARD_FILLER = {
+    "the", "a", "an", "of", "to", "and", "s", "how", "many", "much",
+    "did", "do", "does", "is", "was", "were", "are", "has", "have", "had",
+    "stats", "stat", "statline", "line", "numbers", "number", "this", "that",
+    "his", "her", "its", "for", "show", "me", "please", "what", "whats",
+    "season", "year", "game", "games", "in", "on", "by", "get", "got",
+    "during", "career",  # "career" consumed by career parsers; harmless elsewhere
+}
+
+
+def _unexplained_words(lower: str, consumed: list) -> list:
+    """Return meaningful words left in `lower` after removing the parser's
+    consumed substrings and true filler. Non-empty → the parser ignored
+    something and should bail."""
+    text = lower
+    for phrase in consumed:
+        if phrase:
+            text = text.replace(str(phrase).lower(), " ")
+    toks = re.findall(r"[a-z0-9.+]+", text)
+    return [t for t in toks if t and t not in _GUARD_FILLER]
+
+
+_MONTH_NAME_MAP = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+    "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sept": 9, "sep": 9,
+    "october": 10, "oct": 10, "november": 11, "nov": 11, "december": 12, "dec": 12,
+}
+
+
+def _detect_date_bounds(lower: str):
+    """Sub-season date bounds. Returns (since_date, end_date, consumed_text).
+    'after/since/from [date]' → lower bound; 'before/through/until [date]' →
+    upper bound; 'in the last N days' → lower bound. Month-based dates and
+    'last N days' only — bare years (since 2020) are multi-season scope and
+    are intentionally NOT matched here (the query engine owns those)."""
+    import calendar
+    from datetime import date as _date, timedelta
+    today = _date.today()
+    since = end = None
+    consumed = []
+
+    m = re.search(r'\b(?:in|over)\s+the\s+last\s+(\d+)\s+days?\b', lower)
+    if m:
+        since = (today - timedelta(days=int(m.group(1)))).isoformat()
+        consumed.append(m.group(0))
+
+    def _resolve(month_str, day, year, is_end):
+        month = _MONTH_NAME_MAP.get(month_str)
+        if not month:
+            return None
+        yr = year if year is not None else (today.year if month <= today.month else today.year - 1)
+        last = calendar.monthrange(yr, month)[1]
+        d = day if day is not None else (last if is_end else 1)
+        d = max(1, min(d, last))
+        return f"{yr:04d}-{month:02d}-{d:02d}"
+
+    def _find(quals, is_end):
+        q = "|".join(quals)
+        patterns = [
+            (rf'\b(?:{q})\s+([a-z]+)\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?\s*,?\s*(\d{{4}})\b', True, True),
+            (rf'\b(?:{q})\s+([a-z]+)\.?\s+(\d{{4}})\b', False, True),
+            (rf'\b(?:{q})\s+([a-z]+)\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?\b', True, False),
+            (rf'\b(?:{q})\s+([a-z]+)\b', False, False),
+        ]
+        for pat, has_day, has_year in patterns:
+            mm = re.search(pat, lower)
+            if not mm or mm.group(1) not in _MONTH_NAME_MAP:
+                continue
+            day = int(mm.group(2)) if has_day else None
+            year = int(mm.group(3 if (has_day and has_year) else 2)) if has_year else None
+            resolved = _resolve(mm.group(1), day, year, is_end)
+            if resolved:
+                return resolved, mm.group(0)
+        return None, None
+
+    if since is None:
+        since, c = _find(["since", "after", "from"], is_end=False)
+        if c:
+            consumed.append(c)
+    end, c = _find(["before", "through", "thru", "until"], is_end=True)
+    if c:
+        consumed.append(c)
+    return since, end, " ".join(consumed)
+
+
+def parse_player_date_range(input_str: str) -> Optional[dict]:
+    """Single-player stats over a date range — 'Austin Wells stats after June 30
+    2025', 'Soto in the last 30 days'. NON-GREEDY: requires an explicit date
+    bound, and bails (unexplained-words guard) if anything meaningful is left
+    over, so it never returns a partial answer. Runs before parse_month_query
+    so 'after June 30' isn't misread as the month June."""
+    lower = input_str.strip().lower()
+
+    # Leaderboards / comparisons aren't single-player lookups.
+    if any(w in lower for w in [
+        "leaders", "leader", "leaderboard", "top ", "most ", "best ", "highest",
+        "lowest", "fewest", "worst", "least", "who led", "who leads", "leading",
+        " vs ", " versus ", " compared to ", " or "]):
+        return None
+    if contains_word("career", lower):
+        return None
+
+    since_date, end_date, date_text = _detect_date_bounds(lower)
+    if since_date is None and end_date is None:
+        return None
+
+    name = find_player_in_text(lower)
+    if not name:
+        return None
+
+    # Bail if a meaningful qualifier remains after removing the player and the
+    # date phrase (e.g. "vs lefties", "with RISP", a second stat) — let the
+    # query engine / splits / Haiku handle the richer query.
+    leftover = _unexplained_words(lower, [name, date_text])
+    # A bare stat word ("hits", "ops") is fine — that just narrows the line and
+    # we still show the full grid; only flag NON-stat leftovers.
+    leftover = [w for w in leftover if match_stat(w) is None]
+    if leftover:
+        return None
+
+    return {"name": name, "since_date": since_date, "end_date": end_date}
+
+
 def parse_month_query(input_str: str) -> Optional[dict]:
     """Detect month queries. Returns dict with player_name, month, season."""
     lower = input_str.strip().lower()
@@ -2282,10 +2416,12 @@ def parse_month_query(input_str: str) -> Optional[dict]:
     ]
 
     detected_month: Optional[int] = None
+    matched_month_word: Optional[str] = None
     for names, number in months:
         for month_name in names:
             if contains_word(month_name, lower):
                 detected_month = number
+                matched_month_word = month_name
                 break
         if detected_month is not None:
             break
@@ -2308,6 +2444,23 @@ def parse_month_query(input_str: str) -> Optional[dict]:
         return None
 
     season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
+
+    # Unexplained-words guard: a month query is "X in June [year]". A date
+    # qualifier or day number ("after June 30", "since June") means this is a
+    # date slice, not a month aggregate — bail so parse_player_date_range / the
+    # query engine handles it. Consume player, month word, year, and a matched
+    # stat; if anything meaningful remains, decline.
+    _stat = match_stat(lower)
+    consumed = [name, matched_month_word or "", str(season)]
+    if _stat is not None:
+        for alias in [getattr(_stat, "display", ""), getattr(_stat, "db_column", "")]:
+            if alias:
+                consumed.append(alias.replace("_", " "))
+    leftover = _unexplained_words(lower, consumed)
+    leftover = [w for w in leftover if match_stat(w) is None]
+    if leftover:
+        return None
+
     return {"player_name": name, "month": detected_month, "season": season}
 
 

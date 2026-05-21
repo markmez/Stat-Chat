@@ -302,6 +302,18 @@ def try_intercept(question: str):
         if response:
             return response
 
+    # 0d. Player date range — "stats after June 30 2025", "in the last 30 days".
+    # Must run before parse_month_query (which would grab the bare month name and
+    # drop the "after"/"30" qualifier) and the single-stat/season parsers.
+    # Non-greedy: requires an explicit date bound + passes the unexplained guard.
+    date_range = nm.parse_player_date_range(trimmed)
+    if date_range:
+        response = rb.build_player_date_range(
+            date_range["name"], date_range.get("since_date"),
+            date_range.get("end_date"))
+        if response:
+            return response
+
     # 1. Comparison — "Judge vs Soto", "Compare Lindor and Witt"
     comp = nm.parse_comparison(trimmed)
     if comp:
