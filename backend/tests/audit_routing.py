@@ -92,6 +92,19 @@ TESTS: list[tuple[str, str, str]] = [
     ("Most strikeouts Nolan Ryan ever recorded", "intercepted", "Player single-season max"),
     ("Fewest walks Greg Maddux ever issued", "intercepted", "Player single-season max"),
 
+    # Tier 2c: Sliding-window stretch (best/worst N-consecutive-game window).
+    # Counting stats only; requires an explicit N. Singular "rbi" is the
+    # regression guard — "game" in the window phrase used to hijack stat=games.
+    ("most hits Judge in a 5 game stretch", "intercepted", "Player sliding-window"),
+    ("most rbi Volpe in a 3 game stretch", "intercepted", "Player sliding-window"),
+    ("Skubal most strikeouts in a 3 game stretch", "intercepted", "Player sliding-window"),
+
+    # Tier 2d: Player vs a specific team (opponent split from game logs).
+    # "Judge" is ambiguous, so this also guards parse_team_stats from grabbing
+    # the query and returning the opponent's roster instead.
+    ("Judge vs the Red Sox", "intercepted", "Player vs team split"),
+    ("Soto vs the Dodgers 2025", "intercepted", "Player vs team split"),
+
     # ============================================================
     # Tier 3: Single-player career + season + slash line
     # ============================================================
