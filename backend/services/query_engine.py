@@ -2279,13 +2279,21 @@ def decompose(question: str) -> QueryPlan:
     # Buildable from game logs (rolling N-consecutive-game windows within one
     # season). Requires an explicit N — without it the window is undefined, so
     # "best stretch" alone keeps bailing. Counting stats only (handled by the
-    # executor); derived stats stay a bail.
-    if (_has_sliding_window and plan.player_name and plan.stat
-            and plan.query_type in ("leaderboard", "threshold", "superlative")):
+    # executor); derived stats stay a bail. We do NOT gate on query_type: the
+    # player + stat + stretch/span + explicit "N games" signal is specific, and
+    # decompose may have classified the same shape as leaderboard, threshold,
+    # superlative, or a game-log type depending on the exact wording.
+    if _has_sliding_window and plan.player_name and plan.stat:
         _win_m = re.search(r'(\d+)[\s-]*games?\b', lower)
         if _win_m:
             plan.sliding_window_n = int(_win_m.group(1))
             plan.query_type = "player_sliding_window"
+            # A "{N} game" phrase can trip career_game_window detection; clear
+            # it so the dispatch reaches the sliding-window executor cleanly.
+            plan.career_game_window = None
+            # The player resolves any batting/pitching stat ambiguity, so don't
+            # offer the "(hitters)" disambiguation pill.
+            plan.ambiguous_stat = False
             # Window intent is unambiguous now; leftover decorative words
             # ("ever", "had", "in a", "stretch") shouldn't block the plan.
             plan.unexplained_words = []
