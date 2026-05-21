@@ -2384,6 +2384,12 @@ def _residual_qualifier_words(lower: str, name, extra_consumed=None) -> list:
     so a multi-word stat phrase ("home runs") is fully consumed. Used by the
     stat-bearing parsers (single stat, career, season count, catch-all) — what
     remains is genuine ignored-qualifier words."""
+    # Situational phrases whose key word is itself a stat alias ("in wins",
+    # "in losses") would otherwise be stripped and missed. We can't model
+    # team-result splits for batters, so force a bail.
+    if re.search(r'\bin\s+(?:a\s+)?(?:wins?|losses|loss|winning|losing)\b', lower):
+        return ["__situational__"]
+
     global _STAT_ALIASES_DESC
     if _STAT_ALIASES_DESC is None:
         _STAT_ALIASES_DESC = sorted(
