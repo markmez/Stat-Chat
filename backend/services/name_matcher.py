@@ -1804,6 +1804,8 @@ def parse_season_count(input_str: str) -> Optional[dict]:
             if threshold == int(threshold):
                 threshold = int(threshold)
 
+    if _residual_qualifier_words(lower, name):
+        return None
     return {"name": name, "stat": stat_info.db_column, "stat_abbrev": stat_info.display_abbrev,
             "stat_name": stat_info.display_name, "threshold": threshold, "is_rate": stat_info.is_rate}
 
@@ -1862,6 +1864,8 @@ def parse_single_stat_lookup(input_str: str) -> Optional[dict]:
         return None
 
     season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
+    if _residual_qualifier_words(lower, name):
+        return None
     return {"name": name, "stat": stat, "season": season}
 
 
@@ -1901,6 +1905,8 @@ def parse_career_lookup(input_str: str) -> Optional[dict]:
         return None
 
     stat = match_stat(lower)
+    if _residual_qualifier_words(lower, name):
+        return None
     return {"name": name, "stat": stat}
 
 
@@ -2280,30 +2286,93 @@ def parse_pitching_tto(input_str: str) -> Optional[dict]:
 # numbers, and stray stat words are deliberately NOT filler, so leaving one
 # triggers a bail.
 # ---------------------------------------------------------------------------
+# Mirrors query_engine._STOP_WORDS (the proven set that already lets the query
+# engine claim all 116 audit queries without over-flagging) plus a few query-
+# phrasing words. Deliberately does NOT contain situational/scope CONTENT words
+# (risp, lefties, righties, losses, outs, after, vs, versus, against, before)
+# — leaving one of those is exactly the "ignored qualifier" signal we bail on.
 _GUARD_FILLER = {
-    "the", "a", "an", "of", "to", "and", "s", "how", "many", "much",
-    "did", "do", "does", "is", "was", "were", "are", "has", "have", "had",
-    "stats", "stat", "statline", "line", "numbers", "number", "this", "that",
-    "his", "her", "its", "for", "show", "me", "please", "what", "whats",
-    "season", "year", "game", "games", "in", "on", "by", "get", "got",
-    "during", "career",  # "career" consumed by career parsers; harmless elsewhere
+    "the", "a", "an", "in", "of", "by", "for", "to", "and", "or", "with",
+    "who", "what", "which", "how", "many", "much", "did", "do", "does", "has",
+    "had", "have", "is", "was", "were", "are", "been", "be",
+    "that", "this", "than", "then", "from", "at", "on", "it", "its",
+    "all", "any", "each", "every", "some", "no", "not",
+    "player", "players", "pitcher", "pitchers", "hitter", "hitters",
+    "batter", "batters", "team", "teams",
+    "time", "times", "season", "seasons", "year", "years",
+    "hit", "got", "get", "scored", "threw", "pitched", "batted",
+    "ever", "just", "also", "over", "under", "least", "more", "most",
+    "them", "their", "those", "these", "there",
+    "game", "games", "played", "play", "playing", "hitting", "batting",
+    "won", "win", "winning", "stole", "stolen", "stealing", "bases",
+    "pas", "abs", "plate", "appearance", "appearances",
+    "hits", "runs", "multiple", "allowed", "fewer", "thrown", "throwing",
+    "pitching", "drove", "driven", "struck", "walked", "walking", "given",
+    "gave", "during", "when", "where", "only", "ago", "back", "since", "sub",
+    "among", "between", "across", "around", "about", "within", "per", "into",
+    "both", "either", "but", "so", "yet", "while", "above", "below", "without",
+    "like", "really", "actually", "currently", "recently", "appeared",
+    "appearing", "recorded", "posted", "put", "league", "led", "leading",
+    "leads", "leader", "leaders", "outing", "outings", "start", "starts",
+    "baseman", "basemen", "fielder", "fielders", "qualified", "qualifying",
+    "qualify",
+    # query-phrasing extras (not in the engine's set, but pure filler here)
+    "stats", "stat", "statline", "line", "numbers", "number", "s",
+    "his", "her", "show", "me", "please", "whats", "career",
 }
+
+
+def _strip_consumed(text: str, phrases: list) -> str:
+    """Remove each consumed phrase AND its individual word tokens. The token
+    pass matters because find_player_in_text returns the CANONICAL name
+    ("Aaron Judge") while the query may contain only a partial ("judge") — so
+    we strip both the full string and each name token."""
+    for phrase in phrases:
+        if not phrase:
+            continue
+        p = str(phrase).lower()
+        text = text.replace(p, " ")
+        for tok in p.split():
+            if len(tok) >= 2:
+                text = re.sub(rf'\b{re.escape(tok)}\b', ' ', text)
+    return text
 
 
 def _unexplained_words(lower: str, consumed: list) -> list:
     """Return meaningful words left in `lower` after removing the parser's
     consumed substrings and true filler. Non-empty → the parser ignored
     something and should bail."""
-    text = lower
-    for phrase in consumed:
-        if phrase:
-            text = text.replace(str(phrase).lower(), " ")
+    text = _strip_consumed(lower, consumed)
     toks = re.findall(r"[a-z0-9.+]+", text)
-    # A bare 4-digit year is a scope qualifier the season/date parsers handle
-    # (it may sit apart from the consumed date phrase, e.g. "2025 ... after
-    # June 30"), so it never counts as an ignored qualifier.
+    # Numbers (years, thresholds like "30", rate values like ".300") are NOT
+    # ignored-qualifier signals — they're handled by season/threshold logic, and
+    # flagging them would wrongly bail legit "30 HR seasons" queries. The guard
+    # targets ignored qualifier WORDS (after / RISP / with / losses / vs …).
     return [t for t in toks
-            if t and t not in _GUARD_FILLER and not re.fullmatch(r"(?:19|20)\d{2}", t)]
+            if t and t not in _GUARD_FILLER and not re.fullmatch(r"[\d.]+", t)]
+
+
+# Stat aliases, longest-first, for stripping a (possibly multi-word) stat phrase
+# out of a query before the qualifier-word check. Single-char aliases (g, h, r,
+# k) are excluded — too collision-prone with stray letters.
+_STAT_ALIASES_DESC = None
+
+
+def _residual_qualifier_words(lower: str, name, extra_consumed=None) -> list:
+    """Like _unexplained_words but also strips EVERY stat alias (word-boundary)
+    so a multi-word stat phrase ("home runs") is fully consumed. Used by the
+    stat-bearing parsers (single stat, career, season count, catch-all) — what
+    remains is genuine ignored-qualifier words."""
+    global _STAT_ALIASES_DESC
+    if _STAT_ALIASES_DESC is None:
+        _STAT_ALIASES_DESC = sorted(
+            (a for a in stat_alias_map.keys() if len(a) >= 2), key=len, reverse=True)
+    text = _strip_consumed(lower, [name] + list(extra_consumed or []))
+    for alias in _STAT_ALIASES_DESC:
+        text = re.sub(rf'\b{re.escape(alias)}\b', ' ', text)
+    toks = re.findall(r"[a-z0-9.+]+", text)
+    return [t for t in toks
+            if t and t not in _GUARD_FILLER and not re.fullmatch(r"[\d.]+", t)]
 
 
 _MONTH_NAME_MAP = {
@@ -3598,6 +3667,8 @@ def parse_catch_all_player_stat(input_str: str) -> Optional[dict]:
 
     is_career = contains_word("career", lower)
     season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
+    if _residual_qualifier_words(lower, name):
+        return None
     return {"name": name, "stat": stat, "season": season, "is_career": is_career}
 
 
