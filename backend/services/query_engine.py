@@ -4215,10 +4215,17 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
             }
             # Prorated PA minimum based on date range
             # ~2.7 PA per calendar day for a full-time player (162G × 4PA / 243 days)
-            # Use 1.5 PA/day as qualification floor (catches most regulars)
+            # Use 1.5 PA/day as qualification floor (catches most regulars).
+            # Honor end_date for closed ranges — otherwise a single-month rate
+            # leaderboard ("OPS leaders in July") computed days to TODAY and
+            # demanded ~400 PA, zeroing every row (matches the pitching branch).
             try:
                 start = datetime.strptime(plan.since_date, "%Y-%m-%d").date()
-                days_in_range = (date.today() - start).days
+                if plan.end_date:
+                    end = datetime.strptime(plan.end_date, "%Y-%m-%d").date()
+                    days_in_range = (min(end, date.today()) - start).days + 1
+                else:
+                    days_in_range = (date.today() - start).days + 1
                 min_pa = max(10, min(int(days_in_range * 1.5), 400))
             except:
                 min_pa = 50
