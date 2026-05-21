@@ -1754,6 +1754,13 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
     if target_season is None:
         target_season = current_year
 
+    # Unexplained-words guard: a season lookup is "X [year]". A leftover
+    # qualifier (vs the Red Sox, at Fenway, in wins, postseason, leadoff, in
+    # extra innings) means we'd silently ship a full-season line that ignores
+    # it — bail to the query engine / Haiku instead.
+    if _residual_qualifier_words(lower, name):
+        return None
+
     return {"name": name, "season": target_season}
 
 
@@ -2331,6 +2338,8 @@ _GUARD_FILLER = {
     # query-phrasing extras (not in the engine's set, but pure filler here)
     "stats", "stat", "statline", "line", "numbers", "number", "s",
     "his", "her", "show", "me", "please", "whats", "career",
+    # relative-season words (season parsers resolve these; not qualifiers)
+    "last", "previous", "prior", "ago", "current", "doing", "two", "three",
 }
 
 
@@ -2411,6 +2420,18 @@ def _detect_date_bounds(lower: str):
     if m:
         since = (today - timedelta(days=int(m.group(1)))).isoformat()
         consumed.append(m.group(0))
+
+    # "since/after the all-star break" → second half (since the ASG date).
+    # "break" distinguishes the date reference from awards ("all-star
+    # selections/appearances"), which should NOT be claimed here.
+    if since is None and ("all-star break" in lower or "all star break" in lower):
+        ym = re.search(r'\b(20\d{2})\b', lower)
+        yr = int(ym.group(1)) if ym else (today.year if today.month >= 7 else today.year - 1)
+        _ASG = {2021: "2021-07-13", 2022: "2022-07-19", 2023: "2023-07-11",
+                2024: "2024-07-16", 2025: "2025-07-15", 2026: "2026-07-14"}
+        since = _ASG.get(yr, f"{yr}-07-15")
+        consumed.append("all-star break" if "all-star break" in lower else "all star break")
+        consumed.append("since after the second half")
 
     def _resolve(month_str, day, year, is_end):
         month = _MONTH_NAME_MAP.get(month_str)

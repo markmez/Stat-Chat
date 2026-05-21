@@ -257,7 +257,11 @@ def try_intercept(question: str):
         r'strikeouts?|stolen bases?|wins?|saves?|innings)\b',
         re.I,
     )
-    if any(kw in f" {lower} " for kw in _award_kw) and not _stat_kw_re.search(lower):
+    # "all-star break" is a DATE reference (second half), not an awards query —
+    # let it fall through to parse_player_date_range / the date-range path.
+    _is_asg_break = "all-star break" in lower or "all star break" in lower
+    if any(kw in f" {lower} " for kw in _award_kw) and not _stat_kw_re.search(lower) \
+            and not _is_asg_break:
         from services.query_engine import decompose, execute as qe_execute
         try:
             plan = decompose(trimmed)

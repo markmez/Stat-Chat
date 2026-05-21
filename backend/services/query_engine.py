@@ -2236,9 +2236,17 @@ def decompose(question: str) -> QueryPlan:
     # When the user says "[player]'s [superlative] [stat]" with no other scope cue,
     # the natural reading is "his career-best single-season value." Plays well
     # with the player_name + stat already detected by decompose.
+    # Sliding-window stretch ("most X in a 3 game stretch", "best 5-game
+    # span", "most X in any 10 games") is NOT a single-season max — claiming
+    # it would ship "most X in a single season" and silently drop the window.
+    # Bail so it routes to Haiku for now (real sliding-window support is scoped
+    # separately).
+    _has_sliding_window = bool(re.search(
+        r'\b(?:stretch|span)\b|\b(?:in|over|across)\s+(?:a|any|his|their)?\s*\d+[- ]?games?\b',
+        lower))
     _is_player_ssn_max = (
         plan.player_name and (plan.stat or plan.derived_stat)
-        and not _has_career_total
+        and not _has_career_total and not _has_sliding_window
         and (
             plan.scope == "all_time"
             or (_has_superlative and _has_ever)
