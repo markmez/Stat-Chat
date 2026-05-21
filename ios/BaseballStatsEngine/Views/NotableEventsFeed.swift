@@ -498,27 +498,37 @@ struct NotableEventsFeed: View {
     private func highlightedText(_ text: String, playerNames: [String], teamNames: [String], boldMode: BoldMode = .firstOnly) -> AttributedString {
         var result = AttributedString(text)
 
-        // Highlight + link player names
-        for (index, name) in playerNames.enumerated() {
-            if let range = result.range(of: name) {
-                result[range].foregroundColor = deepBlue
-                if boldMode == .all || (boldMode == .firstOnly && index == 0) {
-                    result[range].font = .system(.subheadline, design: .rounded, weight: .bold)
+        // Color + link EVERY occurrence of a name, not just the first — the same
+        // player can be mentioned twice in a merged headline (e.g. "...passing
+        // Sanchez (80) ... (Sanchez, PHI)"), and both should be tappable. Bold
+        // stays on the first occurrence only (the original emphasis behavior).
+        func linkAll(_ name: String, urlPrefix: String, boldEligible: Bool) {
+            guard !name.isEmpty else { return }
+            var searchStart = text.startIndex
+            var occurrence = 0
+            while let r = text.range(of: name, range: searchStart..<text.endIndex) {
+                let lo = text.distance(from: text.startIndex, to: r.lowerBound)
+                let hi = text.distance(from: text.startIndex, to: r.upperBound)
+                let aLo = result.index(result.startIndex, offsetByCharacters: lo)
+                let aHi = result.index(result.startIndex, offsetByCharacters: hi)
+                result[aLo..<aHi].foregroundColor = deepBlue
+                if boldEligible && occurrence == 0 {
+                    result[aLo..<aHi].font = .system(.subheadline, design: .rounded, weight: .bold)
                 }
                 if let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {
-                    result[range].link = URL(string: "statchat://player/\(encoded)")
+                    result[aLo..<aHi].link = URL(string: "\(urlPrefix)\(encoded)")
                 }
+                searchStart = r.upperBound
+                occurrence += 1
             }
         }
 
-        // Highlight + link team names (not bold)
+        for (index, name) in playerNames.enumerated() {
+            let boldEligible = boldMode == .all || (boldMode == .firstOnly && index == 0)
+            linkAll(name, urlPrefix: "statchat://player/", boldEligible: boldEligible)
+        }
         for team in teamNames {
-            if let range = result.range(of: team) {
-                result[range].foregroundColor = deepBlue
-                if let encoded = team.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) {
-                    result[range].link = URL(string: "statchat://team/\(encoded)")
-                }
-            }
+            linkAll(team, urlPrefix: "statchat://team/", boldEligible: false)
         }
 
         return result
