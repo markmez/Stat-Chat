@@ -1215,6 +1215,32 @@ def decompose(question: str) -> QueryPlan:
                 # (e.g. "first 50 games" — "50" is N, not a threshold).
                 # parse_threshold runs later and will see the consumed words.
 
+    # Closed range "from X to Y" / "between X and Y" — reuse the single-player
+    # date-bound detector (handles to/and/between + no-day months). Only claim
+    # when BOTH bounds are present (a true closed range); single open bounds are
+    # left to _detect_since_date / _detect_end_date below. Player-bearing
+    # variants bail later as unexplained → handled by parse_player_date_range.
+    if not plan.since_date and not plan.end_date and not plan.month_grouped \
+            and not plan.recurring_half:
+        try:
+            from . import name_matcher as _nm_cr
+            cr_since, cr_end, cr_text = _nm_cr._detect_date_bounds(lower)
+        except Exception:
+            cr_since = cr_end = None
+            cr_text = ""
+        if cr_since and cr_end:
+            plan.since_date, plan.end_date = cr_since, cr_end
+            plan.scope = "date_range"
+            plan.query_type = "leaderboard"
+            plan.threshold = None
+            _add_consumed(plan, cr_text)
+            month_names = " ".join(_MONTH_MAP.keys())
+            _add_consumed(plan, f"from to through thru until between and {month_names}")
+            for token in lower.split():
+                cleaned = token.strip(",.;")
+                if re.match(r'^\d{1,4}(st|nd|rd|th)?$', cleaned):
+                    _add_consumed(plan, cleaned)
+
     since_date = _detect_since_date(lower) if not plan.since_date else None
     if since_date:
         plan.since_date = since_date
