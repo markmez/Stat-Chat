@@ -576,6 +576,17 @@ def try_intercept(question: str):
         if response:
             return response
 
+    # Player vs a specific team — "{player} vs the Red Sox". An opponent split
+    # from the player's game logs. Must come before the team parsers, which
+    # would otherwise return the OPPONENT's roster (parse_team_stats misses
+    # ambiguous player surnames like "Judge").
+    pvt = nm.parse_player_vs_team(trimmed)
+    if pvt:
+        response = rb.build_player_vs_team(
+            pvt["name"], pvt["opponent_code"], pvt["season"])
+        if response:
+            return response
+
     # Team game score — "Yankees score yesterday", "did the Mets win last night",
     # "Dodgers vs Padres tonight". Must come before parse_team_record because
     # "Yankees score yesterday" doesn't contain "record" and could match it.

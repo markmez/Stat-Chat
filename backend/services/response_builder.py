@@ -3147,6 +3147,152 @@ def build_player_date_range(name: str, since_date: Optional[str] = None,
         conn.close()
 
 
+def build_player_vs_team(name: str, opponent_code: str,
+                         season: Optional[int] = None) -> Optional[str]:
+    """A player's batting line vs a specific opponent, from game logs.
+
+    Powers "{player} vs the {team}". season=None → career split (all years);
+    else that season only. Batting only — returns None if no batting rows so
+    pitchers / unknown players fall through to Haiku.
+    """
+    if not opponent_code:
+        return None
+    conn = _get_db()
+    try:
+        display_name, _ = _get_player_info(conn, name)
+        where = ["p.name = ?", "g.opponent = ?"]
+        params: list = [_sanitize(name), opponent_code]
+        if season:
+            where.append("g.season = ?"); params.append(season)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) as g, "
+            "SUM(g.at_bats) as ab, SUM(g.hits) as h, SUM(g.doubles) as d2b, "
+            "SUM(g.triples) as d3b, SUM(g.home_runs) as hr, "
+            "SUM(g.runs) as r, SUM(g.rbi) as rbi, "
+            "SUM(g.walks) as bb, SUM(g.strikeouts) as so, "
+            "SUM(g.plate_appearances) as pa, "
+            "SUM(g.hit_by_pitch) as hbp, SUM(g.sacrifice_flies) as sf "
+            "FROM game_batting_logs g "
+            "JOIN players p ON g.player_id = p.player_id "
+            "WHERE " + " AND ".join(where),
+            params,
+        )
+        row = cur.fetchone()
+        if not row or not row[0] or int(row[0]) == 0:
+            return None
+
+        games = int(row[0]); ab = int(row[1] or 0); h = int(row[2] or 0)
+        d2b = int(row[3] or 0); d3b = int(row[4] or 0); hr = int(row[5] or 0)
+        r = int(row[6] or 0); rbi = int(row[7] or 0); bb = int(row[8] or 0)
+        so = int(row[9] or 0); hbp = int(row[11] or 0); sf = int(row[12] or 0)
+
+        avg = h / ab if ab > 0 else 0.0
+        obp_denom = ab + bb + hbp + sf
+        obp = (h + bb + hbp) / obp_denom if obp_denom > 0 else 0.0
+        tb = h + d2b + 2 * d3b + 3 * hr
+        slg = tb / ab if ab > 0 else 0.0
+        ops = obp + slg
+        avg_s = _format_rate(f"{avg:.3f}"); obp_s = _format_rate(f"{obp:.3f}")
+        slg_s = _format_rate(f"{slg:.3f}"); ops_s = _format_rate(f"{ops:.3f}")
+
+        opp = _team_full_name(opponent_code)
+        scope_label = f"{season}" if season else "career"
+        parts = [f"**{display_name}** vs {opp} — {scope_label}\n"]
+        parts.append("[STATGRID]")
+        parts.append("HEADER: G, AB, R, H, 2B, 3B, HR, RBI, BB, SO, AVG, OBP, SLG, OPS")
+        parts.append(
+            f"ROW: {games}, {ab}, {r}, {h}, {d2b}, {d3b}, {hr}, {rbi}, "
+            f"{bb}, {so}, {avg_s}, {obp_s}, {slg_s}, {ops_s}"
+        )
+        parts.append("[/STATGRID]")
+        if _is_active_player(conn, name):
+            parts.append(f"\n[SUGGEST]how is {display_name} doing lately[/SUGGEST]")
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
+# Game-log counting columns we can sum over a sliding window. Rate stats
+# (AVG/OBP/...) and derived stats are excluded — small-denominator rates over
+# a few games are meaningless.
+_SLIDING_BAT_COLS = {"hits", "doubles", "triples", "home_runs", "runs", "rbi",
+                     "walks", "strikeouts", "stolen_bases", "at_bats",
+                     "plate_appearances"}
+_SLIDING_PITCH_COLS = {"strikeouts", "walks", "earned_runs", "hits",
+                       "home_runs", "runs"}
+
+
+def build_player_sliding_window(name: str, stat_info: StatInfo, n: int,
+                                direction: str = "max",
+                                is_pitching: bool = False) -> Optional[str]:
+    """Best/worst N-consecutive-game stretch for a player + counting stat.
+
+    Scans the player's game logs season by season (windows never cross an
+    offseason) and slides an N-game window. Returns the extreme window with its
+    date range. Counting stats only — anything else returns None (→ Haiku).
+    """
+    if not stat_info or n is None or n < 2:
+        return None
+    col = stat_info.db_column
+    table = "game_pitching_logs" if is_pitching else "game_batting_logs"
+    allowed = _SLIDING_PITCH_COLS if is_pitching else _SLIDING_BAT_COLS
+    if col not in allowed:
+        return None
+    conn = _get_db()
+    try:
+        display_name, _ = _get_player_info(conn, name)
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT g.season, g.date, g.{col} "
+            f"FROM {table} g JOIN players p ON g.player_id = p.player_id "
+            f"WHERE p.name = ? ORDER BY g.season, g.date",
+            (_sanitize(name),),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return None
+
+        seasons: dict = {}
+        for season, dt, val in rows:
+            seasons.setdefault(season, []).append((dt, int(val or 0)))
+
+        best = None  # (value, season, start_date, end_date)
+        for season, games in seasons.items():
+            if len(games) < n:
+                continue
+            window = sum(v for _, v in games[:n])
+            for end_i in range(n - 1, len(games)):
+                if end_i >= n:
+                    window += games[end_i][1] - games[end_i - n][1]
+                if (best is None
+                        or (direction == "max" and window > best[0])
+                        or (direction == "min" and window < best[0])):
+                    best = (window, season, games[end_i - n + 1][0], games[end_i][0])
+        if best is None:
+            return None
+        value, season, start_d, end_d = best
+
+        from datetime import datetime as _dt
+        def _fmt(d):
+            try:
+                return _dt.strptime(d, "%Y-%m-%d").strftime("%b %-d")
+            except Exception:
+                return d
+        noun = stat_info.display_name.lower()
+        dir_word = "fewest" if direction == "min" else "most"
+        parts = [
+            f"**{display_name}** — {dir_word} {noun} in a {n}-game stretch\n",
+            f"**{value}** {noun} over {n} games "
+            f"({_fmt(start_d)}–{_fmt(end_d)}, {season}).",
+        ]
+        if _is_active_player(conn, name):
+            parts.append(f"\n[SUGGEST]how is {display_name} doing lately[/SUGGEST]")
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
 # ===================================================================
 # 25. build_leaderboard
 # ===================================================================

@@ -3238,6 +3238,33 @@ def parse_consecutive_streak(input_str: str) -> Optional[dict]:
     return {"type": streak_type, "player_name": player_name, "season": season}
 
 
+# "{player} vs/against {team}" markers. Used by parse_player_vs_team AND by
+# parse_team_stats (to bail when the query is really a player-vs-team split —
+# _has_player_name misses ambiguous surnames like "Judge").
+_VS_TOKENS = (" vs ", " vs. ", " v. ", " versus ", " against ", " facing ")
+
+
+def parse_player_vs_team(input_str: str) -> Optional[dict]:
+    """Detect "{player} vs/against {team}" → that player's line vs the opponent.
+
+    Returns {"name", "opponent_code", "season"} or None. season is None for a
+    career split (no year given), else the explicit/relative year. Uses
+    find_player_in_text (resolves ambiguous surnames by prominence) so "Judge
+    vs the Red Sox" works, where _has_player_name would miss "Judge".
+    """
+    padded = " " + input_str.strip().lower() + " "
+    if not any(tok in padded for tok in _VS_TOKENS):
+        return None
+    name = find_player_in_text(input_str)
+    if not name:
+        return None
+    opponent_code = match_team(input_str)
+    if not opponent_code:
+        return None
+    season = detect_season(input_str)
+    return {"name": name, "opponent_code": opponent_code, "season": season}
+
+
 def parse_team_stats(input_str: str) -> Optional[dict]:
     """Detect team stat queries. Returns dict with team_code, stat, season."""
     lower = input_str.strip().lower()
@@ -3247,6 +3274,12 @@ def parse_team_stats(input_str: str) -> Optional[dict]:
         return None
 
     if _has_player_name(lower):
+        return None
+
+    # "{player} vs the {team}" is a player-vs-opponent split, not a team query.
+    # _has_player_name misses ambiguous surnames, so check vs/against + player
+    # explicitly and bail (parse_player_vs_team handles it upstream).
+    if any(tok in f" {lower} " for tok in _VS_TOKENS) and find_player_in_text(input_str):
         return None
 
     stat = match_stat(lower)

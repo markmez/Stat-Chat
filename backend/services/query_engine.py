@@ -519,6 +519,9 @@ class QueryPlan:
     streak_length: Optional[int] = None  # N consecutive games
     streak_direction: Optional[str] = None  # "leading" (from start), "sliding" (anywhere), "trailing" (current)
 
+    # Sliding-window stretch ("most X in an N-game stretch") for one player
+    sliding_window_n: Optional[int] = None  # window size in consecutive games
+
     # Validation
     is_pitching: bool = False
     ambiguous_stat: bool = False  # True when stat exists in both batting and pitching
@@ -544,6 +547,10 @@ class QueryPlan:
             return len(self.streak_conditions) > 0 and len(self.unexplained_words) == 0
         if self.query_type == "year_comparison":
             return self.player_name is not None and self.compare_years is not None and len(self.unexplained_words) == 0
+        if self.query_type == "player_sliding_window":
+            return (self.player_name is not None and self.stat is not None
+                    and self.sliding_window_n is not None
+                    and len(self.unexplained_words) == 0)
         return (self.stat is not None or self.derived_stat is not None) and len(self.unexplained_words) == 0
 
 
@@ -2268,6 +2275,21 @@ def decompose(question: str) -> QueryPlan:
         # executor can produce the right answer.
         plan.unexplained_words = []
 
+    # Sliding-window stretch: "{player} most {stat} in a {N}-game stretch/span".
+    # Buildable from game logs (rolling N-consecutive-game windows within one
+    # season). Requires an explicit N — without it the window is undefined, so
+    # "best stretch" alone keeps bailing. Counting stats only (handled by the
+    # executor); derived stats stay a bail.
+    if (_has_sliding_window and plan.player_name and plan.stat
+            and plan.query_type in ("leaderboard", "threshold", "superlative")):
+        _win_m = re.search(r'(\d+)[\s-]*games?\b', lower)
+        if _win_m:
+            plan.sliding_window_n = int(_win_m.group(1))
+            plan.query_type = "player_sliding_window"
+            # Window intent is unambiguous now; leftover decorative words
+            # ("ever", "had", "in a", "stretch") shouldn't block the plan.
+            plan.unexplained_words = []
+
     # Final overrides for date_range scope — must run last since earlier steps
     # may have set threshold from date numbers (e.g. "16" from "june 16")
     # and reclassified query_type to "threshold"
@@ -2849,6 +2871,8 @@ def execute(plan: QueryPlan) -> Optional[str]:
             result = _execute_per_team_leaders(conn, plan)
         elif plan.query_type == "player_single_season_max":
             result = _execute_player_single_season_max(plan)
+        elif plan.query_type == "player_sliding_window":
+            result = _execute_player_sliding_window(plan)
         elif plan.team_context is not None:
             result = _execute_team_context_leaderboard(conn, plan)
         elif plan.split_context is not None:
@@ -6008,6 +6032,25 @@ def _execute_player_single_season_max(plan: QueryPlan) -> Optional[str]:
     is_pitching = _nm.is_pitcher(plan.player_name) or _nm.is_pitching_stat(plan.stat)
     return build_player_single_season_max(
         plan.player_name, plan.stat, direction=direction, is_pitching=is_pitching
+    )
+
+
+def _execute_player_sliding_window(plan: QueryPlan) -> Optional[str]:
+    """Best/worst N-consecutive-game stretch for a player + counting stat.
+
+    Delegates to response_builder.build_player_sliding_window, which scans the
+    player's game logs and slides an N-game window within each season.
+    """
+    if not plan.player_name or not plan.stat or not plan.sliding_window_n:
+        return None
+    from .response_builder import build_player_sliding_window
+    from . import name_matcher as _nm
+
+    direction = "min" if plan.sort_asc else "max"
+    is_pitching = _nm.is_pitcher(plan.player_name) or _nm.is_pitching_stat(plan.stat)
+    return build_player_sliding_window(
+        plan.player_name, plan.stat, plan.sliding_window_n,
+        direction=direction, is_pitching=is_pitching,
     )
 
 
