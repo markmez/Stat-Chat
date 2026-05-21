@@ -3214,7 +3214,7 @@ def build_player_vs_team(name: str, opponent_code: str,
             if faced:
                 parts.append(
                     f"[DIDYOUMEAN]{display_name} vs the "
-                    f"{_team_nickname(opponent_code)} this season[/DIDYOUMEAN]")
+                    f"{opp} this season[/DIDYOUMEAN]")
         parts.append("[STATGRID]")
         parts.append("HEADER: G, AB, R, H, 2B, 3B, HR, RBI, BB, SO, AVG, OBP, SLG, OPS")
         parts.append(
