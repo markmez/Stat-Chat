@@ -689,7 +689,9 @@ def _historical_context(conn, streak_len, condition_sql, table="game_batting_log
             mlb_length_lopsided = mlb_run >= streak_len * 1.5
             if not mlb_length_lopsided:
                 name = _player_name(conn, mlb_pid)
-                mlb_phrase = f"the longest {streak_label} streak since {name} ({mlb_run} games) in {mlb_year}."
+                # Same-season anchor reads as "earlier this season", not "in 2026".
+                _when = "earlier this season" if mlb_year == _cur_season else f"in {mlb_year}"
+                mlb_phrase = f"the longest {streak_label} streak since {name} ({mlb_run} games) {_when}."
                 if secondary_names is not None and name:
                     secondary_names.append(name)
 

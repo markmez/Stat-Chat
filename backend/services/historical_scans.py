@@ -520,10 +520,14 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
         mlb_length_lopsided = plen >= current_length * 1.5
         if not mlb_length_lopsided:
             mentioned.append(pname)
+            # Same-season anchor reads as "earlier this season" rather than the
+            # bare year ("in 2026"), which sounds odd when it's the current year.
+            _when = "earlier this season" if pseason == _cur_season else f"in {pseason}"
             if plen == current_length:
-                phrases.append(f"matching {pname}'s {plen}-game {noun} from {pseason}")
+                _from = "earlier this season" if pseason == _cur_season else f"from {pseason}"
+                phrases.append(f"matching {pname}'s {plen}-game {noun} {_from}")
             else:
-                phrases.append(f"the longest {noun} by any player since {pname}'s {plen} in {pseason}")
+                phrases.append(f"the longest {noun} by any player since {pname}'s {plen} {_when}")
 
     # (2) Nth-longest (MLB-wide)
     longer_count = conn.execute("""
@@ -584,15 +588,16 @@ def get_streak_historical_context(conn, streak_type, current_length, current_sta
                     # vowel-starting MLB franchises (Astros, Angels, Athletics,
                     # Orioles) cleanly; everything else stays "a".
                     article = "an" if franchise_name and franchise_name[0].lower() in "aeio" else "a"
+                    _t_when = "earlier this season" if t_season == _cur_season else f"in {t_season}"
                     if t_len == current_length:
                         phrases.append(
                             f"matching {t_name}'s {t_len}-game {noun} as {article} "
-                            f"{franchise_name} in {t_season}"
+                            f"{franchise_name} {_t_when}"
                         )
                     else:
                         phrases.append(
                             f"the longest {noun} by {article} {franchise_name} player "
-                            f"since {t_name}'s {t_len} in {t_season}"
+                            f"since {t_name}'s {t_len} {_t_when}"
                         )
 
     return phrases, mentioned

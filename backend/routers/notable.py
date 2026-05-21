@@ -95,6 +95,9 @@ _NO_LEAD_IN_PREFIX = re.compile(
     r"^(?:"
     r"that's|that was|"
     r"the (?:first|last|most|only)\b|"
+    # "the 10 K is a new career high" — the count restates the lead-in
+    # ("By striking out 10, the 10 K is…"), so drop the lead-in entirely.
+    r"the \d+ \S+ (?:is|are|was|were)\b|"
     r"(?:he\s+)?is\s+(?:now\s+)?on\s+pace\s+for"
     r")",
     re.I,
@@ -706,22 +709,24 @@ def _merge_player_events(conn, group, player_name, game_date):
     sentences = []
     for stat in stat_order:
         events = by_stat[stat]
-        # Detect whether ANY event in this group is active-state (active streak,
-        # ongoing pace). When yes, preserve present tense across the impacts so
-        # the prose says "that's the longest" / "matching X's run" instead of
-        # "that was the longest" / "matched X's run".
-        group_active_state = any(
-            e.get("_type", "") in _ACTIVE_STATE_DETECTION_TYPES for e in events
-        )
-        # Extract raw impact for each event in this stat group
+        # Tense is decided PER EVENT, not per group. An active-state event
+        # (ongoing streak/pace) keeps present tense ("now has 4 scoreless
+        # starts"); a completed event goes past ("took the NL lead"). Grouping a
+        # completed action with an active streak must not force the completed
+        # one into present tense — "taking the NL lead" for yesterday's game is
+        # wrong. Mixed tense in one sentence (past action + current state) reads
+        # naturally.
         raw_impacts = []
+        impact_active = {}  # impact text -> from an active-state event?
         for e in events:
+            e_active = e.get("_type", "") in _ACTIVE_STATE_DETECTION_TYPES
             impact = _extract_raw_impact(
                 e["headline"], player_name,
-                preserve_present_tense=group_active_state,
+                preserve_present_tense=e_active,
             )
             if impact and impact not in raw_impacts:
                 raw_impacts.append(impact)
+                impact_active[impact] = e_active
         # Drop impacts that are substrings of other impacts (e.g., bare slash
         # line when another impact embeds it in richer narrative)
         raw_impacts = _dedupe_by_substring(raw_impacts)
@@ -735,7 +740,8 @@ def _merge_player_events(conn, group, player_name, game_date):
             lead_in = _lead_in_for_stat(stat, count)
 
         # Combine impacts: first keeps its subject; rest get stripped and joined
-        first = _ensure_subject(raw_impacts[0], active_state=group_active_state)
+        first = _ensure_subject(raw_impacts[0],
+                                active_state=impact_active.get(raw_impacts[0], False))
         if len(raw_impacts) == 1:
             body = first
         elif len(raw_impacts) == 2:
