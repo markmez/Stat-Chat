@@ -203,6 +203,27 @@ def _detect_since_date(lower: str) -> Optional[str]:
     return None
 
 
+def _detect_end_date(lower: str) -> Optional[str]:
+    """Open UPPER bound from 'before/through/until/as of [date]'. Returns
+    'YYYY-MM-DD' (inclusive — paired with `date <= end_date` in the executor)
+    or None. Mirror of _detect_since_date for the upper bound; lets the query
+    engine handle "OPS leaders before Aug 1" / "...through July 31"."""
+    import re
+    today = date.today()
+    quals = r'(?:before|through|thru|until|up\s+to|as\s+of)'
+    # "[qual] Month day, year" / "Month day year"
+    m = re.search(rf'\b{quals}\s+([a-z]+)\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?\s*,?\s*(\d{{4}})\b', lower)
+    if m and m.group(1) in _MONTH_MAP:
+        return f"{int(m.group(3))}-{_MONTH_MAP[m.group(1)]:02d}-{int(m.group(2)):02d}"
+    # "[qual] Month day" (no year — infer current season)
+    m = re.search(rf'\b{quals}\s+([a-z]+)\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?\b', lower)
+    if m and m.group(1) in _MONTH_MAP:
+        mo = _MONTH_MAP[m.group(1)]
+        yr = today.year if mo <= today.month else today.year - 1
+        return f"{yr}-{mo:02d}-{int(m.group(2)):02d}"
+    return None
+
+
 def _detect_month_range(lower: str) -> Optional[tuple]:
     """Detect bare month references as closed date ranges.
 
@@ -1230,6 +1251,26 @@ def decompose(question: str) -> QueryPlan:
             for token in lower.split():
                 cleaned = token.strip(",.;")
                 if re.match(r'^\d{1,4}$', cleaned):
+                    _add_consumed(plan, cleaned)
+
+    # Open UPPER bound: "before/through/until Aug 1" → end_date, with the lower
+    # bound floored at that year's season opener (executor applies date <=
+    # end_date). Player-bearing variants ("Judge OPS before Aug 1") bail here as
+    # unexplained and are caught by the single-player parse_player_date_range.
+    if not plan.end_date and not plan.month_grouped and not plan.recurring_half:
+        end_date = _detect_end_date(lower)
+        if end_date:
+            plan.end_date = end_date
+            if not plan.since_date:
+                plan.since_date = f"{int(end_date[:4])}-03-25"  # season-opener floor; avoids spring
+            plan.scope = "date_range"
+            plan.query_type = "leaderboard"
+            plan.threshold = None
+            month_names = " ".join(_MONTH_MAP.keys())
+            _add_consumed(plan, f"before through thru until up to as of {month_names}")
+            for token in lower.split():
+                cleaned = token.strip(",.;")
+                if re.match(r'^\d{1,4}(st|nd|rd|th)?$', cleaned):
                     _add_consumed(plan, cleaned)
 
     since_year = _detect_since_year(lower)
