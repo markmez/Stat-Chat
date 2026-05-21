@@ -526,18 +526,30 @@ def find_player_in_text(text: str) -> Optional[str]:
     # Try unambiguous last name
     for last_name, players in last_name_index.items():
         if contains_word(last_name, lower) and len(players) == 1 \
-                and last_name not in common_word_last_names:
+                and last_name not in common_word_last_names \
+                and last_name not in _MONTH_WORDS:
             return _resolve_embedded_name(players[0])
 
     # Ambiguous last name — pick most prominent (e.g. "Judge" → Aaron Judge over Joe Judge)
     for last_name, players in last_name_index.items():
         if contains_word(last_name, lower) and len(players) > 1 \
-                and last_name not in common_word_last_names:
+                and last_name not in common_word_last_names \
+                and last_name not in _MONTH_WORDS:
             sorted_players, _ = _sort_by_prominence(players)
             if sorted_players:
                 return sorted_players[0]
 
     return None
+
+
+# Month names are far more often a date reference than a player surname
+# (Don August, Lee/Carlos May). A BARE month word must not resolve to the
+# player — "OPS leaders in August" is a month leaderboard, not Don August.
+# Full names ("Don August stats") still match via the full-name loop above.
+_MONTH_WORDS = {
+    "january", "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december",
+}
 
 
 def match_player(text: str) -> Optional[str]:
