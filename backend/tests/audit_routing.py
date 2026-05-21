@@ -104,6 +104,9 @@ TESTS: list[tuple[str, str, str]] = [
     # the query and returning the opponent's roster instead.
     ("Judge vs the Red Sox", "intercepted", "Player vs team split"),
     ("Soto vs the Dodgers 2025", "intercepted", "Player vs team split"),
+    # Full team name must route to vs-team, NOT a player-vs-player comparison
+    # ("Boston" resolves to a player) — guards the parse order vs parse_comparison.
+    ("Aaron Judge vs the Boston Red Sox", "intercepted", "Player vs team split"),
 
     # ============================================================
     # Tier 3: Single-player career + season + slash line
