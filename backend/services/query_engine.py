@@ -2286,6 +2286,18 @@ def decompose(question: str) -> QueryPlan:
     if _has_sliding_window and plan.player_name and plan.stat:
         _win_m = re.search(r'(\d+)[\s-]*games?\b', lower)
         if _win_m:
+            # "N game(s)" can hijack stat detection to G (games played) when the
+            # real stat matched weakly (e.g. singular "rbi"). If that happened,
+            # strip the window phrase and re-derive the intended stat.
+            if plan.stat.db_column == "games":
+                from . import name_matcher as _nm
+                _stripped = re.sub(
+                    r'\b(?:in|over|across|during)?\s*(?:a|any|his|their)?\s*'
+                    r'\d+[\s-]*games?\b', ' ', lower)
+                _stripped = re.sub(r'\b(?:stretch|span)\b', ' ', _stripped)
+                _real = _nm.match_stat(_stripped)
+                if _real and _real.db_column != "games":
+                    plan.stat = _real
             plan.sliding_window_n = int(_win_m.group(1))
             plan.query_type = "player_sliding_window"
             # A "{N} game" phrase can trip career_game_window detection; clear
