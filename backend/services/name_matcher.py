@@ -2430,10 +2430,12 @@ def _detect_date_bounds(lower: str):
         return None, None
 
     if since is None:
-        since, c = _find(["since", "after", "from"], is_end=False)
+        since, c = _find(["since", "after", "from", "between"], is_end=False)
         if c:
             consumed.append(c)
-    end, c = _find(["before", "through", "thru", "until"], is_end=True)
+    # "to"/"and" close a range ("from June 1 to July 31", "between June 1 and
+    # July 31"); the patterns require a month, so a stray "to"/"and" won't fire.
+    end, c = _find(["before", "through", "thru", "until", "to", "and"], is_end=True)
     if c:
         consumed.append(c)
     return since, end, " ".join(consumed)
@@ -2464,14 +2466,11 @@ def parse_player_date_range(input_str: str) -> Optional[dict]:
     if not name:
         return None
 
-    # Bail if a meaningful qualifier remains after removing the player and the
-    # date phrase (e.g. "vs lefties", "with RISP", a second stat) — let the
-    # query engine / splits / Haiku handle the richer query.
-    leftover = _unexplained_words(lower, [name, date_text])
-    # A bare stat word ("hits", "ops") is fine — that just narrows the line and
-    # we still show the full grid; only flag NON-stat leftovers.
-    leftover = [w for w in leftover if match_stat(w) is None]
-    if leftover:
+    # Bail if a meaningful qualifier remains after removing the player, the date
+    # phrase, AND any stat phrase (a specific stat like "home runs" just narrows
+    # the line — we still show the full grid — so it must be consumed, not
+    # flagged). Genuine leftovers ("vs lefties", "with RISP") route elsewhere.
+    if _residual_qualifier_words(lower, name, extra_consumed=[date_text]):
         return None
 
     return {"name": name, "since_date": since_date, "end_date": end_date}
