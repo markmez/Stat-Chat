@@ -205,7 +205,10 @@ TESTS: list[tuple[str, str, str]] = [
     # uses OPS-allowed instead which IS in the table.
     ("Best OPS allowed vs LHB this year", "intercepted", "Split: leaderboard platoon"),
     ("Best ERA in the 7th inning", "intercepted", "Split: inning leaderboard"),
-    ("Aaron Judge in the 1st inning 2024", "intercepted", "Split: single-player inning"),
+    # Inning splits exist only for pitchers (pitching_inning_splits) and only
+    # for 2026. A batter + a season without data never tested the feature — it
+    # just fell to season_lookup and got a full-season line. Use a real one.
+    ("Tarik Skubal in the 1st inning 2026", "intercepted", "Split: single-player inning"),
     # Stage 2 pitching split leaderboards (count, RISP, home/away, pitch type).
     # Each one routes to its *_pitching_splits table via explicit "pitchers"
     # prefix or "throwing X" phrasing for pitch type.
