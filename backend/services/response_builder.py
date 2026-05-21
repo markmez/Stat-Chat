@@ -3199,6 +3199,22 @@ def build_player_vs_team(name: str, opponent_code: str,
         opp = _team_full_name(opponent_code)
         scope_label = f"{season}" if season else "career"
         parts = [f"**{display_name}** vs {opp} — {scope_label}\n"]
+        # Career default is an inference — offer the current-season split as a
+        # see-also, but only if the player has actually faced this opponent
+        # this year (otherwise the see-also would resolve to nothing).
+        if season is None:
+            from datetime import datetime as _dt
+            cur_year = _dt.now().year
+            faced = cur.execute(
+                "SELECT 1 FROM game_batting_logs g JOIN players p "
+                "ON g.player_id = p.player_id "
+                "WHERE p.name = ? AND g.opponent = ? AND g.season = ? LIMIT 1",
+                (_sanitize(name), opponent_code, cur_year),
+            ).fetchone()
+            if faced:
+                parts.append(
+                    f"[DIDYOUMEAN]{display_name} vs the "
+                    f"{_team_nickname(opponent_code)} this season[/DIDYOUMEAN]")
         parts.append("[STATGRID]")
         parts.append("HEADER: G, AB, R, H, 2B, 3B, HR, RBI, BB, SO, AVG, OBP, SLG, OPS")
         parts.append(
@@ -3225,12 +3241,14 @@ _SLIDING_PITCH_COLS = {"strikeouts", "walks", "earned_runs", "hits",
 
 def build_player_sliding_window(name: str, stat_info: StatInfo, n: int,
                                 direction: str = "max",
-                                is_pitching: bool = False) -> Optional[str]:
+                                is_pitching: bool = False,
+                                season: Optional[int] = None) -> Optional[str]:
     """Best/worst N-consecutive-game stretch for a player + counting stat.
 
-    Scans the player's game logs season by season (windows never cross an
-    offseason) and slides an N-game window. Returns the extreme window with its
-    date range. Counting stats only — anything else returns None (→ Haiku).
+    season=None scans every season (career-best window; the default) and never
+    lets a window cross an offseason. season=YYYY restricts to that year. The
+    inferred career default appends a current-season see-also. Counting stats
+    only — anything else returns None (→ Haiku).
     """
     if not stat_info or n is None or n < 2:
         return None
@@ -3242,23 +3260,27 @@ def build_player_sliding_window(name: str, stat_info: StatInfo, n: int,
     conn = _get_db()
     try:
         display_name, _ = _get_player_info(conn, name)
+        where = ["p.name = ?"]
+        params: list = [_sanitize(name)]
+        if season:
+            where.append("g.season = ?"); params.append(season)
         cur = conn.cursor()
         cur.execute(
             f"SELECT g.season, g.date, g.{col} "
             f"FROM {table} g JOIN players p ON g.player_id = p.player_id "
-            f"WHERE p.name = ? ORDER BY g.season, g.date",
-            (_sanitize(name),),
+            f"WHERE {' AND '.join(where)} ORDER BY g.season, g.date",
+            params,
         )
         rows = cur.fetchall()
         if not rows:
             return None
 
         seasons: dict = {}
-        for season, dt, val in rows:
-            seasons.setdefault(season, []).append((dt, int(val or 0)))
+        for s, dt, val in rows:
+            seasons.setdefault(s, []).append((dt, int(val or 0)))
 
         best = None  # (value, season, start_date, end_date)
-        for season, games in seasons.items():
+        for s, games in seasons.items():
             if len(games) < n:
                 continue
             window = sum(v for _, v in games[:n])
@@ -3268,10 +3290,10 @@ def build_player_sliding_window(name: str, stat_info: StatInfo, n: int,
                 if (best is None
                         or (direction == "max" and window > best[0])
                         or (direction == "min" and window < best[0])):
-                    best = (window, season, games[end_i - n + 1][0], games[end_i][0])
+                    best = (window, s, games[end_i - n + 1][0], games[end_i][0])
         if best is None:
             return None
-        value, season, start_d, end_d = best
+        value, best_season, start_d, end_d = best
 
         from datetime import datetime as _dt
         def _fmt(d):
@@ -3281,11 +3303,18 @@ def build_player_sliding_window(name: str, stat_info: StatInfo, n: int,
                 return d
         noun = stat_info.display_name.lower()
         dir_word = "fewest" if direction == "min" else "most"
-        parts = [
-            f"**{display_name}** — {dir_word} {noun} in a {n}-game stretch\n",
+        scope_suffix = f" ({season})" if season else ""
+        parts = [f"**{display_name}** — {dir_word} {noun} in a {n}-game stretch{scope_suffix}\n"]
+        # Career default is an inference — offer the current-season window as a
+        # see-also, but only if the player actually has an N-game window this year.
+        cur_year = _dt.now().year
+        if season is None and cur_year in seasons and len(seasons[cur_year]) >= n:
+            parts.append(
+                f"[DIDYOUMEAN]{display_name} {dir_word} {noun} "
+                f"in a {n} game stretch this season[/DIDYOUMEAN]")
+        parts.append(
             f"**{value}** {noun} over {n} games "
-            f"({_fmt(start_d)}–{_fmt(end_d)}, {season}).",
-        ]
+            f"({_fmt(start_d)}–{_fmt(end_d)}, {best_season}).")
         if _is_active_player(conn, name):
             parts.append(f"\n[SUGGEST]how is {display_name} doing lately[/SUGGEST]")
         return "\n".join(parts)

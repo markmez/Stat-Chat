@@ -521,6 +521,7 @@ class QueryPlan:
 
     # Sliding-window stretch ("most X in an N-game stretch") for one player
     sliding_window_n: Optional[int] = None  # window size in consecutive games
+    sliding_window_season: Optional[int] = None  # None = career default; else that year
 
     # Validation
     is_pitching: bool = False
@@ -2286,11 +2287,11 @@ def decompose(question: str) -> QueryPlan:
     if _has_sliding_window and plan.player_name and plan.stat:
         _win_m = re.search(r'(\d+)[\s-]*games?\b', lower)
         if _win_m:
+            from . import name_matcher as _nm
             # "N game(s)" can hijack stat detection to G (games played) when the
             # real stat matched weakly (e.g. singular "rbi"). If that happened,
             # strip the window phrase and re-derive the intended stat.
             if plan.stat.db_column == "games":
-                from . import name_matcher as _nm
                 _stripped = re.sub(
                     r'\b(?:in|over|across|during)?\s*(?:a|any|his|their)?\s*'
                     r'\d+[\s-]*games?\b', ' ', lower)
@@ -2299,6 +2300,9 @@ def decompose(question: str) -> QueryPlan:
                 if _real and _real.db_column != "games":
                     plan.stat = _real
             plan.sliding_window_n = int(_win_m.group(1))
+            # Explicit season ("this season", "in 2024") → that year; else None
+            # (career-best window is the default, with a current-season see-also).
+            plan.sliding_window_season = _nm.detect_season(lower)
             plan.query_type = "player_sliding_window"
             # A "{N} game" phrase can trip career_game_window detection; clear
             # it so the dispatch reaches the sliding-window executor cleanly.
@@ -6071,6 +6075,7 @@ def _execute_player_sliding_window(plan: QueryPlan) -> Optional[str]:
     return build_player_sliding_window(
         plan.player_name, plan.stat, plan.sliding_window_n,
         direction=direction, is_pitching=is_pitching,
+        season=plan.sliding_window_season,
     )
 
 
