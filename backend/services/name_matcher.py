@@ -2299,7 +2299,11 @@ def _unexplained_words(lower: str, consumed: list) -> list:
         if phrase:
             text = text.replace(str(phrase).lower(), " ")
     toks = re.findall(r"[a-z0-9.+]+", text)
-    return [t for t in toks if t and t not in _GUARD_FILLER]
+    # A bare 4-digit year is a scope qualifier the season/date parsers handle
+    # (it may sit apart from the consumed date phrase, e.g. "2025 ... after
+    # June 30"), so it never counts as an ignored qualifier.
+    return [t for t in toks
+            if t and t not in _GUARD_FILLER and not re.fullmatch(r"(?:19|20)\d{2}", t)]
 
 
 _MONTH_NAME_MAP = {
