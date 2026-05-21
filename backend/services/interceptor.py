@@ -318,6 +318,21 @@ def try_intercept(question: str):
         if response:
             return response
 
+    # Player vs a specific team — "{player} vs the Red Sox" / "...the Boston Red
+    # Sox". An opponent split from the player's game logs. Must come BEFORE
+    # comparison: a full team name contains a city word that resolves to a
+    # player (e.g. "Boston"), so comparison would otherwise treat it as a
+    # player-vs-player matchup. When match_team fails (real player-vs-player),
+    # this returns None and comparison handles it. Also beats the team parsers,
+    # which would return the opponent's roster (parse_team_stats misses
+    # ambiguous surnames like "Judge").
+    pvt = nm.parse_player_vs_team(trimmed)
+    if pvt:
+        response = rb.build_player_vs_team(
+            pvt["name"], pvt["opponent_code"], pvt["season"])
+        if response:
+            return response
+
     # 1. Comparison — "Judge vs Soto", "Compare Lindor and Witt"
     comp = nm.parse_comparison(trimmed)
     if comp:
@@ -573,17 +588,6 @@ def try_intercept(question: str):
             season = None
         response = rb.build_consecutive_streak(
             consec["type"], consec.get("player_name"), season)
-        if response:
-            return response
-
-    # Player vs a specific team — "{player} vs the Red Sox". An opponent split
-    # from the player's game logs. Must come before the team parsers, which
-    # would otherwise return the OPPONENT's roster (parse_team_stats misses
-    # ambiguous player surnames like "Judge").
-    pvt = nm.parse_player_vs_team(trimmed)
-    if pvt:
-        response = rb.build_player_vs_team(
-            pvt["name"], pvt["opponent_code"], pvt["season"])
         if response:
             return response
 
