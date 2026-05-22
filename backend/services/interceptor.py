@@ -381,7 +381,7 @@ def try_intercept(question: str):
         name, perf, season = streak["name"], streak["performance"], streak["season"]
         career = streak.get("career", False)
         if nm.is_pitcher(name):
-            response = rb.build_pitching_streak_list(name, perf, season)
+            response = rb.build_pitching_streak_list(name, perf, season, career=career)
         else:
             response = rb.build_streak_list(name, perf, season, career=career)
         if response:

@@ -1634,8 +1634,8 @@ def build_streak_list(name: str, performance: str, season: Optional[int] = None,
 # 11. build_pitching_streak_list
 # ===================================================================
 
-def _fetch_pitching_streaks_for_season(conn, name, season, performance="hot"):
-    """Fetch pitching streaks with T1->T2->T3 fallback."""
+def _fetch_pitching_streaks_for_season(conn, name, season, performance="hot", career=False):
+    """Fetch pitching streaks with T1->T2->T3 fallback. career=True scans all seasons."""
     order_dir = "DESC" if performance == "cold" else "ASC"  # Lower ERA = hotter
     tables = [
         ("pitching_streaks", "ps"),
@@ -1645,6 +1645,12 @@ def _fetch_pitching_streaks_for_season(conn, name, season, performance="hot"):
     for table, alias in tables:
         cur = conn.cursor()
         try:
+            if career:
+                season_clause = ""
+                params = (_sanitize(name), performance)
+            else:
+                season_clause = f"AND {alias}.season = ? "
+                params = (_sanitize(name), season, performance)
             cur.execute(
                 f"SELECT {alias}.start_date, {alias}.end_date, {alias}.num_games, "
                 f"{alias}.innings_pitched, {alias}.hits, {alias}.earned_runs, "
@@ -1652,9 +1658,9 @@ def _fetch_pitching_streaks_for_season(conn, name, season, performance="hot"):
                 f"{alias}.era, {alias}.whip, {alias}.k_per_9 "
                 f"FROM {table} {alias} "
                 f"JOIN players p ON {alias}.player_id = p.player_id "
-                f"WHERE p.name = ? AND {alias}.season = ? AND {alias}.performance = ? "
+                f"WHERE p.name = ? {season_clause}AND {alias}.performance = ? "
                 f"ORDER BY {alias}.era {order_dir}",
-                (_sanitize(name), season, performance),
+                params,
             )
             rows = cur.fetchall()
             if rows:
@@ -1664,34 +1670,38 @@ def _fetch_pitching_streaks_for_season(conn, name, season, performance="hot"):
     return []
 
 
-def build_pitching_streak_list(name: str, performance: str, season: Optional[int] = None) -> Optional[str]:
-    """Format pitching streaks."""
+def build_pitching_streak_list(name: str, performance: str, season: Optional[int] = None,
+                               career: bool = False) -> Optional[str]:
+    """Format pitching streaks. career=True → all-time."""
     conn = _get_db()
     try:
         display_name, _ = _get_player_info(conn, name)
 
-        if season is None:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT MAX(ps.season) FROM pitching_streaks ps "
-                "JOIN players p ON ps.player_id = p.player_id WHERE p.name = ?",
-                (_sanitize(name),),
-            )
-            row = cur.fetchone()
-            if not row or not row[0]:
-                return None
-            target_season = int(row[0])
-        else:
-            target_season = _resolve_season(conn, name, season, "season_pitching_stats", "sp")
+        target_season = None
+        if not career:
+            if season is None:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT MAX(ps.season) FROM pitching_streaks ps "
+                    "JOIN players p ON ps.player_id = p.player_id WHERE p.name = ?",
+                    (_sanitize(name),),
+                )
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    return None
+                target_season = int(row[0])
+            else:
+                target_season = _resolve_season(conn, name, season, "season_pitching_stats", "sp")
 
-        rows = _fetch_pitching_streaks_for_season(conn, name, target_season, performance)
+        rows = _fetch_pitching_streaks_for_season(conn, name, target_season, performance, career=career)
         if not rows:
             label = "cold streaks" if performance == "cold" else "hot streaks"
-            return f"No {label} found for **{display_name}** in {target_season}."
+            where = "in their career" if career else f"in {target_season}"
+            return f"No {label} found for **{display_name}** {where}."
 
-        # League avg ERA for cold streak context
+        # League avg ERA for cold streak context (skip for career — mixed seasons)
         league_era = None
-        if performance == "cold":
+        if performance == "cold" and not career:
             cur = conn.cursor()
             try:
                 cur.execute("SELECT league_era FROM league_pitching_averages WHERE season = ?", (target_season,))
@@ -1703,8 +1713,9 @@ def build_pitching_streak_list(name: str, performance: str, season: Optional[int
 
         headers = ["G", "IP", "H", "ER", "BB", "SO", "HR", "ERA", "WHIP", "K/9"]
         label = "Cold Streaks" if performance == "cold" else "Hot Streaks"
+        scope_label = "Career" if career else str(target_season)
         parts = []
-        parts.append(f"**{display_name}** \u2014 {target_season} {label}\n")
+        parts.append(f"**{display_name}** \u2014 {scope_label} {label}\n")
         parts.append("[STATGRID]")
         parts.append("HEADER: " + ", ".join(headers))
 
