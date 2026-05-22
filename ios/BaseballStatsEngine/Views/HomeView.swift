@@ -89,22 +89,11 @@ struct HomeView: View {
 
     private var mainContent: some View {
         ZStack(alignment: .bottom) {
-            // Main search area — centered
+            // Main search area — centered. (The settings gear is pinned to the
+            // top safe area via .safeAreaInset on the ZStack below, NOT in this
+            // VStack — keeping it in the flow let .ignoresSafeArea(.keyboard)
+            // shift it up into the status bar when the keyboard opened.)
             VStack(spacing: 0) {
-                // Settings button
-                HStack {
-                    Spacer()
-                    NavigationLink {
-                        SettingsView()
-                    } label: {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 17))
-                            .foregroundStyle(Color.brandLightBlue)
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.top, 8)
-
                 // Fixed gap — logo position never changes regardless of content below
                 Spacer().frame(height: 60)
 
@@ -276,6 +265,19 @@ struct HomeView: View {
             // Notable events drawer — must be above the dismiss overlay
             notableDrawer
                 .transition(.move(edge: .bottom))
+        }
+        // Settings gear pinned to the TOP SAFE AREA (not the content flow), so it
+        // never collides with the status bar — top inset is immune to the keyboard.
+        .safeAreaInset(edge: .top, alignment: .trailing, spacing: 0) {
+            NavigationLink {
+                SettingsView()
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 17))
+                    .foregroundStyle(Color.brandLightBlue)
+            }
+            .padding(.trailing, 24)
+            .padding(.top, 8)
         }
         .ignoresSafeArea(.keyboard)
         .navigationBarHidden(true)
