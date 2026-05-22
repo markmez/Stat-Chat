@@ -1259,7 +1259,9 @@ def decompose(question: str) -> QueryPlan:
         plan.threshold = None
         # Consume all date-related words: month names, day numbers, year, keywords
         month_names = " ".join(_MONTH_MAP.keys())
-        _add_consumed(plan, f"since from after starting the all star all-star break last days {month_names}")
+        _add_consumed(plan, f"since from after starting the all star all-star break "
+                            f"last past over during within for "
+                            f"day days week weeks month months year years {month_names}")
         # Also consume any 4-digit year and 1-2 digit day numbers in the query
         for token in lower.split():
             cleaned = token.strip(",.;")
