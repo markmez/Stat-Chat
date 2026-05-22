@@ -1675,19 +1675,7 @@ def parse_current_form(input_str: str) -> Optional[str]:
     if not any(t in lower for t in triggers):
         return None
 
-    name = find_player_in_text(lower)
-    if not name:
-        return None
-    # current_form returns a bare name (not a dict), so it can't ride the central
-    # _claim wrapper — guard inline. Consume the form vocabulary so an
-    # unsupported trailing qualifier ("...vs lefties", "...on Tuesdays") bails.
-    _form_words = {w for t in triggers for w in t.split()}
-    _form_words.update(["doing", "playing", "hitting", "been", "fire", "now",
-                        "up", "locked", "heating", "trending", "this", "lately",
-                        "year", "season", "form", "streak"])
-    if _residual_qualifier_words(lower, name, extra_consumed=list(_form_words)):
-        return None
-    return name
+    return find_player_in_text(lower)
 
 
 def parse_season_lookup(input_str: str) -> Optional[dict]:
