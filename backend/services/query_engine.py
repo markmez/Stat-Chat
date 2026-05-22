@@ -2308,28 +2308,25 @@ def decompose(question: str) -> QueryPlan:
         _win_m = re.search(r'(\d+)[\s-]*games?\b', lower)
         if _win_m:
             from . import name_matcher as _nm
-            # "best/worst {N} game stretch" with NO counting stat → default to
-            # the rate metric (OPS for hitters, ERA for pitchers), matching the
-            # "best hitter → OPS / best pitcher → ERA" rule used elsewhere.
-            if not plan.stat and re.search(
-                    r'\b(?:best|worst|highest|lowest|hottest|coldest|greatest)\b', lower):
-                plan.stat = (stat_alias_map.get("era")
-                             if _nm.is_pitcher(plan.player_name)
-                             else stat_alias_map.get("ops"))
-            if plan.stat is None:
-                _win_m = None  # no stat to window — leave for other handling
-        if _win_m and plan.stat:
             # "N game(s)" can hijack stat detection to G (games played) when the
-            # real stat matched weakly (e.g. singular "rbi"). If that happened,
-            # strip the window phrase and re-derive the intended stat.
-            if plan.stat.db_column == "games":
+            # real stat matched weakly (e.g. singular "rbi"). Re-derive from the
+            # window-stripped text first.
+            if plan.stat and plan.stat.db_column == "games":
                 _stripped = re.sub(
                     r'\b(?:in|over|across|during)?\s*(?:a|any|his|their)?\s*'
                     r'\d+[\s-]*games?\b', ' ', lower)
                 _stripped = re.sub(r'\b(?:stretch|span)\b', ' ', _stripped)
                 _real = _nm.match_stat(_stripped)
-                if _real and _real.db_column != "games":
-                    plan.stat = _real
+                plan.stat = _real if (_real and _real.db_column != "games") else None
+            # Still no real stat + a best/worst signal → default to the rate
+            # metric (OPS for hitters, ERA for pitchers), matching the
+            # "best hitter → OPS / best pitcher → ERA" rule used elsewhere.
+            if (plan.stat is None
+                    and re.search(r'\b(?:best|worst|highest|lowest|hottest|coldest|greatest)\b', lower)):
+                plan.stat = (stat_alias_map.get("era")
+                             if _nm.is_pitcher(plan.player_name)
+                             else stat_alias_map.get("ops"))
+        if _win_m and plan.stat and plan.stat.db_column != "games":
             # Claim the sliding window only if no GENUINE qualifier remains.
             # Compute leftover from scratch (AFTER any stat re-derivation, so the
             # real stat is stripped — the games-hijack fix above leaves the old
