@@ -2284,14 +2284,17 @@ def decompose(question: str) -> QueryPlan:
         )
     )
     if _is_player_ssn_max and plan.query_type in ("leaderboard", "threshold"):
-        plan.query_type = "player_single_season_max"
-        # We've identified single-season-max intent. Drop only DECORATIVE
-        # leftovers (verbs like "had"/"hit"/"recorded", "ever", "season") so
-        # the plan validates — but KEEP any genuine qualifier ("on tuesdays",
-        # "vs lefties") so it stays invalid and bails instead of leaking a
+        # Claim single-season-max only if no GENUINE qualifier remains. Compute
+        # the leftover from scratch (strips name + stat + filler + numbers) so a
+        # re-derived stat is accounted for, then drop decorative words. Anything
+        # left ("on tuesdays", "vs lefties") means bail instead of leaking a
         # career-best line that ignores the qualifier.
-        plan.unexplained_words = [w for w in plan.unexplained_words
-                                  if w not in _CLAIM_DECORATIVE]
+        from . import name_matcher as _nm_ssn
+        _genuine = [w for w in _nm_ssn._residual_qualifier_words(lower, plan.player_name)
+                    if w not in _CLAIM_DECORATIVE]
+        if not _genuine:
+            plan.query_type = "player_single_season_max"
+            plan.unexplained_words = []
 
     # Sliding-window stretch: "{player} most {stat} in a {N}-game stretch/span".
     # Buildable from game logs (rolling N-consecutive-game windows within one
@@ -2316,22 +2319,25 @@ def decompose(question: str) -> QueryPlan:
                 _real = _nm.match_stat(_stripped)
                 if _real and _real.db_column != "games":
                     plan.stat = _real
-            plan.sliding_window_n = int(_win_m.group(1))
-            # Explicit season ("this season", "in 2024") → that year; else None
-            # (career-best window is the default, with a current-season see-also).
-            plan.sliding_window_season = _nm.detect_season(lower)
-            plan.query_type = "player_sliding_window"
-            # A "{N} game" phrase can trip career_game_window detection; clear
-            # it so the dispatch reaches the sliding-window executor cleanly.
-            plan.career_game_window = None
-            # The player resolves any batting/pitching stat ambiguity, so don't
-            # offer the "(hitters)" disambiguation pill.
-            plan.ambiguous_stat = False
-            # Drop only DECORATIVE leftovers ("ever", "had", "in a", "stretch")
-            # — keep genuine qualifiers ("on tuesdays", "vs lefties") so a
-            # compound stretch query bails instead of leaking.
-            plan.unexplained_words = [w for w in plan.unexplained_words
-                                      if w not in _CLAIM_DECORATIVE]
+            # Claim the sliding window only if no GENUINE qualifier remains.
+            # Compute leftover from scratch (AFTER any stat re-derivation, so the
+            # real stat is stripped — the games-hijack fix above leaves the old
+            # stat word in plan.unexplained_words), then drop decorative words.
+            # Anything left ("on tuesdays") → bail instead of leaking.
+            _genuine = [w for w in _nm._residual_qualifier_words(lower, plan.player_name)
+                        if w not in _CLAIM_DECORATIVE]
+            if not _genuine:
+                plan.sliding_window_n = int(_win_m.group(1))
+                # Explicit season ("this season", "in 2024") → that year; else
+                # None (career-best window default, with a current-season see-also).
+                plan.sliding_window_season = _nm.detect_season(lower)
+                plan.query_type = "player_sliding_window"
+                # A "{N} game" phrase can trip career_game_window detection;
+                # clear it so dispatch reaches the sliding-window executor.
+                plan.career_game_window = None
+                # The player resolves batting/pitching stat ambiguity — no pill.
+                plan.ambiguous_stat = False
+                plan.unexplained_words = []
 
     # Final overrides for date_range scope — must run last since earlier steps
     # may have set threshold from date numbers (e.g. "16" from "june 16")
