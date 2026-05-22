@@ -134,11 +134,11 @@ def _detect_since_date(lower: str) -> Optional[str]:
 
     today = date.today()
 
-    # "in the last N days"
-    m = re.search(r'\b(?:in|over)\s+the\s+last\s+(\d+)\s+days?\b', lower)
-    if m:
-        days = int(m.group(1))
-        return (today - timedelta(days=days)).isoformat()
+    # Trailing rolling window: "(over/in the) last/past N day|week|month|year"
+    from . import name_matcher as _nm
+    _tw_since, _ = _nm._trailing_window_since(lower)
+    if _tw_since:
+        return _tw_since
 
     # "since the all-star break" — use actual ASG dates (1933-2026, see _ASG_DATES above)
     if "all-star break" in lower or "all star break" in lower:

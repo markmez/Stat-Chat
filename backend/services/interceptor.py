@@ -66,7 +66,7 @@ def try_intercept(question: str):
     _war_word = re.search(r'\bwar\b', lower)  # word-boundary match for "war"
     current_year = date.today().year
     is_current = (str(current_year) in lower or "this season" in lower
-                  or "this year" in lower or "2026" in lower
+                  or "this year" in lower
                   or not re.search(r'20[012]\d', lower))  # no year specified = current
     if any(kw in lower for kw in _statcast_keywords):
         if is_current:

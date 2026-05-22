@@ -527,14 +527,16 @@ def find_player_in_text(text: str) -> Optional[str]:
     for last_name, players in last_name_index.items():
         if contains_word(last_name, lower) and len(players) == 1 \
                 and last_name not in common_word_last_names \
-                and last_name not in _MONTH_WORDS:
+                and last_name not in _MONTH_WORDS \
+                and last_name not in _DURATION_WORDS:
             return _resolve_embedded_name(players[0])
 
     # Ambiguous last name — pick most prominent (e.g. "Judge" → Aaron Judge over Joe Judge)
     for last_name, players in last_name_index.items():
         if contains_word(last_name, lower) and len(players) > 1 \
                 and last_name not in common_word_last_names \
-                and last_name not in _MONTH_WORDS:
+                and last_name not in _MONTH_WORDS \
+                and last_name not in _DURATION_WORDS:
             sorted_players, _ = _sort_by_prominence(players)
             if sorted_players:
                 return sorted_players[0]
@@ -549,6 +551,13 @@ def find_player_in_text(text: str) -> Optional[str]:
 _MONTH_WORDS = {
     "january", "february", "march", "april", "may", "june", "july",
     "august", "september", "october", "november", "december",
+}
+
+# Duration units are far more often a trailing-window reference ("over the last
+# 2 weeks") than a surname — a bare "weeks" must not resolve to Rickie Weeks.
+# Full names still match via the full-name loop above.
+_DURATION_WORDS = {
+    "day", "days", "week", "weeks", "month", "months", "year", "years",
 }
 
 
@@ -2404,6 +2413,32 @@ _MONTH_NAME_MAP = {
 }
 
 
+_TW_UNIT_DAYS = {"day": 1, "week": 7, "month": 30, "year": 365}
+_TW_RE = re.compile(
+    r'\b((?:in|over|during|for|within)\s+)?(the\s+)?(?:last|past)\s+'
+    r'(\d+)?\s*(day|week|month|year)s?\b')
+
+
+def _trailing_window_since(lower: str):
+    """Trailing rolling window: "(over/in the) last/past N {day|week|month|year}".
+
+    Returns (since_date_iso, matched_text) or (None, None). Days/weeks/months
+    always count. A YEAR counts as a rolling window only with an explicit number
+    ("last 2 years") or an in/over/the wrapper ("over the last year") — bare
+    "last year"/"last season" stays the previous SEASON (detect_season owns it).
+    """
+    from datetime import date as _date, timedelta
+    m = _TW_RE.search(lower)
+    if not m:
+        return None, None
+    prep, the_, num, unit = m.group(1), m.group(2), m.group(3), m.group(4)
+    if unit == "year" and not num and not (prep or the_):
+        return None, None
+    n = int(num) if num else 1
+    since = (_date.today() - timedelta(days=n * _TW_UNIT_DAYS[unit])).isoformat()
+    return since, m.group(0).strip()
+
+
 def _detect_date_bounds(lower: str):
     """Sub-season date bounds. Returns (since_date, end_date, consumed_text).
     'after/since/from [date]' → lower bound; 'before/through/until [date]' →
@@ -2416,10 +2451,10 @@ def _detect_date_bounds(lower: str):
     since = end = None
     consumed = []
 
-    m = re.search(r'\b(?:in|over)\s+the\s+last\s+(\d+)\s+days?\b', lower)
-    if m:
-        since = (today - timedelta(days=int(m.group(1)))).isoformat()
-        consumed.append(m.group(0))
+    _tw_since, _tw_text = _trailing_window_since(lower)
+    if _tw_since:
+        since = _tw_since
+        consumed.append(_tw_text)
 
     # "since/after the all-star break" → second half (since the ASG date).
     # "break" distinguishes the date reference from awards ("all-star
