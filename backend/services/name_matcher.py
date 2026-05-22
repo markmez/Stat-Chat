@@ -553,11 +553,13 @@ _MONTH_WORDS = {
     "august", "september", "october", "november", "december",
 }
 
-# Duration units are far more often a trailing-window reference ("over the last
-# 2 weeks") than a surname — a bare "weeks" must not resolve to Rickie Weeks.
-# Full names still match via the full-name loop above.
+# Duration units / window words are far more often a time-window reference
+# ("over the last 2 weeks", "best 13 game span") than a surname — bare "weeks"
+# must not resolve to Rickie Weeks, nor "span" to Denard Span. Full names still
+# match via the full-name loop above.
 _DURATION_WORDS = {
     "day", "days", "week", "weeks", "month", "months", "year", "years",
+    "span", "spans", "stretch", "stretches",
 }
 
 
@@ -1591,14 +1593,24 @@ def parse_streak_query(input_str: str) -> Optional[dict]:
     """Detect historical streak queries. Returns dict with name, performance, season."""
     lower = input_str.strip().lower()
 
+    # An explicit "{N} game(s)" window is a FIXED-length sliding-window query
+    # ("best 13 game span") — the query engine handles those as a rate window.
+    # Bail so this PELT-streak-list parser doesn't claim it and drop the N.
+    if re.search(r'\b\d+\s*[-]?\s*games?\b', lower):
+        return None
+
     hot_triggers = [
         "hot streaks", "hot streak", "best streaks", "best streak",
-        "hottest streak", "hottest stretches", "hot runs",
+        "hottest streak", "hottest stretches", "hottest stretch", "hot runs",
+        "best stretch", "best stretches", "best span", "best spans",
+        "hot stretch", "hot stretches", "best run",
         "when was", "when did", "get hot",
     ]
     cold_triggers = [
         "cold streaks", "cold streak", "worst streaks", "worst streak",
-        "coldest streak", "cold stretches", "slumps", "slump",
+        "coldest streak", "cold stretches", "cold stretch", "slumps", "slump",
+        "worst stretch", "worst stretches", "worst span", "worst spans",
+        "biggest slump", "worst run",
         "when was", "when did", "get cold",
     ]
 
@@ -1611,21 +1623,26 @@ def parse_streak_query(input_str: str) -> Optional[dict]:
         return None
     performance = "cold" if is_cold else "hot"
 
-    has_plural = any(w in lower for w in ("streaks", "stretches", "runs", "slumps"))
+    has_plural = any(w in lower for w in ("streaks", "stretches", "runs", "slumps", "spans"))
     has_explicit_year = bool(re.search(r'20[12][0-9]', lower))
+    has_current = any(p in lower for p in ("this year", "this season", "right now", "currently"))
+    has_career = any(p in lower for p in ("career", "all time", "all-time", "ever"))
     past_tense_patterns = ["last year", "last season", "previous season", "prior season",
                            "two years ago", "2 years ago", "three years ago", "3 years ago"]
     has_past_tense = any(p in lower for p in past_tense_patterns)
 
-    if not has_plural and not has_explicit_year and not has_past_tense and performance == "hot":
+    # Bare present-tense "best streak" with no time context is ambiguous — defer
+    # to current_form. "this year"/"this season"/"career" give it context.
+    if (not has_plural and not has_explicit_year and not has_past_tense
+            and not has_current and not has_career and performance == "hot"):
         return None
 
-    # Detect season
+    # Detect season. career → None + career flag (all-time scope in the builder).
     target_season: Optional[int] = None
     m = re.search(r'20[12][0-9]', lower)
     if m:
         target_season = int(m.group())
-    else:
+    elif not has_career:
         current_year = _get_db_max_season()
         for patterns, offset in [
             (["this year", "this season"], 0),
@@ -1640,7 +1657,8 @@ def parse_streak_query(input_str: str) -> Optional[dict]:
     name = find_player_in_text(lower)
     if not name:
         return None
-    return {"name": name, "performance": performance, "season": target_season}
+    return {"name": name, "performance": performance, "season": target_season,
+            "career": has_career}
 
 
 def parse_current_form(input_str: str) -> Optional[str]:

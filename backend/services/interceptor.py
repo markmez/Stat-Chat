@@ -379,10 +379,11 @@ def try_intercept(question: str):
     streak = nm.parse_streak_query(trimmed)
     if streak:
         name, perf, season = streak["name"], streak["performance"], streak["season"]
+        career = streak.get("career", False)
         if nm.is_pitcher(name):
             response = rb.build_pitching_streak_list(name, perf, season)
         else:
-            response = rb.build_streak_list(name, perf, season)
+            response = rb.build_streak_list(name, perf, season, career=career)
         if response:
             return response
 
