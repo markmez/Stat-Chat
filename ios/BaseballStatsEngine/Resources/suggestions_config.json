@@ -1,5 +1,5 @@
 {
-  "version": 10,
+  "version": 11,
   "algorithm": {
     "impressionThreshold": 6,
     "poolSize": 12,
@@ -40,6 +40,11 @@
       "inSeasonText": "How is Juan Soto doing this season?"
     },
     {
+      "text": "Bryce Harper vs the Mets",
+      "weight": 1.0,
+      "id": "d96"
+    },
+    {
       "id": "d92",
       "text": "Best hitter with 2 strikes last season",
       "weight": 1.0,
@@ -49,6 +54,11 @@
       "id": "d94",
       "text": "Best hitters in 3-2 counts",
       "weight": 1.0
+    },
+    {
+      "text": "Bo Bichette vs the Yankees",
+      "weight": 1.0,
+      "id": "d97"
     },
     {
       "id": "d6",
@@ -61,6 +71,11 @@
       "text": "Judge home vs away last season",
       "weight": 0.9,
       "inSeasonText": "Judge home vs away this season"
+    },
+    {
+      "text": "Cal Raleigh most home runs in a 10 game stretch",
+      "weight": 1.0,
+      "id": "d98"
     },
     {
       "id": "d95",
@@ -77,6 +92,11 @@
       "text": "Top 5 in batting average last season",
       "weight": 1.0,
       "inSeasonText": "Top 5 in batting average this season"
+    },
+    {
+      "text": "Paul Skenes most strikeouts in a 3 game stretch",
+      "weight": 1.0,
+      "id": "d99"
     },
     {
       "id": "d10",
@@ -105,6 +125,11 @@
       "id": "d16",
       "text": "What does BABIP measure?",
       "weight": 0.7
+    },
+    {
+      "text": "Pete Alonso over the last 2 weeks",
+      "weight": 1.0,
+      "id": "d100"
     },
     {
       "id": "d17",
@@ -151,6 +176,11 @@
       "text": "Who had the best WHIP last season?",
       "weight": 0.9,
       "inSeasonText": "Who has the best WHIP this season?"
+    },
+    {
+      "text": "Home run leaders over the last 2 weeks",
+      "weight": 1.0,
+      "id": "d101"
     },
     {
       "id": "d25",
