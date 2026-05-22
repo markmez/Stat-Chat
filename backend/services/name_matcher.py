@@ -2461,7 +2461,14 @@ def _strip_consumed(text: str, phrases: list) -> str:
         if not phrase:
             continue
         p = str(phrase).lower()
-        text = text.replace(p, " ")
+        # Multi-word phrases, and ones with punctuation/digits ("vs.", "0-2"),
+        # are removed as a contiguous substring — safe, they don't occur inside
+        # other words. A single ALPHABETIC word is NOT substring-replaced:
+        # text.replace("in"," ") would corrupt "doing"→"do g" (and which words it
+        # hits depends on set-iteration order / PYTHONHASHSEED). Single alphabetic
+        # words are handled only by the word-boundary token pass below.
+        if " " in p or not p.isalpha():
+            text = text.replace(p, " ")
         for tok in p.split():
             if len(tok) >= 2:
                 text = re.sub(rf'\b{re.escape(tok)}\b', ' ', text)

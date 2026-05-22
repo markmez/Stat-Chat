@@ -129,6 +129,23 @@ TESTS: list[tuple[str, str, str]] = [
     ("judge's worst 13 game span", "intercepted", "Stretch: N-game rate window"),
     ("Tarik Skubal best 5 game stretch", "intercepted", "Stretch: N-game rate window"),
 
+    # Tier 2g: stretch-family follow-ups (all moved off Claude).
+    # Rate windows beyond OPS/ERA:
+    ("Aaron Judge best 10 game AVG stretch", "intercepted", "Stretch: N-game rate window"),
+    ("Tarik Skubal best 5 game WHIP stretch", "intercepted", "Stretch: N-game rate window"),
+    # Colloquial streak terms:
+    ("Aaron Judge skid this year", "intercepted", "Streak: colloquial"),
+    ("Aaron Judge on a tear this year", "intercepted", "Streak: colloquial"),
+    # Best/worst calendar month for a player:
+    ("Aaron Judge best month this year", "intercepted", "Best month"),
+    ("Aaron Judge worst month this year", "intercepted", "Best month"),
+    # Multi-player leaderboard sliding window (no specific player):
+    ("who had the best 10 game stretch this year", "intercepted", "Leaderboard window"),
+    ("most home runs in a 10 game stretch this year", "intercepted", "Leaderboard window"),
+    # current_form regression guard — "doing"/"playing" once tripped the
+    # _strip_consumed substring-corruption bug ("in" inside "doing").
+    ("how is Aaron Judge playing lately", "intercepted", "Current form"),
+
     # ============================================================
     # Tier 3: Single-player career + season + slash line
     # ============================================================
