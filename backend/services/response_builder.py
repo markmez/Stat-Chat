@@ -3249,25 +3249,76 @@ _SLIDING_BAT_COLS = {"hits", "doubles", "triples", "home_runs", "runs", "rbi",
                      "plate_appearances"}
 _SLIDING_PITCH_COLS = {"strikeouts", "walks", "earned_runs", "hits",
                        "home_runs", "runs"}
+# Rate stats supported as a sliding window — computed from summed components over
+# the window (not by averaging per-game rates). OPS for hitters, ERA for pitchers.
+_SLIDING_RATE_COLS = {"ops", "era"}
+
+
+def _sliding_rate_value(kind: str, sums: list):
+    """Compute a rate from summed game-log components over a window.
+    Returns (value, extra_tuple) or (None, None) if the denominator is empty."""
+    if kind == "ops":
+        ab, h, d2, d3, hr, bb, hbp, sf = sums
+        obp_denom = ab + bb + hbp + sf
+        if ab <= 0 or obp_denom <= 0:
+            return None, None
+        obp = (h + bb + hbp) / obp_denom
+        tb = h + d2 + 2 * d3 + 3 * hr
+        slg = tb / ab
+        return obp + slg, (h / ab, obp, slg)
+    # era
+    er, ip_outs = sums
+    if ip_outs <= 0:
+        return None, None
+    return 27.0 * er / ip_outs, (ip_outs / 3.0,)
+
+
+def _best_sliding_rate_window(seasons: dict, n: int, direction: str, kind: str):
+    """Slide an N-game window per season over component sums; return the extreme
+    window as (value, season, start_date, end_date, extra) or None."""
+    best = None
+    for s, games in seasons.items():
+        if len(games) < n:
+            continue
+        ncomp = len(games[0][1])
+        sums = [0.0] * ncomp
+        for i in range(n):
+            for k in range(ncomp):
+                sums[k] += games[i][1][k]
+        for end_i in range(n - 1, len(games)):
+            if end_i >= n:
+                for k in range(ncomp):
+                    sums[k] += games[end_i][1][k] - games[end_i - n][1][k]
+            val, extra = _sliding_rate_value(kind, sums)
+            if val is None:
+                continue
+            if (best is None
+                    or (direction == "max" and val > best[0])
+                    or (direction == "min" and val < best[0])):
+                best = (val, s, games[end_i - n + 1][0], games[end_i][0], extra)
+    return best
 
 
 def build_player_sliding_window(name: str, stat_info: StatInfo, n: int,
                                 direction: str = "max",
                                 is_pitching: bool = False,
-                                season: Optional[int] = None) -> Optional[str]:
-    """Best/worst N-consecutive-game stretch for a player + counting stat.
+                                season: Optional[int] = None,
+                                display_word: Optional[str] = None) -> Optional[str]:
+    """Best/worst N-consecutive-game stretch for a player.
 
-    season=None scans every season (career-best window; the default) and never
-    lets a window cross an offseason. season=YYYY restricts to that year. The
-    inferred career default appends a current-season see-also. Counting stats
-    only — anything else returns None (→ Haiku).
+    Counting stats (hits, HR, K…) sum over the window. Rate stats (OPS for
+    hitters, ERA for pitchers) accumulate components over the window and compute
+    the rate. season=None scans every season (career best; the default) and
+    never crosses an offseason; the career default appends a current-season
+    see-also. direction is the math direction ("max"/"min", already adjusted for
+    lower-is-better); display_word is the user-facing label ("best"/"worst"/
+    "most"/"fewest").
     """
     if not stat_info or n is None or n < 2:
         return None
     col = stat_info.db_column
-    table = "game_pitching_logs" if is_pitching else "game_batting_logs"
-    allowed = _SLIDING_PITCH_COLS if is_pitching else _SLIDING_BAT_COLS
-    if col not in allowed:
+    if col not in _SLIDING_RATE_COLS and col not in (
+            _SLIDING_PITCH_COLS if is_pitching else _SLIDING_BAT_COLS):
         return None
     conn = _get_db()
     try:
@@ -3277,9 +3328,60 @@ def build_player_sliding_window(name: str, stat_info: StatInfo, n: int,
         if season:
             where.append("g.season = ?"); params.append(season)
         cur = conn.cursor()
+
+        from datetime import datetime as _dt
+        def _fmt(d):
+            try:
+                return _dt.strptime(d, "%Y-%m-%d").strftime("%b %-d")
+            except Exception:
+                return d
+        cur_year = _dt.now().year
+
+        # ---- Rate window (OPS / ERA) ----
+        if col in _SLIDING_RATE_COLS:
+            kind = "era" if col == "era" else "ops"
+            rtable = "game_pitching_logs" if kind == "era" else "game_batting_logs"
+            sel = ("g.earned_runs, g.ip_outs" if kind == "era" else
+                   "g.at_bats, g.hits, g.doubles, g.triples, g.home_runs, "
+                   "g.walks, g.hit_by_pitch, g.sacrifice_flies")
+            cur.execute(
+                f"SELECT g.season, g.date, {sel} "
+                f"FROM {rtable} g JOIN players p ON g.player_id = p.player_id "
+                f"WHERE {' AND '.join(where)} ORDER BY g.season, g.date",
+                params,
+            )
+            rows = cur.fetchall()
+            if not rows:
+                return None
+            seasons: dict = {}
+            for r in rows:
+                seasons.setdefault(r[0], []).append(
+                    (r[1], tuple(float(x or 0) for x in r[2:])))
+            best = _best_sliding_rate_window(seasons, n, direction, kind)
+            if best is None:
+                return None
+            value, best_season, start_d, end_d, _extra = best
+            metric = "ERA" if kind == "era" else "OPS"
+            vstr = f"{value:.2f}" if kind == "era" else _format_rate(f"{value:.3f}")
+            dw = display_word or "best"
+            scope_suffix = f" ({season})" if season else ""
+            parts = [f"**{display_name}** — {dw} {n}-game {metric} stretch{scope_suffix}\n"]
+            if season is None and cur_year in seasons and len(seasons[cur_year]) >= n:
+                parts.append(
+                    f"[DIDYOUMEAN]{display_name} {dw} {n} game {metric.lower()} "
+                    f"stretch this season[/DIDYOUMEAN]")
+            parts.append(
+                f"**{vstr} {metric}** over {n} games "
+                f"({_fmt(start_d)}–{_fmt(end_d)}, {best_season}).")
+            if _is_active_player(conn, name):
+                parts.append(f"\n[SUGGEST]how is {display_name} doing lately[/SUGGEST]")
+            return "\n".join(parts)
+
+        # ---- Counting window ----
         cur.execute(
             f"SELECT g.season, g.date, g.{col} "
-            f"FROM {table} g JOIN players p ON g.player_id = p.player_id "
+            f"FROM {('game_pitching_logs' if is_pitching else 'game_batting_logs')} g "
+            f"JOIN players p ON g.player_id = p.player_id "
             f"WHERE {' AND '.join(where)} ORDER BY g.season, g.date",
             params,
         )
@@ -3287,7 +3389,7 @@ def build_player_sliding_window(name: str, stat_info: StatInfo, n: int,
         if not rows:
             return None
 
-        seasons: dict = {}
+        seasons = {}
         for s, dt, val in rows:
             seasons.setdefault(s, []).append((dt, int(val or 0)))
 
@@ -3307,19 +3409,10 @@ def build_player_sliding_window(name: str, stat_info: StatInfo, n: int,
             return None
         value, best_season, start_d, end_d = best
 
-        from datetime import datetime as _dt
-        def _fmt(d):
-            try:
-                return _dt.strptime(d, "%Y-%m-%d").strftime("%b %-d")
-            except Exception:
-                return d
         noun = stat_info.display_name.lower()
-        dir_word = "fewest" if direction == "min" else "most"
+        dir_word = display_word or ("fewest" if direction == "min" else "most")
         scope_suffix = f" ({season})" if season else ""
         parts = [f"**{display_name}** — {dir_word} {noun} in a {n}-game stretch{scope_suffix}\n"]
-        # Career default is an inference — offer the current-season window as a
-        # see-also, but only if the player actually has an N-game window this year.
-        cur_year = _dt.now().year
         if season is None and cur_year in seasons and len(seasons[cur_year]) >= n:
             parts.append(
                 f"[DIDYOUMEAN]{display_name} {dir_word} {noun} "

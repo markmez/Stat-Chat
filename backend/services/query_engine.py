@@ -2304,10 +2304,21 @@ def decompose(question: str) -> QueryPlan:
     # player + stat + stretch/span + explicit "N games" signal is specific, and
     # decompose may have classified the same shape as leaderboard, threshold,
     # superlative, or a game-log type depending on the exact wording.
-    if _has_sliding_window and plan.player_name and plan.stat:
+    if _has_sliding_window and plan.player_name:
         _win_m = re.search(r'(\d+)[\s-]*games?\b', lower)
         if _win_m:
             from . import name_matcher as _nm
+            # "best/worst {N} game stretch" with NO counting stat → default to
+            # the rate metric (OPS for hitters, ERA for pitchers), matching the
+            # "best hitter → OPS / best pitcher → ERA" rule used elsewhere.
+            if not plan.stat and re.search(
+                    r'\b(?:best|worst|highest|lowest|hottest|coldest|greatest)\b', lower):
+                plan.stat = (stat_alias_map.get("era")
+                             if _nm.is_pitcher(plan.player_name)
+                             else stat_alias_map.get("ops"))
+            if plan.stat is None:
+                _win_m = None  # no stat to window — leave for other handling
+        if _win_m and plan.stat:
             # "N game(s)" can hijack stat detection to G (games played) when the
             # real stat matched weakly (e.g. singular "rbi"). If that happened,
             # strip the window phrase and re-derive the intended stat.
@@ -6095,12 +6106,26 @@ def _execute_player_sliding_window(plan: QueryPlan) -> Optional[str]:
     from .response_builder import build_player_sliding_window
     from . import name_matcher as _nm
 
-    direction = "min" if plan.sort_asc else "max"
+    # Math direction accounts for lower-is-better (ERA): "best" → min ERA.
+    is_lower_better = plan.stat.db_column in _LOWER_IS_BETTER
+    if plan.sort_asc and is_lower_better:
+        direction = "max"
+    elif plan.sort_asc:
+        direction = "min"
+    elif is_lower_better:
+        direction = "min"
+    else:
+        direction = "max"
+    # User-facing label: rate stats read as best/worst, counting as most/fewest.
+    if plan.stat.is_rate:
+        display_word = "worst" if plan.sort_asc else "best"
+    else:
+        display_word = "fewest" if plan.sort_asc else "most"
     is_pitching = _nm.is_pitcher(plan.player_name) or _nm.is_pitching_stat(plan.stat)
     return build_player_sliding_window(
         plan.player_name, plan.stat, plan.sliding_window_n,
         direction=direction, is_pitching=is_pitching,
-        season=plan.sliding_window_season,
+        season=plan.sliding_window_season, display_word=display_word,
     )
 
 
