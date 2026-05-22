@@ -108,6 +108,19 @@ TESTS: list[tuple[str, str, str]] = [
     # ("Boston" resolves to a player) — guards the parse order vs parse_comparison.
     ("Aaron Judge vs the Boston Red Sox", "intercepted", "Player vs team split"),
 
+    # Tier 2e: Guard precision — the central _claim choke point must pin BOTH
+    # directions. Over-guard protection: legit queries with an extra-but-
+    # accountable word still intercept (a too-aggressive guard would silently
+    # strangle them). Leak guard: an unsupported trailing qualifier ("on
+    # Tuesdays" — no day/night data) must bail, not return a partial answer.
+    ("Aaron Judge vs lefties in 2024", "intercepted", "Guard: legit qualified"),
+    ("Aaron Judge 10 game hitting streak", "intercepted", "Guard: legit qualified"),
+    ("how is Aaron Judge doing this year", "intercepted", "Guard: legit qualified"),
+    ("Aaron Judge at home on Tuesdays", "miss", "Guard: junk qualifier bails"),
+    ("most home runs Aaron Judge ever on Tuesdays", "miss", "Guard: junk qualifier bails"),
+    ("most hits Aaron Judge in a 5 game stretch on Tuesdays", "miss", "Guard: junk qualifier bails"),
+    ("Aaron Judge vs the Red Sox on Tuesdays", "miss", "Guard: junk qualifier bails"),
+
     # ============================================================
     # Tier 3: Single-player career + season + slash line
     # ============================================================
