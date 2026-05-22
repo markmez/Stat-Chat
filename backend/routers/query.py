@@ -339,6 +339,19 @@ def _format_structured_rows_to_grid(
     if not data_rows or not columns:
         return None
 
+    # Drop internal/non-displayable columns the generated SQL may have selected.
+    # A Claude `SELECT *` against streaks/current_form leaks `id` and the
+    # `performance` classification (e.g. "ID 49579 ... Performance: average");
+    # never render those, whatever query produced them.
+    _HIDDEN_COLS = {"id", "rowid", "player_id", "performance", "role",
+                    "detection_type", "headline", "expires_at"}
+    if any(c.lower() in _HIDDEN_COLS for c in columns):
+        columns = [c for c in columns if c.lower() not in _HIDDEN_COLS]
+        data_rows = [{k: v for k, v in row.items() if k.lower() not in _HIDDEN_COLS}
+                     for row in data_rows]
+        if not columns:
+            return None
+
     # Single aggregate result (COUNT, SUM, etc.) — format as a clean answer
     if len(data_rows) == 1 and len(columns) == 1:
         val = list(data_rows[0].values())[0]
