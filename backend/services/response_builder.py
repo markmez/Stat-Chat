@@ -3414,6 +3414,120 @@ def _best_sliding_rate_window(seasons: dict, n: int, direction: str, kind: str):
     return best
 
 
+_RATE_LOWER_BETTER = {"era", "whip", "baa", "bb_per_9", "h_per_9", "hr_per_9"}
+
+
+def build_leaderboard_sliding_window(stat_info, n: int, sort_asc: bool,
+                                     season: int, is_pitching: bool) -> Optional[str]:
+    """Leaderboard of players' best/worst N-game windows in a season. OPS default
+    for hitters / ERA for pitchers, or a named counting/rate stat. Season-scoped;
+    only qualified players (season PA>=100 / IP-outs>=60) to exclude flukes."""
+    col = (stat_info.db_column if stat_info else ("era" if is_pitching else "ops"))
+    is_rate = col in _SLIDING_RATE_META
+    if is_rate:
+        kind, side, metric, dec = _SLIDING_RATE_META[col]
+        is_pitching = (side == "pitch")
+    else:
+        kind, dec = None, 0
+        metric = stat_info.display_abbrev if stat_info else col.upper()
+        if col not in (_SLIDING_PITCH_COLS if is_pitching else _SLIDING_BAT_COLS):
+            return None
+    lower_better = col in _RATE_LOWER_BETTER
+    if sort_asc and lower_better:
+        direction = "max"
+    elif sort_asc:
+        direction = "min"
+    elif lower_better:
+        direction = "min"
+    else:
+        direction = "max"
+
+    conn = _get_db()
+    try:
+        if is_pitching:
+            gtable, qtable, qcol, qmin = "game_pitching_logs", "season_pitching_stats", "ip_outs", 60
+        else:
+            gtable, qtable, qcol, qmin = "game_batting_logs", "season_batting_stats", "plate_appearances", 100
+        if is_rate and not is_pitching:
+            sel = ("g.at_bats, g.hits, g.doubles, g.triples, g.home_runs, "
+                   "g.walks, g.hit_by_pitch, g.sacrifice_flies")
+        elif is_rate:
+            sel = "g.earned_runs, g.ip_outs, g.hits, g.walks, g.strikeouts"
+        else:
+            sel = f"g.{col}"
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT g.player_id, p.name, g.date, {sel} "
+            f"FROM {gtable} g JOIN players p ON g.player_id = p.player_id "
+            f"JOIN {qtable} s ON s.player_id = g.player_id AND s.season = g.season "
+            f"WHERE g.season = ? AND s.{qcol} >= ? "
+            f"ORDER BY g.player_id, g.date",
+            (season, qmin),
+        )
+        players: dict = {}
+        for r in cur.fetchall():
+            pid, pname, dt = r[0], r[1], r[2]
+            val = tuple(float(x or 0) for x in r[3:]) if is_rate else int(r[3] or 0)
+            players.setdefault(pid, (pname, []))[1].append((dt, val))
+
+        results = []  # (value, name, start, end)
+        for pid, (pname, games) in players.items():
+            if len(games) < n:
+                continue
+            if is_rate:
+                ncomp = len(games[0][1])
+                sums = [0.0] * ncomp
+                for i in range(n):
+                    for k in range(ncomp):
+                        sums[k] += games[i][1][k]
+                best = None
+                for end_i in range(n - 1, len(games)):
+                    if end_i >= n:
+                        for k in range(ncomp):
+                            sums[k] += games[end_i][1][k] - games[end_i - n][1][k]
+                    v, _ = _sliding_rate_value(kind, sums)
+                    if v is None:
+                        continue
+                    if (best is None or (direction == "max" and v > best[0])
+                            or (direction == "min" and v < best[0])):
+                        best = (v, games[end_i - n + 1][0], games[end_i][0])
+            else:
+                window = sum(v for _, v in games[:n])
+                best = (window, games[0][0], games[n - 1][0])
+                for end_i in range(n, len(games)):
+                    window += games[end_i][1] - games[end_i - n][1]
+                    if (direction == "max" and window > best[0]) or (direction == "min" and window < best[0]):
+                        best = (window, games[end_i - n + 1][0], games[end_i][0])
+            if best:
+                results.append((best[0], pname, best[1], best[2]))
+        if not results:
+            return None
+        results.sort(key=lambda r: r[0], reverse=(direction == "max"))
+        top = results[:10]
+
+        from datetime import datetime as _dt
+        def _fmt(d):
+            try:
+                return _dt.strptime(d, "%Y-%m-%d").strftime("%b %-d")
+            except Exception:
+                return d
+        dirw = "Worst" if sort_asc else "Best"
+        parts = [f"**{season} {dirw} {n}-Game {metric} Stretches**\n",
+                 "[TIP]Tap a player name for their full profile.[/TIP]",
+                 "[LEADERBOARD]", f"HEADER: {metric}"]
+        for i, (val, pname, sd, ed) in enumerate(top):
+            if is_rate:
+                vs = (_format_rate(f"{val:.3f}") if dec == 3
+                      else f"{val:.2f}" if dec == 2 else f"{val:.1f}")
+            else:
+                vs = str(int(val))
+            parts.append(f"ROW {i+1}. {pname}: {vs} ({_fmt(sd)}–{_fmt(ed)})")
+        parts.append("[/LEADERBOARD]")
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
 def build_player_sliding_window(name: str, stat_info: StatInfo, n: int,
                                 direction: str = "max",
                                 is_pitching: bool = False,

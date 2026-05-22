@@ -674,6 +674,16 @@ def try_intercept(question: str):
         if response:
             return response
 
+    # Leaderboard sliding window — "who had the best 10-game stretch this year"
+    # (no specific player). A multi-player N-game window scan, season-scoped.
+    # Before the query engine, which has no multi-player window concept.
+    lbw = nm.parse_leaderboard_window(trimmed)
+    if lbw:
+        response = rb.build_leaderboard_sliding_window(
+            lbw["stat"], lbw["n"], lbw["sort_asc"], lbw["season"], lbw["is_pitching"])
+        if response:
+            return response
+
     # --- Query Engine — the primary stat query handler ---
     # Handles leaderboards, thresholds, counts, superlatives, game-log queries,
     # split leaderboards, team rankings, derived stats, multi-threshold,

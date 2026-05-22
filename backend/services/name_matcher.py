@@ -1697,6 +1697,43 @@ def parse_best_month(input_str: str) -> Optional[dict]:
             "career": season is None}
 
 
+def parse_leaderboard_window(input_str: str) -> Optional[dict]:
+    """'who had the best 10-game stretch this year' / 'most HR in a 10 game
+    stretch' (NO specific player) → a leaderboard of players' best/worst N-game
+    windows. Season-scoped (a multi-player all-time window scan is too expensive).
+    Returns {stat, n, sort_asc, season, is_pitching} or None."""
+    lower = input_str.strip().lower()
+    if not (re.search(r'\b(?:stretch|span)\b', lower)
+            or re.search(r'\b(?:in|over|across)\s+(?:a|any|their)?\s*\d+[\s-]?games?\b', lower)):
+        return None
+    m = re.search(r'(\d+)[\s-]*games?\b', lower)
+    if not m:
+        return None
+    n = int(m.group(1))
+    if n < 2 or n > 162:
+        return None
+    # A specific player → single-player route (query engine), not a leaderboard.
+    if find_player_in_text(input_str):
+        return None
+    # Needs a leaderboard signal.
+    if not any(t in lower for t in ("who ", "who'", "leaders", "leader", "best",
+                                    "worst", "most", "fewest", "highest",
+                                    "lowest", "top ", "league")):
+        return None
+    sort_asc = any(w in lower for w in ("worst", "fewest", "lowest", "least"))
+    stripped = re.sub(r'\b(?:in|over|across|during)?\s*(?:a|any|their)?\s*'
+                      r'\d+[\s-]*games?\b', ' ', lower)
+    stripped = re.sub(r'\b(?:stretch|span)\b', ' ', stripped)
+    stat = match_stat(stripped)
+    if stat and stat.db_column == "games":
+        stat = None
+    is_pitching = bool(re.search(r'\bpitchers?\b', lower)) or \
+        (stat is not None and is_pitching_stat(stat))
+    season = detect_season(lower) or _get_db_max_season()
+    return {"stat": stat, "n": n, "sort_asc": sort_asc, "season": season,
+            "is_pitching": is_pitching}
+
+
 def parse_current_form(input_str: str) -> Optional[str]:
     """Detect current form queries. Returns canonical player name."""
     lower = input_str.strip().lower()
