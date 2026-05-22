@@ -3261,27 +3261,49 @@ _SLIDING_BAT_COLS = {"hits", "doubles", "triples", "home_runs", "runs", "rbi",
 _SLIDING_PITCH_COLS = {"strikeouts", "walks", "earned_runs", "hits",
                        "home_runs", "runs"}
 # Rate stats supported as a sliding window — computed from summed components over
-# the window (not by averaging per-game rates). OPS for hitters, ERA for pitchers.
-_SLIDING_RATE_COLS = {"ops", "era"}
+# the window (not by averaging per-game rates). Maps db_column → (kind, side,
+# display label, decimal places). Batting: AVG/OBP/SLG/OPS. Pitching: ERA/WHIP/K9.
+_SLIDING_RATE_META = {
+    "batting_avg": ("avg", "bat", "AVG", 3),
+    "obp": ("obp", "bat", "OBP", 3),
+    "slg": ("slg", "bat", "SLG", 3),
+    "ops": ("ops", "bat", "OPS", 3),
+    "era": ("era", "pitch", "ERA", 2),
+    "whip": ("whip", "pitch", "WHIP", 2),
+    "k_per_9": ("k9", "pitch", "K/9", 1),
+}
+_SLIDING_RATE_COLS = set(_SLIDING_RATE_META.keys())
 
 
 def _sliding_rate_value(kind: str, sums: list):
     """Compute a rate from summed game-log components over a window.
-    Returns (value, extra_tuple) or (None, None) if the denominator is empty."""
-    if kind == "ops":
+    Returns (value, None) or (None, None) if the denominator is empty.
+    Batting sums: [ab, h, 2b, 3b, hr, bb, hbp, sf]. Pitching: [er, ip_outs, h, bb, k]."""
+    if kind in ("avg", "obp", "slg", "ops"):
         ab, h, d2, d3, hr, bb, hbp, sf = sums
+        if ab <= 0:
+            return None, None
+        if kind == "avg":
+            return h / ab, None
+        slg = (h + d2 + 2 * d3 + 3 * hr) / ab
+        if kind == "slg":
+            return slg, None
         obp_denom = ab + bb + hbp + sf
-        if ab <= 0 or obp_denom <= 0:
+        if obp_denom <= 0:
             return None, None
         obp = (h + bb + hbp) / obp_denom
-        tb = h + d2 + 2 * d3 + 3 * hr
-        slg = tb / ab
-        return obp + slg, (h / ab, obp, slg)
-    # era
-    er, ip_outs = sums
+        if kind == "obp":
+            return obp, None
+        return obp + slg, None  # ops
+    # pitching: [er, ip_outs, h, bb, k]
+    er, ip_outs, h, bb, k = sums
     if ip_outs <= 0:
         return None, None
-    return 27.0 * er / ip_outs, (ip_outs / 3.0,)
+    if kind == "whip":
+        return 3.0 * (h + bb) / ip_outs, None
+    if kind == "k9":
+        return 27.0 * k / ip_outs, None
+    return 27.0 * er / ip_outs, None  # era
 
 
 def _best_sliding_rate_window(seasons: dict, n: int, direction: str, kind: str):
@@ -3348,13 +3370,16 @@ def build_player_sliding_window(name: str, stat_info: StatInfo, n: int,
                 return d
         cur_year = _dt.now().year
 
-        # ---- Rate window (OPS / ERA) ----
-        if col in _SLIDING_RATE_COLS:
-            kind = "era" if col == "era" else "ops"
-            rtable = "game_pitching_logs" if kind == "era" else "game_batting_logs"
-            sel = ("g.earned_runs, g.ip_outs" if kind == "era" else
-                   "g.at_bats, g.hits, g.doubles, g.triples, g.home_runs, "
-                   "g.walks, g.hit_by_pitch, g.sacrifice_flies")
+        # ---- Rate window (AVG/OBP/SLG/OPS for hitters, ERA/WHIP/K9 for pitchers) ----
+        if col in _SLIDING_RATE_META:
+            kind, side, metric, dec = _SLIDING_RATE_META[col]
+            if side == "pitch":
+                rtable = "game_pitching_logs"
+                sel = "g.earned_runs, g.ip_outs, g.hits, g.walks, g.strikeouts"
+            else:
+                rtable = "game_batting_logs"
+                sel = ("g.at_bats, g.hits, g.doubles, g.triples, g.home_runs, "
+                       "g.walks, g.hit_by_pitch, g.sacrifice_flies")
             cur.execute(
                 f"SELECT g.season, g.date, {sel} "
                 f"FROM {rtable} g JOIN players p ON g.player_id = p.player_id "
@@ -3372,8 +3397,8 @@ def build_player_sliding_window(name: str, stat_info: StatInfo, n: int,
             if best is None:
                 return None
             value, best_season, start_d, end_d, _extra = best
-            metric = "ERA" if kind == "era" else "OPS"
-            vstr = f"{value:.2f}" if kind == "era" else _format_rate(f"{value:.3f}")
+            vstr = (_format_rate(f"{value:.3f}") if dec == 3
+                    else f"{value:.2f}" if dec == 2 else f"{value:.1f}")
             dw = display_word or "best"
             scope_suffix = f" ({season})" if season else ""
             parts = [f"**{display_name}** — {dw} {n}-game {metric} stretch{scope_suffix}\n"]

@@ -1604,6 +1604,9 @@ def parse_streak_query(input_str: str) -> Optional[dict]:
         "hottest streak", "hottest stretches", "hottest stretch", "hot runs",
         "best stretch", "best stretches", "best span", "best spans",
         "hot stretch", "hot stretches", "best run",
+        # Colloquial hot
+        "on a tear", "on a heater", "heater", "on a roll", "red hot", "red-hot",
+        "scorching", "torrid", "in a groove", "hot spell", "tear",
         "when was", "when did", "get hot",
     ]
     cold_triggers = [
@@ -1611,13 +1614,18 @@ def parse_streak_query(input_str: str) -> Optional[dict]:
         "coldest streak", "cold stretches", "cold stretch", "slumps", "slump",
         "worst stretch", "worst stretches", "worst span", "worst spans",
         "biggest slump", "worst run",
+        # Colloquial cold
+        "skid", "skids", "in a funk", "funk", "in a rut", "rut",
+        "rough patch", "rough stretch", "dry spell", "cold spell", "cold snap",
         "when was", "when did", "get cold",
     ]
+    _cold_kw = ("cold", "worst", "coldest", "slump", "skid", "funk", "rut",
+                "rough patch", "rough stretch", "dry spell", "snap")
+    _hot_kw = ("hot", "best", "hottest", "tear", "heater", "roll", "scorching",
+               "torrid", "groove")
 
-    is_cold = any(t in lower for t in cold_triggers) and \
-              any(w in lower for w in ("cold", "worst", "coldest", "slump"))
-    is_hot = any(t in lower for t in hot_triggers) and \
-             any(w in lower for w in ("hot", "best", "hottest"))
+    is_cold = any(t in lower for t in cold_triggers) and any(w in lower for w in _cold_kw)
+    is_hot = any(t in lower for t in hot_triggers) and any(w in lower for w in _hot_kw)
 
     if not (is_hot or is_cold):
         return None
