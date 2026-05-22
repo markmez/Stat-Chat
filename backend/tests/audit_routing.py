@@ -121,6 +121,14 @@ TESTS: list[tuple[str, str, str]] = [
     ("most hits Aaron Judge in a 5 game stretch on Tuesdays", "miss", "Guard: junk qualifier bails"),
     ("Aaron Judge vs the Red Sox on Tuesdays", "miss", "Guard: junk qualifier bails"),
 
+    # Tier 2f: "best/worst stretch|span" family — moved off the Claude raw-dump
+    # path. No N → PELT streak handler (hot/cold, distinguished, career scope);
+    # explicit N + no counting stat → rate window (OPS hitters / ERA pitchers).
+    ("judge's best stretch this year", "intercepted", "Stretch: streak (no N)"),
+    ("worst stretch of judge's career", "intercepted", "Stretch: streak (no N)"),
+    ("judge's worst 13 game span", "intercepted", "Stretch: N-game rate window"),
+    ("Tarik Skubal best 5 game stretch", "intercepted", "Stretch: N-game rate window"),
+
     # ============================================================
     # Tier 3: Single-player career + season + slash line
     # ============================================================
