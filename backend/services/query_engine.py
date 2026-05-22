@@ -746,6 +746,21 @@ def _add_consumed(plan: QueryPlan, words: str):
         plan.consumed_words.add(w.strip("?.!,"))
 
 
+# Decorative words around a superlative ("career-best") or stretch claim — safe
+# to drop from the unexplained-words check. Genuine qualifiers (split words, team
+# names, "on tuesdays", "vs lefties") are deliberately NOT here, so they survive
+# the filter and keep the plan invalid → it bails instead of leaking a partial
+# answer. (Replaces a blanket `unexplained_words = []` that dropped everything.)
+_CLAIM_DECORATIVE = {
+    "ever", "most", "best", "highest", "fewest", "worst", "lowest", "peak",
+    "top", "least", "greatest", "had", "has", "have", "hit", "recorded",
+    "issued", "threw", "got", "made", "posted", "reached", "put", "single",
+    "season", "seasons", "year", "years", "stretch", "span", "game", "games",
+    "any", "over", "across", "during", "within", "in", "a", "an", "the", "of",
+    "his", "her", "their", "with", "for", "to",
+}
+
+
 def decompose(question: str) -> QueryPlan:
     """Decompose a natural language query into a structured QueryPlan."""
     plan = QueryPlan()
@@ -2270,13 +2285,13 @@ def decompose(question: str) -> QueryPlan:
     )
     if _is_player_ssn_max and plan.query_type in ("leaderboard", "threshold"):
         plan.query_type = "player_single_season_max"
-        # We've confidently identified single-season-max intent (superlative +
-        # player + stat + context like "ever" / "best season" / "career
-        # high"). Any leftover unexplained words are decorative — verbs like
-        # "had", "hit", "issued", "threw", "recorded", or just dangling
-        # adjectives. Clear them so plan.is_valid returns True and the
-        # executor can produce the right answer.
-        plan.unexplained_words = []
+        # We've identified single-season-max intent. Drop only DECORATIVE
+        # leftovers (verbs like "had"/"hit"/"recorded", "ever", "season") so
+        # the plan validates — but KEEP any genuine qualifier ("on tuesdays",
+        # "vs lefties") so it stays invalid and bails instead of leaking a
+        # career-best line that ignores the qualifier.
+        plan.unexplained_words = [w for w in plan.unexplained_words
+                                  if w not in _CLAIM_DECORATIVE]
 
     # Sliding-window stretch: "{player} most {stat} in a {N}-game stretch/span".
     # Buildable from game logs (rolling N-consecutive-game windows within one
@@ -2312,9 +2327,11 @@ def decompose(question: str) -> QueryPlan:
             # The player resolves any batting/pitching stat ambiguity, so don't
             # offer the "(hitters)" disambiguation pill.
             plan.ambiguous_stat = False
-            # Window intent is unambiguous now; leftover decorative words
-            # ("ever", "had", "in a", "stretch") shouldn't block the plan.
-            plan.unexplained_words = []
+            # Drop only DECORATIVE leftovers ("ever", "had", "in a", "stretch")
+            # — keep genuine qualifiers ("on tuesdays", "vs lefties") so a
+            # compound stretch query bails instead of leaking.
+            plan.unexplained_words = [w for w in plan.unexplained_words
+                                      if w not in _CLAIM_DECORATIVE]
 
     # Final overrides for date_range scope — must run last since earlier steps
     # may have set threshold from date numbers (e.g. "16" from "june 16")

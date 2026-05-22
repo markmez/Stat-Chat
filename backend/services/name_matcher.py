@@ -1657,7 +1657,19 @@ def parse_current_form(input_str: str) -> Optional[str]:
     if not any(t in lower for t in triggers):
         return None
 
-    return find_player_in_text(lower)
+    name = find_player_in_text(lower)
+    if not name:
+        return None
+    # current_form returns a bare name (not a dict), so it can't ride the central
+    # _claim wrapper — guard inline. Consume the form vocabulary so an
+    # unsupported trailing qualifier ("...vs lefties", "...on Tuesdays") bails.
+    _form_words = {w for t in triggers for w in t.split()}
+    _form_words.update(["doing", "playing", "hitting", "been", "fire", "now",
+                        "up", "locked", "heating", "trending", "this", "lately",
+                        "year", "season", "form", "streak"])
+    if _residual_qualifier_words(lower, name, extra_consumed=list(_form_words)):
+        return None
+    return name
 
 
 def parse_season_lookup(input_str: str) -> Optional[dict]:
@@ -1906,7 +1918,8 @@ def parse_slash_line_lookup(input_str: str) -> Optional[dict]:
     if not name:
         return None
     season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
-    return {"name": name, "season": season}
+    return {"name": name, "season": season,
+            "consumed": ["slash line", "slashline", "slash-line"]}
 
 
 def parse_career_lookup(input_str: str) -> Optional[dict]:
@@ -1970,7 +1983,8 @@ def parse_platoon_splits(input_str: str) -> Optional[dict]:
         return None
 
     season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
-    return {"name": name, "hand": hand, "season": season}
+    return {"name": name, "hand": hand, "season": season,
+            "consumed": lhp_triggers + rhp_triggers + both_triggers}
 
 
 def parse_platoon_leaderboard(input_str: str) -> Optional[dict]:
@@ -2077,7 +2091,8 @@ def parse_home_away_splits(input_str: str) -> Optional[dict]:
         return None
 
     season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
-    return {"name": name, "location": location, "season": season}
+    return {"name": name, "location": location, "season": season,
+            "consumed": home_triggers + away_triggers + both_triggers}
 
 
 def parse_risp_splits(input_str: str) -> Optional[dict]:
@@ -2095,7 +2110,7 @@ def parse_risp_splits(input_str: str) -> Optional[dict]:
         return None
 
     season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
-    return {"name": name, "season": season}
+    return {"name": name, "season": season, "consumed": triggers}
 
 
 def parse_pitch_type_splits(input_str: str) -> Optional[dict]:
@@ -2147,7 +2162,9 @@ def parse_pitch_type_splits(input_str: str) -> Optional[dict]:
         return None
 
     season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
-    return {"name": name, "pitch_type": pitch_type, "season": season}
+    _pt_consumed = [p for pats, _ in pitch_type_map for p in pats] + general_triggers + ["against", "vs", "versus", "by pitch"]
+    return {"name": name, "pitch_type": pitch_type, "season": season,
+            "consumed": _pt_consumed}
 
 
 def parse_count_splits(input_str: str) -> Optional[dict]:
@@ -2192,7 +2209,11 @@ def parse_count_splits(input_str: str) -> Optional[dict]:
         return None
 
     season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
-    return {"name": name, "counts": counts, "season": season}
+    _ct_consumed = (two_strike_patterns + full_count_patterns + ahead_patterns
+                    + behind_patterns + general_triggers + (specific_counts or [])
+                    + ["count", "the count"])
+    return {"name": name, "counts": counts, "season": season,
+            "consumed": _ct_consumed}
 
 
 # Word → digit lookup for ordinal matching across the next three parsers.
@@ -3270,7 +3291,10 @@ def parse_consecutive_streak(input_str: str) -> Optional[dict]:
 
     season = detect_season(lower, default_to_most_recent=False)
 
-    return {"type": streak_type, "player_name": player_name, "season": season}
+    _cs_consumed = (on_base_patterns + hit_patterns
+                    + ["game", "games", "consecutive", "streak", "reaching", "base", "in a row"])
+    return {"type": streak_type, "player_name": player_name, "season": season,
+            "consumed": _cs_consumed}
 
 
 # "{player} vs/against {team}" markers. Used by parse_player_vs_team AND by
@@ -3297,7 +3321,12 @@ def parse_player_vs_team(input_str: str) -> Optional[dict]:
     if not opponent_code:
         return None
     season = detect_season(input_str)
-    return {"name": name, "opponent_code": opponent_code, "season": season}
+    # Consumed = every alias of the matched team + the vs/against markers, so a
+    # trailing unsupported qualifier ("...on Tuesdays") is flagged and bails.
+    _vt_consumed = [a for a, c in team_alias_map.items() if c == opponent_code] + \
+                   ["vs", "vs.", "v.", "versus", "against", "facing"]
+    return {"name": name, "opponent_code": opponent_code, "season": season,
+            "consumed": _vt_consumed}
 
 
 def parse_team_stats(input_str: str) -> Optional[dict]:

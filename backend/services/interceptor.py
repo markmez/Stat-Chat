@@ -43,6 +43,31 @@ def _ping_qe_error(question: str, error: str):
             pass
 
 
+def _claim(result, query):
+    """Default-on guard for single-player stat parsers (the central choke point).
+
+    A matched parser only *claims* the query when no meaningful words are left
+    unaccounted for: the player name + stat aliases + filler + numbers + the
+    parser's declared `consumed` phrases. Otherwise this returns None so the
+    dispatch falls through to the query engine / Haiku instead of shipping a
+    confident partial answer that silently drops a qualifier.
+
+    Wrap EVERY new single-player stat parser's dispatch call in this, and have
+    the parser declare `consumed` (the trigger phrases it accounts for). A
+    parser that forgets `consumed` fails *loud* (its queries bail to Haiku),
+    not *silent* (wrong-but-confident) — that's the point.
+    """
+    if not isinstance(result, dict):
+        return result
+    name = result.get("name") or result.get("player_name")
+    if not name:
+        return result  # no single player → no partial-answer risk to guard
+    if nm._residual_qualifier_words(query.strip().lower(), name,
+                                    extra_consumed=result.get("consumed", [])):
+        return None
+    return result
+
+
 def try_intercept(question: str):
     """
     Try to answer the question locally from the DB.
@@ -326,7 +351,7 @@ def try_intercept(question: str):
     # this returns None and comparison handles it. Also beats the team parsers,
     # which would return the opponent's roster (parse_team_stats misses
     # ambiguous surnames like "Judge").
-    pvt = nm.parse_player_vs_team(trimmed)
+    pvt = _claim(nm.parse_player_vs_team(trimmed), trimmed)
     if pvt:
         response = rb.build_player_vs_team(
             pvt["name"], pvt["opponent_code"], pvt["season"])
@@ -372,7 +397,7 @@ def try_intercept(question: str):
             return response
 
     # 4. Slash line — "Judge's slash line"
-    slash = nm.parse_slash_line_lookup(trimmed)
+    slash = _claim(nm.parse_slash_line_lookup(trimmed), trimmed)
     if slash:
         response = rb.build_slash_line_lookup(slash["name"], slash["season"])
         if response:
@@ -441,7 +466,7 @@ def try_intercept(question: str):
             return response
 
     # 7. Platoon splits — "Judge vs lefties", "Judge home runs vs lefties 2025"
-    platoon = nm.parse_platoon_splits(trimmed)
+    platoon = _claim(nm.parse_platoon_splits(trimmed), trimmed)
     if platoon:
         name, hand, season = platoon["name"], platoon["hand"], platoon["season"]
         # Check if a specific stat was requested
@@ -475,7 +500,7 @@ def try_intercept(question: str):
             return response
 
     # 8. Home/away splits — "Judge home vs away"
-    home_away = nm.parse_home_away_splits(trimmed)
+    home_away = _claim(nm.parse_home_away_splits(trimmed), trimmed)
     if home_away:
         name, loc, season = home_away["name"], home_away["location"], home_away["season"]
         if nm.is_pitcher(name):
@@ -486,7 +511,7 @@ def try_intercept(question: str):
             return response
 
     # 9. RISP splits — "Judge with runners in scoring position"
-    risp = nm.parse_risp_splits(trimmed)
+    risp = _claim(nm.parse_risp_splits(trimmed), trimmed)
     if risp:
         name, season = risp["name"], risp["season"]
         if nm.is_pitcher(name):
@@ -497,7 +522,7 @@ def try_intercept(question: str):
             return response
 
     # 10. Pitch type splits — "Judge vs sliders"
-    pitch_type = nm.parse_pitch_type_splits(trimmed)
+    pitch_type = _claim(nm.parse_pitch_type_splits(trimmed), trimmed)
     if pitch_type:
         name = pitch_type["name"]
         pt = pitch_type["pitch_type"]
@@ -510,7 +535,7 @@ def try_intercept(question: str):
             return response
 
     # 11. Count splits — "Judge with two strikes"
-    count = nm.parse_count_splits(trimmed)
+    count = _claim(nm.parse_count_splits(trimmed), trimmed)
     if count:
         name, counts, season = count["name"], count["counts"], count["season"]
         if nm.is_pitcher(name):
@@ -570,7 +595,7 @@ def try_intercept(question: str):
             return response
 
     # Consecutive streak — "longest hitting streak"
-    consec = nm.parse_consecutive_streak(trimmed)
+    consec = _claim(nm.parse_consecutive_streak(trimmed), trimmed)
     if consec:
         season = consec.get("season")
         # "all time" / "career" / "ever" / "in history" → scan full game-log
