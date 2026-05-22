@@ -1669,6 +1669,34 @@ def parse_streak_query(input_str: str) -> Optional[dict]:
             "career": has_career}
 
 
+def parse_best_month(input_str: str) -> Optional[dict]:
+    """'{player} best/worst month [this year/career]' → that player's best or
+    worst calendar month by OPS (hitters) / ERA (pitchers). Returns
+    {name, performance, season, career} or None. Only fires with a player, so
+    the all-time month leaderboard ("best OPS month ever") is unaffected."""
+    lower = input_str.strip().lower()
+    if "month" not in lower:
+        return None
+    # An explicit "{N} game(s)" window is a stretch, not a calendar month.
+    if re.search(r'\b\d+\s*[-]?\s*games?\b', lower):
+        return None
+    if any(k in lower for k in ("worst month", "coldest month")):
+        performance = "worst"
+    elif any(k in lower for k in ("best month", "hottest month", "top month", "biggest month")):
+        performance = "best"
+    else:
+        return None
+    name = find_player_in_text(input_str)
+    if not name:
+        return None
+    if any(p in lower for p in ("career", "all time", "all-time", "ever")):
+        return {"name": name, "performance": performance, "season": None, "career": True}
+    season = detect_season(lower)
+    # Bare "best month" (no time context) → career default (with a season see-also).
+    return {"name": name, "performance": performance, "season": season,
+            "career": season is None}
+
+
 def parse_current_form(input_str: str) -> Optional[str]:
     """Detect current form queries. Returns canonical player name."""
     lower = input_str.strip().lower()

@@ -1538,6 +1538,88 @@ def _fetch_streaks_for_season(conn, name, season, performance="hot", career=Fals
     return []
 
 
+_CAL_MONTHS = {1: "January", 2: "February", 3: "March", 4: "April", 5: "May",
+               6: "June", 7: "July", 8: "August", 9: "September", 10: "October",
+               11: "November", 12: "December"}
+
+
+def build_best_month(name: str, performance: str = "best",
+                     season: Optional[int] = None, career: bool = False) -> Optional[str]:
+    """A player's best/worst calendar month by OPS (hitters) / ERA (pitchers),
+    from the monthly aggregate tables. career=True scans all seasons."""
+    from . import name_matcher as _nm
+    conn = _get_db()
+    try:
+        display_name, _ = _get_player_info(conn, name)
+        is_pitching = _nm.is_pitcher(name)
+        where = ["p.name = ?"]
+        params: list = [_sanitize(name)]
+        if not career and season:
+            where.append("m.season = ?"); params.append(season)
+        cur = conn.cursor()
+
+        cands = []  # (rank_value, season, month, formatted_row_dict)
+        if is_pitching:
+            cur.execute(
+                "SELECT m.season, m.month, m.games_pitched, m.ip_outs, m.hits, "
+                "m.earned_runs, m.walks, m.strikeouts "
+                "FROM monthly_pitching_aggregates m JOIN players p ON m.player_id = p.player_id "
+                "WHERE " + " AND ".join(where) + " ORDER BY m.season, m.month", params)
+            for ssn, mon, g, ip_outs, h, er, bb, so in cur.fetchall():
+                if (ip_outs or 0) < 30:  # < 10 IP — not a real "month"
+                    continue
+                era = 27.0 * er / ip_outs
+                whip = 3.0 * (h + bb) / ip_outs
+                ip = ip_outs / 3.0
+                cands.append((era, ssn, mon,
+                              {"G": g, "IP": f"{ip:.1f}", "H": h, "ER": er, "BB": bb,
+                               "SO": so, "ERA": f"{era:.2f}", "WHIP": f"{whip:.2f}"}))
+            # best pitching month = lowest ERA
+            cands.sort(key=lambda c: c[0], reverse=(performance == "worst"))
+            headers = ["Month", "G", "IP", "H", "ER", "BB", "SO", "ERA", "WHIP"]
+        else:
+            cur.execute(
+                "SELECT m.season, m.month, m.games, m.at_bats, m.hits, m.doubles, "
+                "m.triples, m.home_runs, m.runs, m.rbi, m.walks, m.strikeouts, "
+                "m.hit_by_pitch, m.sacrifice_flies "
+                "FROM monthly_batting_aggregates m JOIN players p ON m.player_id = p.player_id "
+                "WHERE " + " AND ".join(where) + " ORDER BY m.season, m.month", params)
+            for r in cur.fetchall():
+                ssn, mon, g, ab, h, d2, d3, hr, runs, rbi, bb, so, hbp, sf = r
+                if (ab or 0) < 25:  # not enough PAs to be a meaningful month
+                    continue
+                avg = h / ab
+                obp_d = ab + bb + hbp + sf
+                obp = (h + bb + hbp) / obp_d if obp_d else 0.0
+                slg = (h + d2 + 2 * d3 + 3 * hr) / ab
+                ops = obp + slg
+                cands.append((ops, ssn, mon,
+                              {"G": g, "AB": ab, "R": runs, "H": h, "HR": hr, "RBI": rbi,
+                               "BB": bb, "SO": so,
+                               "AVG": _format_rate(f"{avg:.3f}"), "OBP": _format_rate(f"{obp:.3f}"),
+                               "SLG": _format_rate(f"{slg:.3f}"), "OPS": _format_rate(f"{ops:.3f}")}))
+            # best batting month = highest OPS
+            cands.sort(key=lambda c: c[0], reverse=(performance == "best"))
+            headers = ["Month", "G", "AB", "R", "H", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+
+        if not cands:
+            return None
+        _, b_season, b_month, row = cands[0]
+        scope_label = "career" if career else str(season or b_season)
+        dw = "worst" if performance == "worst" else "best"
+        month_label = f"{_CAL_MONTHS.get(b_month, b_month)} {b_season}"
+        parts = [f"**{display_name}** — {dw} month ({scope_label})\n", "[STATGRID]",
+                 "HEADER: " + ", ".join(headers)]
+        parts.append(f"ROW {month_label}: " + ", ".join(str(row[h]) for h in headers[1:]))
+        parts.append("[/STATGRID]")
+        if career:
+            cur_year = datetime.now().year
+            parts.append(f"[DIDYOUMEAN]{display_name} {dw} month this season[/DIDYOUMEAN]")
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
 def build_streak_list(name: str, performance: str, season: Optional[int] = None,
                       career: bool = False) -> Optional[str]:
     """Format batting streaks with dates, games, stats. career=True → all-time."""

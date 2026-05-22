@@ -375,6 +375,17 @@ def try_intercept(question: str):
         if response:
             return response + see_also
 
+    # Best/worst calendar month — "Judge's best month this year" — from the
+    # monthly aggregate tables. Before the streak + query-engine paths, which
+    # would otherwise return an all-time month leaderboard ignoring the player.
+    best_month = nm.parse_best_month(trimmed)
+    if best_month:
+        response = rb.build_best_month(
+            best_month["name"], best_month["performance"],
+            best_month["season"], career=best_month["career"])
+        if response:
+            return response
+
     # 2. Streak history — "Judge hot streaks 2025", "Ohtani cold streak"
     streak = nm.parse_streak_query(trimmed)
     if streak:
