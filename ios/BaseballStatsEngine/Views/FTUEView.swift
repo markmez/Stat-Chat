@@ -7,6 +7,7 @@ struct FTUEView: View {
     private let lightBlue = Color(red: 0.45, green: 0.7, blue: 1.0)
 
     @State private var visibleItems = 0
+    @State private var revealTask: Task<Void, Never>?
 
     private let examples = [
         "Most 4-hit games this year",
@@ -102,45 +103,63 @@ struct FTUEView: View {
             .padding(.horizontal, 40)
             .padding(.bottom, 50)
             .opacity(visibleItems >= 8 ? 1 : 0)
+            .allowsHitTesting(visibleItems >= 8)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            revealAllImmediately()
+        }
+        .overlay(alignment: .topTrailing) {
+            Button {
+                onDismiss()
+            } label: {
+                Text("Skip")
+                    .font(.system(size: 15, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 8)
+            .padding(.top, 4)
         }
         .onAppear {
             animateSequence()
         }
+        .onDisappear {
+            revealTask?.cancel()
+        }
     }
 
     private func animateSequence() {
-        let basePause = 1.0
-        let tryToBullet = 1.4    // Try... → first bullet
-        let bulletGap = 2.2      // between each of the 3 bullets
-        let toSection2 = 2.0     // 3rd bullet → "Search any player"
-        let section2ToBullet = 2.2  // "Search any player" → "Try Judge..."
-
-        // Title
-        withAnimation(.easeOut(duration: 0.8).delay(basePause)) {
-            visibleItems = 1
-        }
-        // "Try..."
-        let tryTime = basePause + 2.0
-        withAnimation(.easeOut(duration: 0.7).delay(tryTime)) {
-            visibleItems = 2
-        }
-        // 3 example bullets
-        for i in 0..<examples.count {
-            withAnimation(.easeOut(duration: 0.7).delay(tryTime + tryToBullet + Double(i) * bulletGap)) {
-                visibleItems = i + 3
+        // (target visibleItems, seconds to dwell before revealing it). Total ~7s,
+        // down from ~16s. Driven by a cancellable Task so a tap can skip to the end.
+        let steps: [(item: Int, delay: Double)] = [
+            (1, 0.8),  // title
+            (2, 0.9),  // "Try..."
+            (3, 0.9),  // example bullet 1
+            (4, 0.9),  // example bullet 2
+            (5, 0.9),  // example bullet 3
+            (6, 1.0),  // "Search any player..."
+            (7, 0.9),  // "Try Judge..."
+            (8, 0.8),  // "Got it!" button
+        ]
+        revealTask = Task { @MainActor in
+            for step in steps {
+                try? await Task.sleep(for: .seconds(step.delay))
+                if Task.isCancelled { return }
+                withAnimation(.easeOut(duration: 0.5)) {
+                    visibleItems = step.item
+                }
             }
         }
-        // "Search any player..."
-        let section2Time = tryTime + tryToBullet + Double(examples.count - 1) * bulletGap + toSection2
-        withAnimation(.easeOut(duration: 0.7).delay(section2Time)) {
-            visibleItems = 6
-        }
-        // "Try Judge..."
-        withAnimation(.easeOut(duration: 0.7).delay(section2Time + section2ToBullet)) {
-            visibleItems = 7
-        }
-        // Got it
-        withAnimation(.easeOut(duration: 0.7).delay(section2Time + section2ToBullet + 2.2)) {
+    }
+
+    /// Tap anywhere: cancel the timed reveal and show everything at once.
+    private func revealAllImmediately() {
+        guard visibleItems < 8 else { return }
+        revealTask?.cancel()
+        withAnimation(.easeOut(duration: 0.35)) {
             visibleItems = 8
         }
     }
