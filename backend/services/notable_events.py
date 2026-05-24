@@ -16,7 +16,7 @@ import sqlite3
 import os
 import time
 from datetime import date, datetime
-from services.historical_scans import _get_game_line, fmt_ip, continuation_subject, is_person_referent
+from services.historical_scans import _get_game_line, fmt_ip, attach_context
 from services.qualification import min_pa as _qual_min_pa
 
 # PELT config used by the feed hot-streak detector. Mirrors data_pipeline/detect_streaks.py
@@ -393,37 +393,11 @@ def _a_or_an(word: str) -> str:
 
 
 def _continue_with_context(base: str, continuation: str, *, past_tense: bool = False) -> str:
-    """Append a follow-up clause as a separate sentence rather than an
-    em-dash continuation. Em-dash-as-connector reads AI-generated; period
-    boundaries flow more like sportswriter prose.
-
-    - Preserves base's terminal punctuation (! stays !, ? stays ?).
-    - If the continuation begins lowercase (a noun/participial fragment
-      like "the most since X" or "matching his career high"), prepends
-      "That's" (present) or "That was" (past) so it parses as a complete
-      sentence. Use past_tense=True for "On This Date" / historical
-      context where the event happened in a prior year.
-    - If the continuation already begins capitalized, treats it as a
-      complete sentence and appends as-is.
-    - Strips redundant trailing punctuation on `continuation` and adds
-      exactly one terminal period.
-    """
-    if not continuation:
-        return base
-    cont = continuation.strip().rstrip(".!?").strip()
-    if not cont:
-        return base
-    if cont[0].islower() and is_person_referent(cont):
-        # Person appositive renaming the subject ("the first Phillies pitcher to
-        # do it since X") — attach to the event clause with a comma, not a
-        # separate "He's ..." sentence; the context describes the same event.
-        return base.rstrip().rstrip(".") + ", " + cont + "."
-    boundary = " " if base.rstrip().endswith(("!", "?", ".")) else ". "
-    if cont[0].isupper():
-        sentence = cont + "."
-    else:
-        sentence = continuation_subject(cont, past=past_tense) + " " + cont + "."
-    return base.rstrip() + boundary + sentence
+    """Append a follow-up context clause. Delegates to the shared attach_context
+    in historical_scans so person-appositive (comma), event-appositive ("That's"
+    / "That was"), and standalone-clause handling stay uniform across detectors.
+    past_tense=True is used for "On This Date" context."""
+    return attach_context(base, continuation, past=past_tense)
 
 
 def _player_team_display(conn, player_id, season):

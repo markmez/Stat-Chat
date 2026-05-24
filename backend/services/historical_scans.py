@@ -20,20 +20,10 @@ def _player_name(conn, player_id):
 
 
 def _continue_with_context(base: str, continuation: str) -> str:
-    """Append a follow-up clause as a separate sentence rather than an
-    em-dash continuation. Mirrors the helper in notable_events.py — kept
-    local here to avoid a circular import."""
-    if not continuation:
-        return base
-    cont = continuation.strip().rstrip(".!?").strip()
-    if not cont:
-        return base
-    boundary = " " if base.rstrip().endswith(("!", "?", ".")) else ". "
-    if cont[0].isupper():
-        sentence = cont + "."
-    else:
-        sentence = "That's " + cont + "."
-    return base.rstrip() + boundary + sentence
+    """Append a follow-up context clause. Delegates to attach_context (defined
+    later in this module) so person-appositive / event-appositive / standalone-
+    clause handling matches the other detectors."""
+    return attach_context(base, continuation)
 
 
 def _team_display(conn, player_id, season):
@@ -1558,12 +1548,38 @@ def is_person_referent(cont: str) -> bool:
     return bool(_PERSON_NOUN_RE.search(_BY_PERSON_RE.sub("", cont or "")))
 
 
-def continuation_subject(cont: str, *, past: bool = False) -> str:
-    """Capitalized lead-in for a lowercase follow-on clause: He's/He was for a
-    person predicate, That's/That was for an event/stat predicate."""
+_FINITE_VERB_RE = re.compile(r"\b(?:is|was|are|were|has|have|had)\b", re.I)
+
+
+def _looks_like_clause(cont: str) -> bool:
+    """A continuation with an early finite verb ('only 3 pitchers have done
+    this') is a standalone clause, not an appositive — it should become its own
+    sentence with no 'That's'/'He's' lead-in. Checks the first 10 words and only
+    matches auxiliary/copula verbs so infinitives ('to do it') don't count."""
+    return bool(_FINITE_VERB_RE.search(" ".join(cont.split()[:10])))
+
+
+def attach_context(base: str, continuation: str, *, past: bool = False) -> str:
+    """Attach a follow-on context clause to an event clause, choosing the form:
+    - Person appositive renaming the subject ('the first Phillies pitcher to do
+      it since X') -> comma-attached ('..., the first Phillies pitcher ...').
+    - Event/stat appositive ('the longest streak since X') -> its own
+      'That's ...' / 'That was ...' sentence.
+    - A standalone clause ('only 3 pitchers have done this') or already-
+      capitalized text -> its own sentence as written.
+    Shared by the three _continue_with_context wrappers so the rule is uniform."""
+    if not continuation:
+        return base
+    cont = continuation.strip().rstrip(".!?").strip()
+    if not cont:
+        return base
+    boundary = " " if base.rstrip().endswith(("!", "?", ".")) else ". "
+    if cont[0].isupper() or _looks_like_clause(cont):
+        return base.rstrip() + boundary + cont[0].upper() + cont[1:] + "."
     if is_person_referent(cont):
-        return "He was" if past else "He's"
-    return "That was" if past else "That's"
+        return base.rstrip().rstrip(".") + ", " + cont + "."
+    intro = "That was " if past else "That's "
+    return base.rstrip() + boundary + intro + cont + "."
 
 
 def _get_game_line(conn, player_id, date, season):

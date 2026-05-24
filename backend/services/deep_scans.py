@@ -21,7 +21,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from services.franchise import get_franchise_codes, get_franchise_name
-from services.historical_scans import fmt_ip, continuation_subject, is_person_referent
+from services.historical_scans import fmt_ip, attach_context
 
 logger = logging.getLogger("statchat.deep_scans")
 
@@ -99,24 +99,9 @@ def _ordinal(n):
 
 
 def _continue_with_context(base: str, continuation: str) -> str:
-    """Append a follow-up clause as a separate sentence rather than an
-    em-dash continuation. Mirrors the helper in notable_events.py."""
-    if not continuation:
-        return base
-    cont = continuation.strip().rstrip(".!?").strip()
-    if not cont:
-        return base
-    if cont[0].islower() and is_person_referent(cont):
-        # Person appositive renaming the subject ("the first Twins player with
-        # 16+ HR ... since X") — attach to the event clause with a comma, not a
-        # separate "He's ..." sentence; the context describes the same event.
-        return base.rstrip().rstrip(".") + ", " + cont + "."
-    boundary = " " if base.rstrip().endswith(("!", "?", ".")) else ". "
-    if cont[0].isupper():
-        sentence = cont + "."
-    else:
-        sentence = continuation_subject(cont) + " " + cont + "."
-    return base.rstrip() + boundary + sentence
+    """Append a follow-up context clause. Delegates to the shared attach_context
+    in historical_scans so person/appositive/clause handling stays uniform."""
+    return attach_context(base, continuation)
 
 
 def _format_avg(val):
