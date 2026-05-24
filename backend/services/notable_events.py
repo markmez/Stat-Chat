@@ -16,7 +16,7 @@ import sqlite3
 import os
 import time
 from datetime import date, datetime
-from services.historical_scans import _get_game_line, fmt_ip, continuation_subject
+from services.historical_scans import _get_game_line, fmt_ip, continuation_subject, is_person_referent
 from services.qualification import min_pa as _qual_min_pa
 
 # PELT config used by the feed hot-streak detector. Mirrors data_pipeline/detect_streaks.py
@@ -413,6 +413,11 @@ def _continue_with_context(base: str, continuation: str, *, past_tense: bool = F
     cont = continuation.strip().rstrip(".!?").strip()
     if not cont:
         return base
+    if cont[0].islower() and is_person_referent(cont):
+        # Person appositive renaming the subject ("the first Phillies pitcher to
+        # do it since X") — attach to the event clause with a comma, not a
+        # separate "He's ..." sentence; the context describes the same event.
+        return base.rstrip().rstrip(".") + ", " + cont + "."
     boundary = " " if base.rstrip().endswith(("!", "?", ".")) else ". "
     if cont[0].isupper():
         sentence = cont + "."
