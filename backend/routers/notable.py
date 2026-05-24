@@ -703,13 +703,21 @@ def _merge_player_events(conn, group, player_name, game_date):
     stat_order = []  # preserve discovery order
     for e in non_rate_events:
         dt = e.get("_type", "")
-        stat = _DETECTION_TYPE_STAT.get(dt)
-        if not stat and dt not in _NO_LEAD_IN_DETECTION_TYPES:
-            # Scan the IMPACT portion (after stripping stat-line prefix) so
-            # we detect the event's anchor stat, not the box-score line.
-            raw = _extract_raw_impact(e["headline"], player_name)
-            stat = _detect_stat_from_headline(raw)
-        key = stat or "_other"
+        if dt in _NO_LEAD_IN_DETECTION_TYPES:
+            # Own group key → a standalone sentence with no lead-in. Keeps the
+            # quality-/scoreless-start clause and its "first since X" context
+            # together; lumping it into "_other" flattened it into a comma-list
+            # with unrelated impacts (e.g. a leaderboard pass), leaving
+            # "the first ... to do it" with no clear referent.
+            key = dt
+        else:
+            stat = _DETECTION_TYPE_STAT.get(dt)
+            if not stat:
+                # Scan the IMPACT portion (after stripping stat-line prefix) so
+                # we detect the event's anchor stat, not the box-score line.
+                raw = _extract_raw_impact(e["headline"], player_name)
+                stat = _detect_stat_from_headline(raw)
+            key = stat or "_other"
         if key not in by_stat:
             stat_order.append(key)
         by_stat[key].append(e)

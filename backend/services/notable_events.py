@@ -1504,9 +1504,9 @@ def detect_season_pace(conn, season, latest_date=None):
                     # 54 HR this season") and survives the strip when
                     # merged with another event without losing the stat.
                     if game_intro:
-                        pace_line = f"{game_intro}He now has {stat_val} {abbrev} and is now on pace for {projected} {abbrev} this season."
+                        pace_line = f"{game_intro}He now has {stat_val} {abbrev} and is on pace for {projected} {abbrev} this season."
                     else:
-                        pace_line = f"{name} now has {stat_val} {abbrev} and is now on pace for {projected} {abbrev} this season."
+                        pace_line = f"{name} now has {stat_val} {abbrev} and is on pace for {projected} {abbrev} this season."
                     events.append({
                         "headline": pace_line,
                         "detail": "",
