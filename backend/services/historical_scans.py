@@ -782,7 +782,7 @@ def scan_pitching_start_of_season(conn, season, latest_date):
         if all_scoreless and latest_scoreless and num_starts >= 2:
             total_outs = sum(s[3] or 0 for s in starts)
             total_k = sum(s[0] or 0 for s in starts)
-            ip = f"{total_outs // 3}.{total_outs % 3}"
+            ip = fmt_ip(total_outs)
 
             # Historical context: when did anyone last open a season with N+
             # consecutive scoreless starts? Include team-since if deeper.
@@ -926,7 +926,7 @@ def scan_team_starter_era(conn, season, latest_date):
 
         if rank <= 10:
             hist_list = [{"team": h[0], "season": h[1], "era_x100": h[2], "detail": h[3]} for h in lower[:5]]
-            ip_display = f"{total_outs // 3}.{total_outs % 3}"
+            ip_display = fmt_ip(total_outs)
             facts.append({
                 "type": "team_starter_era",
                 "team": team,
@@ -1531,6 +1531,15 @@ def run_all_scans(conn, season, latest_date):
     return all_facts
 
 
+def fmt_ip(ip_outs):
+    """Format innings pitched from total outs, dropping the trailing .0 for
+    whole innings: 24 outs -> "8", 20 outs -> "6.2". Partial innings keep the
+    baseball-notation decimal (.1 = 1 out, .2 = 2 outs)."""
+    outs = int(ip_outs or 0)
+    full, rem = divmod(outs, 3)
+    return f"{full}" if rem == 0 else f"{full}.{rem}"
+
+
 def _get_game_line(conn, player_id, date, season):
     """Get a player's batting or pitching line from a specific game.
     Returns pitching line for starters, batting line otherwise."""
@@ -1542,7 +1551,7 @@ def _get_game_line(conn, player_id, date, season):
     """, (player_id, date, season)).fetchone()
     if pitch_row and pitch_row[7]:  # is_start
         ip, outs, h, er, so, bb, w, _ = pitch_row
-        ip_display = ip or f"{(outs or 0) // 3}.{(outs or 0) % 3}"
+        ip_display = fmt_ip(outs)
         parts = [f"{ip_display} IP", f"{h} H", f"{er} ER", f"{so} K"]
         if bb == 0: parts.append("0 BB")
         if w: parts.append("W")
@@ -1669,18 +1678,14 @@ def template_facts(conn, facts, season, latest_date):
                 # as a parallel item, not a run-on continuation.
                 hist_suffix = ". That's " + hist_phrases[0] + ", and " + hist_phrases[1]
             else:
-                # 3+: middle phrases as sentences, last two joined with ", and"
-                first = hist_phrases[0]
-                middle = [(p[0].upper() + p[1:]) for p in hist_phrases[1:-1]]
-                last = hist_phrases[-1]
-                if middle:
-                    middle_minus_last = middle[:-1]
-                    last_middle = middle[-1]
-                    sentences = ["That's " + first] + middle_minus_last
-                    joined = ". ".join(sentences)
-                    hist_suffix = ". " + joined + ". " + last_middle + ", and " + last
-                else:
-                    hist_suffix = ". That's " + first + ", and " + last
+                # 3+ phrases: one "That's A, B, and C." sentence. Emitting the
+                # middle phrases as their own sentences orphaned them as verbless
+                # fragments ("The 81st-longest on-base streak in the last 100+
+                # years, and the longest…").
+                hist_suffix = (
+                    ". That's " + ", ".join(hist_phrases[:-1])
+                    + ", and " + hist_phrases[-1]
+                )
 
             # Participle-absolute join — the streak claim is a consequence
             # of the box-score line. Compact sportswriter style: "X went
@@ -1882,7 +1887,7 @@ def template_facts(conn, facts, season, latest_date):
                 """, (pid, pid, season, season)).fetchone()
                 if pitch_row:
                     ip_text, ip_outs, ph, per, pso, pbb = pitch_row
-                    ip_display = ip_text or f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
+                    ip_display = fmt_ip(ip_outs)
                     parts = [f"{ip_display} IP"]
                     parts.append(f"{per or 0} ER")
                     if pso: parts.append(f"{pso} K")

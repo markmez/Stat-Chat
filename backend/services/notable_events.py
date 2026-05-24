@@ -16,7 +16,7 @@ import sqlite3
 import os
 import time
 from datetime import date, datetime
-from services.historical_scans import _get_game_line
+from services.historical_scans import _get_game_line, fmt_ip
 from services.qualification import min_pa as _qual_min_pa
 
 # PELT config used by the feed hot-streak detector. Mirrors data_pipeline/detect_streaks.py
@@ -1339,7 +1339,7 @@ def detect_pitching_streaks(conn, season, latest_date):
         if scoreless >= 2:
             name = _player_name(conn, pid)
             last = starts[0]
-            last_ip = f"{(last[1] or 0) // 3}.{(last[1] or 0) % 3}"
+            last_ip = fmt_ip(last[1])
             last_so = last[4] or 0
             game_line = f"{name} threw {last_ip} scoreless IP with {last_so} K and "
             headline = f"{game_line}now has {scoreless} consecutive scoreless starts."
@@ -1371,7 +1371,7 @@ def detect_pitching_streaks(conn, season, latest_date):
         if qs >= 4:
             name = _player_name(conn, pid)
             last = starts[0]
-            last_ip = f"{(last[1] or 0) // 3}.{(last[1] or 0) % 3}"
+            last_ip = fmt_ip(last[1])
             last_er = last[2] or 0
             last_so = last[4] or 0
             game_line = f"{name} went {last_ip} IP, {last_er} ER, {last_so} K and "
@@ -1402,7 +1402,7 @@ def detect_pitching_streaks(conn, season, latest_date):
         if k10 >= 3:
             name = _player_name(conn, pid)
             last = starts[0]
-            last_ip = f"{(last[1] or 0) // 3}.{(last[1] or 0) % 3}"
+            last_ip = fmt_ip(last[1])
             last_so = last[4] or 0
             game_line = f"{name} struck out {last_so} in {last_ip} innings and "
             headline = f"{game_line}now has {k10} consecutive 10+ strikeout starts."
@@ -1961,7 +1961,7 @@ def detect_rarities(conn, season, latest_date):
         h = h or 0
         bb = bb or 0
         er = er or 0
-        ip_display = ip or f"{ip_outs // 3}.{ip_outs % 3}"
+        ip_display = fmt_ip(ip_outs)
         key = (pid, game_date)
 
         # -- RARITY pitching --
@@ -3048,7 +3048,7 @@ def detect_on_this_date(conn, season, latest_date, target_date=None, attach_date
     """, [month_day, season] + nl_params).fetchall()
     for name, yr, so, ip, ip_outs, h, er, opp in big_k:
         opp_name = team_display(opp) if opp else ""
-        ip_display = ip or f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
+        ip_display = fmt_ip(ip_outs)
         headline = f"On this date in {yr}, {name} struck out {so} in {ip_display} innings"
         if opp_name:
             headline += f" against the {opp_name}"

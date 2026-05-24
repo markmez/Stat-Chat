@@ -65,8 +65,12 @@ _DETECTION_TYPE_STAT = {
     "onbase_streak": None,  # mixed (hits + walks + HBP); fall through to keyword scan
     "hr_streak_ended": "home_runs",
     "hot_streak_pelt": "hits",  # OPS-anchored streak; "hits" is the closest lead-in match
-    "scoreless_streak": "strikeouts",
-    "qs_streak": "strikeouts",
+    # Pitching dominance streaks: no "By striking out N" lead-in. A quality
+    # start is 6+ IP / ≤3 ER and a scoreless streak is about runs, not Ks —
+    # the strikeout lead-in implies a false connection. Fall through (None) so
+    # the impact emits as its own sentence ("He now has 5 consecutive…").
+    "scoreless_streak": None,
+    "qs_streak": None,
     "14k_game": "strikeouts",
     "career_p_strikeouts_1000": "strikeouts",
     "career_high": None,  # depends on stat in headline; falls through to keyword scan
@@ -75,6 +79,15 @@ _DETECTION_TYPE_STAT = {
     "ai_insight": None,      # Sonnet narrative; varies. Fall through to keyword scan.
     "on_this_date": None,    # non-mergeable (see _NON_MERGEABLE_TYPES); catalog entry for completeness.
 }
+
+
+# Detection types that must NEVER get a "By [verb-ing] N," lead-in, even via the
+# keyword fallback. Pitching-dominance streaks (quality starts, scoreless
+# starts) aren't "caused" by any single box-score stat, and the fallback would
+# otherwise latch onto the strikeout count in the game line ("By striking out 6,
+# he now has 5 consecutive quality starts" — Ks are irrelevant to a quality
+# start). These impacts stand on their own as a sentence.
+_NO_LEAD_IN_DETECTION_TYPES = {"qs_streak", "scoreless_streak"}
 
 
 # Impact clauses where a "By [player verb-ing], ..." lead-in shouldn't
@@ -334,7 +347,8 @@ def _build_stat_line(conn, player_name, game_date):
     """, (pid, game_date)).fetchone()
     if pitch:
         ip, ip_outs, h, er, so, bb, w, l, sv = (v or 0 for v in pitch)
-        ip_display = ip if ip else f"{ip_outs // 3}.{ip_outs % 3}"
+        from services.historical_scans import fmt_ip
+        ip_display = fmt_ip(ip_outs)
         outcome = ""
         if w: outcome = ", W"
         elif l: outcome = ", L"
@@ -589,7 +603,7 @@ def _format_impact(headline, player_name, detection_type, today_stats):
 
     # Build the lead-in based on the event's stat type + today's count
     stat_key = _DETECTION_TYPE_STAT.get(detection_type)
-    if not stat_key:
+    if not stat_key and detection_type not in _NO_LEAD_IN_DETECTION_TYPES:
         # Fall back to scanning the original headline for stat keywords
         stat_key = _detect_stat_from_headline(headline)
     lead_in = None
@@ -690,7 +704,7 @@ def _merge_player_events(conn, group, player_name, game_date):
     for e in non_rate_events:
         dt = e.get("_type", "")
         stat = _DETECTION_TYPE_STAT.get(dt)
-        if not stat:
+        if not stat and dt not in _NO_LEAD_IN_DETECTION_TYPES:
             # Scan the IMPACT portion (after stripping stat-line prefix) so
             # we detect the event's anchor stat, not the box-score line.
             raw = _extract_raw_impact(e["headline"], player_name)
