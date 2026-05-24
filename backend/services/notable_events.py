@@ -1331,6 +1331,12 @@ def detect_pitching_streaks(conn, season, latest_date):
         if not starts:
             continue
 
+        # A scoreless start is essentially a stronger quality start, so a
+        # scoreless-start streak makes the parallel quality-start streak a weaker
+        # restatement of overlapping games. When both fire for one pitcher, keep
+        # the scoreless streak (it carries the historical context) and skip QS.
+        scoreless_fired = False
+
         # Scoreless starts streak (0 ER, 5+ IP)
         scoreless = 0
         for game_date, ip_outs, er, ip_text, so in starts:
@@ -1362,6 +1368,7 @@ def detect_pitching_streaks(conn, season, latest_date):
                 "detection_type": "scoreless_streak",
                 "priority": 1,
             })
+            scoreless_fired = True
 
         # Quality start streak (6+ IP, 3 or fewer ER)
         qs = 0
@@ -1372,7 +1379,7 @@ def detect_pitching_streaks(conn, season, latest_date):
             else:
                 break
 
-        if qs >= 4:
+        if qs >= 4 and not scoreless_fired:
             name = _player_name(conn, pid)
             last = starts[0]
             last_ip = fmt_ip(last[1])
