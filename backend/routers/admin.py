@@ -4787,7 +4787,8 @@ def _simulate_records_for_date(conn, target_date):
             if pitch["strikeouts"] > (prev_k or 0):
                 k = pitch["strikeouts"]
                 ip_outs = pitch.get("ip_outs", 0)
-                ip_display = f"{ip_outs // 3}.{ip_outs % 3}" if ip_outs else "?"
+                from services.historical_scans import fmt_ip
+                ip_display = fmt_ip(ip_outs) if ip_outs else "?"
                 if prev_k and prev_k_date:
                     try:
                         from datetime import datetime as _dt
