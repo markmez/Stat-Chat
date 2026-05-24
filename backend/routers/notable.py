@@ -221,15 +221,17 @@ _REDUNDANT_PREFIX_PATTERNS = [
     # "He picked up a win, and is now N away" — strip the "picked up a win, and "
     # because the lead-in already says "By picking up the win,"
     re.compile(r"^He (?:picked up a win|earned a win|notched a save|recorded a save|hit (?:a|\d+) (?:homer|home run|home runs)|drove in \d+ runs?|stole (?:a|\d+) base|collected \d+ hits?|struck out \d+),?\s+(?:and\s+)?", re.I),
-    # Generic batting stat-line strip (no pivot required) — runs LAST as a
-    # fallback after the pivot-aware patterns above.
+    # Streak prefixes — keep the "now has N consecutive..." impact. MUST precede
+    # the generic stat-line strips below: the generic pitching strip's greedy
+    # [^,.]+ would otherwise swallow "now has ..." up to the comma once the
+    # streak's "first since X" context is comma-appended to it.
+    re.compile(r"^He threw [\d.]+ scoreless (?:IP|innings) with \d+ K and (?=now has)", re.I),
+    re.compile(r"^He went [\d.]+ IP,\s*\d+\s*ER,\s*\d+\s*K and (?=now has)", re.I),
+    # Generic batting stat-line strip (no pivot required) — fallback after the
+    # pivot-aware and streak-specific patterns above.
     re.compile(r"^He went \d+-for-\d+(?:\s+with\s+[^,]+(?:\s+and\s+[^,]+)?)?(?:,\s+\d+\s+\w+(?:\s+\w+)*)*,\s+", re.I),
     # Generic pitching stat-line strip (no pivot required)
     re.compile(r"^He threw [\d.]+ (?:scoreless\s+)?(?:IP|innings)(?:\s+with[^,.]+)?,\s+", re.I),
-    # scoreless_streak: "He threw X.X scoreless IP with N K and " — keep "now has N consecutive..."
-    re.compile(r"^He threw [\d.]+ scoreless (?:IP|innings) with \d+ K and (?=now has)", re.I),
-    # qs_streak: "He went X.X IP, N ER, N K and " — keep "now has N consecutive..."
-    re.compile(r"^He went [\d.]+ IP,\s*\d+\s*ER,\s*\d+\s*K and (?=now has)", re.I),
 ]
 
 
