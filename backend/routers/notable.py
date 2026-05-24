@@ -520,7 +520,13 @@ def _ensure_subject(text, *, active_state: bool = False):
         first_clause = " ".join(text.split()[:10]).lower()
         if any(f" {v} " in f" {first_clause} " for v in ("is", "was", "has", "had", "are", "were")):
             return text[0].upper() + text[1:]
-        prefix = "that's " if active_state else "that was "
+        # Person predicate ("the first Phillies pitcher to do it") takes "he's";
+        # event/stat predicate ("the longest streak since X") takes "that's".
+        from services.historical_scans import is_person_referent
+        if is_person_referent(text):
+            prefix = "he's " if active_state else "he was "
+        else:
+            prefix = "that's " if active_state else "that was "
         return prefix + text[0].lower() + text[1:]
     return text
 
@@ -781,6 +787,15 @@ def _merge_player_events(conn, group, player_name, game_date):
         if sentence and not sentence.endswith((".", "!", "?")):
             sentence = sentence.rstrip(",;: ") + "."
         sentences.append(sentence)
+
+    # "He also <verb>" for a 2nd+ discrete-action sentence — signals it's an
+    # additional accomplishment rather than reading as a disconnected restatement.
+    _also_re = re.compile(
+        r"^He (took|hit|drove|stole|struck|threw|picked|notched|earned|recorded|"
+        r"set|passed|reached|moved|tied|matched|joined|extended|swiped|collected|drew|scored) ")
+    for _i in range(1, len(sentences)):
+        if _also_re.match(sentences[_i]):
+            sentences[_i] = "He also " + sentences[_i][3:]
 
     if stat_line:
         merged_headline = f"{stat_line}. " + " ".join(sentences)

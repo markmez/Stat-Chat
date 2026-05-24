@@ -21,7 +21,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from services.franchise import get_franchise_codes, get_franchise_name
-from services.historical_scans import fmt_ip
+from services.historical_scans import fmt_ip, continuation_subject
 
 logger = logging.getLogger("statchat.deep_scans")
 
@@ -110,7 +110,7 @@ def _continue_with_context(base: str, continuation: str) -> str:
     if cont[0].isupper():
         sentence = cont + "."
     else:
-        sentence = "That's " + cont + "."
+        sentence = continuation_subject(cont) + " " + cont + "."
     return base.rstrip() + boundary + sentence
 
 

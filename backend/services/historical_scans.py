@@ -8,6 +8,7 @@ Each scan computes a current-season stat, then looks up historical
 comparisons from the index.
 """
 
+import re
 import sqlite3
 from datetime import date
 from .qualification import min_pa as _qual_min_pa, min_ip_outs as _qual_min_ip_outs
@@ -1538,6 +1539,31 @@ def fmt_ip(ip_outs):
     outs = int(ip_outs or 0)
     full, rem = divmod(outs, 3)
     return f"{full}" if rem == 0 else f"{full}.{rem}"
+
+
+_PERSON_NOUN_RE = re.compile(
+    r"\b(?:player|pitcher|hitter|batter|rookie|slugger|starter|reliever)\b", re.I)
+# A person noun that's the object of "by" ("the longest streak by an Athletics
+# player") is about the streak, not the player — strip those before checking.
+_BY_PERSON_RE = re.compile(
+    r"\bby (?:a|an|any|the)\s+(?:\w+\s+){0,2}?"
+    r"(?:player|pitcher|hitter|batter|rookie|slugger|starter|reliever)\b", re.I)
+
+
+def is_person_referent(cont: str) -> bool:
+    """True if a follow-on clause's predicate names a PERSON ("the first
+    Phillies pitcher to do it") — those take "He's"/"He was". Event or stat
+    predicates ("the longest streak since X", "the 81st-longest") take
+    "That's"/"That was"."""
+    return bool(_PERSON_NOUN_RE.search(_BY_PERSON_RE.sub("", cont or "")))
+
+
+def continuation_subject(cont: str, *, past: bool = False) -> str:
+    """Capitalized lead-in for a lowercase follow-on clause: He's/He was for a
+    person predicate, That's/That was for an event/stat predicate."""
+    if is_person_referent(cont):
+        return "He was" if past else "He's"
+    return "That was" if past else "That's"
 
 
 def _get_game_line(conn, player_id, date, season):
