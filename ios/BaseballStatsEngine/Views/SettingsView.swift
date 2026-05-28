@@ -138,6 +138,22 @@ struct SettingsView: View {
                             }
                             .foregroundStyle(.primary)
                         }
+
+                        Divider()
+
+                        Link(destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!) {
+                            HStack {
+                                Image(systemName: "doc.text")
+                                    .font(.system(size: 14))
+                                Text("Terms of Use")
+                                    .font(.system(.subheadline, design: .rounded))
+                                Spacer()
+                                Image(systemName: "arrow.up.right")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .foregroundStyle(.primary)
+                        }
                     }
                 }
 

@@ -130,6 +130,26 @@ struct PaywallView: View {
                         ProgressView()
                             .padding(.top, 8)
                     }
+
+                    // Required by App Store guideline 3.1.2(c): show an
+                    // auto-renewal disclosure plus functional Privacy Policy
+                    // and Terms of Use (EULA) links in the purchase flow.
+                    VStack(spacing: 8) {
+                        Text("Subscription auto-renews unless canceled at least 24 hours before the period ends. Manage in Settings → Apple ID → Subscriptions.")
+                            .font(.system(size: 11, design: .rounded))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 8)
+
+                        HStack(spacing: 14) {
+                            Link("Privacy Policy", destination: URL(string: "https://secondsignalapps.com/privacy.html")!)
+                            Text("•").foregroundStyle(.tertiary)
+                            Link("Terms of Use", destination: URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!)
+                        }
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 12)
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 40)
