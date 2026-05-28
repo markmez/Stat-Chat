@@ -90,16 +90,10 @@ final class AppState: SearchHistoryTracking {
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        // Paywall gate — check before consuming the query
-        resetWeeklyCountIfNeeded()
-        if weeklyQueryCount >= 5 && !StoreKitService.shared.isSubscribed {
-            AnalyticsService.trackPaywallHit(queryCount: weeklyQueryCount)
-            pendingPaywallQuery = trimmed
-            showPaywall = true
-            return
-        }
-
-        incrementQueryCount()
+        // Paywall gate — uses the same helper that all typed-search submit
+        // handlers call, so player/team navigations and questions all consume
+        // the same weekly quota uniformly.
+        if consumePaywallQuotaForSearch(trimmed) { return }
 
         // Non-follow-up queries get added to history immediately.
         // Follow-ups are deferred until after the backend response, so we can use
@@ -446,6 +440,27 @@ final class AppState: SearchHistoryTracking {
         resetWeeklyCountIfNeeded()
         weeklyQueryCount += 1
         UserDefaults.standard.set(weeklyQueryCount, forKey: weeklyCountKey)
+    }
+
+    /// Gate a typed/voice search against the weekly free-query limit. Call
+    /// from every submit handler that initiates a NEW search — HomeView's
+    /// submit, in-card search bars (PlayerCardView, TeamCardView, ResultsView),
+    /// and search-history taps. Link taps (tapping a player name in a result)
+    /// must NOT call this; only typed/voice/history searches do.
+    ///
+    /// Returns true if the search was BLOCKED by the paywall (caller should
+    /// abort). Returns false (and increments the counter) if it proceeds.
+    @discardableResult
+    func consumePaywallQuotaForSearch(_ query: String) -> Bool {
+        resetWeeklyCountIfNeeded()
+        if weeklyQueryCount >= 5 && !StoreKitService.shared.isSubscribed {
+            AnalyticsService.trackPaywallHit(queryCount: weeklyQueryCount)
+            pendingPaywallQuery = query
+            showPaywall = true
+            return true
+        }
+        incrementQueryCount()
+        return false
     }
 
     private func resetWeeklyCountIfNeeded() {

@@ -393,10 +393,12 @@ struct PlayerCardView: View {
         }
         .task {
             AnalyticsService.trackPlayerCardView(name: playerName)
+            // Metering happens at the submit handler that initiated this
+            // navigation (HomeView.submitQuestion, PlayerCardView.submitSearch,
+            // TeamCardView.submitSearch, ResultsView.sendQuestion,
+            // SearchHistoryView tap) via appState.consumePaywallQuotaForSearch.
+            // Don't increment here too — that would double-count typed searches.
             playerCard = await PlayerCardService.fetch(name: playerName, source: source, deviceId: AppState.deviceId)
-            if source == "search" {
-                appState.incrementQueryCount()
-            }
             isLoading = false
         }
     }
@@ -440,10 +442,13 @@ struct PlayerCardView: View {
 
         switch PlayerNameMatcher.resolveSearch(trimmed, history: appState) {
         case .player(let name, let alts):
+            if appState.consumePaywallQuotaForSearch(trimmed) { return }
             navigationPath.append(PlayerCardDestination(name: name, alternatives: alts, source: "search"))
         case .team(let code):
+            if appState.consumePaywallQuotaForSearch(trimmed) { return }
             selectedTeamCode = code
         case .question(let query):
+            // .question routes to ResultsView → appState.sendQuestion gates it.
             searchInputMethod = inputMethod
             searchQuestion = query
         }

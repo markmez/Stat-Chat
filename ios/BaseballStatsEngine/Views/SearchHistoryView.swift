@@ -15,10 +15,15 @@ struct SearchHistoryView: View {
                         Button {
                             appState.addToSearchHistory(query)
                             if let playerName = PlayerNameMatcher.matchPlayer(query) {
+                                // Re-running a history search is a NEW search;
+                                // gate it against the paywall like any typed one.
+                                if appState.consumePaywallQuotaForSearch(query) { return }
                                 navigationPath.append(PlayerCardDestination(name: playerName, source: "search"))
                             } else if let teamCode = PlayerNameMatcher.matchTeamExact(query) {
+                                if appState.consumePaywallQuotaForSearch(query) { return }
                                 navigationPath.append(TeamCardDestination(code: teamCode))
                             } else {
+                                // ResultsDestination -> ResultsView -> appState.sendQuestion gates it.
                                 navigationPath.append(ResultsDestination(question: query))
                             }
                         } label: {

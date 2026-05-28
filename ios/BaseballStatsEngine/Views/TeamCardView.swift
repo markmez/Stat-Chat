@@ -241,10 +241,13 @@ struct TeamCardView: View {
 
         switch PlayerNameMatcher.resolveSearch(trimmed, history: appState) {
         case .player(let name, _):
+            if appState.consumePaywallQuotaForSearch(trimmed) { return }
             selectedPlayerName = name
         case .team(let code):
+            if appState.consumePaywallQuotaForSearch(trimmed) { return }
             searchTeamCode = code
         case .question(let query):
+            // .question routes to ResultsView → appState.sendQuestion gates it.
             searchInputMethod = inputMethod
             searchQuestion = query
         }

@@ -390,10 +390,14 @@ struct HomeView: View {
                                 Button {
                                     switch PlayerNameMatcher.resolveSearch(query, history: nil) {
                                     case .player(let name, let alts):
+                                        // History tap re-runs a search; gate it like a typed one.
+                                        if appState.consumePaywallQuotaForSearch(query) { return }
                                         path.append(PlayerCardDestination(name: name, alternatives: alts, source: "history"))
                                     case .team(let code):
+                                        if appState.consumePaywallQuotaForSearch(query) { return }
                                         path.append(TeamCardDestination(code: code))
                                     case .question(let q):
+                                        // ResultsView -> appState.sendQuestion gates it.
                                         path.append(ResultsDestination(question: q))
                                     }
                                 } label: {
@@ -570,11 +574,18 @@ struct HomeView: View {
 
         switch PlayerNameMatcher.resolveSearch(trimmed, history: appState) {
         case .player(let name, let alternatives):
+            // Typed/voice search that resolves to a player IS a search and
+            // must count toward the paywall. Link taps go directly through
+            // navigationPath with source: "link" and do not come through here.
+            if appState.consumePaywallQuotaForSearch(trimmed) { return }
             lastNameSearchCount = UserDefaults.standard.integer(forKey: "lastNameSearchCount")
             path.append(PlayerCardDestination(name: name, alternatives: alternatives, source: "search"))
         case .team(let code):
+            if appState.consumePaywallQuotaForSearch(trimmed) { return }
             path.append(TeamCardDestination(code: code))
         case .question(let query):
+            // .question routes to ResultsView, which calls appState.sendQuestion
+            // — that's where the paywall gate fires for this case.
             path.append(ResultsDestination(question: query, inputMethod: inputMethod))
         }
     }

@@ -265,9 +265,20 @@ struct ResultsView: View {
             }
         }
         .onChange(of: appState.showPaywall) { _, showing in
-            // When paywall dismisses, retry the blocked query if user subscribed
-            if !showing && StoreKitService.shared.isSubscribed {
-                appState.retryPendingPaywallQuery()
+            // Paywall just closed. Three cases:
+            //   1. User subscribed -> retry the blocked query in place.
+            //   2. User dismissed without subscribing and no results have
+            //      loaded -> the query was blocked before producing anything,
+            //      so popping back to Home is better than stranding them on
+            //      an empty results page.
+            //   3. User dismissed without subscribing but results are visible
+            //      (paywall triggered by a follow-up) -> stay put.
+            if !showing {
+                if StoreKitService.shared.isSubscribed {
+                    appState.retryPendingPaywallQuery()
+                } else if appState.messages.isEmpty {
+                    dismiss()
+                }
             }
         }
         .onAppear {
@@ -335,10 +346,13 @@ struct ResultsView: View {
         // to search history. The rewritten standalone query gets added later.
         switch PlayerNameMatcher.resolveSearch(trimmed, history: nil) {
         case .player(let name, _):
+            if appState.consumePaywallQuotaForSearch(trimmed) { return }
             selectedPlayerName = name
         case .team(let code):
+            if appState.consumePaywallQuotaForSearch(trimmed) { return }
             selectedTeamCode = code
         case .question(let query):
+            // appState.sendQuestion handles the paywall gate for this case.
             appState.sendQuestion(query, isFollowUp: true, inputMethod: inputMethod)
         }
     }
