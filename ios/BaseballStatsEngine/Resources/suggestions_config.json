@@ -1,5 +1,5 @@
 {
-  "version": 11,
+  "version": 12,
   "algorithm": {
     "impressionThreshold": 6,
     "poolSize": 12,
@@ -506,6 +506,21 @@
       "text": "Players with 3000 hits and 500 HR",
       "weight": 1.0,
       "id": "d86"
+    },
+    {
+      "text": "Best record when allowing 5+ runs",
+      "weight": 1.0,
+      "id": "d102"
+    },
+    {
+      "text": "Best road record this season",
+      "weight": 1.0,
+      "id": "d103"
+    },
+    {
+      "text": "Worst home record this season",
+      "weight": 1.0,
+      "id": "d104"
     }
   ],
   "templates": {
