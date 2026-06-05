@@ -11,6 +11,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
 from datetime import date, timedelta
 from typing import Optional
 
@@ -54,6 +55,10 @@ def verify_admin(authorization: str | None, key: str | None = None):
         raise HTTPException(401, "Invalid admin key")
 
 
+_PIPELINE_LOCK_PATH = "/tmp/statchat_pipeline.lock"
+_PIPELINE_LOCK_STALE_SECONDS = 5400  # 90 min — matches refresh.sh
+
+
 @router.post("/refresh")
 async def refresh_live_data(
     season: str | None = None,
@@ -62,6 +67,24 @@ async def refresh_live_data(
 ):
     """Trigger a live data refresh from MySportsFeeds."""
     verify_admin(authorization)
+
+    # Defensive: refresh.sh owns pipeline-lock lifecycle (touch on start,
+    # trap-remove on exit, stale-rule = 90 min). If a fresh lock exists,
+    # something is already running — don't spawn a second pull_live_stats.py.
+    # Without this guard, healthcheck (or a manual call) could race a cron
+    # run and have both processes hit MSF and SQLite at the same time.
+    try:
+        lock_age = time.time() - os.path.getmtime(_PIPELINE_LOCK_PATH)
+        if lock_age < _PIPELINE_LOCK_STALE_SECONDS:
+            return {
+                "status": "skipped",
+                "reason": "pipeline already running",
+                "lock_age_seconds": int(lock_age),
+            }
+    except OSError:
+        # Lock doesn't exist (FileNotFoundError) or was removed mid-check;
+        # safe to proceed.
+        pass
 
     # Let the pipeline auto-detect season if not explicitly provided.
     # The pipeline has smart Opening Day detection (probes MSF for regular season data).
@@ -1532,18 +1555,39 @@ async def volume_cleanup(authorization: str | None = Header(None)):
 
 @router.get("/freshness")
 async def data_freshness():
-    """Return when live data was last updated."""
+    """Return when live data was last updated and the latest game date in the DB.
+
+    healthcheck.sh reads last_game_date_2026 to decide whether the pipeline is
+    behind — without it the bash `-z` test always succeeds and the healthcheck
+    triggers recovery every tick. last_game_date is the generic, year-agnostic
+    equivalent for future callers."""
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT updated_at, season FROM data_freshness WHERE key = 'live_stats'")
         row = cursor.fetchone()
+        cursor.execute("SELECT MAX(date) FROM game_batting_logs")
+        game_row = cursor.fetchone()
         conn.close()
-        if row:
-            return {"last_updated": row[0], "season": row[1]}
-        return {"last_updated": None, "season": None}
+        last_game_date = game_row[0] if game_row else None
+        last_updated = row[0] if row else None
+        season = row[1] if row else None
+        return {
+            "last_updated": last_updated,
+            "season": season,
+            "last_game_date": last_game_date,
+            # Hard-coded key kept for the currently-deployed healthcheck.sh,
+            # which greps the literal string. Drop once that script is updated
+            # to use last_game_date.
+            "last_game_date_2026": last_game_date,
+        }
     except Exception:
-        return {"last_updated": None, "season": None}
+        return {
+            "last_updated": None,
+            "season": None,
+            "last_game_date": None,
+            "last_game_date_2026": None,
+        }
 
 
 @router.get("/todays-games")
