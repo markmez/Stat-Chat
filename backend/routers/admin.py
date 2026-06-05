@@ -380,7 +380,7 @@ async def simulate_passing(
                     passed_rank, passed_name, _ = best_passed
                     from services.notable_events import _ordinal
                     headline = (
-                        f"{name} now has {career_total} career {label}, "
+                        f"{name} now has {career_total:,} career {label}, "
                         f"passing {passed_name} for {_ordinal(passed_rank)} on the all-time list."
                     )
                     all_events.append({
@@ -502,10 +502,10 @@ async def simulate_passing(
                             WHERE player_id = ? AND team NOT IN ({ph})
                         """, (pid, *franchise_codes)).fetchone()[0]
                         if other == 0:
-                            cp = f"{career_total} career {label}"
+                            cp = f"{career_total:,} career {label}"
                             fs = f" in {franchise_name} history"
                         else:
-                            cp = f"{career_total} career {label} as a {fn}"
+                            cp = f"{career_total:,} career {label} as a {fn}"
                             fs = " in franchise history"
                         all_events.append({
                             "date": d,
@@ -525,13 +525,13 @@ async def simulate_passing(
                                 WHERE player_id = ? AND team NOT IN ({ph})
                             """, (pid, *franchise_codes)).fetchone()[0]
                             if other == 0:
-                                cp = f"{career_total} career {label}"
+                                cp = f"{career_total:,} career {label}"
                             else:
-                                cp = f"{career_total} career {label} as a {fn}"
+                                cp = f"{career_total:,} career {label} as a {fn}"
                             all_events.append({
                                 "date": d,
                                 "type": f"franchise_record_approach_{col}",
-                                "headline": f"{name} now has {cp}, just {gap} away from {rec_name}'s franchise record of {rec_total}.",
+                                "headline": f"{name} now has {cp}, just {gap} away from {rec_name}'s franchise record of {rec_total:,}.",
                             })
 
     # Sort all events by date
@@ -4753,9 +4753,9 @@ def _simulate_records_for_date(conn, target_date):
                             prev_fmt = _dt.strptime(prev_date, "%Y-%m-%d").strftime("%b %-d, %Y")
                         except Exception:
                             prev_fmt = prev_date
-                        context = f"a new career high, topping his previous best of {prev_high} set on {prev_fmt}"
+                        context = f"a new career high, topping his previous best of {prev_high:,} set on {prev_fmt}"
                     elif prev_high:
-                        context = f"a new career high, topping his previous best of {prev_high}"
+                        context = f"a new career high, topping his previous best of {prev_high:,}"
                     else:
                         context = f"the first time in his career"
 
@@ -4795,9 +4795,9 @@ def _simulate_records_for_date(conn, target_date):
                         prev_fmt = _dt.strptime(prev_k_date, "%Y-%m-%d").strftime("%b %-d, %Y")
                     except Exception:
                         prev_fmt = prev_k_date
-                    context = f"a new career high, topping his previous best of {prev_k} set on {prev_fmt}"
+                    context = f"a new career high, topping his previous best of {prev_k:,} set on {prev_fmt}"
                 elif prev_k:
-                    context = f"a new career high, topping his previous best of {prev_k}"
+                    context = f"a new career high, topping his previous best of {prev_k:,}"
                 else:
                     context = "the first time in his career"
 
@@ -4846,7 +4846,7 @@ def _simulate_records_for_date(conn, target_date):
                     events.append({
                         "type": "record_approach",
                         "player": pname, "team": team_name,
-                        "detail": f"{pname} {_action_phrase(label, game_val)}, giving him {int(career_total)} career {label} as a member of the {team_name} — {diff} from the franchise record held by {rec[1]} ({int(rec[0])}).",
+                        "detail": f"{pname} {_action_phrase(label, game_val)}, giving him {int(career_total):,} career {label} as a member of the {team_name} — {diff} from the franchise record held by {rec[1]} ({int(rec[0]):,}).",
                     })
                 elif diff <= 0 and rec[1] != pname:
                     # Only fire on the day they actually crossed
@@ -4855,7 +4855,7 @@ def _simulate_records_for_date(conn, target_date):
                         events.append({
                             "type": "record_crossing",
                             "player": pname, "team": team_name,
-                            "detail": f"{pname} passed {rec[1]} for the {team_name} career {label} record ({int(career_total)} vs {int(rec[0])}).",
+                            "detail": f"{pname} passed {rec[1]} for the {team_name} career {label} record ({int(career_total):,} vs {int(rec[0]):,}).",
                         })
 
         for stat_col, game_col, label, _ in PITCH_COUNTING:
@@ -4884,7 +4884,7 @@ def _simulate_records_for_date(conn, target_date):
                     events.append({
                         "type": "record_approach",
                         "player": pname, "team": team_name,
-                        "detail": f"{pname} now has {int(career_total)} career {label} with the {team_name} — {diff} from the franchise record held by {rec[1]} ({int(rec[0])}).",
+                        "detail": f"{pname} now has {int(career_total):,} career {label} with the {team_name} — {diff} from the franchise record held by {rec[1]} ({int(rec[0]):,}).",
                     })
                 elif diff <= 0 and rec[1] != pname:
                     yesterday_total = career_total - game_val
@@ -4892,7 +4892,7 @@ def _simulate_records_for_date(conn, target_date):
                         events.append({
                             "type": "record_crossing",
                             "player": pname, "team": team_name,
-                            "detail": f"{pname} passed {rec[1]} for the {team_name} career {label} record ({int(career_total)} vs {int(rec[0])}).",
+                            "detail": f"{pname} passed {rec[1]} for the {team_name} career {label} record ({int(career_total):,} vs {int(rec[0]):,}).",
                         })
 
         # ===== SEASON RECORD APPROACHES (only later in season) =====
@@ -4925,7 +4925,7 @@ def _simulate_records_for_date(conn, target_date):
                         events.append({
                             "type": "season_record_approach",
                             "player": pname, "team": team_name,
-                            "detail": f"{pname} has {int(sv)} {label} — {diff} from {team_name} single-season record ({rec[1]}, {rec[2]}: {int(rec[0])}).",
+                            "detail": f"{pname} has {int(sv):,} {label} — {diff} from {team_name} single-season record ({rec[1]}, {rec[2]}: {int(rec[0]):,}).",
                         })
 
         # ===== SEASON MILESTONE THRESHOLDS =====
