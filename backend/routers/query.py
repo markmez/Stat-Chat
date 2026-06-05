@@ -104,6 +104,11 @@ _COL_DISPLAY = {
     "sb_pct": "SB%",
     "bb_pct": "BB%",
     "k_pct": "K%",
+    "win_pct": "Win Pct",
+    "winning_pct": "Win Pct",
+    "winning_percentage": "Win Pct",
+    "winpct": "Win Pct",
+    "win pct": "Win Pct",
     "multi_hit_games": "Multi-Hit G",
     "multi_hr_games": "Multi-HR G",
     "ops_improvement": "OPS Chg",
@@ -140,6 +145,8 @@ _RATE_3_EXACT = {
     "batting_avg", "obp", "slg", "ops", "iso", "babip",
     "avg", "career_avg", "career_ops", "april_avg", "batting_avg_against",
     "fielding_pct", "sb_pct",
+    # Team-record win percentage variants (Sonnet aliases vary)
+    "win_pct", "winning_pct", "winning_percentage", "winpct", "win pct",
 }
 # Substrings that indicate a .XXX rate stat column (for Haiku aliases like ops_2024)
 _RATE_3_PATTERNS = ["avg", "obp", "slg", "ops", "iso", "babip", "baa", "fielding_pct"]
@@ -511,6 +518,24 @@ def _format_structured_rows_to_grid(
                 sort_key = candidates[0]
         if sort_key and sort_key in stat_cols and stat_cols[0] != sort_key:
             stat_cols = [sort_key] + [c for c in stat_cols if c != sort_key]
+
+    # Baseball convention: wins precede losses. When the sort-key promotion
+    # (or raw SQL column order) puts losses before wins, swap so W reads first.
+    # Applied after sort_key promo, so if losses was the chosen sort key,
+    # wins moves to position 0 and losses to position 1 — losses still leads
+    # the rest of the row, just not the row itself.
+    def _idx(name_set):
+        for _i, _c in enumerate(stat_cols):
+            if _c.lower() in name_set:
+                return _i
+        return -1
+    _w_idx = _idx({"w", "wins", "total_wins", "career_wins"})
+    _l_idx = _idx({"l", "losses", "total_losses", "career_losses"})
+    if _w_idx >= 0 and _l_idx >= 0 and _l_idx < _w_idx:
+        _l_col = stat_cols.pop(_l_idx)
+        # Recompute W index after the pop, then insert L immediately after it.
+        _w_idx = _idx({"w", "wins", "total_wins", "career_wins"})
+        stat_cols.insert(_w_idx + 1, _l_col)
 
     # Strip columns where every row has the same value (no information)
     if multi_row and len(data_rows) > 1:
