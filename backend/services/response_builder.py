@@ -5312,6 +5312,88 @@ def build_team_ranking(stat_info: StatInfo, season: int) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Team conditional record — "best/worst record when scoring 5+ runs",
+# "best home record", "worst record when allowing 2 or fewer runs", etc.
+# Aggregates W/L/G/Win Pct per team from team_game_results under a single
+# game-level condition (team_runs / opp_runs / is_home).
+# ---------------------------------------------------------------------------
+
+# Whitelist of allowed condition fields — guards the f-string interpolation
+# below from any value that wasn't constructed by decompose().
+_TEAM_CONDITIONAL_FIELDS = {"team_runs", "opp_runs", "is_home"}
+
+
+def build_team_conditional_record(cr: dict, season: int) -> Optional[str]:
+    """Leaderboard of team records under a per-game condition.
+
+    cr shape (built by query_engine.decompose()):
+        {"field":      "team_runs" | "opp_runs" | "is_home",
+         "comparison": ">=" | "<=" | "==",
+         "value":      int,
+         "direction":  "best" | "worst",
+         "label":      str  (human-readable, e.g. "scoring 5+ runs")}
+    """
+    field = cr.get("field")
+    comp = cr.get("comparison")
+    value = cr.get("value")
+    direction = cr.get("direction", "best")
+    label = cr.get("label", "")
+
+    if field not in _TEAM_CONDITIONAL_FIELDS or comp not in (">=", "<=", "=="):
+        return None
+    comp_sql = "=" if comp == "==" else comp
+    order = "DESC" if direction == "best" else "ASC"
+    min_games = 5
+
+    conn = _get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT
+                team,
+                SUM(CASE WHEN result = 'W' THEN 1 ELSE 0 END) AS wins,
+                SUM(CASE WHEN result = 'L' THEN 1 ELSE 0 END) AS losses,
+                COUNT(*) AS games,
+                CAST(SUM(CASE WHEN result = 'W' THEN 1 ELSE 0 END) AS REAL) /
+                    NULLIF(SUM(CASE WHEN result IN ('W','L') THEN 1 ELSE 0 END), 0) AS win_pct
+            FROM team_game_results
+            WHERE season = ? AND gametype = 'regular'
+              AND {field} {comp_sql} ?
+            GROUP BY team
+            HAVING games >= ?
+            ORDER BY win_pct {order}, wins DESC
+            LIMIT 30
+            """,
+            (season, value, min_games),
+        )
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return f"No team records found {label} in {season}."
+
+    title_word = "Best" if direction == "best" else "Worst"
+    if field == "is_home":
+        loc = "Home" if value == 1 else "Road"
+        title = f"**{season} {title_word} Team {loc} Records**\n"
+    else:
+        # "When Scoring 5+ Runs", "When Allowing 2 Or Fewer Runs", etc.
+        title = f"**{season} {title_word} Team Records When {label[0].upper()}{label[1:]}**\n"
+
+    parts = [title, "[LEADERBOARD]", "HEADER: W, L, G, Win Pct"]
+    for i, row in enumerate(rows):
+        team_code, wins, losses, games, win_pct = row
+        team_name = _team_full_name(str(team_code))
+        wp = win_pct or 0.0
+        wp_str = f".{int(round(wp * 1000)):03d}" if wp < 1 else "1.000"
+        parts.append(f"ROW {i+1}. {team_name}: {int(wins)}, {int(losses)}, {int(games)}, {wp_str}")
+    parts.append("[/LEADERBOARD]")
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Season count — "how many seasons has Judge hit a triple?"
 # ---------------------------------------------------------------------------
 

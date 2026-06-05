@@ -497,7 +497,7 @@ class QueryPlan:
     player_name: Optional[str] = None  # Filter results to a specific player
 
     # Query shape
-    query_type: str = "leaderboard"  # "leaderboard", "threshold", "count", "superlative", "game_log_count", "game_log_extreme", "team_ranking", "per_team_leaders"
+    query_type: str = "leaderboard"  # "leaderboard", "threshold", "count", "superlative", "game_log_count", "game_log_extreme", "team_ranking", "per_team_leaders", "team_conditional_record"
     threshold: Optional[float] = None
     comparison: str = ">="  # ">=" or "<="
     sort_asc: bool = False
@@ -508,6 +508,15 @@ class QueryPlan:
 
     # Multi-threshold filters (e.g., ".300 with 30 HR")
     extra_filters: list = field(default_factory=list)  # [{stat, threshold, comparison}]
+
+    # Team conditional record ("best record when scoring 5+ runs", etc.).
+    # Populated only when query_type == "team_conditional_record".
+    # Shape: {"field":      "team_runs" | "opp_runs" | "is_home",
+    #         "comparison": ">=" | "<=" | "==",
+    #         "value":      int,
+    #         "direction":  "best" | "worst",
+    #         "label":      str  (human-readable, e.g. "scoring 5+ runs")}
+    conditional_record: Optional[dict] = None
 
     # Multi-season consistency ("50+ games in each of the last 3 seasons")
     per_season: bool = False  # condition must hold in EVERY season individually
@@ -552,6 +561,10 @@ class QueryPlan:
             return (self.player_name is not None and self.stat is not None
                     and self.sliding_window_n is not None
                     and len(self.unexplained_words) == 0)
+        if self.query_type == "team_conditional_record":
+            # Aggregates team_game_results under a per-game condition — no
+            # stat column needed, just the condition itself.
+            return self.conditional_record is not None and len(self.unexplained_words) == 0
         return (self.stat is not None or self.derived_stat is not None) and len(self.unexplained_words) == 0
 
 
@@ -941,6 +954,14 @@ def decompose(question: str) -> QueryPlan:
     if any(t in lower for t in count_triggers):
         plan.query_type = "count"
         _add_consumed(plan, "how many players pitchers batters hitters")
+
+    # Team conditional record — "best/worst record when scoring 5+ runs",
+    # "best home record", "worst record allowing 2 or fewer runs", etc.
+    # Must check BEFORE team_ranking so the "what team has the best record..."
+    # phrasing doesn't get swallowed by the generic team_ranking pattern.
+    if _detect_team_conditional_record(lower, plan):
+        # Consume the trigger words so they don't influence downstream parsing.
+        _add_consumed(plan, "best worst team record when scoring scored allowing allowed gave up giving up home road away runs")
 
     # Per-team individual leaders (must check BEFORE team_ranking and leaderboard triggers)
     # "on each team" / "per team" / "by team" / "for each team"
@@ -2924,6 +2945,8 @@ def execute(plan: QueryPlan) -> Optional[str]:
             result = _execute_game_log_extreme(conn, plan)
         elif plan.query_type == "team_ranking":
             result = _execute_team_ranking(conn, plan)
+        elif plan.query_type == "team_conditional_record":
+            result = _execute_team_conditional_record(conn, plan)
         elif plan.query_type == "per_team_leaders":
             result = _execute_per_team_leaders(conn, plan)
         elif plan.query_type == "player_single_season_max":
@@ -6133,6 +6156,131 @@ def _execute_team_ranking(conn, plan: QueryPlan) -> Optional[str]:
         season = plan.season or datetime.now().year
         return build_team_ranking(plan.stat, season)
     return None
+
+
+# ===================================================================
+# Team conditional record — "best/worst record when [game-level condition]"
+# Aggregates team_game_results under one of:
+#   - team_runs >= N / <= N           ("scoring N+ runs", "scoring N or fewer")
+#   - opp_runs  >= N / <= N           ("allowing N+ runs", "giving up <= N")
+#   - is_home   == 1 / 0              ("home record", "road record")
+# ===================================================================
+
+# Phrases that flip the comparison from the default ">=" to "<=" when
+# co-occurring with a numeric threshold. Order matters in the regex; we
+# check for the looser "or fewer / or less" first, then "fewer than".
+_LE_QUALIFIERS = ("or fewer", "or less", "or below", "or under", "at most",
+                  "fewer than", "less than", "no more than", "up to")
+_GE_QUALIFIERS = ("or more", "or higher", "or above", "or greater",
+                  "at least", "+")
+
+_SCORE_VERBS = {"scoring", "scored", "score"}
+_ALLOW_VERBS = {"allowing", "allowed", "giving up", "gave up", "gives up"}
+
+
+def _detect_team_conditional_record(lower: str, plan: "QueryPlan") -> bool:
+    """Recognize 'best/worst (team) record when [condition]' shapes.
+
+    Returns True (and sets plan.query_type + plan.conditional_record) on match;
+    False otherwise. Kept narrow on purpose — every accepted shape maps to a
+    clean SQL filter on team_game_results.
+    """
+    if "record" not in lower:
+        return False
+    if "best" in lower:
+        direction = "best"
+    elif "worst" in lower:
+        direction = "worst"
+    else:
+        return False
+
+    # Skip if the query is about an individual (pitcher/starter), not a team.
+    # "best pitcher record when his team scores 5+ runs" is a different shape
+    # that needs per-pitcher game-log aggregation, not team_game_results.
+    if re.search(r"\b(?:pitcher|pitchers|starter|starters|reliever|relievers)\b", lower):
+        return False
+
+    # Location: "home record" / "road record" / "away record"
+    if re.search(r"\bhome\s+record\b", lower):
+        plan.query_type = "team_conditional_record"
+        plan.conditional_record = {
+            "field": "is_home", "comparison": "==", "value": 1,
+            "direction": direction, "label": "at home",
+        }
+        return True
+    if re.search(r"\b(?:road|away)\s+record\b", lower):
+        plan.query_type = "team_conditional_record"
+        plan.conditional_record = {
+            "field": "is_home", "comparison": "==", "value": 0,
+            "direction": direction, "label": "on the road",
+        }
+        return True
+
+    # Score / allowed conditions with a numeric threshold.
+    # The verb anchors which side of the box score: scoring -> team_runs,
+    # allowing/giving up -> opp_runs.
+    verb_pattern = r"(scoring|scored|score|allowing|allowed|giving\s+up|gave\s+up|gives\s+up)"
+    # Number then optional qualifier (e.g. "5+", "5 or more", "5 or fewer",
+    # "at most 5", "fewer than 5"). Qualifier may precede the number too
+    # ("at least 5", "fewer than 5").
+    pre_qualifier = r"(?:at\s+least|at\s+most|no\s+more\s+than|fewer\s+than|less\s+than|up\s+to)?"
+    post_qualifier = r"(?:\s*\+|\s+or\s+more|\s+or\s+higher|\s+or\s+above|\s+or\s+greater|\s+or\s+fewer|\s+or\s+less|\s+or\s+below|\s+or\s+under)?"
+
+    m = re.search(
+        rf"\b{verb_pattern}\s+{pre_qualifier}\s*(\d+){post_qualifier}\s*(?:runs?)?",
+        lower,
+    )
+    if not m:
+        return False
+
+    raw_verb = re.sub(r"\s+", " ", m.group(1).strip())
+    n = int(m.group(2))
+    full_phrase = m.group(0)
+
+    # Decide >= vs <= from qualifiers in the matched span.
+    if any(q in full_phrase for q in _LE_QUALIFIERS):
+        comparison = "<="
+        # "fewer than N" / "less than N" / "under N" means strictly less,
+        # i.e. <= N-1. Other LE qualifiers ("or fewer", "at most") are
+        # inclusive.
+        if any(q in full_phrase for q in ("fewer than", "less than", "under")):
+            n = max(n - 1, 0)
+        verb_label_n = f"{n} or fewer"
+    elif any(q in full_phrase for q in _GE_QUALIFIERS):
+        comparison = ">="
+        verb_label_n = f"{n}+"
+    else:
+        # Bare "scoring 5 runs" with no qualifier — default to "5+".
+        # Single-value equality is rarely what the user means.
+        comparison = ">="
+        verb_label_n = f"{n}+"
+
+    if raw_verb in _SCORE_VERBS:
+        field = "team_runs"
+        action_label = "scoring"
+    elif raw_verb in _ALLOW_VERBS:
+        field = "opp_runs"
+        action_label = "allowing"
+    else:
+        return False
+
+    plan.query_type = "team_conditional_record"
+    plan.conditional_record = {
+        "field": field, "comparison": comparison, "value": n,
+        "direction": direction,
+        "label": f"{action_label} {verb_label_n} runs",
+    }
+    return True
+
+
+def _execute_team_conditional_record(conn, plan: QueryPlan) -> Optional[str]:
+    """Dispatch the conditional-record plan to the response builder."""
+    cr = plan.conditional_record
+    if not cr:
+        return None
+    from .response_builder import build_team_conditional_record
+    season = plan.season or datetime.now().year
+    return build_team_conditional_record(cr, season)
 
 
 # ===================================================================

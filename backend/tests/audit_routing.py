@@ -334,6 +334,20 @@ TESTS: list[tuple[str, str, str]] = [
     ("HR leader on each team this year", "intercepted", "Per-team leader"),
 
     # ============================================================
+    # Tier 16b: Team conditional record — aggregates team_game_results
+    # under a per-game condition (team_runs, opp_runs, is_home). Added
+    # 2026-06-04 after a "best record when scoring 5+ runs" query fell
+    # through to Sonnet. See query_engine._detect_team_conditional_record.
+    # ============================================================
+    ("What team has the best record when scoring 5 runs or more?", "intercepted", "Team conditional record (score >=)"),
+    ("Best record when scoring at least 7 runs", "intercepted", "Team conditional record (score >=)"),
+    ("Worst record when scoring 3 or fewer runs", "intercepted", "Team conditional record (score <=)"),
+    ("Best record when allowing 2 or fewer runs", "intercepted", "Team conditional record (allow <=)"),
+    ("Best record allowing 6+ runs", "intercepted", "Team conditional record (allow >=)"),
+    ("Best home record this year", "intercepted", "Team conditional record (home)"),
+    ("Worst road record", "intercepted", "Team conditional record (road)"),
+
+    # ============================================================
     # Tier 17: Narrative — Sonnet expected
     # ============================================================
     ("Why is Skenes considered a generational pitcher", "sonnet", "Narrative"),
