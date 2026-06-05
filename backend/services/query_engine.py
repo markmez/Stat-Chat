@@ -955,19 +955,19 @@ def decompose(question: str) -> QueryPlan:
         plan.query_type = "count"
         _add_consumed(plan, "how many players pitchers batters hitters")
 
-    # Team conditional record — "best/worst record when scoring 5+ runs",
-    # "best home record", "worst record allowing 2 or fewer runs", etc.
-    # Must check BEFORE team_ranking so the "what team has the best record..."
-    # phrasing doesn't get swallowed by the generic team_ranking pattern.
-    if _detect_team_conditional_record(lower, plan):
-        # Consume the trigger words so they don't influence downstream parsing.
-        _add_consumed(plan, "best worst team record when scoring scored allowing allowed gave up giving up home road away runs")
-
     # Per-team individual leaders (must check BEFORE team_ranking and leaderboard triggers)
     # "on each team" / "per team" / "by team" / "for each team"
     per_team_triggers = ["on each team", "per team", "for each team", "by team",
                          "each team", "every team"]
-    if any(p in lower for p in per_team_triggers):
+    # Team conditional record — "best/worst record when scoring 5+ runs",
+    # "best home record", "worst record allowing 2 or fewer runs", etc.
+    # Must be the FIRST branch of this chain so the "what team has the best
+    # record..." phrasing isn't reassigned to team_ranking by the elif below.
+    if _detect_team_conditional_record(lower, plan):
+        # Consume the trigger words so downstream parsing doesn't mistake
+        # the runs threshold for a runs-stat leaderboard.
+        _add_consumed(plan, "best worst team record when scoring scored allowing allowed gave gives up giving home road away runs")
+    elif any(p in lower for p in per_team_triggers):
         plan.query_type = "per_team_leaders"
         _add_consumed(plan, "on each per for by every team teams")
     # Team ranking: "what team" / "which team"
