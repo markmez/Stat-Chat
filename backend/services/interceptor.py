@@ -267,6 +267,28 @@ def try_intercept(question: str):
         # Fall through to other parsers if query_engine couldn't handle it
         # (rare — usually means the stat itself wasn't recognized)
 
+    # 0a-team-conditional-record. "best/worst (team) record when scoring 5+
+    # runs", "best home record", etc. Same problem as team_context: if the
+    # threshold/leaderboard parsers below run first they'll grab "5+ runs"
+    # as a runs-stat filter and return a player leaderboard. Force-route to
+    # query_engine, which has the dedicated team_conditional_record detector.
+    # Gate is cheap: needs "record" + a direction word + a condition trigger.
+    if "record" in lower and ("best" in lower or "worst" in lower) and \
+       (re.search(r"\b(?:scoring|scored|allowing|allowed|giving\s+up|gave\s+up|gives\s+up)\b", lower)
+        or re.search(r"\b(?:home|road|away)\s+record\b", lower)):
+        from services.query_engine import decompose, execute as qe_execute
+        try:
+            plan = decompose(trimmed)
+        except Exception as e:
+            logger.error("query_engine_decompose_error question=%r error=%s", trimmed, e)
+            plan = None
+        if plan and plan.is_valid and plan.query_type == "team_conditional_record":
+            response = qe_execute(plan)
+            if response:
+                logger.info("query_engine_handled_team_conditional_record question=%r", trimmed)
+                return response
+        # Fall through if query_engine didn't recognize it.
+
     # Award queries — force-route to query_engine before the player-name
     # parsers fire. "How many Gold Gloves does Aaron Judge have" otherwise
     # falls through to the career-lookup path and returns Judge's stat grid
