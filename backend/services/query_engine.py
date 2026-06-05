@@ -995,7 +995,7 @@ def decompose(question: str) -> QueryPlan:
     if any(t in lower for t in ["best", "highest", "most", "top", "leaders", "leader",
                                   "leaderboard", "lowest", "who led", "who leads", "leading",
                                   "worst", "fewest"]):
-        if plan.query_type not in ("count", "superlative", "team_ranking", "per_team_leaders"):
+        if plan.query_type not in ("count", "superlative", "team_ranking", "per_team_leaders", "team_conditional_record"):
             plan.query_type = "leaderboard"
         _add_consumed(plan, "best highest most top leaders leader leaderboard lowest who led leads leading worst fewest")
 
