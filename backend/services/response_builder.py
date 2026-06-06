@@ -5504,7 +5504,10 @@ def build_player_career_filtered(plan) -> Optional[str]:
     abbrev = stat.display_abbrev
     if is_rate:
         if db_col in ("batting_avg", "obp", "slg", "ops", "iso", "babip"):
-            formatted = f".{int(round(float(val) * 1000)):03d}" if float(val) < 1 else f"{float(val):.3f}"
+            mil = int(round(float(val) * 1000))
+            # mil >= 1000 catches OPS that rounds up to 1.000 (e.g. 0.9999)
+            # — otherwise `.{1000:03d}` renders as ".1000" (four digits).
+            formatted = f".{mil:03d}" if mil < 1000 else f"{float(val):.3f}"
         else:
             # ERA, WHIP, K/9, BB/9, K/BB
             decimals = 1 if db_col in ("k_per_9", "bb_per_9") else 2

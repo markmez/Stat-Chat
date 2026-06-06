@@ -6441,7 +6441,11 @@ def _detect_player_career_filter(lower: str, plan: "QueryPlan") -> bool:
     plan.team_filter = team_filter
     plan.season_range = season_range
     plan.query_type = "player_career_filtered"
-    # Burn through residue
+    # Burn through residue: team-name tokens, the digits of any year we
+    # consumed, plus generic career words. The detector runs LATE so
+    # unexplained_words is already populated — clear anything that became
+    # consumed AND any 4-digit year tokens (we matched the year in the
+    # regex; the residue of the year word survives separately).
     _add_consumed(plan, "career all time lifetime years season seasons "
                        "yankees yankee mets met dodgers dodger giants giant "
                        "cardinals cardinal red sox redsox blue jays bluejays "
@@ -6451,7 +6455,14 @@ def _detect_player_career_filter(lower: str, plan: "QueryPlan") -> bool:
                        "twins twin angels angel athletics athletic mariners mariner "
                        "rangers ranger astros astro royals royal "
                        "marlins marlin nationals national rays ray "
-                       "diamondbacks diamondback dbacks dback")
+                       "diamondbacks diamondback dbacks dback "
+                       "as an a with the his their for on of in")
+    # Drop newly-consumed words from unexplained_words; also drop digit
+    # tokens (the year we already encoded into season_range).
+    plan.unexplained_words = [
+        w for w in plan.unexplained_words
+        if w not in plan.consumed_words and not w.strip("'’s").isdigit()
+    ]
     return True
 
 
