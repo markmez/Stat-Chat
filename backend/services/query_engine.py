@@ -518,6 +518,16 @@ class QueryPlan:
     #         "label":      str  (human-readable, e.g. "scoring 5+ runs")}
     conditional_record: Optional[dict] = None
 
+    # Player career stat with team or season-range filter ("Sonny Gray career
+    # ERA excluding Yankees", "Verlander career ERA after 2018"). Populated
+    # only when query_type == "player_career_filtered".
+    # team_filter shape: {"code": "NYA", "mode": "include"|"exclude",
+    #                     "label": "Yankees"}
+    # season_range shape: {"start": int|None, "end": int|None,
+    #                      "label": "after 2018"}
+    team_filter: Optional[dict] = None
+    season_range: Optional[dict] = None
+
     # Multi-season consistency ("50+ games in each of the last 3 seasons")
     per_season: bool = False  # condition must hold in EVERY season individually
     season_count: Optional[int] = None  # number of consecutive seasons required
@@ -565,6 +575,12 @@ class QueryPlan:
             # Aggregates team_game_results under a per-game condition — no
             # stat column needed, just the condition itself.
             return self.conditional_record is not None and len(self.unexplained_words) == 0
+        if self.query_type == "player_career_filtered":
+            # Per-player career aggregate filtered by team and/or season range.
+            return (self.player_name is not None
+                    and (self.stat is not None or self.derived_stat is not None)
+                    and (self.team_filter is not None or self.season_range is not None)
+                    and len(self.unexplained_words) == 0)
         return (self.stat is not None or self.derived_stat is not None) and len(self.unexplained_words) == 0
 
 
@@ -995,7 +1011,7 @@ def decompose(question: str) -> QueryPlan:
     if any(t in lower for t in ["best", "highest", "most", "top", "leaders", "leader",
                                   "leaderboard", "lowest", "who led", "who leads", "leading",
                                   "worst", "fewest"]):
-        if plan.query_type not in ("count", "superlative", "team_ranking", "per_team_leaders", "team_conditional_record"):
+        if plan.query_type not in ("count", "superlative", "team_ranking", "per_team_leaders", "team_conditional_record", "player_career_filtered"):
             plan.query_type = "leaderboard"
         _add_consumed(plan, "best highest most top leaders leader leaderboard lowest who led leads leading worst fewest")
 
@@ -2439,6 +2455,13 @@ def decompose(question: str) -> QueryPlan:
             and plan.stat.db_column == "era"):
         plan.stat = stat_alias_map.get("ops")
 
+    # Player career stat with team or year-range filter ("Sonny Gray career
+    # ERA excluding Yankees", "Verlander career ERA after 2018"). Runs LATE
+    # so that player_name + stat are already resolved. Only flips query_type
+    # when both a player and a filter phrase are present — otherwise leaves
+    # the (leaderboard) plan untouched.
+    _detect_player_career_filter(lower, plan)
+
     return plan
 
 
@@ -2947,6 +2970,8 @@ def execute(plan: QueryPlan) -> Optional[str]:
             result = _execute_team_ranking(conn, plan)
         elif plan.query_type == "team_conditional_record":
             result = _execute_team_conditional_record(conn, plan)
+        elif plan.query_type == "player_career_filtered":
+            result = _execute_player_career_filtered(conn, plan)
         elif plan.query_type == "per_team_leaders":
             result = _execute_per_team_leaders(conn, plan)
         elif plan.query_type == "player_single_season_max":
@@ -6273,6 +6298,178 @@ def _detect_team_conditional_record(lower: str, plan: "QueryPlan") -> bool:
     return True
 
 
+_TEAM_INCLUDE_TRIGGERS = (
+    "as a ", "as an ", "while with ", "while on ", "with the ", "with his ",
+    "on the ", "for the ", "playing for ", "with ",
+)
+_TEAM_EXCLUDE_TRIGGERS = (
+    "excluding ", "not as a ", "not as an ", "not on ", "not with ",
+    "without ", "outside of ", "outside ", "other than ", "minus ",
+)
+_YEAR_AFTER_TRIGGERS = ("after ", "post-", "post ", "since ", "starting ", "from ")
+_YEAR_BEFORE_TRIGGERS = ("before ", "prior to ", "pre-", "pre ")
+_YEAR_THROUGH_TRIGGERS = ("through ", "thru ", "up to ", "up through ", "as of ", "by ")
+
+
+def _detect_player_career_filter(lower: str, plan: "QueryPlan") -> bool:
+    """Detect career stat queries scoped by team or year range.
+
+    Examples:
+      "sonny gray career ERA excluding yankees"
+      "judge career OPS as a yankee"
+      "verlander career ERA after 2018"
+      "trout career numbers through 2019"
+      "pujols career HR with the cardinals from 2001 to 2011"
+
+    Gates strictly: requires player_name + (stat or derived_stat) already set
+    by upstream parsing, and at least one explicit filter (team or year). If
+    nothing matches, returns False and leaves the plan untouched.
+    """
+    if not plan.player_name:
+        return False
+    if plan.stat is None and plan.derived_stat is None:
+        return False
+    if "career" not in lower and "all time" not in lower and "lifetime" not in lower:
+        # Year-range filters can stand alone ("after 2018"), but the more
+        # ambiguous shapes — "with the Yankees" — should require "career"
+        # to avoid grabbing single-season questions. We check this per branch.
+        has_career_word = False
+    else:
+        has_career_word = True
+
+    from services import name_matcher as _nm
+
+    matched_anything = False
+
+    # --- Team filter ---------------------------------------------------------
+    team_filter = None
+    # Try EXCLUDE first (subset of trigger words also appear in include phrases)
+    for trig in _TEAM_EXCLUDE_TRIGGERS:
+        idx = lower.find(trig)
+        if idx < 0:
+            continue
+        tail = lower[idx + len(trig):].strip()
+        # Drop trailing decorators ("years", "era", season noise)
+        tail = re.sub(r"\b(years?|seasons?|tenure|days?|era|stint)\b.*$", "", tail).strip()
+        code = _nm.match_team(tail) or _nm.match_team(lower[idx:])
+        if code:
+            team_filter = {"code": code, "mode": "exclude",
+                           "label": _team_nickname_for(code)}
+            _add_consumed(plan, trig)
+            matched_anything = True
+            break
+    if team_filter is None:
+        for trig in _TEAM_INCLUDE_TRIGGERS:
+            idx = lower.find(trig)
+            if idx < 0:
+                continue
+            tail = lower[idx + len(trig):].strip()
+            tail = re.sub(r"\b(years?|seasons?|tenure|days?|era|stint)\b.*$", "", tail).strip()
+            # match_team scans aliases — only commit if we find one IN the
+            # tail (so "with two outs" doesn't false-trigger on "with ").
+            code = _nm.match_team(tail)
+            if code:
+                team_filter = {"code": code, "mode": "include",
+                               "label": _team_nickname_for(code)}
+                _add_consumed(plan, trig)
+                matched_anything = True
+                break
+
+    # --- Year-range filter ---------------------------------------------------
+    season_range = None
+    # Closed range first: "from YEAR1 to YEAR2", "between YEAR1 and YEAR2",
+    # "YEAR1-YEAR2", "YEAR1 to YEAR2".
+    m = re.search(r"\b(?:from|between)\s+(19\d{2}|20\d{2})\s+(?:to|and|through|-)\s+(19\d{2}|20\d{2})\b", lower)
+    if not m:
+        m = re.search(r"\b(19\d{2}|20\d{2})\s*[-–]\s*(19\d{2}|20\d{2})\b", lower)
+    if m:
+        y1, y2 = int(m.group(1)), int(m.group(2))
+        if y2 < y1:
+            y1, y2 = y2, y1
+        season_range = {"start": y1, "end": y2, "label": f"from {y1} to {y2}"}
+        _add_consumed(plan, "from between to and through")
+        matched_anything = True
+
+    if season_range is None:
+        # Open-ended: "after YEAR", "since YEAR" (inclusive of start),
+        # "before YEAR", "through YEAR" (inclusive of end).
+        for trig in _YEAR_AFTER_TRIGGERS:
+            m = re.search(rf"\b{re.escape(trig.strip())}\s+(19\d{{2}}|20\d{{2}})\b", lower)
+            if m:
+                yr = int(m.group(1))
+                # "since YEAR" / "starting YEAR" / "from YEAR" treat as inclusive.
+                # "after YEAR" excludes that year.
+                inclusive = trig.strip() in ("since", "starting", "from", "post-", "post")
+                start = yr if inclusive else yr + 1
+                season_range = {"start": start, "end": None,
+                                "label": f"{trig.strip()} {yr}"}
+                _add_consumed(plan, trig)
+                matched_anything = True
+                break
+        if season_range is None:
+            for trig in _YEAR_BEFORE_TRIGGERS:
+                m = re.search(rf"\b{re.escape(trig.strip())}\s+(19\d{{2}}|20\d{{2}})\b", lower)
+                if m:
+                    yr = int(m.group(1))
+                    season_range = {"start": None, "end": yr - 1,
+                                    "label": f"before {yr}"}
+                    _add_consumed(plan, trig)
+                    matched_anything = True
+                    break
+        if season_range is None:
+            for trig in _YEAR_THROUGH_TRIGGERS:
+                m = re.search(rf"\b{re.escape(trig.strip())}\s+(19\d{{2}}|20\d{{2}})\b", lower)
+                if m:
+                    yr = int(m.group(1))
+                    season_range = {"start": None, "end": yr,
+                                    "label": f"through {yr}"}
+                    _add_consumed(plan, trig)
+                    matched_anything = True
+                    break
+
+    # Team-only filter shapes like "Judge career OPS as a Yankee" don't have
+    # a year clause; team_filter is enough. But guard against trivial false
+    # positives: require the literal word "career" / "all time" / "lifetime"
+    # to be present somewhere when ONLY a team filter is matched. Year-range
+    # filters can stand alone ("after 2018") because the year itself signals
+    # career intent.
+    if matched_anything and team_filter and not season_range and not has_career_word:
+        return False
+    if not matched_anything:
+        return False
+
+    plan.team_filter = team_filter
+    plan.season_range = season_range
+    plan.query_type = "player_career_filtered"
+    # Burn through residue
+    _add_consumed(plan, "career all time lifetime years season seasons "
+                       "yankees yankee mets met dodgers dodger giants giant "
+                       "cardinals cardinal red sox redsox blue jays bluejays "
+                       "braves brave orioles oriole padres padre cubs cub "
+                       "reds red phillies phillie rockies rocky brewers brewer "
+                       "pirates pirate guardians guardian indians indian tigers tiger "
+                       "twins twin angels angel athletics athletic mariners mariner "
+                       "rangers ranger astros astro royals royal "
+                       "marlins marlin nationals national rays ray "
+                       "diamondbacks diamondback dbacks dback")
+    return True
+
+
+def _team_nickname_for(code: str) -> str:
+    """Friendly nickname for a Retrosheet code. Mirrors response_builder map."""
+    nick_map = {
+        "NYA": "Yankees", "NYN": "Mets", "LAN": "Dodgers", "ANA": "Angels",
+        "BOS": "Red Sox", "ARI": "Diamondbacks", "ATL": "Braves", "BAL": "Orioles",
+        "CHA": "White Sox", "CHN": "Cubs", "CIN": "Reds", "CLE": "Guardians",
+        "COL": "Rockies", "DET": "Tigers", "HOU": "Astros", "KCA": "Royals",
+        "MIA": "Marlins", "MIL": "Brewers", "MIN": "Twins", "OAK": "Athletics",
+        "PHI": "Phillies", "PIT": "Pirates", "SDN": "Padres", "SEA": "Mariners",
+        "SFN": "Giants", "SLN": "Cardinals", "TBA": "Rays", "TEX": "Rangers",
+        "TOR": "Blue Jays", "WAS": "Nationals",
+    }
+    return nick_map.get(code, code)
+
+
 def _execute_team_conditional_record(conn, plan: QueryPlan) -> Optional[str]:
     """Dispatch the conditional-record plan to the response builder."""
     cr = plan.conditional_record
@@ -6281,6 +6478,28 @@ def _execute_team_conditional_record(conn, plan: QueryPlan) -> Optional[str]:
     from .response_builder import build_team_conditional_record
     season = plan.season or datetime.now().year
     return build_team_conditional_record(cr, season)
+
+
+# ===================================================================
+# Player career filtered executor (team/year-range filter)
+# ===================================================================
+
+def _execute_player_career_filtered(conn, plan: QueryPlan) -> Optional[str]:
+    """Aggregate a player's career stat under team and/or year-range filters.
+
+    Reads from season_batting_stats / season_pitching_stats (one row per
+    player-season-team). Mid-season trade years are stored as combined
+    rows like team='OAK/NYA'; we detect those with a '/' check and add a
+    caveat note when any row in the included set is split.
+    """
+    if not plan.player_name:
+        return None
+    stat = plan.stat
+    if stat is None:
+        return None
+
+    from .response_builder import build_player_career_filtered
+    return build_player_career_filtered(plan)
 
 
 # ===================================================================

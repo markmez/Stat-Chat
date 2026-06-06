@@ -5394,6 +5394,163 @@ def build_team_conditional_record(cr: dict, season: int) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Player career filtered — "career ERA excluding Yankees", "after 2018"
+# ---------------------------------------------------------------------------
+
+# Components per stat — we SUM these from season_stats and (for rates) compose
+# the formula. Counting stats just SUM the named column.
+_PLAYER_CAREER_RATE_FORMULAS = {
+    # batting (table = season_batting_stats)
+    "batting_avg": ("CAST(SUM(hits) AS REAL) / NULLIF(SUM(at_bats), 0)", False),
+    "obp":         ("CAST(SUM(hits) + SUM(walks) + SUM(COALESCE(hit_by_pitch,0)) AS REAL) / "
+                    "NULLIF(SUM(at_bats) + SUM(walks) + SUM(COALESCE(hit_by_pitch,0)) + SUM(COALESCE(sacrifice_flies,0)), 0)", False),
+    "slg":         ("CAST((SUM(hits) - SUM(doubles) - SUM(triples) - SUM(home_runs)) + "
+                    "2*SUM(doubles) + 3*SUM(triples) + 4*SUM(home_runs) AS REAL) / "
+                    "NULLIF(SUM(at_bats), 0)", False),
+    "ops":         ("(CAST(SUM(hits) + SUM(walks) + SUM(COALESCE(hit_by_pitch,0)) AS REAL) / "
+                    "NULLIF(SUM(at_bats) + SUM(walks) + SUM(COALESCE(hit_by_pitch,0)) + SUM(COALESCE(sacrifice_flies,0)), 0)) + "
+                    "(CAST((SUM(hits) - SUM(doubles) - SUM(triples) - SUM(home_runs)) + "
+                    "2*SUM(doubles) + 3*SUM(triples) + 4*SUM(home_runs) AS REAL) / NULLIF(SUM(at_bats), 0))", False),
+    "iso":         ("CAST(SUM(doubles) + 2*SUM(triples) + 3*SUM(home_runs) AS REAL) / NULLIF(SUM(at_bats), 0)", False),
+    "babip":       ("CAST(SUM(hits) - SUM(home_runs) AS REAL) / "
+                    "NULLIF(SUM(at_bats) - SUM(strikeouts) - SUM(home_runs) + SUM(COALESCE(sacrifice_flies,0)), 0)", False),
+    # pitching (table = season_pitching_stats)
+    "era":         ("9.0 * SUM(earned_runs) / NULLIF(SUM(ip_outs) / 3.0, 0)", True),
+    "whip":        ("CAST(SUM(hits) + SUM(walks) AS REAL) / NULLIF(SUM(ip_outs) / 3.0, 0)", True),
+    "k_per_9":     ("9.0 * SUM(strikeouts) / NULLIF(SUM(ip_outs) / 3.0, 0)", True),
+    "bb_per_9":    ("9.0 * SUM(walks) / NULLIF(SUM(ip_outs) / 3.0, 0)", True),
+    "k_per_bb":    ("CAST(SUM(strikeouts) AS REAL) / NULLIF(SUM(walks), 0)", True),
+}
+
+
+def build_player_career_filtered(plan) -> Optional[str]:
+    """Compute a player's career stat under team and/or year-range filters.
+
+    Trade-year handling: season_stats stores combined rows like team='OAK/NYA'.
+    We use `team LIKE '%CODE%'` so include catches the row fully (overcount
+    when the year was split with another team) and exclude drops it fully
+    (undercount). When any matched row has '/', we append a caveat note.
+    """
+    name = plan.player_name
+    stat = plan.stat
+    if not name or stat is None:
+        return None
+
+    db_col = stat.db_column
+    is_rate = stat.is_rate
+    is_pitching = plan.is_pitching
+    table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+    tf = plan.team_filter
+    sr = plan.season_range
+
+    # Build WHERE
+    where = ["p.name = ?"]
+    params: list = [name]
+    if tf:
+        op = "LIKE" if tf["mode"] == "include" else "NOT LIKE"
+        where.append(f"s.team {op} ?")
+        params.append(f"%{tf['code']}%")
+    if sr:
+        if sr.get("start") is not None:
+            where.append("s.season >= ?")
+            params.append(sr["start"])
+        if sr.get("end") is not None:
+            where.append("s.season <= ?")
+            params.append(sr["end"])
+    where_sql = " AND ".join(where)
+
+    # Aggregate: rate uses formula, counting just SUMs the column.
+    if is_rate:
+        formula_entry = _PLAYER_CAREER_RATE_FORMULAS.get(db_col)
+        if not formula_entry:
+            return None
+        formula, is_pitching_rate = formula_entry
+        agg_select = f"({formula}) AS val"
+        denom_select = ("SUM(ip_outs) AS denom" if is_pitching_rate
+                        else "SUM(at_bats) AS denom")
+    else:
+        agg_select = f"SUM(s.{db_col}) AS val"
+        denom_select = "SUM(s.games) AS denom" if is_pitching else "SUM(s.plate_appearances) AS denom"
+
+    # Sniff trade-year rows for caveat
+    trade_sql = f"""
+        SELECT COUNT(*) FROM {table} s
+        JOIN players p ON s.player_id = p.player_id
+        WHERE {where_sql} AND s.team LIKE '%/%'
+    """
+    main_sql = f"""
+        SELECT {agg_select}, {denom_select}, MIN(s.season), MAX(s.season),
+               COUNT(*) AS row_count
+        FROM {table} s
+        JOIN players p ON s.player_id = p.player_id
+        WHERE {where_sql}
+    """
+
+    conn = _get_db()
+    try:
+        row = conn.execute(main_sql, params).fetchone()
+        trade_rows = conn.execute(trade_sql, params).fetchone()[0]
+    finally:
+        conn.close()
+
+    if not row or row[0] is None or row[4] == 0:
+        # No data matched.
+        filter_phrase = _filter_phrase(tf, sr)
+        return f"No qualifying seasons for **{name}** {filter_phrase}."
+
+    val, denom, yr_min, yr_max, n_rows = row
+
+    # Format the value via the same rules as the chat grid
+    abbrev = stat.display_abbrev
+    if is_rate:
+        if db_col in ("batting_avg", "obp", "slg", "ops", "iso", "babip"):
+            formatted = f".{int(round(float(val) * 1000)):03d}" if float(val) < 1 else f"{float(val):.3f}"
+        else:
+            # ERA, WHIP, K/9, BB/9, K/BB
+            decimals = 1 if db_col in ("k_per_9", "bb_per_9") else 2
+            formatted = f"{float(val):.{decimals}f}"
+    else:
+        formatted = f"{int(round(float(val))):,}"
+
+    filter_phrase = _filter_phrase(tf, sr)
+    season_span = f"{yr_min}–{yr_max}" if yr_min != yr_max else f"{yr_min}"
+    sentence = f"**{name}** {_verb_for(abbrev, is_rate)} **{formatted} {abbrev}** {filter_phrase} ({season_span}, {n_rows} season{'s' if n_rows != 1 else ''})."
+
+    parts = [sentence]
+    if trade_rows > 0 and tf:
+        parts.append(
+            f"\n_Note: includes {trade_rows} mid-season trade year"
+            f"{'s' if trade_rows != 1 else ''} where stats are stored as a combined row; "
+            f"can't cleanly split that year by team alone._"
+        )
+    parts.append("\n[SUGGEST]" + name + " career[/SUGGEST]")
+    return "\n".join(parts)
+
+
+def _filter_phrase(team_filter: Optional[dict], season_range: Optional[dict]) -> str:
+    bits = []
+    if team_filter:
+        verb = "with" if team_filter["mode"] == "include" else "excluding"
+        bits.append(f"{verb} the {team_filter['label']}")
+    if season_range:
+        if season_range.get("start") and season_range.get("end"):
+            bits.append(f"from {season_range['start']} to {season_range['end']}")
+        elif season_range.get("start"):
+            bits.append(f"from {season_range['start']} on")
+        elif season_range.get("end"):
+            bits.append(f"through {season_range['end']}")
+    return " ".join(bits) if bits else "(career)"
+
+
+def _verb_for(abbrev: str, is_rate: bool) -> str:
+    if is_rate:
+        return "posted a"
+    if abbrev in ("HR", "H", "RBI", "R", "SB", "BB", "SO", "K", "2B", "3B", "W", "L", "SV"):
+        return "had"
+    return "had"
+
+
+# ---------------------------------------------------------------------------
 # Season count — "how many seasons has Judge hit a triple?"
 # ---------------------------------------------------------------------------
 

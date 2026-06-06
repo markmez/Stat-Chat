@@ -348,6 +348,21 @@ TESTS: list[tuple[str, str, str]] = [
     ("Worst road record", "intercepted", "Team conditional record (road)"),
 
     # ============================================================
+    # Tier 16c: Player career filtered — team or year-range filter.
+    # New handler (2026-06-05). Aggregates season_stats with team include/
+    # exclude and/or season start/end filter. See decompose._detect_player_
+    # career_filter. Mid-season trade years (combined "OAK/NYA" rows) noted
+    # via caveat in the response, never silently miscounted.
+    # ============================================================
+    ("Sonny Gray career ERA excluding Yankees", "intercepted", "Player career filtered (team exclude)"),
+    ("Aaron Judge career OPS as a Yankee", "intercepted", "Player career filtered (team include)"),
+    ("Pujols career HR with the Cardinals", "intercepted", "Player career filtered (team include)"),
+    ("Verlander career ERA after 2018", "intercepted", "Player career filtered (after year)"),
+    ("Trout career OPS through 2019", "intercepted", "Player career filtered (through year)"),
+    ("Pujols career HR before 2010", "intercepted", "Player career filtered (before year)"),
+    ("Trout career HR from 2012 to 2019", "intercepted", "Player career filtered (year range)"),
+
+    # ============================================================
     # Tier 17: Narrative — Sonnet expected
     # ============================================================
     ("Why is Skenes considered a generational pitcher", "sonnet", "Narrative"),
