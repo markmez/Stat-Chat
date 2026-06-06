@@ -362,9 +362,17 @@ def _format_structured_rows_to_grid(
     # Single aggregate result (COUNT, SUM, etc.) — format as a clean answer
     if len(data_rows) == 1 and len(columns) == 1:
         val = list(data_rows[0].values())[0]
+        col_name = _display_col_name(columns[0]) or columns[0].replace("_", " ").title()
+        # Rate stats (ERA, WHIP, AVG, OPS, ...) must keep their decimals
+        # — int() would render ERA 3.00 as "3". Use _fmt_val which already
+        # knows the per-stat rules.
+        if _is_rate_2(columns[0]) or _is_rate_3(columns[0]):
+            try:
+                return f"**{_fmt_val(columns[0], val)}** {col_name}"
+            except (ValueError, TypeError):
+                pass
         try:
             num = int(float(val))
-            col_name = _display_col_name(columns[0]) or columns[0].replace("_", " ").title()
             return f"**{num:,}** {col_name}"
         except (ValueError, TypeError):
             pass
