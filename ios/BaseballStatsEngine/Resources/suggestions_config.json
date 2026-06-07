@@ -1,5 +1,5 @@
 {
-  "version": 12,
+  "version": 13,
   "algorithm": {
     "impressionThreshold": 6,
     "poolSize": 12,
@@ -521,6 +521,31 @@
       "text": "Worst home record this season",
       "weight": 1.0,
       "id": "d104"
+    },
+    {
+      "text": "Sonny Gray career ERA excluding Yankees",
+      "weight": 1.0,
+      "id": "d105"
+    },
+    {
+      "text": "Pujols career HR with the Cardinals",
+      "weight": 1.0,
+      "id": "d106"
+    },
+    {
+      "text": "Verlander career ERA after 2018",
+      "weight": 1.0,
+      "id": "d107"
+    },
+    {
+      "text": "Best pitchers against sliders",
+      "weight": 1.0,
+      "id": "d108"
+    },
+    {
+      "text": "Best pitchers behind in the count",
+      "weight": 1.0,
+      "id": "d109"
     }
   ],
   "templates": {
