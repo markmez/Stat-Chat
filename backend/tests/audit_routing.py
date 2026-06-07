@@ -270,6 +270,11 @@ TESTS: list[tuple[str, str, str]] = [
     ("Best pitchers with RISP", "intercepted", "Split: leaderboard RISP pitching"),
     ("Best pitchers at home this year", "intercepted", "Split: leaderboard home/away pitching"),
     ("Best pitchers throwing sliders", "intercepted", "Split: leaderboard pitch-type pitching"),
+    # "against X" / "vs X" naturally read as hitter phrasing but when the
+    # subject is "pitchers" we pivot to pitch_type_pitching_splits.
+    ("Best pitchers against sliders", "intercepted", "Split: leaderboard pitch-type pitching"),
+    ("Best pitchers vs changeups", "intercepted", "Split: leaderboard pitch-type pitching"),
+    ("Worst pitchers against fastballs", "intercepted", "Split: leaderboard pitch-type pitching"),
     ("Best pitchers ahead in the count", "intercepted", "Split: leaderboard count pitching"),
 
     # ============================================================

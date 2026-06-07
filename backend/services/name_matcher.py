@@ -1165,9 +1165,33 @@ _SPLIT_CONTEXTS = {
 def _detect_split_context(lower: str) -> Optional[SplitContext]:
     """Detect split context in query. Checks longest fixed phrases first,
     then parametric patterns (TTO ordinals)."""
+    # Subject pivot: "best pitchers against sliders" naturally reads as a
+    # batting context ("against X") but the user wants the pitching side.
+    # When the query says "pitcher(s)" with no player name AND the matched
+    # phrase is a batting pitch-type / vs-handedness split, pivot to the
+    # corresponding pitching split table. Same pitch_type filter values;
+    # only table + is_pitching change.
+    wants_pitcher_subject = bool(re.search(r'\bpitchers?\b', lower)) and not bool(re.search(r'\bhitters?\b|\bbatters?\b', lower))
+
     for phrase in sorted(_SPLIT_CONTEXTS.keys(), key=len, reverse=True):
         if phrase in lower:
-            return _SPLIT_CONTEXTS[phrase]
+            ctx = _SPLIT_CONTEXTS[phrase]
+            # Pivot a batting pitch-type split into its pitching twin when
+            # the subject is clearly pitchers. Label stays as "vs Sliders"
+            # — works for both pitcher and hitter framings.
+            if (wants_pitcher_subject
+                    and not ctx.is_pitching
+                    and ctx.table == "pitch_type_batting_splits"):
+                return SplitContext(
+                    table="pitch_type_pitching_splits",
+                    filter_col=ctx.filter_col,
+                    filter_values=ctx.filter_values,
+                    label=ctx.label,
+                    consumed_phrases=ctx.consumed_phrases,
+                    is_pitching=True,
+                    pivot_phrase=ctx.pivot_phrase,
+                )
+            return ctx
 
     # Parametric: "Nth time(s) through (the order)?" — pitching split (pitching_tto_splits).
     # Must include "time through" / "times through" so bare ordinals like
