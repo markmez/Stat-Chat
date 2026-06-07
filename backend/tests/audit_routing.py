@@ -271,10 +271,21 @@ TESTS: list[tuple[str, str, str]] = [
     ("Best pitchers at home this year", "intercepted", "Split: leaderboard home/away pitching"),
     ("Best pitchers throwing sliders", "intercepted", "Split: leaderboard pitch-type pitching"),
     # "against X" / "vs X" naturally read as hitter phrasing but when the
-    # subject is "pitchers" we pivot to pitch_type_pitching_splits.
-    ("Best pitchers against sliders", "intercepted", "Split: leaderboard pitch-type pitching"),
-    ("Best pitchers vs changeups", "intercepted", "Split: leaderboard pitch-type pitching"),
-    ("Worst pitchers against fastballs", "intercepted", "Split: leaderboard pitch-type pitching"),
+    # subject is "pitchers" we pivot to pitch_type_pitching_splits. The
+    # `must_contain` arg below pins these to the PITCHING table — a
+    # regression that intercepts but lands on the BATTING table would
+    # produce "OPS Leaders" (no "Allowed") and trip the content guard.
+    ("Best pitchers against sliders", "intercepted", "Split: pivot-fragility pitcher→pitching", "OPS Allowed"),
+    ("Best pitchers vs changeups", "intercepted", "Split: pivot-fragility pitcher→pitching", "OPS Allowed"),
+    ("Worst pitchers against fastballs", "intercepted", "Split: pivot-fragility pitcher→pitching", "OPS Allowed"),
+
+    # Pivot guard cases — same "against X" phrases but with HITTER subject.
+    # Must stay on the BATTING table; if my pivot ever over-triggers and
+    # routes hitter queries to pitching, "OPS Allowed" would appear and
+    # the content guard would fire.
+    ("Best hitters against sliders", "intercepted", "Split: pivot-fragility hitter stays batting", "OPS Leaders vs"),
+    ("Best batters vs changeups", "intercepted", "Split: pivot-fragility hitter stays batting", "OPS Leaders vs"),
+    ("Worst hitters against fastballs", "intercepted", "Split: pivot-fragility hitter stays batting", "Worst OPS vs"),
     ("Best pitchers ahead in the count", "intercepted", "Split: leaderboard count pitching"),
 
     # ============================================================
@@ -511,7 +522,14 @@ def main():
     print(f"{'#':>3} {'CAT':<32} {'EXPECT':<12} {'ACTUAL':<12} {'MS':>5} {'0?':>3}  QUERY")
     print("-" * 130)
 
-    for i, (query, expected, category) in enumerate(tests, start=1):
+    for i, test in enumerate(tests, start=1):
+        # 3-tuple: (query, expected, category) — standard case.
+        # 4-tuple: + must_contain — assert this substring appears in the
+        # result snippet. Used to guard against silent wrong-table answers
+        # (e.g. a pitcher query that intercepts but lands on the BATTING
+        # table because the pivot regressed).
+        query, expected, category = test[0], test[1], test[2]
+        must_contain = test[3] if len(test) > 3 else None
         if not args.no_throttle and i > 1:
             time.sleep(THROTTLE_SECONDS)
 
@@ -538,6 +556,11 @@ def main():
             ok = actual == "haiku" if args.deep else actual == "miss"
         else:
             ok = actual == expected
+        # Content guard: even if the query intercepted, fail when the
+        # required substring is missing — that's a silent wrong answer.
+        if ok and must_contain and must_contain.lower() not in snip.lower():
+            ok = False
+            snip = f"MISSING `{must_contain}` :: " + snip
 
         status_marker = " " if ok else "✗"
         if ok:
