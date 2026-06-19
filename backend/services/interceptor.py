@@ -78,9 +78,33 @@ def try_intercept(question: str):
     if not trimmed:
         return None
 
-    # Statcast queries for current season — graceful rejection, don't count query
     import re
     lower = trimmed.lower()
+
+    # Game-event qualifiers we don't model structurally. Without this bail, the
+    # interceptor matches on the recognized parts ("yankee" + "home runs") and
+    # silently drops the qualifier — returning the Yankees regular HR
+    # leaderboard for "which yankee has the most inside-the-park HRs". Sonnet
+    # CAN answer these from baseball knowledge (with VOICE_RULES guardrails),
+    # so return None here to let the call fall through to sql_planner /
+    # knowledge_mode rather than producing a confidently-wrong intercept.
+    _event_qualifiers = (
+        "inside the park", "inside-the-park",
+        "walk-off", "walkoff", "walk off",
+        "grand slam", "grand-slam", "grand slams",
+        "pinch-hit home", "pinch hit home", "pinch-hit hr", "pinch hit hr",
+        "pinch-hit homer", "pinch hit homer",
+        "leadoff home run", "leadoff homer", "leadoff hr",
+        "extra-inning home", "extra inning home", "extra-innings home",
+        "go-ahead home", "go-ahead hr", "go-ahead homer",
+        "tying home run", "tying hr", "tying homer",
+        "first-pitch home", "first pitch home",
+    )
+    if any(p in lower for p in _event_qualifiers):
+        logger.info("intercept_bail_event_qualifier question=%r", trimmed)
+        return None
+
+    # Statcast queries for current season — graceful rejection, don't count query
     _statcast_keywords = ["exit velo", "exit velocity", "launch angle", "barrel rate",
                           "barrels", "sprint speed", "hard hit", "hard-hit",
                           "spin rate", "pitch velocity", "xba", "xslg", "xwoba",

@@ -307,6 +307,28 @@ CRITICAL: For "data" type, you MUST rewrite the follow-up into a full question. 
 
 IMPORTANT: When the follow-up ADDS a condition or filter to the prior query (e.g., "minimum 3 stolen bases", "only lefties", "at home"), preserve the ENTIRE prior query and add the new condition. The stat being ranked/displayed must stay the same — the follow-up is narrowing the results, not changing what's being measured.
 
+CRITICAL — PRESERVE THE SHAPE OF THE PRIOR QUERY:
+The follow-up narrows, swaps, or extends the prior query — it does NOT collapse it to a different SHAPE. A follow-up that adds a filter ("for the Yankees", "in the AL", "vs lefties") must keep the prior query's shape:
+
+- COMPARISON shape ("X compared to Y", "X vs last year", "year-over-year") → stay a comparison.
+- LEADERBOARD shape ("best/worst/most/leaders in X") → stay a leaderboard.
+- LOOKUP shape ("Judge's HR", "Trout's career OPS") → stay a lookup.
+- TIME-SERIES shape ("X over the last N games") → stay a time series.
+
+If the prior question was a year-over-year comparison and the follow-up adds a team filter, the rewrite is STILL a year-over-year comparison — just narrowed to that team. Don't drop the comparison and substitute a leaderboard.
+
+Examples (prior question: "2026 total stolen base attempts compared to the same point last year"):
+- "how about just for the Yankees?" → {"type": "data", "rewritten": "2026 Yankees stolen base attempts compared to the same point in 2025"}  ← preserves comparison
+- "what about the AL?" → {"type": "data", "rewritten": "2026 American League stolen base attempts compared to the same point in 2025"}  ← preserves comparison
+- "by team" → {"type": "data", "rewritten": "2026 stolen base attempts by team compared to last year"}  ← preserves comparison, adds breakdown
+- WRONG: "Yankees stolen base leaders" — that's a leaderboard SHAPE; prior was a comparison SHAPE.
+- WRONG: "Yankees stolen base attempts in 2026" — drops the "compared to last year" comparison.
+
+Examples (prior question: "Aaron Judge's slash line vs lefties this season"):
+- "and vs righties?" → {"type": "data", "rewritten": "Aaron Judge's slash line vs righties this season"}  ← preserves lookup shape, swaps split
+- "career numbers" → {"type": "data", "rewritten": "Aaron Judge's career slash line vs lefties"}  ← preserves lookup + split
+- WRONG: "best slash line vs lefties" — collapses lookup into leaderboard.
+
 Return ONLY valid JSON:
 - {"type": "data", "rewritten": "complete standalone question"}
 - {"type": "analytical"}

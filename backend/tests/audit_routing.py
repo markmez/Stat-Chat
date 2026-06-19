@@ -393,6 +393,27 @@ TESTS: list[tuple[str, str, str]] = [
     # ============================================================
     ("What's the difference between FIP and xERA", "sonnet",
      "Off-topic / metric comparison"),
+
+    # ============================================================
+    # Tier 18c: Game-event qualifiers — Sonnet expected.
+    # Inside-the-park HRs, walk-offs, grand slams, leadoff HRs,
+    # pinch-hit HRs, etc. aren't stored as separate columns. The
+    # interceptor MUST bail (return None) so these reach sql_planner /
+    # knowledge_mode rather than producing a confidently-wrong intercept
+    # by dropping the qualifier (e.g., returning regular Yankees HR
+    # leaders for "which Yankee has the most inside-the-park HRs").
+    # See interceptor.py _event_qualifiers (top of try_intercept).
+    # ============================================================
+    ("which yankee has the most inside the park home runs", "sonnet",
+     "Game-event qualifier: inside-the-park"),
+    ("most walk-off home runs all time", "sonnet",
+     "Game-event qualifier: walk-off"),
+    ("career grand slams leader", "sonnet",
+     "Game-event qualifier: grand slam"),
+    ("most leadoff home runs in a season", "sonnet",
+     "Game-event qualifier: leadoff HR"),
+    ("most pinch-hit home runs by a player", "sonnet",
+     "Game-event qualifier: pinch-hit HR"),
 ]
 
 
