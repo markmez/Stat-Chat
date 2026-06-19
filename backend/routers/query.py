@@ -658,6 +658,14 @@ async def _try_haiku_sql(question: str):
     Returns (sql, result_text, is_streak) tuple, or None to fall through to Sonnet.
     Retries once on SQL error (sends error back to Haiku).
     """
+    # Game-event qualifiers (inside-the-park, walk-off, grand slam, leadoff
+    # HR, etc.) have no clean structural answer. Even if Haiku writes SQL
+    # that runs, it'll produce a proxy stat (regular HRs) labeled as if
+    # it were the requested concept. Bail so knowledge_mode handles it.
+    from services.interceptor import is_game_event_qualifier
+    if is_game_event_qualifier(question):
+        logger.info("haiku_sql_bail_event_qualifier question=%r", question)
+        return None
     try:
         sql = await llm.generate_sql_haiku(question)
     except Exception as e:
@@ -1679,17 +1687,29 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
         from services.sql_planner import plan_and_execute
+        from services.interceptor import is_game_event_qualifier as _is_geq
 
-        _executor = ThreadPoolExecutor(max_workers=1)
-        loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(_executor, plan_and_execute, question)
+        # Skip the insight engine for game-event qualifiers — sql_planner
+        # has tools to write SQL, which it'll do even when the requested
+        # concept has no clean column, producing leaderboards of proxy
+        # stats labeled as if they were the answer. Route those straight
+        # to knowledge_mode for a pure narrative answer.
+        if _is_geq(question):
+            logger.info("insight_skip_event_qualifier question=%r", question)
+            insight_result = None
+            future = None
+        else:
+            _executor = ThreadPoolExecutor(max_workers=1)
+            loop = asyncio.get_event_loop()
+            future = loop.run_in_executor(_executor, plan_and_execute, question)
 
-        # Send heartbeat while insight engine works (keeps nginx alive)
-        while not future.done():
-            yield event({"type": "text", "text": ""})
-            await asyncio.sleep(2)
+        if future is not None:
+            # Send heartbeat while insight engine works (keeps nginx alive)
+            while not future.done():
+                yield event({"type": "text", "text": ""})
+                await asyncio.sleep(2)
+            insight_result = future.result()
 
-        insight_result = future.result()
         if insight_result:
             logger.info("query_insight question=%r", question)
             insight_text: str = insight_result.get("text", "") if isinstance(insight_result, dict) else str(insight_result)

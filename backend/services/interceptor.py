@@ -43,6 +43,38 @@ def _ping_qe_error(question: str, error: str):
             pass
 
 
+# Game-event qualifiers we don't model structurally. Module-level so the
+# Haiku-SQL and sql_planner paths can check the same list — otherwise the
+# interceptor bails but the SQL paths still produce hallucinated leaderboards
+# (e.g., regular HR totals labeled "Leadoff Home Runs"). Queries matching
+# this list must skip every structural attempt and go straight to
+# knowledge_mode for a pure narrative answer.
+_EVENT_QUALIFIERS = (
+    "inside the park", "inside-the-park",
+    "walk-off", "walkoff", "walk off",
+    "grand slam", "grand-slam", "grand slams",
+    "pinch-hit home", "pinch hit home", "pinch-hit hr", "pinch hit hr",
+    "pinch-hit homer", "pinch hit homer",
+    "leadoff home run", "leadoff home runs", "leadoff homer",
+    "leadoff homers", "leadoff hr",
+    "extra-inning home", "extra inning home", "extra-innings home",
+    "go-ahead home", "go-ahead hr", "go-ahead homer",
+    "tying home run", "tying hr", "tying homer",
+    "first-pitch home", "first pitch home",
+)
+
+
+def is_game_event_qualifier(question: str) -> bool:
+    """Does this question reference a game-event qualifier (inside-the-park,
+    walk-off, grand slam, leadoff HR, etc.) that we can't answer with
+    precision? Used by every structural layer — interceptor, Haiku SQL,
+    sql_planner — to skip itself and let knowledge_mode produce a clean
+    narrative answer."""
+    if not question:
+        return False
+    return any(p in question.lower() for p in _EVENT_QUALIFIERS)
+
+
 def _claim(result, query):
     """Default-on guard for single-player stat parsers (the central choke point).
 
@@ -81,26 +113,11 @@ def try_intercept(question: str):
     import re
     lower = trimmed.lower()
 
-    # Game-event qualifiers we don't model structurally. Without this bail, the
-    # interceptor matches on the recognized parts ("yankee" + "home runs") and
-    # silently drops the qualifier — returning the Yankees regular HR
-    # leaderboard for "which yankee has the most inside-the-park HRs". Sonnet
-    # CAN answer these from baseball knowledge (with VOICE_RULES guardrails),
-    # so return None here to let the call fall through to sql_planner /
-    # knowledge_mode rather than producing a confidently-wrong intercept.
-    _event_qualifiers = (
-        "inside the park", "inside-the-park",
-        "walk-off", "walkoff", "walk off",
-        "grand slam", "grand-slam", "grand slams",
-        "pinch-hit home", "pinch hit home", "pinch-hit hr", "pinch hit hr",
-        "pinch-hit homer", "pinch hit homer",
-        "leadoff home run", "leadoff homer", "leadoff hr",
-        "extra-inning home", "extra inning home", "extra-innings home",
-        "go-ahead home", "go-ahead hr", "go-ahead homer",
-        "tying home run", "tying hr", "tying homer",
-        "first-pitch home", "first pitch home",
-    )
-    if any(p in lower for p in _event_qualifiers):
+    # Game-event qualifiers we don't model structurally — see
+    # is_game_event_qualifier above. Bail so the request falls through to
+    # knowledge_mode (the Haiku/sql_planner paths also short-circuit on this
+    # check; we want only pure narrative answers for these).
+    if is_game_event_qualifier(trimmed):
         logger.info("intercept_bail_event_qualifier question=%r", trimmed)
         return None
 
