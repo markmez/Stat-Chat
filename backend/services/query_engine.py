@@ -5593,6 +5593,144 @@ def _execute_split_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     )
 
 
+def _execute_team_context_single_player(conn, plan: QueryPlan) -> Optional[str]:
+    """Single-player answer for stat + team_context (e.g. "Skubal ERA in
+    day games"). Filters to one player early so we scan ~30 game log rows
+    instead of the whole season's worth, and skips the qualifier subset
+    calc entirely (no ranking = no threshold needed).
+
+    Returns a one-line answer or None if the shape isn't supported.
+    """
+    if not plan.player_name or not plan.stat or not plan.team_context:
+        return None
+
+    tc = plan.team_context
+    is_pitching = plan.is_pitching
+    table = "game_pitching_logs" if is_pitching else "game_batting_logs"
+    stat_col = plan.stat.db_column
+
+    # Scope handling (same convention as the leaderboard executor)
+    is_all_time = plan.scope in ("all_time", "career")
+    is_since = plan.scope and plan.scope.startswith("since_") and plan.since_year
+    if plan.season:
+        season, season_range = plan.season, None
+    elif is_all_time:
+        season, season_range = None, None
+    elif is_since:
+        season, season_range = None, (plan.since_year, date.today().year)
+    else:
+        season, season_range = date.today().year, None
+
+    # Stat aggregation expressions — same formulas as the leaderboard path
+    # but with no qualifier concept (single player, we show whatever they had)
+    if is_pitching:
+        rate_exprs = {
+            "era":  ("9.0 * SUM(g.earned_runs) / NULLIF(SUM(g.ip_outs) / 3.0, 0)", "SUM(g.ip_outs)", "outs"),
+            "whip": ("CAST(SUM(g.walks + g.hits) AS REAL) / NULLIF(SUM(g.ip_outs) / 3.0, 0)", "SUM(g.ip_outs)", "outs"),
+            "k_per_9": ("9.0 * SUM(g.strikeouts) / NULLIF(SUM(g.ip_outs) / 3.0, 0)", "SUM(g.ip_outs)", "outs"),
+        }
+        counting_cols = {"strikeouts", "walks", "hits", "earned_runs", "runs",
+                         "home_runs", "wins", "losses", "saves"}
+    else:
+        rate_exprs = {
+            "batting_avg": ("CAST(SUM(g.hits) AS REAL) / NULLIF(SUM(g.at_bats), 0)", "SUM(g.at_bats)", "AB"),
+            "obp": ("CAST(SUM(g.hits + g.walks + COALESCE(g.hit_by_pitch, 0)) AS REAL) / "
+                    "NULLIF(SUM(g.at_bats + g.walks + COALESCE(g.hit_by_pitch, 0) + COALESCE(g.sacrifice_flies, 0)), 0)",
+                    "SUM(g.at_bats + g.walks + COALESCE(g.hit_by_pitch, 0))", "PA"),
+            "slg": ("CAST(SUM(g.hits - g.doubles - g.triples - g.home_runs + 2*g.doubles + 3*g.triples + 4*g.home_runs) AS REAL) / "
+                    "NULLIF(SUM(g.at_bats), 0)", "SUM(g.at_bats)", "AB"),
+            "ops": ("(CAST(SUM(g.hits + g.walks + COALESCE(g.hit_by_pitch, 0)) AS REAL) / "
+                    "NULLIF(SUM(g.at_bats + g.walks + COALESCE(g.hit_by_pitch, 0) + COALESCE(g.sacrifice_flies, 0)), 0)) + "
+                    "(CAST(SUM(g.hits - g.doubles - g.triples - g.home_runs + 2*g.doubles + 3*g.triples + 4*g.home_runs) AS REAL) / "
+                    "NULLIF(SUM(g.at_bats), 0))", "SUM(g.at_bats)", "AB"),
+        }
+        counting_cols = {"hits", "home_runs", "rbi", "runs", "stolen_bases",
+                         "walks", "strikeouts", "doubles", "triples"}
+
+    if stat_col in rate_exprs:
+        stat_expr, denom_expr, denom_label = rate_exprs[stat_col]
+        is_rate = True
+    elif stat_col in counting_cols:
+        stat_expr = f"SUM(g.{stat_col})"
+        denom_expr = "COUNT(*)"
+        denom_label = "G"
+        is_rate = False
+    else:
+        return None  # unsupported stat
+
+    join_clause = (
+        "JOIN team_game_results tgr "
+        "ON tgr.date = g.date "
+        "AND tgr.opponent = g.opponent "
+        "AND tgr.is_home = (CASE WHEN g.vishome='H' THEN 1 ELSE 0 END) "
+        "AND tgr.season = g.season"
+    )
+
+    base_filter = (
+        "p.name = ? AND "
+        f"COALESCE(tgr.gametype, 'regular') = 'regular' AND ({tc.sql_clause})"
+    )
+    params: list = [plan.player_name] + list(tc.sql_params)
+    if season is not None:
+        base_filter += " AND g.season = ?"
+        params.append(season)
+    elif season_range is not None:
+        base_filter += " AND g.season BETWEEN ? AND ?"
+        params.extend([season_range[0], season_range[1]])
+
+    sql = (
+        f"SELECT ({stat_expr}) AS metric, ({denom_expr}) AS denom, COUNT(*) AS games_n "
+        f"FROM {table} g "
+        f"{join_clause} "
+        f"JOIN players p ON p.player_id = g.player_id "
+        f"WHERE {base_filter}"
+    )
+
+    cur = conn.cursor()
+    try:
+        cur.execute(sql, tuple(params))
+    except Exception as e:
+        return f"Could not run single-player team-context query: {e}"
+    row = cur.fetchone()
+    if not row or row[0] is None or row[2] == 0:
+        # No matching games — format a clean empty response.
+        scope_label = str(season) if season else (
+            f"{season_range[0]}–{season_range[1]}" if season_range else "career")
+        return (f"**{plan.player_name}** didn't have any {tc.label.lower()} "
+                f"games in {scope_label}.")
+
+    metric, denom, games_n = row
+
+    # Format the value
+    abbrev = plan.stat.display_abbrev
+    if is_rate:
+        if stat_col in ("batting_avg", "obp", "slg", "ops"):
+            mil = int(round(float(metric) * 1000))
+            value_str = f".{mil:03d}" if mil < 1000 else f"{float(metric):.3f}"
+        else:
+            decimals = 1 if stat_col in ("k_per_9", "bb_per_9") else 2
+            value_str = f"{float(metric):.{decimals}f}"
+    else:
+        value_str = f"{int(round(float(metric))):,}"
+
+    scope_label = str(season) if season else (
+        f"{season_range[0]}–{season_range[1]}" if season_range else "career")
+    ctx_label = tc.label.lower()  # e.g., "day games", "night games", "extra innings"
+
+    if is_rate:
+        return (
+            f"**{plan.player_name}** posted a **{value_str} {abbrev}** in "
+            f"{ctx_label} ({scope_label}, {games_n} games).\n\n"
+            f"[SUGGEST]{plan.player_name} {abbrev} {ctx_label}[/SUGGEST]"
+        )
+    else:
+        return (
+            f"**{plan.player_name}** had **{value_str} {abbrev}** in "
+            f"{ctx_label} ({scope_label}, {games_n} games).\n\n"
+            f"[SUGGEST]{plan.player_name} {abbrev} {ctx_label}[/SUGGEST]"
+        )
+
+
 def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     """Aggregate game-log stats over games filtered by team_game_results context.
 
@@ -5607,6 +5745,23 @@ def _execute_team_context_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     """
     if not plan.team_context or not plan.stat:
         return None
+
+    # Bail when team_context is combined with a stat split (platoon, pitch
+    # type, count, RISP, etc.). Team context lives in game-log granularity;
+    # stat splits live in season-aggregated split tables. Combining them
+    # would require per-plate-appearance data we don't have (no batter
+    # handedness per game log). Fall through to knowledge_mode so Sonnet
+    # can narrate an approximate answer instead of the engine dropping
+    # the split filter silently.
+    if plan.split_context is not None:
+        return None
+
+    # Single-player short path — when a player is named, skip the leaderboard
+    # machinery entirely. Filter to that player early, skip GROUP BY, skip
+    # the qualifier subset calc, return a one-line answer. Turns 51-second
+    # full-DB scans into sub-second single-player lookups.
+    if plan.player_name:
+        return _execute_team_context_single_player(conn, plan)
 
     is_pitching = plan.is_pitching
     table = "game_pitching_logs" if is_pitching else "game_batting_logs"

@@ -414,6 +414,26 @@ TESTS: list[tuple[str, str, str]] = [
      "Game-event qualifier: leadoff HR"),
     ("most pinch-hit home runs by a player", "sonnet",
      "Game-event qualifier: pinch-hit HR"),
+
+    # ============================================================
+    # Tier 18d: Single-player + team_context — the correctness+perf
+    # fix (2026-07-01). Previously routed through the LEADERBOARD
+    # executor which dropped the player_name filter (returned a
+    # generic top-5 leaderboard instead of the named player's number)
+    # AND took 51 seconds due to full-DB scan + qualifier calc.
+    # New short path filters to one player early, no GROUP BY.
+    # Must intercept AND include the player name in the response.
+    # ============================================================
+    ("Skubal ERA in day games", "intercepted",
+     "Single-player + team_context", "Skubal"),
+    ("Judge OPS in extra innings", "intercepted",
+     "Single-player + team_context", "Judge"),
+    ("Ohtani home runs in night games", "intercepted",
+     "Single-player + team_context", "Ohtani"),
+    # Split + team_context combination — must bail (fall through to Sonnet).
+    # No per-PA data to combine handedness with day/night filtering.
+    ("Skubal ERA against lefties in day games", "sonnet",
+     "Bail: team_context + split_context combo"),
 ]
 
 
