@@ -2437,7 +2437,24 @@ def main():
             from services.notable_events import detect_all
             detect_all(args.db, season_year)
         except Exception as e:
-            print(f"Notable events detection failed: {e}")
+            # Detection failures used to be silently printed and forgotten —
+            # which caused feed events for June 18/19/21 (2026) to go missing
+            # for days without anyone noticing until users complained. Log to
+            # the metering DB so failures surface on /admin/dashboard, and
+            # let log_server_error's Healthchecks ping alert us in real time.
+            import traceback as _tb
+            _tb_str = _tb.format_exc()
+            print(f"Notable events detection failed: {e}\n{_tb_str}")
+            try:
+                from services.metering import log_server_error
+                log_server_error(
+                    source="detect_all",
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    context={"season": season_year, "traceback": _tb_str[-1500:]},
+                )
+            except Exception as _log_err:
+                print(f"  Also failed to log the failure: {_log_err}")
 
         # AI-powered insights (Sonnet) — kicked off async in a detached
         # subprocess so the rule-based feed events become visible to

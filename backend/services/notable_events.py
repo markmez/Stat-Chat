@@ -3881,6 +3881,36 @@ def is_detection_locked():
     return True
 
 
+def _safe_detect(name, fn, *args, **kwargs):
+    """Run a detector, catch + log any exception, return the events list (or []).
+
+    Previously, one bad Tier 1/2 detector would crash the entire detect_all()
+    call and take out every subsequent detector too — that's how June 18/19/21
+    (2026) ended up with only ai_insight/on_this_date/matchup_preview events
+    and none of the rule-based stuff. Wrapping each call preserves the rest
+    of the run when one detector fails, and log_server_error surfaces the
+    failure on /admin/dashboard so it can be diagnosed instead of silently
+    swallowed.
+    """
+    try:
+        return fn(*args, **kwargs) or []
+    except Exception as e:
+        import traceback as _tb
+        tb_str = _tb.format_exc()
+        print(f"    {name} failed (continuing): {e}\n{tb_str}")
+        try:
+            from services.metering import log_server_error
+            log_server_error(
+                source=f"detect_all.{name}",
+                error_type=type(e).__name__,
+                error_message=str(e),
+                context={"traceback": tb_str[-1500:]},
+            )
+        except Exception as _log_err:
+            print(f"    ({name}) Also failed to log the failure: {_log_err}")
+        return []
+
+
 def detect_all(db_path=None, season=None, from_poll=False, force=False, target_date=None):
     """Run all detectors, insert results, prune old events.
 
@@ -3984,22 +4014,25 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False, target_d
     onbase_streak_min = max(12, min(25, int(gp * 1.0)))
     hr_streak_min = max(3, min(5, int(gp * 0.3)))
 
-    # Tier 1
+    # Tier 1 — each detector wrapped so one crash doesn't take out the rest.
+    # Historical June 18/19/21 (2026) incident: an unwrapped detector raised,
+    # detect_all bubbled up to pull_live_stats.py which swallowed the print,
+    # and no rule-based events fired for 3 days without alerting.
     print(f"  Running Tier 1 detectors... (gp={gp}, hit_min={hit_streak_min}, ob_min={onbase_streak_min}, hr_min={hr_streak_min})")
-    events += detect_hitting_streaks(conn, season, latest_date, min_games=hit_streak_min)
-    events += detect_onbase_streaks(conn, season, latest_date, min_games=onbase_streak_min)
-    events += detect_hr_streaks(conn, season, latest_date, min_games=hr_streak_min)
-    events += detect_streak_endings(conn, season, latest_date)
-    events += detect_pitching_streaks(conn, season, latest_date)
-    events += detect_season_pace(conn, season, latest_date)
+    events += _safe_detect("hitting_streaks", detect_hitting_streaks, conn, season, latest_date, min_games=hit_streak_min)
+    events += _safe_detect("onbase_streaks", detect_onbase_streaks, conn, season, latest_date, min_games=onbase_streak_min)
+    events += _safe_detect("hr_streaks", detect_hr_streaks, conn, season, latest_date, min_games=hr_streak_min)
+    events += _safe_detect("streak_endings", detect_streak_endings, conn, season, latest_date)
+    events += _safe_detect("pitching_streaks", detect_pitching_streaks, conn, season, latest_date)
+    events += _safe_detect("season_pace", detect_season_pace, conn, season, latest_date)
     t1_count = len(events)
     print(f"    Tier 1: {t1_count} events")
 
     # Tier 2
     print("  Running Tier 2 detectors...")
-    events += detect_career_milestones(conn, season, latest_date)
-    events += detect_rarities(conn, season, latest_date)
-    events += detect_hot_streaks_pelt(conn, season, latest_date, cooldowns=cooldowns)
+    events += _safe_detect("career_milestones", detect_career_milestones, conn, season, latest_date)
+    events += _safe_detect("rarities", detect_rarities, conn, season, latest_date)
+    events += _safe_detect("hot_streaks_pelt", detect_hot_streaks_pelt, conn, season, latest_date, cooldowns=cooldowns)
     t2_count = len(events) - t1_count
     print(f"    Tier 2: {t2_count} events")
 
@@ -4046,8 +4079,8 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False, target_d
     # Tier 3 backfill if needed
     if len(events) < 3:
         print("  Running Tier 3 backfill...")
-        events += detect_hitting_streaks_relaxed(conn, season, latest_date)
-        events += detect_league_leaders(conn, season, latest_date)
+        events += _safe_detect("hitting_streaks_relaxed", detect_hitting_streaks_relaxed, conn, season, latest_date)
+        events += _safe_detect("league_leaders", detect_league_leaders, conn, season, latest_date)
         t3_count = len(events) - t1_count - t2_count
         print(f"    Tier 3: {t3_count} events")
 
@@ -4142,8 +4175,8 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False, target_d
     # today's calendar makes the superheader match the "this date" in the text.
     print("  Running On This Date...")
     today_iso = date.today().isoformat()
-    otd_events = detect_on_this_date(conn, season, latest_date,
-                                     target_date=today_iso, attach_date=today_iso)
+    otd_events = _safe_detect("on_this_date", detect_on_this_date, conn, season,
+                              latest_date, target_date=today_iso, attach_date=today_iso)
     events += otd_events
     print(f"    On This Date: {len(otd_events)} events")
 
