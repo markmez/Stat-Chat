@@ -6490,6 +6490,33 @@ _FUZZY_SKIP_TOKENS = frozenset({
 })
 
 
+def _match_team_singular_ok(text: str) -> Optional[str]:
+    """match_team wrapper that also tries singular→plural pluralization.
+
+    Team aliases in stat_config.json are stored plural ("angels", "yankees"),
+    so "as an angel" / "with the yankee" fail plain match_team. Retry with a
+    trailing "s" appended to the last word of the tail before match. Falls
+    back through the original tail unchanged if that doesn't help.
+    """
+    from services import name_matcher as _nm
+
+    code = _nm.match_team(text)
+    if code:
+        return code
+    # Try appending 's' to each word (cheap; the alias index will only match
+    # the pluralized form if it's a legitimate team-name-that-happens-to-be-
+    # spoken-singular).
+    words = text.split()
+    for i in range(len(words)):
+        if words[i].endswith("s"):
+            continue
+        tweaked = " ".join(words[:i] + [words[i] + "s"] + words[i+1:])
+        code = _nm.match_team(tweaked)
+        if code:
+            return code
+    return None
+
+
 def _fuzzy_player_from_query(lower: str) -> Optional[str]:
     """When a player-name-shaped query fails exact resolution (voice
     mangling), fuzzy-match its tokens against player last names. Returns
@@ -6598,7 +6625,7 @@ def _detect_player_career_filter(lower: str, plan: "QueryPlan") -> bool:
         tail = lower[idx + len(trig):].strip()
         # Drop trailing decorators ("years", "era", season noise)
         tail = re.sub(r"\b(years?|seasons?|tenure|days?|era|stint)\b.*$", "", tail).strip()
-        code = _nm.match_team(tail) or _nm.match_team(lower[idx:])
+        code = _match_team_singular_ok(tail) or _match_team_singular_ok(lower[idx:])
         if code:
             team_filter = {"code": code, "mode": "exclude",
                            "label": _team_nickname_for(code)}
@@ -6614,7 +6641,7 @@ def _detect_player_career_filter(lower: str, plan: "QueryPlan") -> bool:
             tail = re.sub(r"\b(years?|seasons?|tenure|days?|era|stint)\b.*$", "", tail).strip()
             # match_team scans aliases — only commit if we find one IN the
             # tail (so "with two outs" doesn't false-trigger on "with ").
-            code = _nm.match_team(tail)
+            code = _match_team_singular_ok(tail)
             if code:
                 team_filter = {"code": code, "mode": "include",
                                "label": _team_nickname_for(code)}
