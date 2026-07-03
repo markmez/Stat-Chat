@@ -5517,7 +5517,12 @@ def build_player_career_filtered(plan) -> Optional[str]:
 
     filter_phrase = _filter_phrase(tf, sr)
     season_span = f"{yr_min}–{yr_max}" if yr_min != yr_max else f"{yr_min}"
-    sentence = f"**{name}** {_verb_for(abbrev, is_rate)} **{formatted} {abbrev}** {filter_phrase} ({season_span}, {n_rows} season{'s' if n_rows != 1 else ''})."
+    # Ongoing tenure (yr_max reaches current year) → present tense so a
+    # response about Ohtani's 2024-2026 Dodgers run reads "has a X OPS"
+    # instead of "posted a X OPS" (which implies the tenure is over).
+    from datetime import date as _date
+    is_ongoing = yr_max == _date.today().year
+    sentence = f"**{name}** {_verb_for(abbrev, is_rate, is_ongoing)} **{formatted} {abbrev}** {filter_phrase} ({season_span}, {n_rows} season{'s' if n_rows != 1 else ''})."
 
     parts = [sentence]
     if trade_rows > 0 and tf:
@@ -5545,11 +5550,13 @@ def _filter_phrase(team_filter: Optional[dict], season_range: Optional[dict]) ->
     return " ".join(bits) if bits else "(career)"
 
 
-def _verb_for(abbrev: str, is_rate: bool) -> str:
+def _verb_for(abbrev: str, is_rate: bool, is_ongoing: bool = False) -> str:
+    # Present tense when the tenure extends to the current year — "Ohtani
+    # has a .922 OPS with the Dodgers" (still going), not "posted" (over).
+    if is_ongoing:
+        return "has a" if is_rate else "has"
     if is_rate:
         return "posted a"
-    if abbrev in ("HR", "H", "RBI", "R", "SB", "BB", "SO", "K", "2B", "3B", "W", "L", "SV"):
-        return "had"
     return "had"
 
 
