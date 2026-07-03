@@ -6677,10 +6677,23 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
         # For rate stats: if multiple filter values, recompute from components.
         # If single filter value (or single-bucket table), use the precomputed
         # column directly. Pitching split tables don't carry the raw
-        # _against rate-component pieces, so we never aggregate for them — the
-        # `_against` precomputed column is always single-bucket.
-        needs_aggregation = len(filter_values) > 1 and not is_pitching
-        if needs_aggregation and stat_info.is_rate and col in ("batting_avg", "obp", "slg", "ops", "iso", "babip"):
+        # Multi-filter-value queries (e.g., "with 2 strikes" = 0-2 + 1-2 +
+        # 2-2 + 3-2) must aggregate across all matched rows before applying
+        # the min-PA gate. Without aggregation, the pa_filter runs against
+        # each individual count-state row's PA (~30-40) rather than the
+        # cross-state total (~140+), so every row fails the qualifier and
+        # the query returns zero — even though 121 pitchers actually
+        # qualify. Prior version excluded pitching via `and not is_pitching`
+        # based on a misread that `_against` columns are single-bucket;
+        # they're single-bucket per row, but a pitcher has multiple rows.
+        needs_aggregation = len(filter_values) > 1
+        # For pitching, the requested col was remapped to its _against
+        # variant earlier; strip that suffix to look up the raw-component
+        # formula in rate_formulas (same aggregation math works either
+        # perspective since the split table's raw columns — hits, walks,
+        # at_bats, etc. — mean "allowed" for pitching).
+        agg_lookup_col = col.replace("_against", "") if is_pitching else col
+        if needs_aggregation and stat_info.is_rate and agg_lookup_col in ("batting_avg", "obp", "slg", "ops", "iso", "babip"):
             rate_formulas = {
                 "batting_avg": "CAST(SUM(t.hits) AS REAL) / NULLIF(SUM(t.at_bats), 0)",
                 "obp": ("CAST(SUM(t.hits) + SUM(t.walks) + SUM(COALESCE(t.hit_by_pitch, 0)) AS REAL) / "
@@ -6698,7 +6711,7 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
                 "babip": ("CAST(SUM(t.hits) - SUM(t.home_runs) AS REAL) / "
                           "NULLIF(SUM(t.at_bats) - SUM(t.strikeouts) - SUM(t.home_runs) + SUM(COALESCE(t.sacrifice_flies, 0)), 0)"),
             }
-            agg_select = rate_formulas.get(col, f"SUM(t.{col})")
+            agg_select = rate_formulas.get(agg_lookup_col, f"SUM(t.{col})")
             cur.execute(
                 f"SELECT p.name, {agg_select} AS stat_val, SUM(t.plate_appearances) AS pa "
                 f"FROM {table} t "
