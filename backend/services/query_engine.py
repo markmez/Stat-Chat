@@ -6484,13 +6484,6 @@ def _detect_player_career_filter(lower: str, plan: "QueryPlan") -> bool:
         return False
     if plan.stat is None and plan.derived_stat is None:
         return False
-    if "career" not in lower and "all time" not in lower and "lifetime" not in lower:
-        # Year-range filters can stand alone ("after 2018"), but the more
-        # ambiguous shapes — "with the Yankees" — should require "career"
-        # to avoid grabbing single-season questions. We check this per branch.
-        has_career_word = False
-    else:
-        has_career_word = True
 
     from services import name_matcher as _nm
 
@@ -6582,14 +6575,11 @@ def _detect_player_career_filter(lower: str, plan: "QueryPlan") -> bool:
                     matched_anything = True
                     break
 
-    # Team-only filter shapes like "Judge career OPS as a Yankee" don't have
-    # a year clause; team_filter is enough. But guard against trivial false
-    # positives: require the literal word "career" / "all time" / "lifetime"
-    # to be present somewhere when ONLY a team filter is matched. Year-range
-    # filters can stand alone ("after 2018") because the year itself signals
-    # career intent.
-    if matched_anything and team_filter and not season_range and not has_career_word:
-        return False
+    # No safety-gate on missing "career" word. "Ohtani's OPS with the Angels"
+    # is unambiguous once you have player + team filter: there's only one
+    # answerable read (Angels-era career stats). Requiring the literal word
+    # "career" caused the demo query "Ohtani's OPS with the Angels" to fall
+    # through to a leaderboard and silently drop both filters (2026-07-03).
     if not matched_anything:
         return False
 
