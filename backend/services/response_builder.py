@@ -6712,13 +6712,24 @@ def build_split_leaderboard(stat_info: 'StatInfo', split_context, season: int,
                           "NULLIF(SUM(t.at_bats) - SUM(t.strikeouts) - SUM(t.home_runs) + SUM(COALESCE(t.sacrifice_flies, 0)), 0)"),
             }
             agg_select = rate_formulas.get(agg_lookup_col, f"SUM(t.{col})")
+            # For the aggregation path, the qualifier applies to the SUM
+            # across all filter values (a pitcher's cross-count-state total)
+            # — NOT to each individual row. Move the min-PA gate from WHERE
+            # to HAVING so we don't drop rows before grouping.
+            agg_having_pa = ""
+            if stat_info.is_rate and pa_filter:
+                # pa_filter is " AND t.<qual_col> >= <n>" — reshape into a
+                # HAVING clause on the SUM.
+                m = re.search(r"AND t\.(\w+) >= (\d+)", pa_filter)
+                if m:
+                    agg_having_pa = f" AND SUM(t.{m.group(1)}) >= {m.group(2)}"
             cur.execute(
                 f"SELECT p.name, {agg_select} AS stat_val, SUM(t.plate_appearances) AS pa "
                 f"FROM {table} t "
                 f"JOIN players p ON t.player_id = p.player_id "
-                f"WHERE t.season = ? {split_filter}{pa_filter}{league_filter} "
+                f"WHERE t.season = ? {split_filter}{league_filter} "
                 f"GROUP BY t.player_id "
-                f"HAVING stat_val IS NOT NULL "
+                f"HAVING stat_val IS NOT NULL{agg_having_pa} "
                 f"ORDER BY stat_val {sort_dir} LIMIT ?",
                 (season, *split_params, limit),
             )
