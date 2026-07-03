@@ -130,7 +130,42 @@ final class VoiceInputService {
                          "Nationals", "Marlins", "Rays", "Brewers", "Reds"]
             let stats = ["OPS", "OPS plus", "ERA", "ERA plus", "WHIP", "RBI",
                          "strikeouts", "home runs", "batting average", "stolen bases"]
+            // Handedness — the recognizer treats "lefty"/"righty" as rare
+            // English words without these hints. Includes both nouns and
+            // preposition forms since users say both ("vs lefties", "against
+            // righties", "left-handed pitching").
+            let handedness = ["righty", "lefty", "righties", "lefties",
+                              "left-handed", "right-handed",
+                              "vs lefties", "vs righties",
+                              "against lefties", "against righties",
+                              "left-handed pitching", "right-handed pitching",
+                              "left-handed batter", "right-handed batter"]
+            // Bare last names for tricky-to-transcribe names — the full-name
+            // hints ("Tarik Skubal") only fire on the full phrase; users
+            // usually say just the surname ("Skubal's ERA...").
+            let bareLastNames = [
+                "Skubal", "Ohtani", "Acuña", "Bichette", "Sasaki", "Yamamoto",
+                "Semien", "Devers", "Chisholm", "Realmuto", "Alcantara",
+                "Arozarena", "Arraez", "Rodón", "Ragans", "Rutschman",
+                "Bogaerts", "Kwan", "Ozuna", "Contreras", "Alcántara",
+                "Buxton", "Machado", "Alonso", "Schwarber", "Goldschmidt",
+                "Kershaw", "deGrom", "Rooker", "Peralta", "Hoerner",
+                "Castellanos", "Albies", "Correa", "Castillo", "Skenes",
+                "Suzuki", "Kirk", "Marte", "Ramírez", "Guerrero",
+                "Tatís", "Rodríguez", "Hernández", "Álvarez", "Giménez",
+                "Ramirez", "Tatis", "Rodriguez", "Hernandez", "Alvarez",
+                "Gimenez", "Fujinami", "Imanaga", "Senga", "Kikuchi",
+                "Nakamura", "Kwon",
+            ]
+            // Split / context vocabulary — words the engine occasionally
+            // mangles ("RISP" → "risk", "leadoff" → "lead off").
+            let splits = ["leadoff", "clutch", "walk-off", "walkoff",
+                          "extra innings", "day games", "night games",
+                          "RISP", "runners in scoring position",
+                          "two strikes", "full count", "grand slam",
+                          "inside the park", "pinch hit"]
             contextualStrings = currentStars + legends + teams + stats
+                + handedness + bareLastNames + splits
         }
 
         let session = AVAudioSession.sharedInstance()
