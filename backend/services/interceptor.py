@@ -365,6 +365,32 @@ def try_intercept(question: str):
                 return response
         # Fall through if query_engine didn't recognize it.
 
+    # 0a-player-career-filter. "Judge OPS with the Yankees", "Ohtani career OPS
+    # with the Angels", "Pujols HR before 2010", etc. — decompose() handles
+    # these via query_type="player_career_filtered", but parse_team_stats
+    # below claims "OPS with the Yankees" as a team-roster query first
+    # (bare last name "Judge" doesn't register via _has_player_name because
+    # more than one player has that last name in history). Force-route to
+    # query_engine when a career-filter phrase signature is present.
+    if (re.search(r"\bwith\s+the\s+\w+", lower)
+            or re.search(r"\bas\s+an?\s+\w+", lower)
+            or re.search(r"\bwith\s+his\s+\w+", lower)
+            or "excluding " in lower
+            or re.search(r"\b(?:after|before|through|since)\s+(?:19|20)\d{2}\b", lower)
+            or re.search(r"\bfrom\s+(?:19|20)\d{2}\s+to\s+(?:19|20)\d{2}\b", lower)):
+        from services.query_engine import decompose, execute as qe_execute
+        try:
+            plan = decompose(trimmed)
+        except Exception as e:
+            logger.error("query_engine_decompose_error question=%r error=%s", trimmed, e)
+            plan = None
+        if plan and plan.is_valid and plan.query_type == "player_career_filtered":
+            response = qe_execute(plan)
+            if response:
+                logger.info("query_engine_handled_player_career_filter question=%r", trimmed)
+                return response
+        # Fall through if not matched.
+
     # 0a-perfect. Perfect games — hand-curated JSON list. Must come before the
     # leaderboard/threshold parsers so "perfect games since 2010" doesn't get
     # parsed as a threshold query on "games".
