@@ -6466,6 +6466,86 @@ _YEAR_BEFORE_TRIGGERS = ("before ", "prior to ", "pre-", "pre ")
 _YEAR_THROUGH_TRIGGERS = ("through ", "thru ", "up to ", "up through ", "as of ", "by ")
 
 
+# Words to skip when fuzzy-matching for a player name from a mangled query.
+# Stats, common connectives, split phrases, and team-code words won't be
+# player last names — matching them would waste the ratio budget.
+_FUZZY_SKIP_TOKENS = frozenset({
+    "ops", "obp", "slg", "avg", "hr", "hrs", "era", "whip", "rbi", "rbis",
+    "hits", "runs", "stolen", "bases", "strikeouts", "walks", "saves", "wins",
+    "losses", "innings", "at", "bats", "the", "with", "of", "in", "a", "an",
+    "and", "as", "for", "by", "his", "her", "their", "was", "is", "are",
+    "career", "season", "seasons", "year", "years", "all", "time", "lifetime",
+    "against", "excluding", "vs", "versus", "on", "or",
+    "yankees", "yankee", "dodgers", "dodger", "angels", "angel",
+    "mets", "met", "cardinals", "cardinal", "cubs", "cub", "sox", "reds",
+    "red", "giants", "giant", "braves", "brave", "phillies", "phillie",
+    "pirates", "pirate", "brewers", "brewer", "rockies", "rocky",
+    "guardians", "guardian", "tigers", "tiger", "twins", "twin",
+    "athletics", "athletic", "royals", "royal", "rangers", "ranger",
+    "astros", "astro", "mariners", "mariner", "padres", "padre",
+    "diamondbacks", "diamondback", "dbacks", "marlins", "marlin",
+    "nationals", "national", "rays", "ray", "orioles", "oriole",
+    "blue", "jays", "jay", "white", "chicago", "boston", "new", "york",
+    "los", "angeles", "san", "diego", "francisco",
+})
+
+
+def _fuzzy_player_from_query(lower: str) -> Optional[str]:
+    """When a player-name-shaped query fails exact resolution (voice
+    mangling), fuzzy-match its tokens against player last names. Returns
+    a canonical full name or None.
+
+    Cheap and forgiving on purpose — the caller has already confirmed a
+    career-filter phrase signature is present, so a strong prior exists
+    that the query IS about a specific player.
+    """
+    from difflib import get_close_matches
+    from services import name_matcher as _nm
+
+    # Build a candidate list of tokens from the query.
+    tokens = re.split(r"[\s'.,?!]+", lower)
+    candidates = []
+    for tok in tokens:
+        t = tok.strip().strip("'s")
+        if not t or len(t) < 3 or t in _FUZZY_SKIP_TOKENS or t.isdigit():
+            continue
+        candidates.append(t)
+    if not candidates:
+        return None
+
+    # Match against last-name index. get_close_matches ranks by SequenceMatcher
+    # ratio; cutoff 0.75 accepts single-phoneme drops ("otani" → "ohtani").
+    last_names = list(_nm.last_name_index.keys())
+    resolved = []
+    for tok in candidates:
+        matches = get_close_matches(tok, last_names, n=1, cutoff=0.75)
+        if not matches:
+            continue
+        last = matches[0]
+        players = _nm.last_name_index[last]
+        if len(players) == 1:
+            resolved.append(players[0])
+        else:
+            # Ambiguous last name — pick by prominence via existing helper
+            # (falls back to the most prominent player using the same rules
+            # match_player_with_prominence uses elsewhere).
+            picked = _nm.match_player_with_prominence(last)
+            if picked and isinstance(picked, tuple):
+                resolved.append(picked[0])
+            elif picked:
+                resolved.append(picked)
+    if len(resolved) == 1:
+        return resolved[0]
+    if len(resolved) > 1:
+        # Multiple fuzzy hits — prefer the strongest one (first) rather than
+        # bail entirely. In practice this happens when the query mentions
+        # both a mangled name and a team-city name that fuzzy-matches a
+        # player last name. The gate below the fuzzy match (career-filter
+        # phrase presence) makes false positives unlikely.
+        return resolved[0]
+    return None
+
+
 def _detect_player_career_filter(lower: str, plan: "QueryPlan") -> bool:
     """Detect career stat queries scoped by team or year range.
 
@@ -6480,12 +6560,31 @@ def _detect_player_career_filter(lower: str, plan: "QueryPlan") -> bool:
     by upstream parsing, and at least one explicit filter (team or year). If
     nothing matches, returns False and leaves the plan untouched.
     """
-    if not plan.player_name:
-        return False
     if plan.stat is None and plan.derived_stat is None:
         return False
 
     from services import name_matcher as _nm
+
+    # Fuzzy player fallback for voice-transcribed queries.
+    # Voice input often mangles names Apple's speech engine doesn't know
+    # ("Ohtani" → "otani", "Skubal" → "scooble"). If we have no player_name
+    # but the query has a clear career-filter phrase signature, try a
+    # forgiving fuzzy match against player last names. This is gated on
+    # phrase presence so we don't fuzzy-match into unrelated queries.
+    if not plan.player_name:
+        _has_career_filter_phrase = (
+            re.search(r"\bwith\s+the\s+\w+", lower) is not None
+            or re.search(r"\bas\s+an?\s+\w+", lower) is not None
+            or re.search(r"\bwith\s+his\s+\w+", lower) is not None
+            or "excluding " in lower
+            or re.search(r"\b(?:after|before|through|since)\s+(?:19|20)\d{2}\b", lower) is not None
+            or re.search(r"\bfrom\s+(?:19|20)\d{2}\s+to\s+(?:19|20)\d{2}\b", lower) is not None
+        )
+        if _has_career_filter_phrase:
+            plan.player_name = _fuzzy_player_from_query(lower)
+
+    if not plan.player_name:
+        return False
 
     matched_anything = False
 
