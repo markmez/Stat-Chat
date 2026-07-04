@@ -37,6 +37,44 @@ final class VoiceInputService {
     // Semien, Adames, Acuña, Realmuto that Apple's recognizer often mangles.
     private var contextualStrings: [String] = []
 
+    // Voice-fixup dictionary — pairs of (regex pattern, replacement) applied
+    // to the recognizer's transcription before display and submission. Fixes
+    // known collisions where a common English word overrides the intended
+    // baseball term even with contextualStrings hints (e.g., "writing" wins
+    // over "righties" because "writing" has orders of magnitude more prior
+    // probability in the on-device language model). Case-insensitive; word-
+    // boundary anchored so we don't corrupt substrings.
+    //
+    // Add entries as we observe real mistranscriptions in Mixpanel voice
+    // query logs. Bias toward high-confidence corrections — a wrong fixup
+    // is worse than a wrong transcription because the user can't understand
+    // where the weirdness came from.
+    private static let voiceFixups: [(String, String)] = [
+        // Handedness — Apple's engine picks common English "-ing" verbs
+        // over the baseball adjectival forms.
+        (#"\bwriting\b"#, "righties"),
+        (#"\bwritey\b"#, "righty"),
+        (#"\bwrighty\b"#, "righty"),
+        // Rare player names the on-device model doesn't know.
+        (#"\bscrew ?ball\b"#, "Skubal"),
+        (#"\bschool ball\b"#, "Skubal"),
+        (#"\bsizzle key\b"#, "Sasaki"),
+        (#"\bsizzly key\b"#, "Sasaki"),
+    ]
+
+    private static func applyVoiceFixups(_ text: String) -> String {
+        var result = text
+        for (pattern, replacement) in voiceFixups {
+            result = result.replacingOccurrences(
+                of: pattern,
+                with: replacement,
+                options: [.regularExpression, .caseInsensitive],
+                range: nil
+            )
+        }
+        return result
+    }
+
     func requestAuthorization() async {
         // Permission APIs deliver callbacks on background threads. Wrapping
         // them via withCheckedContinuation inside a @MainActor function
@@ -226,7 +264,13 @@ final class VoiceInputService {
             guard let self else { return }
             Task { @MainActor in
                 if let result {
-                    self.transcript = result.bestTranscription.formattedString
+                    // Apply voice-fixup dictionary before display so the
+                    // user sees the corrected text (and, on the final
+                    // result, the corrected text is what gets submitted).
+                    // Applied to partials too so mid-flight recognizer
+                    // revisions (e.g., Apple's engine flipping "right"
+                    // → "writing") get rewritten back before rendering.
+                    self.transcript = Self.applyVoiceFixups(result.bestTranscription.formattedString)
                     self.resetSilenceTimer()
                 }
                 if let error {
