@@ -1106,26 +1106,53 @@ def build_single_stat_lookup(name: str, stat_info: StatInfo, season: int) -> Opt
         formatted_value = _format_rate(raw_value) if stat_info.is_rate else raw_value
 
         abbr = stat_info.display_abbrev
-        sentence_map = {
-            "HR": f"**{display_name}** hit **{formatted_value}** home runs in {season}.",
-            "AVG": f"**{display_name}** posted a **{formatted_value} AVG** in {season}.",
-            "RBI": f"**{display_name}** drove in **{formatted_value}** runs in {season}.",
-            "SB": f"**{display_name}** stole **{formatted_value}** bases in {season}.",
-            "R": f"**{display_name}** scored **{formatted_value}** runs in {season}.",
-            "H": f"**{display_name}** had **{formatted_value}** hits in {season}.",
-            "SO": f"**{display_name}** struck out **{formatted_value}** times in {season}.",
-            "BB": f"**{display_name}** drew **{formatted_value}** walks in {season}.",
-            "OPS": f"**{display_name}** posted a **{formatted_value} OPS** in {season}.",
-            "OPS+": f"**{display_name}** posted a **{formatted_value} OPS+** in {season}.",
-            "OBP": f"**{display_name}** posted a **{formatted_value} OBP** in {season}.",
-            "SLG": f"**{display_name}** posted a **{formatted_value} SLG** in {season}.",
-        }
+        # Current-season stats are still accumulating — use present tense so
+        # "Judge has 30 HR" reads live vs "hit 30" which reads like final tally.
+        from datetime import date as _date
+        is_current = int(season) == _date.today().year
+        yr_or_this = "this season" if is_current else f"in {season}"
+        if is_current:
+            sentence_map = {
+                "HR": f"**{display_name}** has **{formatted_value}** home runs {yr_or_this}.",
+                "AVG": f"**{display_name}** has a **{formatted_value} AVG** {yr_or_this}.",
+                "RBI": f"**{display_name}** has driven in **{formatted_value}** runs {yr_or_this}.",
+                "SB": f"**{display_name}** has stolen **{formatted_value}** bases {yr_or_this}.",
+                "R": f"**{display_name}** has scored **{formatted_value}** runs {yr_or_this}.",
+                "H": f"**{display_name}** has **{formatted_value}** hits {yr_or_this}.",
+                "SO": f"**{display_name}** has struck out **{formatted_value}** times {yr_or_this}.",
+                "BB": f"**{display_name}** has drawn **{formatted_value}** walks {yr_or_this}.",
+                "OPS": f"**{display_name}** has a **{formatted_value} OPS** {yr_or_this}.",
+                "OPS+": f"**{display_name}** has a **{formatted_value} OPS+** {yr_or_this}.",
+                "OBP": f"**{display_name}** has a **{formatted_value} OBP** {yr_or_this}.",
+                "SLG": f"**{display_name}** has a **{formatted_value} SLG** {yr_or_this}.",
+            }
+        else:
+            sentence_map = {
+                "HR": f"**{display_name}** hit **{formatted_value}** home runs in {season}.",
+                "AVG": f"**{display_name}** posted a **{formatted_value} AVG** in {season}.",
+                "RBI": f"**{display_name}** drove in **{formatted_value}** runs in {season}.",
+                "SB": f"**{display_name}** stole **{formatted_value}** bases in {season}.",
+                "R": f"**{display_name}** scored **{formatted_value}** runs in {season}.",
+                "H": f"**{display_name}** had **{formatted_value}** hits in {season}.",
+                "SO": f"**{display_name}** struck out **{formatted_value}** times in {season}.",
+                "BB": f"**{display_name}** drew **{formatted_value}** walks in {season}.",
+                "OPS": f"**{display_name}** posted a **{formatted_value} OPS** in {season}.",
+                "OPS+": f"**{display_name}** posted a **{formatted_value} OPS+** in {season}.",
+                "OBP": f"**{display_name}** posted a **{formatted_value} OBP** in {season}.",
+                "SLG": f"**{display_name}** posted a **{formatted_value} SLG** in {season}.",
+            }
         if abbr in sentence_map:
             sentence = sentence_map[abbr]
         elif stat_info.is_rate:
-            sentence = f"**{display_name}** posted a **{formatted_value} {abbr}** in {season}."
+            if is_current:
+                sentence = f"**{display_name}** has a **{formatted_value} {abbr}** {yr_or_this}."
+            else:
+                sentence = f"**{display_name}** posted a **{formatted_value} {abbr}** in {season}."
         else:
-            sentence = f"**{display_name}** had **{formatted_value} {abbr}** in {season}."
+            if is_current:
+                sentence = f"**{display_name}** has **{formatted_value} {abbr}** {yr_or_this}."
+            else:
+                sentence = f"**{display_name}** had **{formatted_value} {abbr}** in {season}."
 
         stat_name = stat_info.pill_name
         return (
@@ -1176,20 +1203,39 @@ def build_pitching_single_stat_lookup(name: str, stat_info: StatInfo, season: in
         formatted_value = _format_pitching_rate(raw_value, 2) if stat_info.is_rate else raw_value
 
         abbr = stat_info.display_abbrev
-        sentence_map = {
-            "W": f"**{display_name}** won **{formatted_value}** games in {season}.",
-            "SV": f"**{display_name}** had **{formatted_value}** saves in {season}.",
-            "SO": f"**{display_name}** struck out **{formatted_value}** batters in {season}.",
-            "ERA": f"**{display_name}** posted a **{formatted_value} ERA** in {season}.",
-            "WHIP": f"**{display_name}** posted a **{formatted_value} WHIP** in {season}.",
-            "K/9": f"**{display_name}** posted a **{_format_pitching_rate(raw_value, 1)} K/9** in {season}.",
-        }
+        from datetime import date as _date
+        is_current = int(season) == _date.today().year
+        yr_or_this = "this season" if is_current else f"in {season}"
+        if is_current:
+            sentence_map = {
+                "W": f"**{display_name}** has **{formatted_value}** wins {yr_or_this}.",
+                "SV": f"**{display_name}** has **{formatted_value}** saves {yr_or_this}.",
+                "SO": f"**{display_name}** has struck out **{formatted_value}** batters {yr_or_this}.",
+                "ERA": f"**{display_name}** has a **{formatted_value} ERA** {yr_or_this}.",
+                "WHIP": f"**{display_name}** has a **{formatted_value} WHIP** {yr_or_this}.",
+                "K/9": f"**{display_name}** has a **{_format_pitching_rate(raw_value, 1)} K/9** {yr_or_this}.",
+            }
+        else:
+            sentence_map = {
+                "W": f"**{display_name}** won **{formatted_value}** games in {season}.",
+                "SV": f"**{display_name}** had **{formatted_value}** saves in {season}.",
+                "SO": f"**{display_name}** struck out **{formatted_value}** batters in {season}.",
+                "ERA": f"**{display_name}** posted a **{formatted_value} ERA** in {season}.",
+                "WHIP": f"**{display_name}** posted a **{formatted_value} WHIP** in {season}.",
+                "K/9": f"**{display_name}** posted a **{_format_pitching_rate(raw_value, 1)} K/9** in {season}.",
+            }
         if abbr in sentence_map:
             sentence = sentence_map[abbr]
         elif stat_info.is_rate:
-            sentence = f"**{display_name}** posted a **{formatted_value} {abbr}** in {season}."
+            if is_current:
+                sentence = f"**{display_name}** has a **{formatted_value} {abbr}** {yr_or_this}."
+            else:
+                sentence = f"**{display_name}** posted a **{formatted_value} {abbr}** in {season}."
         else:
-            sentence = f"**{display_name}** had **{formatted_value} {abbr}** in {season}."
+            if is_current:
+                sentence = f"**{display_name}** has **{formatted_value} {abbr}** {yr_or_this}."
+            else:
+                sentence = f"**{display_name}** had **{formatted_value} {abbr}** in {season}."
 
         stat_name = stat_info.pill_name
         return (
