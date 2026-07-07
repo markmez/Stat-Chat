@@ -75,6 +75,60 @@ def is_game_event_qualifier(question: str) -> bool:
     return any(p in question.lower() for p in _EVENT_QUALIFIERS)
 
 
+# Stat-perspective split indicators — phrases that require a season-aggregate
+# split table (pitching_platoon_splits, count_pitching_splits, etc.). Season
+# aggregate; no game-level context.
+_STAT_SPLIT_INDICATORS = (
+    "against lefties", "against righties", "vs lefties", "vs righties",
+    "vs lhp", "vs rhp", "vs lhh", "vs rhh",
+    "against left-handed", "against right-handed",
+    "vs left-handed", "vs right-handed",
+    "against sliders", "against fastballs", "against curveballs",
+    "against changeups", "against sinkers", "against cutters",
+    "against sweepers", "against splitters",
+    "vs sliders", "vs fastballs", "vs curveballs",
+    "with risp", "runners in scoring position",
+    "with 2 strikes", "with two strikes", "with the bases loaded",
+    "in the count",  # "ahead in the count", "behind in the count"
+    "full count",
+)
+
+# Team-context indicators — per-game filters derived from team_game_results.
+# Live at game-log granularity; no per-plate-appearance detail.
+_TEAM_CONTEXT_INDICATORS = (
+    "in day games", "in night games", "day game", "night game",
+    "on the road", "at home", "at fenway", "at home this",
+    "in extra innings", "in extra-innings",
+    "in rain games", "in cold weather", "in hot weather",
+    "on tuesdays", "on wednesdays", "on thursdays",
+    "on fridays", "on saturdays", "on sundays", "on mondays",
+    "with team above .500", "with a winning record",
+    "with team below .500", "with a losing record",
+)
+
+
+def is_compound_split_unanswerable(question: str) -> bool:
+    """Does this question combine a stat-perspective split with a team-context
+    filter — the crossproduct we don't store (e.g., "vs lefties on the road")?
+
+    Query engine already bails this shape internally (see _execute_team_context_
+    leaderboard). But Haiku SQL and sql_planner run anyway and silently drop
+    ONE of the two filters, returning a confident-wrong number labeled as the
+    combined answer. This bail routes matching queries directly to
+    knowledge_mode so Sonnet can narrate honestly ("we don't cleanly break
+    out that intersection — his vs-lefty number is X, his road number is Y").
+
+    Matches when BOTH a stat-split phrase AND a team-context phrase appear.
+    Either alone is answerable via a single split table and shouldn't bail.
+    """
+    if not question:
+        return False
+    lower = question.lower()
+    has_split = any(p in lower for p in _STAT_SPLIT_INDICATORS)
+    has_context = any(p in lower for p in _TEAM_CONTEXT_INDICATORS)
+    return has_split and has_context
+
+
 def _claim(result, query):
     """Default-on guard for single-player stat parsers (the central choke point).
 

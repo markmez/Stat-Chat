@@ -662,9 +662,16 @@ async def _try_haiku_sql(question: str):
     # HR, etc.) have no clean structural answer. Even if Haiku writes SQL
     # that runs, it'll produce a proxy stat (regular HRs) labeled as if
     # it were the requested concept. Bail so knowledge_mode handles it.
-    from services.interceptor import is_game_event_qualifier
+    from services.interceptor import is_game_event_qualifier, is_compound_split_unanswerable
     if is_game_event_qualifier(question):
         logger.info("haiku_sql_bail_event_qualifier question=%r", question)
+        return None
+    # Compound-split queries ("vs lefties on the road", "with RISP at night")
+    # have no crossproduct table stored. Haiku will silently drop one of the
+    # two filters and return a wrong-labeled precise number. Route to
+    # knowledge_mode where Sonnet narrates honestly.
+    if is_compound_split_unanswerable(question):
+        logger.info("haiku_sql_bail_compound_split question=%r", question)
         return None
     try:
         sql = await llm.generate_sql_haiku(question)
@@ -1687,7 +1694,10 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
         from services.sql_planner import plan_and_execute
-        from services.interceptor import is_game_event_qualifier as _is_geq
+        from services.interceptor import (
+            is_game_event_qualifier as _is_geq,
+            is_compound_split_unanswerable as _is_compound,
+        )
 
         # Skip the insight engine for game-event qualifiers — sql_planner
         # has tools to write SQL, which it'll do even when the requested
@@ -1696,6 +1706,14 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         # to knowledge_mode for a pure narrative answer.
         if _is_geq(question):
             logger.info("insight_skip_event_qualifier question=%r", question)
+            insight_result = None
+            future = None
+        elif _is_compound(question):
+            # Compound-split (stat-perspective split × team-context) has no
+            # stored crossproduct table. sql_planner would either drop one
+            # filter or invent a proxy leaderboard. Route to knowledge_mode
+            # so Sonnet narrates the two components honestly.
+            logger.info("insight_skip_compound_split question=%r", question)
             insight_result = None
             future = None
         else:
