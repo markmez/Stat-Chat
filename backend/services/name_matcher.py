@@ -2085,9 +2085,20 @@ def parse_platoon_splits(input_str: str) -> Optional[dict]:
     if not name:
         return None
 
-    season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
+    # Career scope override — "career vs lefties" / "all-time OPS against
+    # lefties" / "lifetime vs LHP" must aggregate across every season the
+    # player has platoon data for, NOT silently default to current season
+    # (2026-07-06 bug: "Judge career OPS against lefties" was silently
+    # dropping "career" and returning his 2026 platoon number in 71 PA).
+    is_career = ("career" in lower or "all time" in lower
+                 or "all-time" in lower or "lifetime" in lower)
+    if is_career:
+        season = None
+    else:
+        season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
     return {"name": name, "hand": hand, "season": season,
-            "consumed": lhp_triggers + rhp_triggers + both_triggers}
+            "consumed": lhp_triggers + rhp_triggers + both_triggers +
+            (["career", "all time", "all-time", "lifetime"] if is_career else [])}
 
 
 def parse_platoon_leaderboard(input_str: str) -> Optional[dict]:

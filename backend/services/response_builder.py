@@ -2033,8 +2033,14 @@ def build_pitching_current_form(name: str) -> Optional[str]:
 # 14. build_platoon_splits
 # ===================================================================
 
-def build_platoon_splits(name: str, hand: Optional[str] = None, season: int = 0) -> Optional[str]:
+def build_platoon_splits(name: str, hand: Optional[str] = None, season=0) -> Optional[str]:
     """Batting platoon splits (vs LHP / vs RHP)."""
+    # Career-scope grid ("Judge platoon splits career") not implemented in the
+    # grid form yet — bail so the query falls through to something else.
+    # Career-scope SINGLE-STAT queries ("Judge career OPS vs lefties") DO
+    # work — they hit build_platoon_stat_single above.
+    if season is None:
+        return None
     conn = _get_db()
     try:
         season = _resolve_season(conn, name, season)
@@ -2086,54 +2092,104 @@ def build_platoon_splits(name: str, hand: Optional[str] = None, season: int = 0)
         conn.close()
 
 
-def build_platoon_stat_single(name: str, hand: str, season: int, stat_info) -> Optional[str]:
-    """Single stat from platoon splits: 'Judge home runs vs lefties 2025'."""
+def build_platoon_stat_single(name: str, hand: str, season, stat_info) -> Optional[str]:
+    """Single stat from platoon splits: 'Judge home runs vs lefties 2025'.
+
+    Career mode: pass season=None to aggregate across all seasons of platoon
+    data for the player. Rate stats recompute from raw components; counting
+    stats SUM.
+    """
     conn = _get_db()
     try:
-        season = _resolve_season(conn, name, season)
         display_name, _ = _get_player_info(conn, name)
 
         split_value = "vs_LHP" if hand == "LHP" else "vs_RHP"
         hand_label = "left-handed" if hand == "LHP" else "right-handed"
 
         col = stat_info.db_column
-        _col_map = {
-            "home_runs": "home_runs", "hits": "hits", "rbi": "rbi",
-            "doubles": "doubles", "triples": "triples",
-            "walks": "walks", "strikeouts": "strikeouts",
-            "batting_avg": "batting_avg", "obp": "obp", "slg": "slg",
-            "ops": "ops", "iso": "iso", "babip": "babip",
-            "plate_appearances": "plate_appearances", "at_bats": "at_bats",
-        }
-        ps_col = _col_map.get(col)
-        if not ps_col:
+        _counting_cols = {"home_runs", "hits", "rbi", "doubles", "triples",
+                          "walks", "strikeouts", "plate_appearances", "at_bats"}
+        _rate_cols = {"batting_avg", "obp", "slg", "ops", "iso", "babip"}
+        if col not in _counting_cols and col not in _rate_cols:
             return None
 
-        cur = conn.cursor()
-        cur.execute(
-            f"SELECT ps.{ps_col}, ps.plate_appearances "
-            "FROM platoon_splits ps "
-            "JOIN players p ON ps.player_id = p.player_id "
-            "WHERE p.name = ? AND ps.season = ? AND ps.split = ?",
-            (_sanitize(name), season, split_value),
-        )
-        row = cur.fetchone()
-        if not row:
-            return None
+        is_career = season is None
 
-        value = row[0]
-        pa = row[1]
+        if not is_career:
+            season = _resolve_season(conn, name, season)
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT ps.{col}, ps.plate_appearances "
+                "FROM platoon_splits ps "
+                "JOIN players p ON ps.player_id = p.player_id "
+                "WHERE p.name = ? AND ps.season = ? AND ps.split = ?",
+                (_sanitize(name), season, split_value),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            value = row[0]
+            pa = row[1]
+        else:
+            # Career aggregation across every platoon-splits season row
+            cur = conn.cursor()
+            if col in _counting_cols:
+                cur.execute(
+                    f"SELECT SUM(ps.{col}) AS val, SUM(ps.plate_appearances) AS pa "
+                    "FROM platoon_splits ps "
+                    "JOIN players p ON ps.player_id = p.player_id "
+                    "WHERE p.name = ? AND ps.split = ?",
+                    (_sanitize(name), split_value),
+                )
+            else:
+                # Rate stats: recompute from raw components. Skip AVG/OBP/SLG/
+                # OPS/ISO/BABIP formulas that need columns not on this table
+                # (hit_by_pitch, sacrifice_flies) by using existing components.
+                rate_sql = {
+                    "batting_avg": "CAST(SUM(hits) AS REAL) / NULLIF(SUM(at_bats), 0)",
+                    "obp": ("CAST(SUM(hits) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) AS REAL) / "
+                            "NULLIF(SUM(at_bats) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) + SUM(COALESCE(sacrifice_flies, 0)), 0)"),
+                    "slg": ("CAST(SUM(hits) - SUM(doubles) - SUM(triples) - SUM(home_runs) + "
+                            "2*SUM(doubles) + 3*SUM(triples) + 4*SUM(home_runs) AS REAL) / "
+                            "NULLIF(SUM(at_bats), 0)"),
+                    "ops": ("(CAST(SUM(hits) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) AS REAL) / "
+                            "NULLIF(SUM(at_bats) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) + SUM(COALESCE(sacrifice_flies, 0)), 0)) + "
+                            "(CAST(SUM(hits) - SUM(doubles) - SUM(triples) - SUM(home_runs) + "
+                            "2*SUM(doubles) + 3*SUM(triples) + 4*SUM(home_runs) AS REAL) / NULLIF(SUM(at_bats), 0))"),
+                    "iso": ("CAST(SUM(doubles) + 2*SUM(triples) + 3*SUM(home_runs) AS REAL) / "
+                            "NULLIF(SUM(at_bats), 0)"),
+                    "babip": ("CAST(SUM(hits) - SUM(home_runs) AS REAL) / "
+                              "NULLIF(SUM(at_bats) - SUM(strikeouts) - SUM(home_runs) + SUM(COALESCE(sacrifice_flies, 0)), 0)"),
+                }
+                formula = rate_sql.get(col)
+                if not formula:
+                    return None
+                cur.execute(
+                    f"SELECT ({formula}) AS val, SUM(ps.plate_appearances) AS pa "
+                    "FROM platoon_splits ps "
+                    "JOIN players p ON ps.player_id = p.player_id "
+                    "WHERE p.name = ? AND ps.split = ?",
+                    (_sanitize(name), split_value),
+                )
+            row = cur.fetchone()
+            if not row or row[0] is None:
+                return None
+            value = row[0]
+            pa = row[1]
 
         if stat_info.is_rate and value is not None:
             formatted = _format_rate(value)
         else:
             formatted = str(int(value)) if value is not None else "0"
 
+        when_phrase = "in his career" if is_career else f"in {season}"
+        verb = "has" if is_career else "had"
+        season_pill = "career" if is_career else str(season)
         return (
-            f"**{display_name}** had **{formatted} {stat_info.display_name.lower()}** "
-            f"vs {hand_label} pitchers in {season} ({pa} PA).\n\n"
-            f"[SUGGEST]{display_name} vs {'lefties' if hand == 'LHP' else 'righties'} {season}[/SUGGEST]\n"
-            f"[SUGGEST]{display_name} {season}[/SUGGEST]"
+            f"**{display_name}** {verb} **{formatted} {stat_info.display_name.lower()}** "
+            f"vs {hand_label} pitchers {when_phrase} ({pa:,} PA).\n\n"
+            f"[SUGGEST]{display_name} vs {'lefties' if hand == 'LHP' else 'righties'} {season_pill}[/SUGGEST]\n"
+            f"[SUGGEST]{display_name} career[/SUGGEST]"
         )
     finally:
         conn.close()
@@ -2143,8 +2199,12 @@ def build_platoon_stat_single(name: str, hand: str, season: int, stat_info) -> O
 # 15. build_pitching_platoon_splits
 # ===================================================================
 
-def build_pitching_platoon_splits(name: str, hand: Optional[str] = None, season: int = 0) -> Optional[str]:
+def build_pitching_platoon_splits(name: str, hand: Optional[str] = None, season=0) -> Optional[str]:
     """Pitching platoon splits (vs LHB / vs RHB)."""
+    if season is None:
+        # Career-scope grid not yet implemented for pitching platoon splits
+        # (single-stat career queries use build_platoon_stat_single upstream).
+        return None
     conn = _get_db()
     try:
         season = _resolve_season(conn, name, season, "season_pitching_stats", "sp")
