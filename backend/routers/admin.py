@@ -1880,6 +1880,31 @@ async def seed_event_archive(
     return {"status": "ok", "seeded": len(events)}
 
 
+@router.get("/debug-parse-platoon")
+async def debug_parse_platoon(
+    q: str = "",
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Diagnostic: what does parse_platoon_splits return + does _claim block it?"""
+    verify_admin(authorization, key)
+    from services import name_matcher as nm
+    from services.interceptor import _claim
+    try:
+        parsed = nm.parse_platoon_splits(q)
+        claimed = _claim(parsed, q) if parsed else None
+        stat_match = nm.match_stat(q.lower()) if q else None
+        return {
+            "parsed": parsed,
+            "claimed": claimed,
+            "stat_match": stat_match.db_column if stat_match else None,
+            "is_pitcher": nm.is_pitcher(parsed.get("name")) if parsed and parsed.get("name") else None,
+        }
+    except Exception as e:
+        import traceback
+        return {"error": f"{type(e).__name__}: {e}", "tb": traceback.format_exc()[-800:]}
+
+
 @router.get("/debug-decompose")
 async def debug_decompose(
     q: str = "",
