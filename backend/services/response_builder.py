@@ -2218,7 +2218,14 @@ def build_pitching_platoon_splits(name: str, hand: Optional[str] = None, season=
         split_filter = ""
         params = [_sanitize(name), season]
         if hand:
-            split_value = "vs_LHB" if hand == "LHB" else "vs_RHB"
+            # Parser passes hand="LHP" (from lhp_triggers like "against lefties")
+            # or hand="RHP" — batter-centric naming. Pitching platoon split table
+            # is opponent-batter-centric (vs_LHB / vs_RHB). Map correctly:
+            # "against lefties" in a pitcher context = pitcher facing LHB.
+            # Sibling build_platoon_leaderboard already had this mapping right;
+            # this function was checking hand=="LHB" which the parser never
+            # sets → every "vs lefties" for a pitcher silently returned RHB.
+            split_value = "vs_LHB" if hand == "LHP" else "vs_RHB"
             split_filter = " AND pps.split = ?"
             params.append(split_value)
 
@@ -2242,7 +2249,9 @@ def build_pitching_platoon_splits(name: str, hand: Optional[str] = None, season=
 
         subtitle = "Platoon Splits"
         if hand:
-            subtitle = "vs Left-Handed Batters" if hand == "LHB" else "vs Right-Handed Batters"
+            # Same mapping fix as above — parser passes LHP/RHP; map to
+            # LHB/RHB for the batter-facing pitcher label.
+            subtitle = "vs Left-Handed Batters" if hand == "LHP" else "vs Right-Handed Batters"
 
         parts = []
         parts.append(f"**{display_name}** \u2014 {season} {subtitle}\n")
