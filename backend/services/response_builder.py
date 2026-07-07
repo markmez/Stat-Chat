@@ -2145,21 +2145,26 @@ def build_platoon_stat_single(name: str, hand: str, season, stat_info) -> Option
                 # Rate stats: recompute from raw components. Skip AVG/OBP/SLG/
                 # OPS/ISO/BABIP formulas that need columns not on this table
                 # (hit_by_pitch, sacrifice_flies) by using existing components.
+                # Note: platoon_splits doesn't carry hit_by_pitch or
+                # sacrifice_flies columns, so OBP/OPS/BABIP formulas drop
+                # those pieces. OBP ≈ (H+BB)/(AB+BB) — slight underestimate
+                # vs the fully-qualified formula (a few thousandths for a
+                # career sample); acceptable for a career approximation.
                 rate_sql = {
                     "batting_avg": "CAST(SUM(hits) AS REAL) / NULLIF(SUM(at_bats), 0)",
-                    "obp": ("CAST(SUM(hits) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) AS REAL) / "
-                            "NULLIF(SUM(at_bats) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) + SUM(COALESCE(sacrifice_flies, 0)), 0)"),
+                    "obp": ("CAST(SUM(hits) + SUM(walks) AS REAL) / "
+                            "NULLIF(SUM(at_bats) + SUM(walks), 0)"),
                     "slg": ("CAST(SUM(hits) - SUM(doubles) - SUM(triples) - SUM(home_runs) + "
                             "2*SUM(doubles) + 3*SUM(triples) + 4*SUM(home_runs) AS REAL) / "
                             "NULLIF(SUM(at_bats), 0)"),
-                    "ops": ("(CAST(SUM(hits) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) AS REAL) / "
-                            "NULLIF(SUM(at_bats) + SUM(walks) + SUM(COALESCE(hit_by_pitch, 0)) + SUM(COALESCE(sacrifice_flies, 0)), 0)) + "
+                    "ops": ("(CAST(SUM(hits) + SUM(walks) AS REAL) / "
+                            "NULLIF(SUM(at_bats) + SUM(walks), 0)) + "
                             "(CAST(SUM(hits) - SUM(doubles) - SUM(triples) - SUM(home_runs) + "
                             "2*SUM(doubles) + 3*SUM(triples) + 4*SUM(home_runs) AS REAL) / NULLIF(SUM(at_bats), 0))"),
                     "iso": ("CAST(SUM(doubles) + 2*SUM(triples) + 3*SUM(home_runs) AS REAL) / "
                             "NULLIF(SUM(at_bats), 0)"),
                     "babip": ("CAST(SUM(hits) - SUM(home_runs) AS REAL) / "
-                              "NULLIF(SUM(at_bats) - SUM(strikeouts) - SUM(home_runs) + SUM(COALESCE(sacrifice_flies, 0)), 0)"),
+                              "NULLIF(SUM(at_bats) - SUM(strikeouts) - SUM(home_runs), 0)"),
                 }
                 formula = rate_sql.get(col)
                 if not formula:
