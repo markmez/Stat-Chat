@@ -40,11 +40,10 @@ struct StatGridView: View {
     @State private var selectedStat: String? = nil
     @State private var isExpanded = false
     @State private var showProjection = false
-    /// Slider value: "last N games" (nil = auto-detected from FORM metadata)
+    /// Slider value: "last N games" (nil = auto-detected from FORM metadata).
+    /// activeDisplayRows and the pace calc both read this directly so they
+    /// stay in sync during drag (no more debounce indirection).
     @State private var formSliderNumGames: Int? = nil
-    /// Debounced slider value — only updates display after drag settles
-    @State private var formSliderDisplayGames: Int? = nil
-    @State private var sliderDebounceTask: Task<Void, Never>? = nil
     /// Cache of recently computed grids by game number
     @State private var recomputeCache: [Int: [StatGridParser.StatGrid.Row]] = [:]
     @State private var formGameLogs: [GameLog]? = nil
@@ -184,6 +183,13 @@ struct StatGridView: View {
 
     /// When form metadata is present and slider has been adjusted (or logs are loaded),
     /// returns recomputed rows so the ForEach renders updated values inline.
+    /// Uses `formSliderNumGames` (the immediate slider position) so stats stay
+    /// in sync with the pace calculation, which also reads the immediate value.
+    /// Previously read a debounced value while pace read the immediate one —
+    /// the divisor would change but the numerator (raw stats) stayed stale,
+    /// so pace *looked* like it updated (new divisor) while the underlying
+    /// stat row didn't. Recompute is cheap (~200 game logs × integer sums per
+    /// frame); the recomputeCache handles repeat positions instantly.
     private var activeDisplayRows: [StatGridParser.StatGrid.Row] {
         guard let meta = grid.formMetadata,
               let logs = formGameLogs, !logs.isEmpty else {
@@ -192,22 +198,13 @@ struct StatGridView: View {
         let numGamesShown = formSliderNumGames ?? (meta.totalGames - meta.autoDetectedGameNumber + 1)
         let effectiveGameNumber = meta.totalGames - numGamesShown + 1
 
-        // Check cache first — instant if we've computed this before
         if let cached = recomputeCache[effectiveGameNumber] {
             return cached
         }
 
-        // Use debounced value for uncached recomputation
-        let debouncedGames = formSliderDisplayGames ?? numGamesShown
-        let debouncedGameNumber = meta.totalGames - debouncedGames + 1
-        if let cached = recomputeCache[debouncedGameNumber] {
-            return cached
-        }
-
-        if let reGrid = Self.recomputeFromLogs(logs, fromGameNumber: debouncedGameNumber) {
-            // Cache the result (limit cache size to 30 entries)
+        if let reGrid = Self.recomputeFromLogs(logs, fromGameNumber: effectiveGameNumber) {
             DispatchQueue.main.async {
-                recomputeCache[debouncedGameNumber] = reGrid.rows
+                recomputeCache[effectiveGameNumber] = reGrid.rows
                 if recomputeCache.count > 30 {
                     recomputeCache.removeAll()
                 }
@@ -430,13 +427,9 @@ struct StatGridView: View {
                             set: { newValue in
                                 let clamped = max(1, min(Int(newValue.rounded()), meta.totalGames))
                                 formSliderNumGames = clamped
-                                // Debounce the expensive recomputation
-                                sliderDebounceTask?.cancel()
-                                sliderDebounceTask = Task { @MainActor in
-                                    try? await Task.sleep(for: .milliseconds(40))
-                                    guard !Task.isCancelled else { return }
-                                    formSliderDisplayGames = clamped
-                                }
+                                // No debounce — activeDisplayRows recomputes
+                                // instantly on every change so stats and pace
+                                // stay in sync. Recompute is O(N) with N ≤ 200.
                             }
                         ),
                         range: 1...Double(max(meta.totalGames, 2)),
