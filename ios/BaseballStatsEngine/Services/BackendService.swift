@@ -42,6 +42,15 @@ final class BackendService: Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // URLSession default is 60s. Sonnet knowledge_mode + sql_planner
+        // can legitimately take 50-90s for narrative queries the query
+        // engine can't answer structurally (e.g., "Yankees warm-day vs
+        // cold-day performance"). At the 60s default, borderline-slow
+        // Sonnet responses fail as "Couldn't reach the server" from the
+        // client's perspective even though the backend is working fine.
+        // Bumping to 180s covers legitimate Sonnet latency without
+        // hiding real network problems (typical p95 < 20s).
+        request.timeoutInterval = 180
 
         let historyPayload = history.flatMap { q, a in
             [["role": "user", "content": q],
