@@ -126,6 +126,13 @@ _UNANSWERABLE_SITUATIONS = (
     "with a runner on third", "with runners in scoring",
     "with two outs", "with 2 outs",
     "in clutch situations", "in the clutch",
+    # Weather / temperature — MSF flags rain/cold but not fine-grained
+    # temperature. Sonnet handles these queries via narrative knowledge.
+    "warm day", "warm days", "cold day", "cold days",
+    "hot day", "hot days", "on warm", "on cold", "on hot",
+    "in warm weather", "in cold weather", "in hot weather",
+    "in rain", "in the rain", "rain games", "rainy",
+    "temperature", "degrees",
 )
 
 
