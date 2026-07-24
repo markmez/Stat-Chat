@@ -652,6 +652,35 @@ def _format_structured_rows_to_grid(
         return "\n".join(parts)
 
 
+def _looks_like_sql(text: str) -> bool:
+    """Sanity-check that a Haiku response is a SQL query, not a natural-
+    language reply. Strips leading whitespace, comments (--), and markdown
+    fences (```sql), then checks whether the first real token is a valid
+    SQL query verb. Prevents "I need to see the original SQL..." from being
+    fed to SQLite as a query (2026-07-23 bug: user asked "this doesn't
+    answer my question", Haiku responded conversationally on retry, and
+    the "I need..." was executed as SQL, throwing "near 'I': syntax error").
+    """
+    if not text:
+        return False
+    t = text.strip()
+    # Strip common markdown code fences (Haiku sometimes wraps SQL in ```sql)
+    if t.startswith("```"):
+        # Drop the fence line
+        t = t.split("\n", 1)[1] if "\n" in t else t
+        # Drop trailing fence if present
+        if t.rstrip().endswith("```"):
+            t = t.rstrip()[:-3].rstrip()
+        t = t.strip()
+    # Strip leading SQL comments
+    while t.startswith("--"):
+        t = t.split("\n", 1)[1].strip() if "\n" in t else ""
+    if not t:
+        return False
+    first_word = t.split(None, 1)[0].upper().rstrip(";")
+    return first_word in {"SELECT", "WITH"}
+
+
 async def _try_haiku_sql(question: str):
     """
     Haiku SQL fallback: generate SQL with Haiku, execute it.
@@ -701,6 +730,13 @@ async def _try_haiku_sql(question: str):
 
     if not sql or "OFF_TOPIC" in sql or "NO_DATA" in sql or "NEEDS_CONTEXT" in sql:
         return None
+    if not _looks_like_sql(sql):
+        # Haiku returned conversational text (e.g., "I need to see the
+        # original query...") instead of SQL. Don't pass it to SQLite,
+        # where it produces confusing "near 'I': syntax error" logs and
+        # a wasted retry cycle. Fall through cleanly.
+        logger.info("haiku_sql_not_sql question=%r first_chars=%r", question, sql[:80])
+        return None
 
     # First attempt
     loop = asyncio.get_event_loop()
@@ -715,6 +751,13 @@ async def _try_haiku_sql(question: str):
             retry_prompt = f"Previous SQL failed with error: {e}\n\nOriginal question: {question}\n\nFix the SQL query."
             sql = await llm.generate_sql_haiku(retry_prompt)
             if not sql or "OFF_TOPIC" in sql or "NO_DATA" in sql or "NEEDS_CONTEXT" in sql:
+                return None
+            if not _looks_like_sql(sql):
+                # Retry response wasn't SQL either — Haiku got confused
+                # and answered conversationally. Fall through instead of
+                # sending "I need to see..." to SQLite as a query.
+                logger.info("haiku_sql_retry_not_sql question=%r first_chars=%r",
+                            question, sql[:80])
                 return None
             result_text, is_streak = await loop.run_in_executor(
                 None, runner.execute_and_format, sql
@@ -1592,6 +1635,19 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             yield event({"type": "done"})
             increment_count(device_id)
             log_query(question, device_id, "sonnet", input_method=input_method, duration_ms=_elapsed_ms())
+            return
+
+        elif classification["type"] == "feedback":
+            # User complained about the previous answer without asking a new
+            # question ("this doesn't answer my question", "no", "wrong").
+            # Route to a helpful "please rephrase" nudge — do NOT send this
+            # to Haiku SQL where it triggers the near-'I': syntax error bug.
+            # Doesn't count against the user's weekly quota.
+            logger.info("followup_feedback question=%r", question)
+            yield event({"type": "text",
+                         "text": "Sorry that didn't hit the mark. Try rephrasing your question with the specific player, stat, and time frame you're looking for — that helps me find the right answer."})
+            yield event({"type": "done"})
+            log_query(question, device_id, "feedback", input_method=input_method, duration_ms=_elapsed_ms())
             return
 
     # 2b. Insight query detection — check before interceptor

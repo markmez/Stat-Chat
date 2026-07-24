@@ -305,6 +305,14 @@ FOLLOWUP_CLASSIFY_PROMPT = """You classify follow-up questions in a baseball sta
 Given the prior conversation and a short follow-up, determine if the user wants:
 1. New data looked up — a different player, year, stat, split, or comparison. Rewrite as a COMPLETE, STANDALONE question that makes sense without any prior context.
 2. Analysis or interpretation of the prior answer — "is that good?", "how is that calculated?", "why?", etc.
+3. Meta-feedback about the previous answer with no new question — "this doesn't answer my question", "no", "wrong", "that's not what I asked", "try again", "you're wrong", "not helpful". These are complaints, not data questions. Classify as {"type": "feedback"} — the client will show a "sorry, try rephrasing" hint. NEVER treat these as data queries: they'd get passed to Haiku SQL where the model gets confused, invents malformed SQL, and produces a "near 'I': syntax error" failure.
+
+Examples (prior question: any):
+- "this doesn't answer my question" → {"type": "feedback"}
+- "no" → {"type": "feedback"}
+- "wrong" → {"type": "feedback"}
+- "that's not what I meant" → {"type": "feedback"}
+- "try again" → {"type": "feedback"}
 
 CRITICAL: For "data" type, you MUST rewrite the follow-up into a full question. The rewritten question must be self-contained — it will be sent to a database query engine that has NO access to the conversation history. NEVER return the follow-up text as-is (e.g., never return "what about 2023?" — that means nothing without context). Always incorporate the subject/stat/context from the prior conversation into the rewritten question.
 
@@ -335,6 +343,7 @@ Examples (prior question: "Aaron Judge's slash line vs lefties this season"):
 Return ONLY valid JSON:
 - {"type": "data", "rewritten": "complete standalone question"}
 - {"type": "analytical"}
+- {"type": "feedback"}
 
 Examples (prior question: "who had the most multi-hit games in 2025"):
 - "what about 2023?" → {"type": "data", "rewritten": "who had the most multi-hit games in 2023"}

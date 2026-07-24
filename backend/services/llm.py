@@ -164,6 +164,8 @@ class LLMService:
                 return result
             elif result.get("type") == "analytical":
                 return {"type": "analytical"}
+            elif result.get("type") == "feedback":
+                return {"type": "feedback"}
             return {"type": "data", "rewritten": question}
         except (json.JSONDecodeError, AttributeError):
             return {"type": "data", "rewritten": question}
