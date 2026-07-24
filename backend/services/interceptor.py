@@ -107,6 +107,39 @@ _TEAM_CONTEXT_INDICATORS = (
 )
 
 
+# Game-state / leverage / base-out situations we don't have splits or a
+# crossproduct table for. Distinct from _EVENT_QUALIFIERS (which are play
+# TYPES like walk-off HR); these are game STATES ("late and close", "in
+# save situations", "with 2 outs"). Query engine, comparison, and every
+# other structural parser silently drop these qualifiers if we don't bail
+# early — user asks "Bellinger vs Rice in late and close games this year"
+# and gets a normal full-season comparison with the leverage filter
+# completely dropped (2026-07-23 bug). Route to knowledge_mode so Sonnet
+# can honestly hedge.
+_UNANSWERABLE_SITUATIONS = (
+    "late and close", "close and late",
+    "high leverage", "low leverage", "high-leverage", "low-leverage",
+    "in save situations", "in save opportunities", "in save spots",
+    "with the game on the line", "with the game tied",
+    "in tie games", "in one-run games", "in one run games",
+    "with the bases loaded", "with the bases empty",
+    "with a runner on third", "with runners in scoring",
+    "with two outs", "with 2 outs",
+    "in clutch situations", "in the clutch",
+)
+
+
+def is_unanswerable_situation(question: str) -> bool:
+    """Does this question reference a game-state / leverage situation we
+    don't have a split table for? Same pattern as is_game_event_qualifier —
+    every structural parser gets the chance to silently drop these
+    qualifiers if we let them through, so bail at the top of the chain and
+    let knowledge_mode narrate honestly."""
+    if not question:
+        return False
+    return any(p in question.lower() for p in _UNANSWERABLE_SITUATIONS)
+
+
 def is_compound_split_unanswerable(question: str) -> bool:
     """Does this question combine a stat-perspective split with a team-context
     filter — the crossproduct we don't store (e.g., "vs lefties on the road")?
@@ -173,6 +206,13 @@ def try_intercept(question: str):
     # check; we want only pure narrative answers for these).
     if is_game_event_qualifier(trimmed):
         logger.info("intercept_bail_event_qualifier question=%r", trimmed)
+        return None
+
+    # Game-state / leverage situations — see is_unanswerable_situation above.
+    # Bail so downstream parsers (comparison, single-stat, etc.) don't
+    # silently drop the qualifier and return a wrong-labeled answer.
+    if is_unanswerable_situation(trimmed):
+        logger.info("intercept_bail_situation question=%r", trimmed)
         return None
 
     # Statcast queries for current season — graceful rejection, don't count query

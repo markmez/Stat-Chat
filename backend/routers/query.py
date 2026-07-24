@@ -662,7 +662,11 @@ async def _try_haiku_sql(question: str):
     # HR, etc.) have no clean structural answer. Even if Haiku writes SQL
     # that runs, it'll produce a proxy stat (regular HRs) labeled as if
     # it were the requested concept. Bail so knowledge_mode handles it.
-    from services.interceptor import is_game_event_qualifier, is_compound_split_unanswerable
+    from services.interceptor import (
+        is_game_event_qualifier,
+        is_compound_split_unanswerable,
+        is_unanswerable_situation,
+    )
     if is_game_event_qualifier(question):
         logger.info("haiku_sql_bail_event_qualifier question=%r", question)
         return None
@@ -672,6 +676,11 @@ async def _try_haiku_sql(question: str):
     # knowledge_mode where Sonnet narrates honestly.
     if is_compound_split_unanswerable(question):
         logger.info("haiku_sql_bail_compound_split question=%r", question)
+        return None
+    # Game-state / leverage situations — same reasoning: Haiku would drop
+    # the situational qualifier silently.
+    if is_unanswerable_situation(question):
+        logger.info("haiku_sql_bail_situation question=%r", question)
         return None
     try:
         sql = await llm.generate_sql_haiku(question)
@@ -1697,6 +1706,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         from services.interceptor import (
             is_game_event_qualifier as _is_geq,
             is_compound_split_unanswerable as _is_compound,
+            is_unanswerable_situation as _is_situation,
         )
 
         # Skip the insight engine for game-event qualifiers — sql_planner
@@ -1714,6 +1724,14 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             # filter or invent a proxy leaderboard. Route to knowledge_mode
             # so Sonnet narrates the two components honestly.
             logger.info("insight_skip_compound_split question=%r", question)
+            insight_result = None
+            future = None
+        elif _is_situation(question):
+            # Game-state / leverage situations we don't have splits for
+            # (late-and-close, save situations, one-run games, bases loaded,
+            # etc.). sql_planner would either invent SQL against a table
+            # that doesn't have the concept or drop the qualifier.
+            logger.info("insight_skip_situation question=%r", question)
             insight_result = None
             future = None
         else:
