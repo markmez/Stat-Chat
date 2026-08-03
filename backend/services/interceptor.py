@@ -869,14 +869,15 @@ def try_intercept(question: str):
             response = rb.build_team_stats(
                 team_stats["team_code"], stat, team_stats["season"])
         else:
-            # No side specified → team overview covering both hitters and
-            # pitchers, plus the team's W-L record on top for context.
-            # Falls back to build_team_stats if the combined builder
-            # returns nothing (e.g., team has no pitching data yet).
-            response = rb.build_team_overview(team_stats["team_code"], team_stats["season"])
-            if not response:
-                response = rb.build_team_stats(
-                    team_stats["team_code"], stat, team_stats["season"])
+            # No side specified — the user just said "Diamondbacks stats"
+            # or "Yankees 2026 stats". Rather than picking hitters (which
+            # silently hides pitching) or building a combined text response
+            # (redundant with the existing team card in iOS), emit a
+            # [TEAMCARD:CODE] control tag that the client intercepts and
+            # uses to navigate to the existing TeamCardView. Clean split
+            # of responsibilities: chat handles targeted queries, the
+            # team card handles browsing.
+            response = f"[TEAMCARD:{team_stats['team_code']}]"
         if response:
             return response
 
