@@ -852,15 +852,31 @@ def try_intercept(question: str):
     if team_stats:
         stat = team_stats.get("stat")
         lower_q = trimmed.lower()
-        pitching_context = stat and nm.is_pitching_stat(stat)
-        if not pitching_context:
-            pitching_context = any(w in lower_q for w in ["pitching", "pitcher", "pitchers", "pitching stats"])
-        if pitching_context:
+        # Explicit signals to lock into one side. Without a signal AND
+        # without a specific stat, previous behavior silently defaulted
+        # to hitters — surprising when the user asked "Diamondbacks
+        # stats" and got a batting-only leaderboard with no pitching.
+        wants_hitters = any(w in lower_q for w in
+                             ["hitter", "hitters", "batting", "batter", "batters", "offense", "offensive"])
+        wants_pitchers = any(w in lower_q for w in
+                              ["pitching", "pitcher", "pitchers", "pitching stats"])
+        pitching_context = (stat and nm.is_pitching_stat(stat)) or wants_pitchers
+        batting_context = wants_hitters or (stat and not nm.is_pitching_stat(stat))
+        if pitching_context and not batting_context:
             response = rb.build_pitching_team_stats(
                 team_stats["team_code"], stat, team_stats["season"])
-        else:
+        elif batting_context and not pitching_context:
             response = rb.build_team_stats(
                 team_stats["team_code"], stat, team_stats["season"])
+        else:
+            # No side specified → team overview covering both hitters and
+            # pitchers, plus the team's W-L record on top for context.
+            # Falls back to build_team_stats if the combined builder
+            # returns nothing (e.g., team has no pitching data yet).
+            response = rb.build_team_overview(team_stats["team_code"], team_stats["season"])
+            if not response:
+                response = rb.build_team_stats(
+                    team_stats["team_code"], stat, team_stats["season"])
         if response:
             return response
 

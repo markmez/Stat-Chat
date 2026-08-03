@@ -2067,10 +2067,25 @@ def parse_platoon_splits(input_str: str) -> Optional[dict]:
                      "vs. righties", "against right-handed", "against rhp",
                      "versus right-handed", "facing right-handed"]
     both_triggers = ["platoon splits", "platoon", "splits"]
-
+    # Mixed / abbreviated phrasings that mean "show me both splits":
+    # "righty left splits", "lefty righty splits", "rhp lhp", "L/R splits",
+    # bare "righty splits" / "lefty splits". A common casual asker doesn't
+    # use "vs" or "against" and just names the handedness they care about.
+    # For now, treat all of these as the "both sides" case, same as the
+    # bare "platoon splits" trigger — the response builder shows both rows.
+    both_mixed_re = re.compile(
+        r'\b(?:'
+        r'(?:righty|lefty|rhp|lhp|righties|lefties)\s+'
+        r'(?:righty|lefty|rhp|lhp|righties|lefties)\s+splits'
+        r'|(?:righty|lefty|rhp|lhp)\s+splits'
+        r'|(?:right|left)\s*/\s*(?:left|right)\s+splits'
+        r'|l\s*/\s*r\s+splits'
+        r'|r\s*/\s*l\s+splits'
+        r')\b'
+    )
     has_lhp = any(t in lower for t in lhp_triggers)
     has_rhp = any(t in lower for t in rhp_triggers)
-    has_both = any(t in lower for t in both_triggers)
+    has_both = any(t in lower for t in both_triggers) or both_mixed_re.search(lower) is not None
 
     if has_lhp:
         hand = "LHP"
@@ -2096,8 +2111,10 @@ def parse_platoon_splits(input_str: str) -> Optional[dict]:
         season = None
     else:
         season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
+    mixed_words = ["righty", "lefty", "righties", "lefties",
+                   "rhp", "lhp", "right", "left"]
     return {"name": name, "hand": hand, "season": season,
-            "consumed": lhp_triggers + rhp_triggers + both_triggers +
+            "consumed": lhp_triggers + rhp_triggers + both_triggers + mixed_words +
             (["career", "all time", "all-time", "lifetime"] if is_career else [])}
 
 
