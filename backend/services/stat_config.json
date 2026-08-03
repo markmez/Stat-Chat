@@ -225,6 +225,11 @@
     "fernando tatis junior": "Fernando Tatis Jr.",
     "vladimir guerrero junior": "Vladimir Guerrero Jr.",
     "lance mccullers junior": "Lance McCullers Jr.",
+    "luis garcia jr.": "Luis Garcia Jr.",
+    "luis garcia jr": "Luis Garcia Jr.",
+    "luis garcia junior": "Luis Garcia Jr.",
+    "luis garcía jr.": "Luis Garcia Jr.",
+    "luis garcía jr": "Luis Garcia Jr.",
     "otani": "Shohei Ohtani",
     "otani's": "Shohei Ohtani",
     "shohei otani": "Shohei Ohtani",
@@ -235,7 +240,8 @@
     "bobby witt": ["Bobby Witt Jr.", "Bobby Witt"],
     "fernando tatis": ["Fernando Tatis Jr.", "Fernando Tatis"],
     "vladimir guerrero": ["Vladimir Guerrero Jr.", "Vladimir Guerrero"],
-    "lance mccullers": ["Lance McCullers Jr.", "Lance McCullers"]
+    "lance mccullers": ["Lance McCullers Jr.", "Lance McCullers"],
+    "luis garcia": ["Luis Garcia Jr.", "Luis Garcia"]
   },
   "al_teams": ["ANA", "ATH", "BAL", "BOS", "CHA", "CLE", "DET", "HOU", "KCA", "MIN", "NYA", "SEA", "TBA", "TEX", "TOR"],
   "nl_teams": ["ARI", "ATL", "CHN", "CIN", "COL", "LAN", "MIA", "MIL", "NYN", "PHI", "PIT", "SDN", "SFN", "SLN", "WAS"],
