@@ -2508,7 +2508,15 @@ def _strip_consumed(text: str, phrases: list) -> str:
     """Remove each consumed phrase AND its individual word tokens. The token
     pass matters because find_player_in_text returns the CANONICAL name
     ("Aaron Judge") while the query may contain only a partial ("judge") — so
-    we strip both the full string and each name token."""
+    we strip both the full string and each name token.
+
+    Also strips a trailing period from each token before the word-boundary
+    match. Without this, "Luis Garcia Jr." (canonical form) → token "jr."
+    fails to match "jr" in the query text — the "." after \b\bjr\b\b\. never
+    aligns. Result: "luis garcia jr platoon splits" leaves "jr" as a
+    residual qualifier and the parser silently bails, even though the name
+    resolved correctly.
+    """
     for phrase in phrases:
         if not phrase:
             continue
@@ -2521,9 +2529,16 @@ def _strip_consumed(text: str, phrases: list) -> str:
         # words are handled only by the word-boundary token pass below.
         if " " in p or not p.isalpha():
             text = text.replace(p, " ")
+            # Also try a version with trailing periods stripped so
+            # "luis garcia jr." (canonical) matches "luis garcia jr" (query).
+            p_no_period = re.sub(r'\.$| \.', ' ', p).strip()
+            if p_no_period != p:
+                text = text.replace(p_no_period, " ")
         for tok in p.split():
-            if len(tok) >= 2:
-                text = re.sub(rf'\b{re.escape(tok)}\b', ' ', text)
+            # Strip trailing period so canonical "Jr." matches user's "jr"
+            tok_norm = tok.rstrip(".,")
+            if len(tok_norm) >= 2:
+                text = re.sub(rf'\b{re.escape(tok_norm)}\b', ' ', text)
     return text
 
 
