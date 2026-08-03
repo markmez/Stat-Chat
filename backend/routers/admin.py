@@ -1880,6 +1880,36 @@ async def seed_event_archive(
     return {"status": "ok", "seeded": len(events)}
 
 
+@router.get("/debug-parse-platoon")
+async def debug_parse_platoon(
+    q: str = "",
+    key: str | None = None,
+    authorization: str | None = Header(None),
+):
+    verify_admin(authorization, key)
+    from services import name_matcher as nm
+    from services.interceptor import _claim
+    try:
+        # Also trace the raw find_player_in_text output
+        found_player = nm.find_player_in_text(q.lower())
+        parsed = nm.parse_platoon_splits(q)
+        claimed = _claim(parsed, q) if parsed else None
+        residual = None
+        if parsed:
+            residual = nm._residual_qualifier_words(
+                q.lower(), parsed.get("name"),
+                extra_consumed=parsed.get("consumed", []))
+        return {
+            "find_player_in_text": found_player,
+            "parsed": parsed,
+            "claimed": claimed,
+            "residual_qualifier_words": residual,
+        }
+    except Exception as e:
+        import traceback
+        return {"error": f"{type(e).__name__}: {e}", "tb": traceback.format_exc()[-800:]}
+
+
 @router.get("/debug-decompose")
 async def debug_decompose(
     q: str = "",
