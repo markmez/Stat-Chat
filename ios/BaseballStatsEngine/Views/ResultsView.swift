@@ -130,6 +130,15 @@ struct ResultsView: View {
                                 selectedPlayerName = name
                             }
                         }
+                        .onChange(of: appState.disambiguatedTeamCode) { _, code in
+                            // Backend emitted [TEAMCARD:CODE] for an ambiguous
+                            // team-stats query — navigate to the existing team
+                            // card instead of showing a text leaderboard.
+                            if let code {
+                                appState.disambiguatedTeamCode = nil
+                                selectedTeamCode = code
+                            }
+                        }
                         .onChange(of: appState.messages.count) {
                             scrollToLatestQuestion(proxy: proxy)
                         }

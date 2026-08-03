@@ -39,6 +39,12 @@ final class AppState: SearchHistoryTracking {
     var pendingDisambiguation: (query: String, lastName: String)?
     /// Set by resolveDisambiguation when the corrected query is just a player name — ResultsView observes this to navigate to player card
     var disambiguatedPlayerName: String?
+    /// Set when the backend returns a [TEAMCARD:CODE] control response for an
+    /// ambiguous team-stats query — ResultsView observes this to navigate
+    /// directly to the existing TeamCardView instead of showing a text
+    /// leaderboard. Backend emits this for queries like "Diamondbacks 2026
+    /// stats" that have no explicit hitting/pitching signal.
+    var disambiguatedTeamCode: String?
     private(set) var weeklyQueryCount: Int = 0
     var showPaywall = false
     var showUpdateBanner = false
@@ -218,6 +224,34 @@ final class AppState: SearchHistoryTracking {
                     guard !Task.isCancelled, streamingIndex < messages.count else { return }
                     streamingBuffer += chunk
                 }
+
+                // [TEAMCARD:CODE] control response — the backend emits this
+                // when an ambiguous team-stats query ("Diamondbacks 2026 stats")
+                // should route to the existing TeamCardView instead of rendering
+                // an inline text leaderboard. Parse the code, drop the placeholder
+                // message, and set disambiguatedTeamCode for ResultsView to
+                // observe and navigate.
+                let trimmedBuffer = streamingBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmedBuffer.hasPrefix("[TEAMCARD:") && trimmedBuffer.hasSuffix("]") {
+                    let inner = trimmedBuffer.dropFirst("[TEAMCARD:".count).dropLast()
+                    let code = String(inner)
+                    stopStreamingTimer()
+                    // Remove both the placeholder assistant message and the user's
+                    // question — the team card IS the answer.
+                    if streamingIndex < messages.count {
+                        messages.remove(at: streamingIndex)
+                    }
+                    if !messages.isEmpty, messages.last?.role == .user {
+                        messages.removeLast()
+                    }
+                    isLoading = false
+                    currentStreamingText = ""
+                    streamingBuffer = ""
+                    disambiguatedTeamCode = code
+                    AnalyticsService.trackQuery(text: trimmed, type: .backendIntercept)
+                    return
+                }
+
                 // Mark streaming as done — timer will finish revealing remaining text
                 streamingComplete = true
                 // Track after response so we know if it was intercepted
