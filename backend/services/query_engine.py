@@ -6818,10 +6818,21 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
     if plan.player_name:
         player_filter = " AND p.name = ?"
         player_params = [plan.player_name]
-        if (not plan.season and not plan.since_year
+        # Career default: decompose pre-fills plan.season with the current
+        # year on bare phrasings, so "not plan.season" alone isn't enough —
+        # a retired player would get "No game log data" for their default-
+        # 2026 scan. Promote to career unless the season was EXPLICIT in
+        # the question.
+        _q = (plan.original_question or "").lower()
+        _explicit_season = bool(re.search(r"\b(?:18|19|20)\d{2}\b", _q)) or any(
+            p in _q for p in ("this season", "this year", "current season",
+                              "last season", "last year"))
+        if (not plan.since_year
                 and plan.scope not in ("career", "all_time")
-                and plan.streak_direction != "trailing"):
+                and plan.streak_direction != "trailing"
+                and not _explicit_season):
             plan.scope = "career"
+            plan.season = None
 
     # Build season filter. Scope precedence:
     #   1. career / all_time → no season filter (full historical scan, ~4.8M rows)
