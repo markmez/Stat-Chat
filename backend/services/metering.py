@@ -66,7 +66,12 @@ def log_query(query_text: str, device_id: str, response_type: str,
               is_followup: bool = False, original_query: str = None,
               input_method: str = "keyboard",
               duration_ms: int | None = None) -> None:
-    """Log a query with its response type. response_type: 'intercepted', 'haiku', 'sonnet'.
+    """Log a query with its response type.
+    response_type values: 'query engine' / 'intercepted' (structural, $0),
+    'mapped' (Haiku intent mapper → engine), 'haiku' (Haiku SQL),
+    'planner' (Sonnet sql_planner), 'knowledge_miss' (ungrounded knowledge
+    mode — THE miss signal), 'analytical', 'contextual', 'feedback',
+    plus error types. 'sonnet' is the legacy pre-2026-08-03 combined bucket.
     input_method: 'keyboard' (default), 'mic', or 'mic+keyboard'.
     duration_ms: end-to-end handler latency in milliseconds. Captured by the
     /query handler at request entry; used by the dashboard to surface slow

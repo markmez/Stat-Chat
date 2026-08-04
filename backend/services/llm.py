@@ -28,8 +28,15 @@ from prompts import (
     KNOWLEDGE_MODE_PROMPT,
 )
 
+# Model selection per the Aug 2026 benchmark (see memory: model-selection-
+# benchmark-2026-08): Sonnet 5 for multi-round reasoning + narrative tiers
+# (sql_planner, knowledge mode, analytical/contextual answers — 30-40% faster
+# than Sonnet 4.5 at the same price); Haiku 4.5 stays for single-shot SQL
+# generation and classification (3× faster and 4× cheaper than Sonnet there,
+# with zero quality gain from upgrading). sql_planner imports MAIN_MODEL from
+# here — this is the single source of truth for model IDs.
 ROUTING_MODEL = os.getenv("ROUTING_MODEL", "claude-haiku-4-5-20251001")
-MAIN_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
+MAIN_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 _CACHE_BETA = "prompt-caching-2024-07-31"
 
 

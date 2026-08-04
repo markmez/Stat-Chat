@@ -1543,7 +1543,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             return
         yield event({"type": "done"})
         increment_count(device_id)
-        log_query(question, device_id, "sonnet", input_method=input_method, duration_ms=_elapsed_ms())
+        log_query(question, device_id, "contextual", input_method=input_method, duration_ms=_elapsed_ms())
         return
 
     # 2. Follow-up rewrite — try local patterns BEFORE interceptor so short
@@ -1634,7 +1634,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             # Analytical follow-ups don't get rewritten queries in history
             yield event({"type": "done"})
             increment_count(device_id)
-            log_query(question, device_id, "sonnet", input_method=input_method, duration_ms=_elapsed_ms())
+            log_query(question, device_id, "analytical", input_method=input_method, duration_ms=_elapsed_ms())
             return
 
         elif classification["type"] == "feedback":
@@ -1724,6 +1724,50 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                   input_method=input_method)
         return
 
+    # 3a. Intent mapper — first fallback after an interceptor miss. One cheap
+    # Haiku call rewrites wild phrasing ("AZ diamondbacks stats", "judge
+    # dingers this yr") into the canonical form the engine's parsers
+    # recognize, then re-enters try_intercept: grounded, deterministic, ~2s
+    # total instead of demoting a phrasing miss to Haiku SQL / sql_planner.
+    # On a re-intercept miss the canonical form still replaces the question
+    # downstream — cleaner English helps the SQL tiers too. Any mapper
+    # error/timeout falls through with the original question unchanged.
+    if not is_insight:
+        try:
+            from services.intent_mapper import map_to_canonical
+            mapped = await asyncio.wait_for(map_to_canonical(question), timeout=6.0)
+        except Exception as e:
+            logger.info("intent_mapper_error question=%r error=%s", question, e)
+            mapped = None
+        if mapped:
+            try:
+                intercepted = try_intercept(mapped)
+            except Exception as e:
+                logger.warning("intercept_mapped_error mapped=%r error=%s", mapped, e)
+                intercepted = None
+            if intercepted is not None:
+                no_count = intercepted.startswith("__NO_COUNT__")
+                if no_count:
+                    intercepted = intercepted.replace("__NO_COUNT__", "", 1)
+                logger.info("query_mapped_intercepted original=%r mapped=%r", question, mapped)
+                intercepted = _strip_bold_title(intercepted, original_question)
+                intercepted = _add_pre1898_note(intercepted, original_question)
+                yield event({"type": "text", "text": intercepted})
+                done_event = {"type": "done", "intercepted": True, "mapped": True}
+                if rewritten_query:
+                    done_event["rewritten_query"] = rewritten_query
+                yield event(done_event)
+                if not no_count:
+                    increment_count(device_id)
+                log_query(mapped, device_id, "mapped", duration_ms=_elapsed_ms(),
+                          is_followup=bool(rewritten_query),
+                          original_query=original_question,
+                          input_method=input_method)
+                return
+            # Mapped form didn't intercept either — carry it downstream.
+            logger.info("intent_mapper_no_intercept original=%r mapped=%r", question, mapped)
+            question = mapped
+
     # Haiku SQL fallback — skip for insight queries (need insight engine)
     if not is_insight:
         haiku_result = await _try_haiku_sql(question)
@@ -1754,11 +1798,17 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                   input_method=input_method)
         return
 
-    # 4. Insight engine — multi-step Sonnet reasoning for complex queries
+    # 4. Insight engine — multi-step Sonnet reasoning for complex queries.
+    # The planner streams its final narration live (tool rounds are silent;
+    # 2s empty-text heartbeats keep nginx alive during them). It is also the
+    # grounded/ungrounded terminus: if its SQL found real rows the answer is
+    # DB-verified ("planner"); if it looked and found nothing, it answers
+    # from general knowledge in the same call — no second Sonnet request —
+    # and is logged as "knowledge_miss" with the ungrounded disclaimer.
+    planner_streamed = False  # any text already sent to the client
     try:
         import asyncio
-        from concurrent.futures import ThreadPoolExecutor
-        from services.sql_planner import plan_and_execute
+        from services.sql_planner import plan_and_execute_stream
         from services.interceptor import (
             is_game_event_qualifier as _is_geq,
             is_compound_split_unanswerable as _is_compound,
@@ -1769,79 +1819,87 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         # has tools to write SQL, which it'll do even when the requested
         # concept has no clean column, producing leaderboards of proxy
         # stats labeled as if they were the answer. Route those straight
-        # to knowledge_mode for a pure narrative answer.
+        # to knowledge_mode for a pure narrative answer. Same for
+        # compound splits (no crossproduct table — a filter would be
+        # silently dropped) and game-state / leverage situations.
+        skip_planner = False
         if _is_geq(question):
             logger.info("insight_skip_event_qualifier question=%r", question)
-            insight_result = None
-            future = None
+            skip_planner = True
         elif _is_compound(question):
-            # Compound-split (stat-perspective split × team-context) has no
-            # stored crossproduct table. sql_planner would either drop one
-            # filter or invent a proxy leaderboard. Route to knowledge_mode
-            # so Sonnet narrates the two components honestly.
             logger.info("insight_skip_compound_split question=%r", question)
-            insight_result = None
-            future = None
+            skip_planner = True
         elif _is_situation(question):
-            # Game-state / leverage situations we don't have splits for
-            # (late-and-close, save situations, one-run games, bases loaded,
-            # etc.). sql_planner would either invent SQL against a table
-            # that doesn't have the concept or drop the qualifier.
             logger.info("insight_skip_situation question=%r", question)
-            insight_result = None
-            future = None
-        else:
-            _executor = ThreadPoolExecutor(max_workers=1)
-            loop = asyncio.get_event_loop()
-            future = loop.run_in_executor(_executor, plan_and_execute, question)
+            skip_planner = True
 
-        if future is not None:
-            # Send heartbeat while insight engine works (keeps nginx alive)
-            while not future.done():
-                yield event({"type": "text", "text": ""})
-                await asyncio.sleep(2)
-            insight_result = future.result()
-
-        if insight_result:
-            logger.info("query_insight question=%r", question)
-            insight_text: str = insight_result.get("text", "") if isinstance(insight_result, dict) else str(insight_result)
-
-            # If sql_planner captured structured rows from its primary
-            # tool_result, run them through the shared row-to-grid
-            # formatter. Same code path Haiku uses, so column-cap and
-            # name-column rules are identical. Returns None when the
-            # data isn't gridable (single scalar, weird shape) — in
-            # that case we send Sonnet's prose alone, preserving the
-            # rich narrative fallback for definitional / opinion /
-            # historical-narrative questions.
-            grid_block: Optional[str] = None
-            if isinstance(insight_result, dict):
-                cols = insight_result.get("columns")
-                rows = insight_result.get("rows")
-                if cols and rows:
-                    rows_as_dicts = [dict(zip(cols, r)) for r in rows]
+        if not skip_planner:
+            agen = plan_and_execute_stream(question)
+            first_text = True
+            full_text = ""
+            grounded = True
+            planner_done = False
+            while True:
+                nxt = asyncio.ensure_future(agen.__anext__())
+                while True:
+                    done_set, _ = await asyncio.wait({nxt}, timeout=2.0)
+                    if done_set:
+                        break
+                    yield event({"type": "text", "text": ""})  # heartbeat
+                try:
+                    kind, item = nxt.result()
+                except StopAsyncIteration:
+                    break
+                if kind == "grid":
+                    # Primary tool_result rows through the shared row-to-grid
+                    # formatter — same code path Haiku uses, so column-cap
+                    # and name-column rules are identical. None = ungridable
+                    # shape; prose alone carries the answer.
+                    rows_as_dicts = [dict(zip(item["columns"], r)) for r in item["rows"]]
                     grid_block = _format_structured_rows_to_grid(
-                        list(cols), rows_as_dicts, total_count=None,
+                        list(item["columns"]), rows_as_dicts, total_count=None,
                         question=question,
                     )
+                    if grid_block:
+                        yield event({"type": "text", "text": grid_block + "\n\n"})
+                        planner_streamed = True
+                elif kind == "text":
+                    chunk = item
+                    if first_text:
+                        chunk = _strip_bold_title(chunk, original_question)
+                        first_text = False
+                    if chunk:
+                        yield event({"type": "text", "text": chunk})
+                        planner_streamed = True
+                    full_text += item
+                elif kind == "done":
+                    grounded = item.get("grounded", True)
+                    full_text = item.get("text", full_text)
+                    planner_done = True
+                elif kind == "failed":
+                    break
 
-            insight_text = _strip_bold_title(insight_text, original_question)
-            insight_text = _add_pre1898_note(insight_text, original_question)
-            if grid_block:
-                payload = grid_block + "\n\n" + insight_text
-            else:
-                payload = insight_text
-            payload += "\n\n[AIDISCLAIMER]Stats verified against our database. Analysis is AI-generated.[/AIDISCLAIMER]"
-            yield event({"type": "text", "text": payload})
-            done_event = {"type": "done", "insight": True}
-            if rewritten_query:
-                done_event["rewritten_query"] = rewritten_query
-            yield event(done_event)
-            increment_count(device_id)
-            log_query(question, device_id, "sonnet", duration_ms=_elapsed_ms(),
-                      is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
-                      input_method=input_method)
-            return
+            if planner_done:
+                logger.info("query_insight question=%r grounded=%s", question, grounded)
+                # Pre-1898 note is computed on the full narration and only
+                # ever appends (prose has no [/LEADERBOARD]) — emit the suffix.
+                noted = _add_pre1898_note(full_text, original_question)
+                suffix = noted[len(full_text):] if noted.startswith(full_text) else ""
+                if grounded:
+                    disclaimer = "\n\n[AIDISCLAIMER]Stats verified against our database. Analysis is AI-generated.[/AIDISCLAIMER]"
+                else:
+                    disclaimer = "\n\n[AIDISCLAIMER]Answered by AI from general knowledge, not verified against our database. AI can make mistakes.[/AIDISCLAIMER]"
+                yield event({"type": "text", "text": suffix + disclaimer})
+                done_event = {"type": "done", "insight": True}
+                if rewritten_query:
+                    done_event["rewritten_query"] = rewritten_query
+                yield event(done_event)
+                increment_count(device_id)
+                log_query(question, device_id, "planner" if grounded else "knowledge_miss",
+                          duration_ms=_elapsed_ms(),
+                          is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
+                          input_method=input_method)
+                return
     except Exception as e:
         import traceback as _tb
         tb_str = _tb.format_exc()
@@ -1856,6 +1914,19 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             )
         except Exception:
             pass
+        if planner_streamed:
+            # Partial planner output already reached the client — close out
+            # rather than double-answering via knowledge mode below.
+            yield event({"type": "text", "text": "\n\n[AIDISCLAIMER]Stats verified against our database. Analysis is AI-generated.[/AIDISCLAIMER]"})
+            done_event = {"type": "done", "insight": True}
+            if rewritten_query:
+                done_event["rewritten_query"] = rewritten_query
+            yield event(done_event)
+            increment_count(device_id)
+            log_query(question, device_id, "planner", duration_ms=_elapsed_ms(),
+                      is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
+                      input_method=input_method)
+            return
 
     # 5. Knowledge mode — answer from Claude's baseball knowledge
     # If we got here, nothing else could answer.
@@ -1891,6 +1962,6 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         done_event["rewritten_query"] = rewritten_query
     yield event(done_event)
     increment_count(device_id)
-    log_query(question, device_id, "sonnet", duration_ms=_elapsed_ms(),
+    log_query(question, device_id, "knowledge_miss", duration_ms=_elapsed_ms(),
               is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
               input_method=input_method)

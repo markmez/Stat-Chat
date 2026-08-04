@@ -3078,8 +3078,21 @@ METERING_DB_PATH = os.getenv(
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "metering.db"),
 )
 
-# Cost estimates per query by response type
-_COST_PER_QUERY = {"query engine": 0.0, "intercepted": 0.0, "haiku": 0.002, "sonnet": 0.02, "query_engine_error": 0.0}
+# Cost estimates per query by response type.
+# "sonnet" is the legacy pre-split type (planner + knowledge + analytical +
+# contextual all logged as one bucket before 2026-08-03); kept for old rows.
+_COST_PER_QUERY = {
+    "query engine": 0.0,
+    "intercepted": 0.0,
+    "mapped": 0.003,          # Haiku intent mapper hit → engine executed
+    "haiku": 0.002,
+    "planner": 0.02,          # Sonnet sql_planner (insight engine)
+    "knowledge_miss": 0.005,  # knowledge mode terminus — ungrounded answer
+    "analytical": 0.005,
+    "contextual": 0.005,
+    "sonnet": 0.02,
+    "query_engine_error": 0.0,
+}
 
 
 def _to_eastern(iso_ts: str) -> str:
@@ -3537,6 +3550,11 @@ async def dashboard(
   .badge.evt-leader-change {{ background: #fff7ed; color: #9a3412; }}
   .badge.haiku {{ background: #dbeafe; color: #1A40B3; }}
   .badge.sonnet {{ background: #f3e8ff; color: #6b21a8; }}
+  .badge.mapped {{ background: #ccfbf1; color: #115e59; }}
+  .badge.planner {{ background: #f3e8ff; color: #6b21a8; }}
+  .badge.knowledge_miss {{ background: #fee2e2; color: #991b1b; }}
+  .badge.analytical {{ background: #fef9c3; color: #854d0e; }}
+  .badge.contextual {{ background: #fef9c3; color: #854d0e; }}
   .badge.mic {{ background: #ffedd5; color: #9a3412; }}
   .breakdown {{ margin-bottom: 24px; }}
   .breakdown table {{ max-width: 500px; }}
