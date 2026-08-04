@@ -6807,6 +6807,22 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
     is_pitching = plan.is_pitching or any(pc in c for c in plan.streak_conditions for pc in pitching_cols)
     table = "game_pitching_logs" if is_pitching else "game_batting_logs"
 
+    # Player scoping — decompose extracts plan.player_name ("Derek Jeter
+    # longest hitting streak") but this executor historically ignored it,
+    # shipping a league-wide leaderboard as the "answer" (and, with "ever"
+    # scope, a 120s+ full-history scan that 504s). A player-scoped streak
+    # question with no explicit season means career-longest, and the scan
+    # is one player's game logs — cheap at any scope.
+    player_filter = ""
+    player_params = []
+    if plan.player_name:
+        player_filter = " AND p.name = ?"
+        player_params = [plan.player_name]
+        if (not plan.season and not plan.since_year
+                and plan.scope not in ("career", "all_time")
+                and plan.streak_direction != "trailing"):
+            plan.scope = "career"
+
     # Build season filter. Scope precedence:
     #   1. career / all_time → no season filter (full historical scan, ~4.8M rows)
     #   2. explicit plan.season → single-season filter
@@ -6867,9 +6883,9 @@ def _execute_streak_sequence(conn, plan: QueryPlan) -> Optional[str]:
         f"CASE WHEN {condition} THEN 1 ELSE 0 END AS success "
         f"FROM {table} g "
         f"JOIN players p ON g.player_id = p.player_id "
-        f"WHERE 1=1{season_filter}{team_filter} "
+        f"WHERE 1=1{season_filter}{team_filter}{player_filter} "
         f"ORDER BY g.player_id, g.season, g.date",
-        tuple(season_params + team_params),
+        tuple(season_params + team_params + player_params),
     )
     rows = cur.fetchall()
 
@@ -6933,10 +6949,11 @@ def _streak_sliding(rows, target_length, label, plan) -> Optional[str]:
     # Title with count
     scope = str(plan.season) if plan.season else f"Since {plan.since_year}" if plan.since_year else "All-Time"
     total = len(results)
+    _who = f"{plan.player_name} — " if plan.player_name else ""
     if target_length:
-        title = f"**{total} streak{'s' if total != 1 else ''} of {target_length}+ consecutive games with {label} ({scope})**\n"
+        title = f"**{_who}{total} streak{'s' if total != 1 else ''} of {target_length}+ consecutive games with {label} ({scope})**\n"
     else:
-        title = f"**Longest Streaks of {label} ({scope})**\n"
+        title = f"**{_who}Longest Streaks of {label} ({scope})**\n"
 
     _MAX_ROWS = 500
     parts = [title]
