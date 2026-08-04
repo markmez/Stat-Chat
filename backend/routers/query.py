@@ -1807,7 +1807,6 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     # and is logged as "knowledge_miss" with the ungrounded disclaimer.
     planner_streamed = False  # any text already sent to the client
     try:
-        import asyncio
         from services.sql_planner import plan_and_execute_stream
         from services.interceptor import (
             is_game_event_qualifier as _is_geq,
