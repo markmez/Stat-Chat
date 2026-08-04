@@ -34,6 +34,9 @@ struct PlayerCardView: View {
 
     // Pitching-specific state
     @State private var pitchingFormSliderStartGame: Int? = nil  // same timeline semantics as formSliderStartGame
+    // One-time hint under the Game Logs header; dismissed forever on first
+    // tap of a game row (or manually never — it's small).
+    @AppStorage("gameLogTapHintDismissed") private var gameLogTapHintDismissed = false
     @State private var pitchingGameLogs: [PitchingGameLog]? = nil
     @State private var showPitchingFormProjection = false
     @State private var careerStartYear: Int? = nil   // nil = full career
@@ -529,6 +532,20 @@ struct PlayerCardView: View {
                     currentFormSection(season: current)
                 }
 
+                // Game logs directly below the streak slider (2026-08-04):
+                // tapping a row sets the window start there — the slider
+                // thumb and form grid must be co-visible for the
+                // cause-and-effect to read.
+                if !card.gameLogs.isEmpty || !card.pitchingGameLogs.isEmpty {
+                    gameLogSection(
+                        card: card,
+                        windowStart: current.currentForm.map { form in
+                            formSliderStartGame ?? (form.totalSeasonGames - form.numGames + 1)
+                        },
+                        isPitching: false
+                    )
+                }
+
                 // Unified splits section
                 splitsSection(
                     season: current,
@@ -536,11 +553,6 @@ struct PlayerCardView: View {
                     pitchIdx: $pitchTypeIndex,
                     countIdx: $countSplitIndex
                 )
-
-                // Game logs (current season)
-                if !card.gameLogs.isEmpty || !card.pitchingGameLogs.isEmpty {
-                    gameLogSection(card: card)
-                }
 
                 // Fielding (collapsed)
                 fieldingSection(season: current)
@@ -691,16 +703,23 @@ struct PlayerCardView: View {
                     pitchingFormSection(season: current)
                 }
 
+                // Pitching game logs — directly below the slider, same
+                // tap-to-set-window rationale as the batting layout.
+                if !card.pitchingGameLogs.isEmpty {
+                    gameLogSection(
+                        card: card,
+                        windowStart: current.currentForm.map { form in
+                            pitchingFormSliderStartGame ?? (form.totalSeasonGames - form.numGames + 1)
+                        },
+                        isPitching: true
+                    )
+                }
+
                 // Pitching splits section
                 pitchingSplitsSection(
                     season: current, tab: $splitTab,
                     pitchIdx: $pitchTypeIndex, countIdx: $countSplitIndex
                 )
-
-                // Pitching game logs
-                if !card.pitchingGameLogs.isEmpty {
-                    gameLogSection(card: card)
-                }
             }
 
             // Pitching career totals + 162-game pace
@@ -1236,7 +1255,8 @@ struct PlayerCardView: View {
     @State private var gameLogMonth: String = ""  // "" = most recent, or "March", "April", etc.
 
     @ViewBuilder
-    private func gameLogSection(card: PlayerCard) -> some View {
+    private func gameLogSection(card: PlayerCard, windowStart: Int? = nil,
+                                isPitching: Bool = false) -> some View {
         let allLogs = card.isPitcher ? card.pitchingGameLogs.map { g in
             (date: g.date, opponent: g.opponent, line: g.line)
         } : card.gameLogs.map { g in
@@ -1244,9 +1264,15 @@ struct PlayerCardView: View {
         }
 
         if !allLogs.isEmpty {
+            // Attach 1-based season game numbers. The list renders newest
+            // first (DESC), so game number = count - position. These drive
+            // tap-to-set (thumb jumps to the tapped game) and the window
+            // tint (rows inside the current streak window).
+            let total = allLogs.count
+            let numbered = allLogs.enumerated().map { (num: total - $0.offset, log: $0.element) }
             // Group logs by month
             let months = gameLogMonths(allLogs.map(\.date))
-            let filtered = gameLogMonth.isEmpty ? allLogs : allLogs.filter { logMatchesMonth($0.date, month: gameLogMonth) }
+            let filtered = gameLogMonth.isEmpty ? numbered : numbered.filter { logMatchesMonth($0.log.date, month: gameLogMonth) }
             let visible = gameLogExpanded ? filtered : Array(filtered.prefix(7))
 
             VStack(alignment: .leading, spacing: 8) {
@@ -1254,6 +1280,13 @@ struct PlayerCardView: View {
                     .font(.system(.subheadline, design: .rounded, weight: .semibold))
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 16)
+
+                if windowStart != nil && !gameLogTapHintDismissed {
+                    Text("Tap a game to start the streak window there")
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 16)
+                }
 
                 VStack(spacing: 0) {
                     // Month pills (if more than one month)
@@ -1310,28 +1343,55 @@ struct PlayerCardView: View {
                         .padding(.top, 8)
                     }
 
-                    // Game log rows
-                    ForEach(Array(visible.enumerated()), id: \.offset) { index, log in
+                    // Game log rows. Tapping a row sets the streak window to
+                    // start at that game (slider thumb + form grid update in
+                    // place — they're directly above). Rows inside the
+                    // current window get a subtle tint + leading accent bar,
+                    // so the window is visible in the list itself and sweeps
+                    // live as the slider drags.
+                    ForEach(Array(visible.enumerated()), id: \.offset) { index, item in
+                        let inWindow = windowStart.map { item.num >= $0 } ?? false
                         VStack(spacing: 0) {
-                            HStack {
-                                Text(formatGameDate(log.date))
-                                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                                    .foregroundStyle(.primary)
-                                    .frame(width: 36, alignment: .leading)
-
-                                Text(log.line)
-                                    .font(.system(.subheadline, design: .rounded))
-                                    .foregroundStyle(.primary)
-                                if !log.opponent.isEmpty {
-                                    Text("vs \(log.opponent)")
-                                        .font(.system(.subheadline, design: .rounded))
-                                        .foregroundStyle(.tertiary)
+                            Button {
+                                guard windowStart != nil else { return }
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    if isPitching {
+                                        pitchingFormSliderStartGame = item.num
+                                    } else {
+                                        formSliderStartGame = item.num
+                                    }
                                 }
+                                gameLogTapHintDismissed = true
+                            } label: {
+                                HStack {
+                                    Text(formatGameDate(item.log.date))
+                                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                        .foregroundStyle(.primary)
+                                        .frame(width: 36, alignment: .leading)
 
-                                Spacer()
+                                    Text(item.log.line)
+                                        .font(.system(.subheadline, design: .rounded))
+                                        .foregroundStyle(.primary)
+                                    if !item.log.opponent.isEmpty {
+                                        Text("vs \(item.log.opponent)")
+                                            .font(.system(.subheadline, design: .rounded))
+                                            .foregroundStyle(.tertiary)
+                                    }
+
+                                    Spacer()
+                                }
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 12)
+                                .background(inWindow ? deepBlue.opacity(0.05) : Color.clear)
+                                .overlay(alignment: .leading) {
+                                    if inWindow {
+                                        Rectangle()
+                                            .fill(deepBlue.opacity(0.35))
+                                            .frame(width: 3)
+                                    }
+                                }
                             }
-                            .padding(.vertical, 8)
-                            .padding(.horizontal, 12)
+                            .buttonStyle(.plain)
 
                             if index < visible.count - 1 {
                                 Divider()
