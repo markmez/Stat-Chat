@@ -12,7 +12,12 @@ struct PlayerCardView: View {
     @State private var isLoading = true
     @State private var expandedSeasons: Set<Int> = []
     @State private var projectionMode: ProjectionMode = .fullSeason
-    @State private var formSliderGameNumber: Int? = nil  // nil = auto-detected, represents "last N games"
+    // Timeline slider (2026-08-04 redesign): the thumb picks the WINDOW START
+    // game on the season axis — left end = game 1, right end = most recent
+    // game; the window always runs start → today. nil = auto (PELT-detected
+    // form start). Deliberately allows a 1-game window: the slider is the
+    // fine-grained instrument for experimenting with where the split begins.
+    @State private var formSliderStartGame: Int? = nil
     @State private var gameLogs: [GameLog]? = nil
     @State private var formProjectionMode: FormProjectionMode = .pace
     @State private var showFormProjection = false
@@ -28,7 +33,7 @@ struct PlayerCardView: View {
     @State private var twoWayTab: Int = 0  // 0 = Batting, 1 = Pitching
 
     // Pitching-specific state
-    @State private var pitchingFormSliderGameNumber: Int? = nil
+    @State private var pitchingFormSliderStartGame: Int? = nil  // same timeline semantics as formSliderStartGame
     @State private var pitchingGameLogs: [PitchingGameLog]? = nil
     @State private var showPitchingFormProjection = false
     @State private var careerStartYear: Int? = nil   // nil = full career
@@ -872,8 +877,8 @@ struct PlayerCardView: View {
     @ViewBuilder
     private func pitchingFormSection(season: PitchingSeasonData) -> some View {
         if let form = season.currentForm {
-            let numGamesShown = pitchingFormSliderGameNumber ?? form.numGames
-            let effectiveGameNumber = form.totalSeasonGames - numGamesShown + 1
+            let autoStartGame = form.totalSeasonGames - form.numGames + 1
+            let effectiveGameNumber = pitchingFormSliderStartGame ?? autoStartGame
             let (formGrid, formNumGames, formStartDate) = recomputePitchingFormStats(
                 season: season, fromGameNumber: effectiveGameNumber
             )
@@ -888,13 +893,13 @@ struct PlayerCardView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 4) {
-                            Text("Since \(formattedDate) (\(formNumGames) games)")
+                            Text("Last \(formNumGames) game\(formNumGames == 1 ? "" : "s") · since \(formattedDate)")
                                 .font(.system(.subheadline, design: .rounded))
                                 .foregroundStyle(.secondary)
-                            if pitchingFormSliderGameNumber != nil {
+                            if pitchingFormSliderStartGame != nil {
                                 Button {
                                     withAnimation(.easeInOut(duration: 0.15)) {
-                                        pitchingFormSliderGameNumber = nil
+                                        pitchingFormSliderStartGame = nil
                                     }
                                 } label: {
                                     HStack(spacing: 3) {
@@ -911,18 +916,21 @@ struct PlayerCardView: View {
                         }
                         .padding(.horizontal, 14)
 
+                        // Timeline: thumb = window start game. Left end is
+                        // game 1 (whole season), right end is the most recent
+                        // game (1-game window — allowed by design).
                         PlainSlider(
                             value: Binding<Double>(
-                                get: { form.totalSeasonGames < 2 ? Double(max(form.totalSeasonGames, 2)) : Double(numGamesShown) },
+                                get: { Double(min(max(effectiveGameNumber, 1), max(form.totalSeasonGames, 2))) },
                                 set: { newValue in
-                                    pitchingFormSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
+                                    pitchingFormSliderStartGame = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
                                 }
                             ),
                             range: 1...Double(max(form.totalSeasonGames, 2)),
                             step: 1,
                             trackTint: deepBlue,
                             isDisabled: form.totalSeasonGames < 2 || pitchingGameLogs == nil,
-                            leftChipText: "\(formNumGames) games",
+                            leftChipText: "\(formNumGames) game\(formNumGames == 1 ? "" : "s")",
                             rightChipText: PlayerCardView.statValue(in: formGrid, header: "ERA").map { "\($0) ERA" }
                         )
                         .padding(.horizontal, 14)
@@ -1478,8 +1486,8 @@ struct PlayerCardView: View {
     @ViewBuilder
     private func currentFormSection(season: SeasonData) -> some View {
         if let form = season.currentForm {
-            let numGamesShown = formSliderGameNumber ?? form.numGames
-            let effectiveGameNumber = form.totalSeasonGames - numGamesShown + 1
+            let autoStartGame = form.totalSeasonGames - form.numGames + 1
+            let effectiveGameNumber = formSliderStartGame ?? autoStartGame
             let (formGrid, formNumGames, formStartDate) = recomputeFormStats(
                 season: season, fromGameNumber: effectiveGameNumber
             )
@@ -1500,13 +1508,13 @@ struct PlayerCardView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 4) {
-                            Text("Since \(formattedDate) (\(formNumGames) games)")
+                            Text("Last \(formNumGames) game\(formNumGames == 1 ? "" : "s") · since \(formattedDate)")
                                 .font(.system(.subheadline, design: .rounded))
                                 .foregroundStyle(.secondary)
-                            if formSliderGameNumber != nil {
+                            if formSliderStartGame != nil {
                                 Button {
                                     withAnimation(.easeInOut(duration: 0.15)) {
-                                        formSliderGameNumber = nil
+                                        formSliderStartGame = nil
                                     }
                                 } label: {
                                     HStack(spacing: 3) {
@@ -1523,18 +1531,21 @@ struct PlayerCardView: View {
                         }
                         .padding(.horizontal, 14)
 
+                        // Timeline: thumb = window start game. Left end is
+                        // game 1 (whole season), right end is the most recent
+                        // game (1-game window — allowed by design).
                         PlainSlider(
                             value: Binding<Double>(
-                                get: { form.totalSeasonGames < 2 ? Double(max(form.totalSeasonGames, 2)) : Double(numGamesShown) },
+                                get: { Double(min(max(effectiveGameNumber, 1), max(form.totalSeasonGames, 2))) },
                                 set: { newValue in
-                                    formSliderGameNumber = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
+                                    formSliderStartGame = max(1, min(Int(newValue.rounded()), form.totalSeasonGames))
                                 }
                             ),
                             range: 1...Double(max(form.totalSeasonGames, 2)),
                             step: 1,
                             trackTint: deepBlue,
                             isDisabled: form.totalSeasonGames < 2 || gameLogs == nil,
-                            leftChipText: "\(formNumGames) games",
+                            leftChipText: "\(formNumGames) game\(formNumGames == 1 ? "" : "s")",
                             rightChipText: PlayerCardView.statValue(in: formGrid, header: "OPS").map { "\($0) OPS" }
                         )
                         .padding(.horizontal, 14)
@@ -1546,7 +1557,7 @@ struct PlayerCardView: View {
                     }
 
                     StatGridView(grid: formGrid, suppressBackground: true)
-                        .animation(nil, value: formSliderGameNumber)
+                        .animation(nil, value: formSliderStartGame)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Rectangle()
