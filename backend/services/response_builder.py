@@ -1947,14 +1947,29 @@ def build_current_form(name: str) -> Optional[str]:
         if tr and tr[0]:
             team_games = min(int(tr[0]), 162)
 
+        # Direction-aware narration — the old copy hardcoded "on fire" /
+        # "That's up from", which read wrong for a slumping player (and for
+        # "is X cold right now" phrasings). Compare form OPS vs season OPS.
+        _form_ops = float(row[15]) if row[15] is not None else None
+        _season_ops = float(row[19]) if row[19] is not None else None
+        if _form_ops is not None and _season_ops is not None and _form_ops >= _season_ops + 0.050:
+            _verb = "has been on fire"
+            _cmp = f"That's up from his {season} season line of {season_avg}/{season_ops} (AVG/OPS)."
+        elif _form_ops is not None and _season_ops is not None and _form_ops <= _season_ops - 0.050:
+            _verb = "has been struggling"
+            _cmp = f"That's down from his {season} season line of {season_avg}/{season_ops} (AVG/OPS)."
+        else:
+            _verb = "has been steady"
+            _cmp = f"That's right in line with his {season} season line of {season_avg}/{season_ops} (AVG/OPS)."
+
         parts = []
-        parts.append(f"{display_name} has been on fire over the last {num_games} games (since {start_date}):\n")
+        parts.append(f"{display_name} {_verb} over the last {num_games} games (since {start_date}):\n")
         parts.append("[STATGRID]")
         parts.append("HEADER: G, AB, R, H, HR, RBI, BB, SO, AVG, OBP, SLG, OPS")
         parts.append(f"FORM: {display_name}, {season}, {start_game_num}, {total_games}, {team_games}")
         parts.append(f"ROW: {num_games}, {ab}, {r}, {h}, {hr}, {rbi}, {bb}, {so}, {avg}, {obp}, {slg}, {ops}")
         parts.append("[/STATGRID]")
-        parts.append(f"\nThat's up from his {season} season line of {season_avg}/{season_ops} (AVG/OPS).")
+        parts.append(f"\n{_cmp}")
         parts.append(f"\n[SUGGEST]{display_name} hot streaks {season}[/SUGGEST]")
 
         return "\n".join(parts)
@@ -2014,8 +2029,18 @@ def build_pitching_current_form(name: str) -> Optional[str]:
         if tr and tr[0]:
             team_games = min(int(tr[0]), 162)
 
+        # Direction-aware narration (pitching: LOWER ERA is better).
+        _form_era = float(row[12]) if row[12] is not None else None
+        _season_era_n = float(row[16]) if row[16] is not None else None
+        if _form_era is not None and _season_era_n is not None and _form_era <= _season_era_n - 0.75:
+            _verb = "has been on fire"
+        elif _form_era is not None and _season_era_n is not None and _form_era >= _season_era_n + 0.75:
+            _verb = "has been struggling"
+        else:
+            _verb = "has been steady"
+
         parts = []
-        parts.append(f"{display_name} has been on fire over the last {num_games} games (since {start_date}):\n")
+        parts.append(f"{display_name} {_verb} over the last {num_games} games (since {start_date}):\n")
         parts.append("[STATGRID]")
         parts.append("HEADER: G, IP, H, ER, HR, BB, SO, ERA, WHIP, K/9, BB/9")
         parts.append(f"FORM: {display_name}, {season}, {start_game_num}, {total_games}, {team_games}")

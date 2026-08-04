@@ -1535,15 +1535,18 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     # Claude answer directly (these are analytical, not data-retrieval questions).
     if contextual:
         logger.info("query_contextual question_len=%d", len(question))
+        _resp_buf: list[str] = []
         try:
             async for chunk in llm.stream_contextual(question):
+                _resp_buf.append(chunk)
                 yield event({"type": "text", "text": chunk})
         except Exception as e:
             yield event({"type": "error", "message": str(e)})
             return
         yield event({"type": "done"})
         increment_count(device_id)
-        log_query(question, device_id, "contextual", input_method=input_method, duration_ms=_elapsed_ms())
+        log_query(question, device_id, "contextual", input_method=input_method, duration_ms=_elapsed_ms(),
+                  response_preview="".join(_resp_buf))
         return
 
     # 2. Follow-up rewrite — try local patterns BEFORE interceptor so short
@@ -1559,7 +1562,8 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             yield event({"type": "done", "intercepted": True})
             increment_count(device_id)
             log_query(question, device_id, "query engine", is_followup=True, duration_ms=_elapsed_ms(),
-                      original_query=original_question, input_method=input_method)
+                      original_query=original_question, input_method=input_method,
+                      response_preview=canned)
             return
 
         local_rewrite = _local_followup_rewrite(question, history)
@@ -1584,7 +1588,8 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 done_event["rewritten_query"] = local_rewrite
                 yield event(done_event)
                 increment_count(device_id)
-                log_query(local_rewrite, device_id, "query engine", is_followup=True, original_query=original_question, input_method=input_method, duration_ms=_elapsed_ms())
+                log_query(local_rewrite, device_id, "query engine", is_followup=True, original_query=original_question, input_method=input_method, duration_ms=_elapsed_ms(),
+                          response_preview=intercepted)
                 return
             # Local rewrite didn't intercept — use it as the question for the rest of pipeline
             question = local_rewrite
@@ -1618,15 +1623,18 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                         done_event["rewritten_query"] = rewritten_query
                     yield event(done_event)
                     increment_count(device_id)
-                    log_query(rewritten, device_id, "intercepted", is_followup=True, original_query=original_question, input_method=input_method, duration_ms=_elapsed_ms())
+                    log_query(rewritten, device_id, "intercepted", is_followup=True, original_query=original_question, input_method=input_method, duration_ms=_elapsed_ms(),
+                              response_preview=intercepted)
                     return
             # Use rewritten question for the rest of the pipeline
             question = rewritten
 
         elif classification["type"] == "analytical":
             logger.info("followup_analytical question=%r", question)
+            _resp_buf = []
             try:
                 async for chunk in llm.stream_analytical(question, history):
+                    _resp_buf.append(chunk)
                     yield event({"type": "text", "text": chunk})
             except Exception as e:
                 yield event({"type": "error", "message": str(e)})
@@ -1634,7 +1642,8 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             # Analytical follow-ups don't get rewritten queries in history
             yield event({"type": "done"})
             increment_count(device_id)
-            log_query(question, device_id, "analytical", input_method=input_method, duration_ms=_elapsed_ms())
+            log_query(question, device_id, "analytical", input_method=input_method, duration_ms=_elapsed_ms(),
+                      response_preview="".join(_resp_buf))
             return
 
         elif classification["type"] == "feedback":
@@ -1650,49 +1659,61 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             log_query(question, device_id, "feedback", input_method=input_method, duration_ms=_elapsed_ms())
             return
 
-    # 2b. Insight query detection — check before interceptor
-    def _is_insight_query(q: str) -> bool:
-        """Detect queries needing multi-step reasoning, not a single SQL query."""
+    # 2b. Insight query detection — check before interceptor.
+    # Two levels (2026-08-03 "no keyword list may terminate data access" rule):
+    #   "hard" — genuinely multi-step/strategy queries. Skip interceptor,
+    #            mapper, AND Haiku SQL; straight to the planner (as before).
+    #   "soft" — analysis-flavored phrasings that the structural tiers often
+    #            answer correctly ("is Judge hot right now" → current_form).
+    #            Interceptor + mapper run first (~0-2s); only Haiku SQL is
+    #            skipped; misses land on the planner. Verified empirically
+    #            via debug-intercept replay before the split: player-scoped
+    #            form phrasings HIT correctly, multi-step phrases MISS
+    #            harmlessly. Never fix a bad structural claim by promoting
+    #            a phrase to "hard" — fix the claim guard instead.
+    def _insight_level(q: str) -> str | None:
         lower = q.lower()
-        keyword_signals = [
+        hard_signals = [
             "optimal", "lineup", "build me", "build a",
             "roster", "draft", "fantasy",
+            "if i were", "if you were",
+            "strategy", "should i",
+        ]
+        if any(kw in lower for kw in hard_signals):
+            return "hard"
+        hard_conditionals = ["if .* then", "assuming", "given that",
+                             "what would happen", "how would", "simulate", "predict"]
+        for pattern in hard_conditionals:
+            if _re.search(pattern, lower):
+                return "hard"
+        soft_signals = [
             "pinch hit", "pinch-hit",
             "best at each", "worst at each", "by position",
             "outperforming", "underperforming",
-            "if i were", "if you were",
-            "strategy", "should i",
             "hot right now", "hottest right now", "on fire right now",
             "coldest right now", "struggling right now",
             "who should i watch", "most exciting",
-        ]
-        if any(kw in lower for kw in keyword_signals):
-            return True
-        cross_entity = [
             "across teams", "across the league",
             "best player on each", "worst player on each",
         ]
-        if any(ce in lower for ce in cross_entity):
-            return True
+        if any(kw in lower for kw in soft_signals):
+            return "soft"
         # "each team" / "every team" / "per team" — only insight if NOT a simple
         # per-team leaderboard (which the query engine handles)
         if any(ce in lower for ce in ["each team", "every team", "per team"]):
             if not _re.search(r'\b\w+\s*(leaders?|leader)\b.*\b(each|every|per)\s+team\b', lower) \
                and not _re.search(r'\b(each|every|per)\s+team\b.*\b(leaders?|leader)\b', lower):
-                return True
-        conditionals = ["if .* then", "assuming", "given that",
-                        "what would happen", "how would", "simulate", "predict"]
-        for pattern in conditionals:
-            if _re.search(pattern, lower):
-                return True
-        return False
+                return "soft"
+        return None
 
-    is_insight = _is_insight_query(question)
-    if is_insight:
-        logger.info("insight_query_detected question=%r", question)
+    insight_level = _insight_level(question)
+    if insight_level:
+        logger.info("insight_query_detected level=%s question=%r", insight_level, question)
+    is_insight_hard = insight_level == "hard"
+    skip_haiku_sql = insight_level is not None
 
-    # 2c. Try local intercept — zero Claude API cost (skip for insight queries)
-    if is_insight:
+    # 2c. Try local intercept — zero Claude API cost (skip only for HARD insight)
+    if is_insight_hard:
         intercepted = None
     else:
         try:
@@ -1721,7 +1742,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             increment_count(device_id)
         log_query(question, device_id, "query engine", duration_ms=_elapsed_ms(),
                   is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
-                  input_method=input_method)
+                  input_method=input_method, response_preview=intercepted)
         return
 
     # 3a. Intent mapper — first fallback after an interceptor miss. One cheap
@@ -1732,7 +1753,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     # On a re-intercept miss the canonical form still replaces the question
     # downstream — cleaner English helps the SQL tiers too. Any mapper
     # error/timeout falls through with the original question unchanged.
-    if not is_insight:
+    if not is_insight_hard:
         try:
             from services.intent_mapper import map_to_canonical
             mapped = await asyncio.wait_for(map_to_canonical(question), timeout=6.0)
@@ -1762,14 +1783,16 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 log_query(mapped, device_id, "mapped", duration_ms=_elapsed_ms(),
                           is_followup=bool(rewritten_query),
                           original_query=original_question,
-                          input_method=input_method)
+                          input_method=input_method, response_preview=intercepted)
                 return
             # Mapped form didn't intercept either — carry it downstream.
             logger.info("intent_mapper_no_intercept original=%r mapped=%r", question, mapped)
             question = mapped
 
-    # Haiku SQL fallback — skip for insight queries (need insight engine)
-    if not is_insight:
+    # Haiku SQL fallback — skip for insight queries (hard AND soft: an
+    # analysis-shaped query that missed the structural tiers needs the
+    # planner's multi-step reasoning, not a single Haiku SQL shot)
+    if not skip_haiku_sql:
         haiku_result = await _try_haiku_sql(question)
     else:
         haiku_result = None
@@ -1795,7 +1818,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         increment_count(device_id)
         log_query(question, device_id, "haiku", duration_ms=_elapsed_ms(),
                   is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
-                  input_method=input_method)
+                  input_method=input_method, response_preview=formatted)
         return
 
     # 4. Insight engine — multi-step Sonnet reasoning for complex queries.
@@ -1806,6 +1829,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     # from general knowledge in the same call — no second Sonnet request —
     # and is logged as "knowledge_miss" with the ungrounded disclaimer.
     planner_streamed = False  # any text already sent to the client
+    gate_note = None  # set when a bail gate skips the planner; passed to knowledge mode
     try:
         from services.sql_planner import plan_and_execute_stream
         from services.interceptor import (
@@ -1825,12 +1849,21 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
         if _is_geq(question):
             logger.info("insight_skip_event_qualifier question=%r", question)
             skip_planner = True
+            gate_note = ("The app's database does not store game-event outcomes "
+                         "(walk-offs, inside-the-park HRs, leadoff/pinch-hit HR "
+                         "situations, etc.) as queryable stats.")
         elif _is_compound(question):
             logger.info("insight_skip_compound_split question=%r", question)
             skip_planner = True
+            gate_note = ("The app's database has single-dimension splits (vs "
+                         "LHP/RHP, home/away, RISP, by pitch type, by count) but "
+                         "does not store this COMBINATION of split dimensions.")
         elif _is_situation(question):
             logger.info("insight_skip_situation question=%r", question)
             skip_planner = True
+            gate_note = ("The app's database does not have splits for this game "
+                         "situation (late-and-close, one-run games, save "
+                         "situations, specific base-out states, etc.).")
 
         if not skip_planner:
             agen = plan_and_execute_stream(question)
@@ -1897,7 +1930,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 log_query(question, device_id, "planner" if grounded else "knowledge_miss",
                           duration_ms=_elapsed_ms(),
                           is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
-                          input_method=input_method)
+                          input_method=input_method, response_preview=full_text)
                 return
     except Exception as e:
         import traceback as _tb
@@ -1929,9 +1962,11 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
 
     # 5. Knowledge mode — answer from Claude's baseball knowledge
     # If we got here, nothing else could answer.
-    logger.info("knowledge_mode question=%r", question)
+    logger.info("knowledge_mode question=%r gate_note=%s", question, bool(gate_note))
+    _resp_buf = []
     try:
-        async for chunk in llm.stream_knowledge(question, history):
+        async for chunk in llm.stream_knowledge(question, history, data_note=gate_note):
+            _resp_buf.append(chunk)
             yield event({"type": "text", "text": chunk})
     except Exception as e:
         # Surface the exception: log to dashboard metering DB + gunicorn logger.
@@ -1963,4 +1998,4 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     increment_count(device_id)
     log_query(question, device_id, "knowledge_miss", duration_ms=_elapsed_ms(),
               is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
-              input_method=input_method)
+              input_method=input_method, response_preview="".join(_resp_buf))

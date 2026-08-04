@@ -190,13 +190,24 @@ class LLMService:
             async for text in stream.text_stream:
                 yield text
 
-    async def stream_knowledge(self, question: str, history: list[dict]):
-        """Stream a response from Claude's own baseball knowledge — no SQL, no DB."""
+    async def stream_knowledge(self, question: str, history: list[dict],
+                               data_note: str | None = None):
+        """Stream a response from Claude's own baseball knowledge — no SQL, no DB.
+
+        data_note: when a bail gate skipped the data tiers, the precise reason
+        ("we don't store late-and-close splits") so the narration acknowledges
+        the specific limitation instead of hedging generically."""
+        system = KNOWLEDGE_MODE_PROMPT
+        if data_note:
+            system = (KNOWLEDGE_MODE_PROMPT
+                      + f"\n\nDATA NOTE: {data_note} Acknowledge this limitation "
+                        "naturally in one short clause, then answer from your "
+                        "general baseball knowledge.")
         msgs = _build_messages(question, history)
         async with self.client.messages.stream(
             model=MAIN_MODEL,
             max_tokens=1024,
-            system=KNOWLEDGE_MODE_PROMPT,
+            system=system,
             messages=msgs,
         ) as stream:
             async for text in stream.text_stream:

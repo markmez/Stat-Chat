@@ -206,30 +206,72 @@ def run_query(base: str, question: str, timeout: int = 90):
                 elif ev.get("type") == "done":
                     done_event = ev
                 elif ev.get("type") in ("error", "quota_exceeded"):
-                    return "error", time.time() - t0, ev.get("message", ev.get("type", ""))
+                    return "error", time.time() - t0, ev.get("message", ev.get("type", "")), ""
     except Exception as e:
-        return "error", time.time() - t0, str(e)[:120]
+        return "error", time.time() - t0, str(e)[:120], ""
 
     latency = time.time() - t0
     full_text = "".join(text_parts)
     snippet = full_text.replace("\n", " ")[:100]
+    response = full_text[:600]
 
     if done_event.get("mapped"):
-        return "mapped", latency, snippet
+        return "mapped", latency, snippet, response
     if done_event.get("intercepted"):
-        return "engine", latency, snippet
+        return "engine", latency, snippet, response
     if done_event.get("haiku_sql"):
-        return "haiku", latency, snippet
+        return "haiku", latency, snippet, response
     if done_event.get("insight"):
         if "general knowledge" in full_text:
-            return "knowledge", latency, snippet
-        return "planner", latency, snippet
+            return "knowledge", latency, snippet, response
+        return "planner", latency, snippet, response
     if "general knowledge" in full_text:
-        return "knowledge", latency, snippet
-    return "unknown", latency, snippet
+        return "knowledge", latency, snippet, response
+    return "unknown", latency, snippet, response
 
 
 GROUNDED_TIERS = {"engine", "mapped", "haiku", "planner"}
+
+# Same judge prompt as backend/scripts/judge_answers.py — keep in sync.
+JUDGE_PROMPT = """You review answers from a baseball stats app. Formatting tags like [STATGRID], [LEADERBOARD], [SUGGEST], [TIP], [SEEALSO], [SUBTITLE], [CONTEXT], [DIDYOUMEAN], [TEAMCARD:XXX] are normal UI markup — ignore them.
+
+Given the user's question and the app's answer, decide ONE thing: does the answer address the question that was asked?
+
+Reply ok=false ONLY for these mismatches:
+- Wrong subject (different player or team than asked)
+- Wrong stat (asked for HRs, answered with steals)
+- Wrong time frame or scope (asked 2004, answered 2016; asked career, answered this season; asked one player, answered a league-wide leaderboard)
+- Wrong direction (asked worst/coldest/fewest, answered best/hottest/most)
+- Deflects or refuses even though a direct stat lookup was clearly asked
+
+Reply ok=true for everything else — including answers that honestly say the data isn't available, partial answers that acknowledge their scope, and "0 players matched" style results.
+
+Output strict JSON only: {"ok": true} or {"ok": false, "issue": "<one short sentence>"}"""
+
+
+def judge_answer(api_key: str, question: str, answer: str) -> dict:
+    """One Haiku call: does the answer address the question? (~$0.001)"""
+    import os
+    body = json.dumps({
+        "model": os.getenv("ROUTING_MODEL", "claude-haiku-4-5-20251001"),
+        "max_tokens": 150,
+        "system": JUDGE_PROMPT,
+        "messages": [{"role": "user",
+                      "content": f"QUESTION: {question}\n\nANSWER: {answer}"}],
+    }).encode()
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages", data=body,
+        headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
+                 "content-type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as r:
+        text = json.load(r)["content"][0]["text"].strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+    try:
+        parsed = json.loads(text)
+        return {"ok": bool(parsed.get("ok")), "issue": parsed.get("issue", "")}
+    except json.JSONDecodeError:
+        return {"ok": True, "issue": f"unparseable judge output: {text[:80]}"}
 
 
 def main() -> int:
@@ -239,6 +281,9 @@ def main() -> int:
     ap.add_argument("--filter", default="", help="substring filter on query text")
     ap.add_argument("--throttle", type=float, default=1.0)
     ap.add_argument("--out", default="", help="write per-query results JSON here")
+    ap.add_argument("--judge", action="store_true",
+                    help="Haiku-grade each data-tier answer for correctness "
+                         "(needs ANTHROPIC_API_KEY; ~$0.001/answer)")
     args = ap.parse_args()
 
     cases = [c for c in WILD if args.filter.lower() in c[0].lower()]
@@ -249,13 +294,14 @@ def main() -> int:
     consecutive_errors = 0
     print(f"Running {len(cases)} wild queries against {args.base}\n")
     for i, (q, expectation) in enumerate(cases, 1):
-        terminus, latency, snippet = run_query(args.base, q)
+        terminus, latency, snippet, response = run_query(args.base, q)
         grounded = terminus in GROUNDED_TIERS
         ok = grounded if expectation == "grounded" else True
         results.append({
             "query": q, "expectation": expectation, "terminus": terminus,
             "grounded": grounded, "ok": ok,
             "latency_s": round(latency, 2), "snippet": snippet,
+            "response": response,
         })
         flag = "  " if ok else "✗ "
         print(f"{flag}[{i:3}/{len(cases)}] {terminus:10} {latency:6.1f}s  {q}")
@@ -283,11 +329,38 @@ def main() -> int:
         print("\nUngrounded data queries (promotion candidates):")
         for r in misses:
             print(f"  [{r['terminus']:9}] {r['query']}")
+
+    wrong = []
+    if args.judge:
+        import os
+        api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            print("\n--judge skipped: no ANTHROPIC_API_KEY in env")
+        else:
+            judged = [r for r in results
+                      if r["terminus"] in GROUNDED_TIERS and r["response"]]
+            print(f"\nJudging {len(judged)} grounded answers for correctness...")
+            for r in judged:
+                try:
+                    verdict = judge_answer(api_key, r["query"], r["response"])
+                except Exception as e:
+                    print(f"  judge error on {r['query']!r}: {e}")
+                    continue
+                r["judge_ok"] = verdict["ok"]
+                r["judge_issue"] = verdict.get("issue", "")
+                if not verdict["ok"]:
+                    wrong.append(r)
+            if wrong:
+                print(f"\nWRONG-ANSWER FLAGS ({len(wrong)}):")
+                for r in wrong:
+                    print(f"  [{r['terminus']:9}] {r['query']!r} — {r['judge_issue']}")
+            else:
+                print("All judged answers address their questions.")
     if args.out:
         with open(args.out, "w") as f:
             json.dump(results, f, indent=2)
         print(f"\nPer-query results → {args.out}")
-    return 0 if not misses else 1
+    return 0 if not (misses or wrong) else 1
 
 
 if __name__ == "__main__":

@@ -65,7 +65,8 @@ def init_metering_db() -> None:
 def log_query(query_text: str, device_id: str, response_type: str,
               is_followup: bool = False, original_query: str = None,
               input_method: str = "keyboard",
-              duration_ms: int | None = None) -> None:
+              duration_ms: int | None = None,
+              response_preview: str | None = None) -> None:
     """Log a query with its response type.
     response_type values: 'query engine' / 'intercepted' (structural, $0),
     'mapped' (Haiku intent mapper → engine), 'haiku' (Haiku SQL),
@@ -94,9 +95,14 @@ def log_query(query_text: str, device_id: str, response_type: str,
         conn.execute("ALTER TABLE query_log ADD COLUMN duration_ms INTEGER")
     except Exception:
         pass
+    try:
+        conn.execute("ALTER TABLE query_log ADD COLUMN response_preview TEXT")
+    except Exception:
+        pass
     conn.execute(
-        "INSERT INTO query_log (query_text, device_id, response_type, timestamp, is_followup, original_query, input_method, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (query_text, device_id, response_type, _now_iso(), 1 if is_followup else 0, original_query, input_method, duration_ms),
+        "INSERT INTO query_log (query_text, device_id, response_type, timestamp, is_followup, original_query, input_method, duration_ms, response_preview) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (query_text, device_id, response_type, _now_iso(), 1 if is_followup else 0, original_query, input_method, duration_ms,
+         response_preview[:600] if response_preview else None),
     )
     conn.commit()
     conn.close()

@@ -52,6 +52,14 @@
 - **Player card bio**: Dynamic age computed from birthdate (updates on player's birthday). Header shows handedness (Bats R / Throws R). About section shows birth date.
 - **Query routing (backend-only, 2026-03-18)**: AppState handles only: (1) paywall check, (2) stat definitions (hardcoded, free), (3) player disambiguation (players table). Everything else → backend streaming path. Backend `interceptor.py` handles 29 query types structurally at zero Claude cost. All local stats intercepts removed (~600 lines).
 - **Backend interceptor query types (29)**: comparison, streak history, current form, slash line, season count, single stat, career lookup, platoon splits, home/away splits, RISP splits, pitch type splits, count splits, month stats, season lookup, milestone, superlative, filtered leaderboard, threshold, multi-threshold, composite threshold, triple crown, consecutive streak, team ranking, team total, team stats, platoon leaderboard, leaderboard, stat definition, catch-all player stat.
+- **Backend query pipeline (2026-08-03, "LLM-as-parser, engine-as-executor")** — stages in `routers/query.py::_stream`, each falling through to the next; `response_type` logged per terminus:
+  1. **Interceptor / query engine** (`try_intercept`) — structural, $0 → `query engine`
+  2. **Intent mapper** (`services/intent_mapper.py`, Haiku ~$0.003, ~2s) — rewrites wild phrasing ("AZ diamondbacks stats", "the kid career stats") to canonical form, re-enters try_intercept → `mapped` (done event carries `mapped: true`; original phrasing kept in `original_query`). On re-miss the canonical form still replaces the question downstream.
+  3. **Haiku SQL** (`_try_haiku_sql`, ~$0.014) → `haiku`
+  4. **sql_planner** (`services/sql_planner.py::plan_and_execute_stream`, Sonnet 5 tool loop, cached system prompt, streams final narration live) → `planner` when its SQL returned rows, `knowledge_miss` when it looked and the DB lacked the data (ungrounded disclaimer, same call — no separate knowledge request). `knowledge_miss` is THE coverage-miss signal to mine.
+  5. **Knowledge mode** — only reachable when bail gates skip the planner (event qualifiers / compound splits / situations) or the planner failed with nothing emitted → `knowledge_miss`.
+  Model IDs live ONLY in `services/llm.py` (`MAIN_MODEL` = Sonnet 5, `ROUTING_MODEL` = Haiku 4.5); sql_planner imports from there. Expanding coverage = write new EXECUTORS (engine shapes); the mapper makes every phrasing reach them. New recognizers/aliases are fast-path promotions, driven by `mapped` rows in the query log.
+  **Eval**: `backend/tests/wild_query_eval.py` — adversarial wild-phrasing suite (% grounded / terminus distribution / latency). Run with audit_routing before+after pipeline changes.
 - **Key interceptor techniques**: Multi-threshold splits on ALL separators (with/and/while/plus) via common delimiter. Batting avg inference for "batted/hit .300" queries. Platoon leaderboard context detection: "against pitchers" = batting, "against batters" = pitching. Situational triggers excluded from generic leaderboard parser. Dynamic year references via `date.today().year`.
 - **Query engine vs interceptor parsers — prefer query engine (`query_engine.py` `decompose()` / `execute()`).** The rigid `parse_*` functions in `name_matcher.py` are the older path. When a new query shape is needed, the default move is to extend `query_engine.decompose()` to understand it — give it new triggers, new `Plan` fields, new execution paths. Add a `parse_*` interceptor only when the shape is too narrow / one-off to belong in the general engine. Reason: the engine generalizes (e.g., add "career-best single-season" handling once and it works for batters, pitchers, every stat, every direction); rigid parsers proliferate and fight each other for routing precedence. Concrete trap: a new `parse_player_single_season_max` parser added in step 25b had no effect because `query_engine.decompose()` runs FIRST in `interceptor.try_intercept()` and was already claiming the query with `scope=all_time` (single-season leaderboard, ignoring the named player). The fix belonged inside `decompose()` — recognizing player-name presence flips "in a season" from "all-time records" to "this player's career-best".
 - **ResultsView layout**: Follow-up input hidden during loading, appears inline below short results or pinned to bottom for long results
@@ -108,7 +116,7 @@ At scale (500K queries/mo), Claude API costs dominate (~$7,500-9,000/mo unoptimi
 
 **Total estimated savings**: ~$7,900-8,000/mo at 500K queries → reduced to ~$3,000-3,500/mo.
 
-### Haiku SQL Fallback (VALIDATED, not yet built)
+### Haiku SQL Fallback (BUILT — live as pipeline stage 3; section kept for design rationale)
 Major unlock: when the 29-parser interceptor misses a query, have Haiku generate SQL directly from the schema instead of routing to Sonnet. Tested 14/15 correct — including complex queries like year-over-year comparisons, cross-table joins, and consecutive-season analysis.
 
 **Current flow**: interceptor miss → Sonnet SQL gen (~$0.02/query)
@@ -230,6 +238,9 @@ When adding a new stat to `stat_config.json` / the DB schema, also update these 
 3. **Lower-is-better set** in `_LOWER_IS_BETTER_PITCHING` (response_builder.py) if it's a rate where smaller = better (ERA, WHIP style).
 4. **Schema description** (`schema_description.py`) — the prompt Haiku/Sonnet see. Add a line describing the new column so Haiku SQL fallback can use it.
 5. **Ambiguous stat set** (`_AMBIGUOUS_STATS`) in query_engine.py if the same name exists as both batting and pitching (like SO / BB).
+6. **Bail gates + refusal lists** — if the new data covers a concept the gates currently refuse (`is_unanswerable_situation`, `is_compound_split_unanswerable`, `is_game_event_qualifier` in interceptor.py, and the Statcast/WAR/PA-window refusal intercepts), NARROW those lists in the same PR. A stale gate silently exiles answerable queries to ungrounded knowledge mode. Concretely: base-state/out-state splits → situations gate; platoon×home-away crossproducts → compound-split gate; Close & Late splits → situations gate.
+
+**Standing routing rule (2026-08-03):** a bad-answer incident is fixed with a claim-guard (`_claim` / `_residual_qualifier_words`), a decompose() fix, or a planner prompt hint — NEVER with a new keyword list that skips data tiers. Keyword lists may reorder tiers (see the insight hard/soft split in query.py) but may not terminate a query's access to the DB. The existing bail gates are grandfathered because the schema is near-frozen; they must shrink per checklist item 6 when data lands.
 
 ### User-facing error messages
 Errors are sanitized in `AppState.friendlyErrorMessage()` before display. The mapping:

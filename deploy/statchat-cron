@@ -66,5 +66,11 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # the SN V2 webhook missed. Lightweight curl, ~1s per paid device.
 45 8 * * * statchat curl -sS -X POST "http://127.0.0.1:8000/admin/revalidate-subscriptions" -H "Authorization: Bearer $(grep ^ADMIN_KEY= /opt/statchat/.env | cut -d= -f2-)" >> /data/refresh.log 2>&1
 
+# Nightly answer-correctness judge: 5:15 AM ET (09:15 UTC). Haiku reads
+# yesterday's (question, answer) pairs from query_log.response_preview and
+# flags answers that address a different question than asked (wrong player/
+# scope/stat/season). Flags land in answer_judgments + dashboard alerts.
+15 9 * * * statchat /opt/statchat/venv/bin/python /opt/statchat/repo/backend/scripts/judge_answers.py --env-file /opt/statchat/.env >> /data/judge.log 2>&1
+
 # Health monitor: every 5 min, pings Healthchecks.io if API + DB are up
 */5 * * * * statchat /opt/statchat/repo/deploy/healthcheck.sh
