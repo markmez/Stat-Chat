@@ -3094,6 +3094,40 @@ _COST_PER_QUERY = {
     "query_engine_error": 0.0,
 }
 
+# Display layer (2026-08-04, Mark's naming): raw response_type values stay
+# stable in the DB; the dashboard shows the five-badge scheme grafted onto
+# the pre-split vocabulary. The ONLY two new labels are the two that carry
+# new information: the mapper tier and grounded-vs-not for Sonnet answers.
+_DISPLAY_LABEL = {
+    "intercepted": "query engine",
+    "query engine": "query engine",
+    "mapped": "query engine (haiku map)",
+    "haiku": "haiku",
+    "planner": "sonnet",
+    "analytical": "sonnet",
+    "contextual": "sonnet",
+    "sonnet": "sonnet",
+    "knowledge_miss": "sonnet (null)",
+}
+
+# CSS class per display label (labels contain spaces/parens, so no string
+# munging — explicit map, fallback handled by _badge_css).
+_LABEL_CSS = {
+    "query engine": "query-engine",
+    "query engine (haiku map)": "mapped",
+    "haiku": "haiku",
+    "sonnet": "sonnet",
+    "sonnet (null)": "knowledge_miss",
+}
+
+
+def _display_label(rtype: str) -> str:
+    return _DISPLAY_LABEL.get(rtype, rtype)
+
+
+def _badge_css(label: str) -> str:
+    return _LABEL_CSS.get(label, label.replace(" ", "-"))
+
 
 def _to_eastern(iso_ts: str) -> str:
     """Convert an ISO UTC timestamp to Eastern Time display string."""
@@ -3218,16 +3252,25 @@ async def dashboard(
     # badges on each query row, so you can jump from the cost summary straight
     # into a filtered view of that type (e.g. find a recent haiku response when
     # none appear near the top of the table).
+    # Aggregate raw types into display labels (e.g. planner + analytical +
+    # contextual + legacy sonnet all render as one "sonnet" line).
+    label_agg: dict[str, dict] = {}
+    for rtype, cnt in breakdown:
+        label = _display_label(rtype)
+        agg = label_agg.setdefault(label, {"cnt": 0, "cost": 0.0})
+        agg["cnt"] += cnt
+        agg["cost"] += cnt * _COST_PER_QUERY.get(rtype, 0)
+
     breakdown_html = ""
     total_cost = 0.0
-    for rtype, cnt in breakdown:
+    for label, agg in sorted(label_agg.items(), key=lambda kv: -kv[1]["cnt"]):
+        cnt, cost = agg["cnt"], agg["cost"]
         pct = (cnt / total * 100) if total else 0
-        cost = cnt * _COST_PER_QUERY.get(rtype, 0)
         total_cost += cost
-        css = rtype.replace(' ', '-')
+        css = _badge_css(label)
         breakdown_html += f"""
         <tr>
-            <td><span class="badge {css}" style="cursor: pointer;" onclick="filterBy('{rtype}'); document.getElementById('qtable').scrollIntoView({{behavior: 'smooth', block: 'start'}});">{rtype}</span></td>
+            <td><span class="badge {css}" style="cursor: pointer;" onclick="filterBy('{label}', '{css}'); document.getElementById('qtable').scrollIntoView({{behavior: 'smooth', block: 'start'}});">{label}</span></td>
             <td>{cnt:,}</td>
             <td>{pct:.1f}%</td>
             <td>${cost:.3f}</td>
@@ -3247,9 +3290,10 @@ async def dashboard(
     slowest_html = ""
     for s_text, s_avg, s_max, s_samples, s_types in slowest:
         s_escaped = s_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        s_type_list = [t.strip() for t in (s_types or "").split(",")]
+        s_type_list = list(dict.fromkeys(
+            _display_label(t.strip()) for t in (s_types or "").split(",")))
         s_type_badges = " ".join(
-            f'<span class="badge {t.replace(" ", "-")}">{t}</span>'
+            f'<span class="badge {_badge_css(t)}">{t}</span>'
             for t in s_type_list
         )
         slow_color = "color:#c00;font-weight:bold" if s_avg and s_avg >= 2000 else (
@@ -3270,9 +3314,10 @@ async def dashboard(
         # Convert UTC timestamp to Eastern
         ts_display = _to_eastern(last_seen) if last_seen else ""
         # Build type badges (intercepting clicks so the row doesn't also expand)
-        type_list = [t.strip() for t in (types or "").split(",")]
+        type_list = list(dict.fromkeys(
+            _display_label(t.strip()) for t in (types or "").split(",")))
         type_badges = " ".join(
-            f'<span class="badge {t.replace(" ", "-")}" onclick="event.stopPropagation(); filterBy(\'{t}\')">{t}</span>'
+            f'<span class="badge {_badge_css(t)}" onclick="event.stopPropagation(); filterBy(\'{t}\', \'{_badge_css(t)}\')">{t}</span>'
             for t in type_list
         )
         # Input method badges (mic / keyboard). Show only mic visibly to keep
@@ -3833,12 +3878,12 @@ function sortBy(mode) {{
   renderPage();
 }}
 
-function filterBy(type) {{
+function filterBy(type, cssOverride) {{
   currentFilter = type;
   currentPage = 0;
   const bar = document.getElementById('filter-bar');
   const label = document.getElementById('filter-label');
-  const css = type.replace(' ', '-');
+  const css = cssOverride || type.replace(/[ ()]/g, '-');
   label.innerHTML = '<span class="badge ' + css + '">' + type + '</span>';
   bar.classList.add('active');
   // Hide the matching alert card AND persist the ack in localStorage using
