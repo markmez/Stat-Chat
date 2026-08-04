@@ -1792,7 +1792,7 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
         return None
 
     # Reject year-over-year comparisons — "Betts 2023 vs 2024" or "Soto last year vs this year"
-    if re.search(r'20[012]\d\s*(?:vs\.?|versus|compared to|to)\s*20[012]\d', lower):
+    if re.search(r'(?:18|19|20)\d{2}\s*(?:vs\.?|versus|compared to|to)\s*(?:18|19|20)\d{2}', lower):
         return None
     if re.search(r'(?:last|this)\s+(?:year|season)\s+(?:vs\.?|versus|compared to)\s+(?:last|this)\s+(?:year|season)', lower):
         return None
@@ -1856,7 +1856,10 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
     current_year = _get_db_max_season()
 
     target_season: Optional[int] = None
-    m = re.search(r'20[2][0-9]', lower)
+    # Any season the DB could hold (1876-2029) — NOT just 2020s. The old
+    # pattern (20[2][0-9]) silently dropped historical years: "David Ortiz
+    # stats in 2004" matched no year and shipped his 2016 (final) season.
+    m = re.search(r'\b(?:18[7-9]\d|19\d{2}|20[0-2]\d)\b', lower)
     if m:
         target_season = int(m.group())
     else:
@@ -2472,6 +2475,7 @@ def parse_pitching_tto(input_str: str) -> Optional[dict]:
 # (risp, lefties, righties, losses, outs, after, vs, versus, against, before)
 # — leaving one of those is exactly the "ignored qualifier" signal we bail on.
 _GUARD_FILLER = {
+    "jr", "sr", "junior", "senior",  # name suffixes consumed by alias layer
     "the", "a", "an", "in", "of", "by", "for", "to", "and", "or", "with",
     "who", "what", "which", "how", "many", "much", "did", "do", "does", "has",
     "had", "have", "is", "was", "were", "are", "been", "be",
@@ -2575,8 +2579,14 @@ def _residual_qualifier_words(lower: str, name, extra_consumed=None) -> list:
     for alias in _STAT_ALIASES_DESC:
         text = re.sub(rf'\b{re.escape(alias)}\b', ' ', text)
     toks = re.findall(r"[a-z0-9.+]+", text)
+    # Strip trailing periods before the filler check: a name suffix the
+    # alias layer already resolved can leave a bare "jr." / "sr." token
+    # ("Ken Griffey Jr. career stats" → alias consumes "ken griffey jr",
+    # the orphan "jr." must not read as an ignored qualifier and bail the
+    # parser). Suffix words are in _GUARD_FILLER for the same reason.
     return [t for t in toks
-            if t and t not in _GUARD_FILLER and not re.fullmatch(r"[\d.]+", t)]
+            if t and t.rstrip(".") not in _GUARD_FILLER
+            and not re.fullmatch(r"[\d.]+", t)]
 
 
 _MONTH_NAME_MAP = {
