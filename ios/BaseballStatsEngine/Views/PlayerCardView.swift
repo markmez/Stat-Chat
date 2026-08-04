@@ -34,9 +34,6 @@ struct PlayerCardView: View {
 
     // Pitching-specific state
     @State private var pitchingFormSliderStartGame: Int? = nil  // same timeline semantics as formSliderStartGame
-    // One-time hint under the Game Logs header; dismissed forever on first
-    // tap of a game row (or manually never — it's small).
-    @AppStorage("gameLogTapHintDismissed") private var gameLogTapHintDismissed = false
     @State private var pitchingGameLogs: [PitchingGameLog]? = nil
     @State private var showPitchingFormProjection = false
     @State private var careerStartYear: Int? = nil   // nil = full career
@@ -912,7 +909,7 @@ struct PlayerCardView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 4) {
-                            Text("Last \(formNumGames) game\(formNumGames == 1 ? "" : "s") · since \(formattedDate)")
+                            Text("Last \(formNumGames) game\(formNumGames == 1 ? "" : "s") · Since \(formattedDate)")
                                 .font(.system(.subheadline, design: .rounded))
                                 .foregroundStyle(.secondary)
                             if pitchingFormSliderStartGame != nil {
@@ -1272,8 +1269,19 @@ struct PlayerCardView: View {
             let numbered = allLogs.enumerated().map { (num: total - $0.offset, log: $0.element) }
             // Group logs by month
             let months = gameLogMonths(allLogs.map(\.date))
-            let filtered = gameLogMonth.isEmpty ? numbered : numbered.filter { logMatchesMonth($0.log.date, month: gameLogMonth) }
-            let visible = gameLogExpanded ? filtered : Array(filtered.prefix(7))
+            // Default view ("" month) = the STREAK: exactly the window's
+            // rows, so the pill count, slider headline, and row count all
+            // carry the same number — that repetition IS the connection
+            // between slider and list. Falls back to plain recency when no
+            // form section exists.
+            let inStreakView = gameLogMonth.isEmpty && windowStart != nil
+            let filtered = inStreakView
+                ? numbered.filter { $0.num >= (windowStart ?? 1) }
+                : (gameLogMonth.isEmpty ? numbered : numbered.filter { logMatchesMonth($0.log.date, month: gameLogMonth) })
+            // Streak view shows the whole window when it's short (≤12);
+            // longer windows and month views truncate to 7 behind the button.
+            let visible = gameLogExpanded ? filtered
+                : ((inStreakView && filtered.count <= 12) ? filtered : Array(filtered.prefix(7)))
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Game Logs")
@@ -1281,26 +1289,22 @@ struct PlayerCardView: View {
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 16)
 
-                if windowStart != nil && !gameLogTapHintDismissed {
-                    Text("Tap a game to start the streak window there")
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 16)
-                }
-
                 VStack(spacing: 0) {
-                    // Month pills (if more than one month)
-                    if months.count > 1 {
+                    // Month pills. Shown whenever there's a Streak pill to
+                    // label the default view, or more than one month.
+                    if months.count > 1 || windowStart != nil {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 0) {
-                                // "Recent" pill
+                                // Default pill: the streak window (count
+                                // matches the slider headline), or plain
+                                // "Recent" when no form section exists.
                                 Button {
                                     withAnimation(.easeInOut(duration: 0.15)) {
                                         gameLogMonth = ""
                                         gameLogExpanded = false
                                     }
                                 } label: {
-                                    Text("Recent")
+                                    Text(windowStart.map { "Streak · \(max(0, total - $0 + 1))" } ?? "Recent")
                                         .font(.system(.caption, design: .rounded, weight: .semibold))
                                         .padding(.horizontal, 12)
                                         .padding(.vertical, 6)
@@ -1343,55 +1347,60 @@ struct PlayerCardView: View {
                         .padding(.top, 8)
                     }
 
-                    // Game log rows. Tapping a row sets the streak window to
-                    // start at that game (slider thumb + form grid update in
-                    // place — they're directly above). Rows inside the
-                    // current window get a subtle tint + leading accent bar,
-                    // so the window is visible in the list itself and sweeps
-                    // live as the slider drags.
+                    // Game log rows. Each row carries a plain-text CTA
+                    // ("Streak from here") that re-anchors the window at
+                    // that game — thumb moves, form grid re-rolls, and the
+                    // Streak view re-filters. The current anchor row shows
+                    // a non-interactive "Streak start" label instead. Plain
+                    // English over decoding: no tint, no icons.
                     ForEach(Array(visible.enumerated()), id: \.offset) { index, item in
-                        let inWindow = windowStart.map { item.num >= $0 } ?? false
                         VStack(spacing: 0) {
-                            Button {
-                                guard windowStart != nil else { return }
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    if isPitching {
-                                        pitchingFormSliderStartGame = item.num
-                                    } else {
-                                        formSliderStartGame = item.num
-                                    }
-                                }
-                                gameLogTapHintDismissed = true
-                            } label: {
-                                HStack {
-                                    Text(formatGameDate(item.log.date))
-                                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                                        .foregroundStyle(.primary)
-                                        .frame(width: 36, alignment: .leading)
+                            HStack {
+                                Text(formatGameDate(item.log.date))
+                                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                                    .foregroundStyle(.primary)
+                                    .frame(width: 36, alignment: .leading)
 
-                                    Text(item.log.line)
+                                Text(item.log.line)
+                                    .font(.system(.subheadline, design: .rounded))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                if !item.log.opponent.isEmpty {
+                                    Text("vs \(item.log.opponent)")
                                         .font(.system(.subheadline, design: .rounded))
-                                        .foregroundStyle(.primary)
-                                    if !item.log.opponent.isEmpty {
-                                        Text("vs \(item.log.opponent)")
-                                            .font(.system(.subheadline, design: .rounded))
-                                            .foregroundStyle(.tertiary)
-                                    }
-
-                                    Spacer()
+                                        .foregroundStyle(.tertiary)
+                                        .lineLimit(1)
                                 }
-                                .padding(.vertical, 8)
-                                .padding(.horizontal, 12)
-                                .background(inWindow ? deepBlue.opacity(0.05) : Color.clear)
-                                .overlay(alignment: .leading) {
-                                    if inWindow {
-                                        Rectangle()
-                                            .fill(deepBlue.opacity(0.35))
-                                            .frame(width: 3)
+
+                                Spacer(minLength: 8)
+
+                                if let start = windowStart {
+                                    if item.num == start {
+                                        Text("Streak start")
+                                            .font(.system(.caption, design: .rounded, weight: .semibold))
+                                            .foregroundStyle(.secondary)
+                                            .fixedSize()
+                                    } else {
+                                        Button {
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                if isPitching {
+                                                    pitchingFormSliderStartGame = item.num
+                                                } else {
+                                                    formSliderStartGame = item.num
+                                                }
+                                            }
+                                        } label: {
+                                            Text("Streak from here")
+                                                .font(.system(.caption, design: .rounded, weight: .medium))
+                                                .foregroundStyle(deepBlue)
+                                                .fixedSize()
+                                        }
+                                        .buttonStyle(.plain)
                                     }
                                 }
                             }
-                            .buttonStyle(.plain)
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 12)
 
                             if index < visible.count - 1 {
                                 Divider()
@@ -1400,12 +1409,13 @@ struct PlayerCardView: View {
                         }
                     }
 
-                    // Show more button
-                    if filtered.count > 7 && !gameLogExpanded {
+                    // Show more button (streak view names the full count so
+                    // the window size stays legible even when truncated)
+                    if visible.count < filtered.count {
                         Button {
                             withAnimation { gameLogExpanded = true }
                         } label: {
-                            Text("Show more")
+                            Text(inStreakView ? "Show all \(filtered.count) games" : "Show more")
                                 .font(.system(.caption, design: .rounded, weight: .medium))
                                 .foregroundStyle(deepBlue)
                                 .frame(maxWidth: .infinity)
@@ -1568,7 +1578,7 @@ struct PlayerCardView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 4) {
-                            Text("Last \(formNumGames) game\(formNumGames == 1 ? "" : "s") · since \(formattedDate)")
+                            Text("Last \(formNumGames) game\(formNumGames == 1 ? "" : "s") · Since \(formattedDate)")
                                 .font(.system(.subheadline, design: .rounded))
                                 .foregroundStyle(.secondary)
                             if formSliderStartGame != nil {
@@ -1743,9 +1753,10 @@ struct PlayerCardView: View {
                 return s.hasPrefix("0.") ? String(s.dropFirst()) : s
             }
 
-            let headers = ["G", "AB", "R", "H", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
+            let headers = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS"]
             let values = [
                 String(slice.count), String(totalAB), String(totalR), String(totalH),
+                String(total2B), String(total3B),
                 String(totalHR), String(totalRBI), String(totalBB), String(totalSO),
                 fmtRate(avg), fmtRate(obp), fmtRate(slg), fmtRate(ops)
             ]
@@ -1771,7 +1782,7 @@ struct PlayerCardView: View {
 
         let headers = formGrid.headers
         let values = formGrid.rows.first?.values ?? []
-        let countingStats: Set<String> = ["G", "AB", "R", "H", "HR", "RBI", "BB", "SO"]
+        let countingStats: Set<String> = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "BB", "SO"]
 
         // Parse form counting values from the grid
         var formCounting: [String: Double] = [:]
