@@ -2997,7 +2997,19 @@ def execute(plan: QueryPlan) -> Optional[str]:
             else:
                 result = _execute_threshold(conn, plan)
         elif plan.query_type == "leaderboard":
-            result = _execute_leaderboard(conn, plan)
+            # Player-scoped guard (2026-08-03, same class as the streak fix):
+            # decompose extracts an embedded player name ("judge dingers this
+            # yr" → player_name="Aaron Judge") but a leaderboard executor
+            # drops it and ships the league-wide board — a wrong-slice answer.
+            # With no explicit ranking intent in the question, decline so the
+            # downstream catch-all player-stat parser (or the intent mapper)
+            # answers for THAT player instead.
+            if plan.player_name and not re.search(
+                    r"\b(most|top|leaders?|best|worst|fewest|highest|lowest|rank(?:ing)?s?)\b",
+                    (plan.original_question or "").lower()):
+                result = None
+            else:
+                result = _execute_leaderboard(conn, plan)
 
         # Collect all "see also" alternatives, output as single combined DIDYOUMEAN
         see_also = []

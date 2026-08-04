@@ -3576,12 +3576,16 @@ def parse_team_record(input_str: str) -> Optional[dict]:
 
     # Trigger words/phrases. Be specific to avoid hijacking other team queries.
     record_triggers = [
-        " record", "w-l", "w/l", "win-loss", "wins and losses",
+        " record", "w-l", "w/l", "win-loss", "win loss", "wins and losses",
         "how are the", "how have the", "how did the",
         "are the", " standing", " standings",
     ]
     # Bare "wins" / "losses" only counts if no other stat keyword present.
     has_record_trigger = any(t in lower for t in record_triggers)
+    # Spaced/bare "w l" / "wl" forms ("mets w l this season") — word-bounded
+    # regex, NOT a substring ("show lineup" contains "w l" as a substring).
+    if not has_record_trigger and re.search(r"\bw[ /-]?l\b", lower):
+        has_record_trigger = True
     if not has_record_trigger:
         # Fall back to bare "wins"/"losses" — but only when the team is the
         # subject (avoids "most home runs in Yankees wins" kind of queries).

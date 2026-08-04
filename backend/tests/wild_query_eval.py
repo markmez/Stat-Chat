@@ -246,6 +246,12 @@ Reply ok=false ONLY for these mismatches:
 
 Reply ok=true for everything else — including answers that honestly say the data isn't available, partial answers that acknowledge their scope, and "0 players matched" style results.
 
+Baseball domain notes (do NOT flag these):
+- "steals" means stolen bases; answering stolen bases is correct.
+- "whiffs", "Ks", "punchouts" colloquially mean strikeouts; answering strikeouts is correct.
+- "dingers", "bombs", "jacks", "taters" mean home runs.
+- When a shorthand name matches several players, resolving to the most prominent one is intended behavior, not an error.
+
 Output strict JSON only: {"ok": true} or {"ok": false, "issue": "<one short sentence>"}"""
 
 
