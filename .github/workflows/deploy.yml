@@ -22,8 +22,12 @@
             key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
             envs: APP_STORE_SERVER_API_KEY
             script: |
-              echo "=== DEBUG: splits-stage lines (temporary) ==="
-              sudo grep -n "Computing splits\|per-game split\|Processed all\|Found.*completed games\|No games found\|Inserted.*platoon\|Done in" /data/refresh.log | tail -30 || true
+              echo "=== DEBUG v3 (temporary) ==="
+              cd /opt/statchat/repo && git log --oneline -3 && git status --short | head -5
+              echo "--- game_split_logs occurrences in server pipeline file:"
+              grep -c game_split_logs backend/data_pipeline/pull_live_stats.py || true
+              echo "--- refresh.log lines 89862-89895 (after final run's loop):"
+              sudo sed -n '89862,89895p' /data/refresh.log || true
               echo "=== END DEBUG ==="
               cd /opt/statchat/repo
               sudo -u statchat git pull
