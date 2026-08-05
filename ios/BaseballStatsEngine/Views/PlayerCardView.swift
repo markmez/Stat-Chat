@@ -34,6 +34,17 @@ struct PlayerCardView: View {
 
     // Pitching-specific state
     @State private var pitchingFormSliderStartGame: Int? = nil  // same timeline semantics as formSliderStartGame
+    // System-wide "splits follow the streak window" mode (persists across
+    // players and launches; the window itself stays per-player).
+    @AppStorage("splitsMatchStreakWindow") private var splitsMatchWindow = false
+    // Global-frame bottom edge of the in-content slider, tracked so the
+    // pinned window bar appears only when window mode is ON and the real
+    // slider has scrolled out of view (a persistent global setting needs a
+    // persistent visible indicator).
+    @State private var formSliderGlobalMaxY: CGFloat = .infinity
+    private var showPinnedWindowBar: Bool {
+        splitsMatchWindow && formSliderGlobalMaxY < 130
+    }
     @State private var pitchingGameLogs: [PitchingGameLog]? = nil
     @State private var showPitchingFormProjection = false
     @State private var careerStartYear: Int? = nil   // nil = full career
@@ -85,6 +96,10 @@ struct PlayerCardView: View {
                 LoadingIndicator()
             } else if let card = playerCard {
                 VStack(spacing: 0) {
+                if showPinnedWindowBar {
+                    pinnedWindowBar(card: card)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
                         // Header with back arrow + subtitle
@@ -950,6 +965,15 @@ struct PlayerCardView: View {
                             rightChipText: PlayerCardView.statValue(in: formGrid, header: "ERA").map { "\($0) ERA" }
                         )
                         .padding(.horizontal, 14)
+                        .background(
+                            GeometryReader { g in
+                                Color.clear
+                                    .onAppear { formSliderGlobalMaxY = g.frame(in: .global).maxY }
+                                    .onChange(of: g.frame(in: .global).maxY) { _, newY in
+                                        formSliderGlobalMaxY = newY
+                                    }
+                            }
+                        )
                     }
                     .task {
                         if pitchingGameLogs == nil {
@@ -1152,6 +1176,39 @@ struct PlayerCardView: View {
 
         if hasData {
             VStack(alignment: .leading, spacing: 8) {
+                // Streak-window scope control (2026-08-04). System-wide
+                // setting (@AppStorage). Data wiring lands with the windowed
+                // endpoint — until per-game rows exist on the backend, the
+                // section keeps showing season splits.
+                if let form = season.currentForm {
+                    let startG = formSliderStartGame ?? (form.totalSeasonGames - form.numGames + 1)
+                    let windowN = max(1, form.totalSeasonGames - startG + 1)
+                    // Switch sits snug beside its label (not Settings-style
+                    // right-aligned — in a content card that strands the
+                    // switch across a dead gap).
+                    HStack(spacing: 10) {
+                        Text("Match streak window")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.primary)
+                        Toggle("", isOn: $splitsMatchWindow)
+                            .labelsHidden()
+                            .tint(deepBlue)
+                        if splitsMatchWindow {
+                            Text("Last \(windowN) game\(windowN == 1 ? "" : "s")")
+                                .font(.system(.caption, design: .rounded, weight: .semibold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(deepBlue.opacity(0.1))
+                                .clipShape(Capsule())
+                                .foregroundStyle(deepBlue)
+                                .transition(.opacity)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 4)
+                }
+
                 // Scrollable tab bar
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
@@ -1250,6 +1307,76 @@ struct PlayerCardView: View {
 
     @State private var gameLogExpanded = false
     @State private var gameLogMonth: String = ""  // "" = most recent, or "March", "April", etc.
+
+    // Condensed window bar, pinned above the scroll when window mode is on
+    // and the real slider is off-screen. Fully draggable — adjusting the
+    // window from anywhere (especially while reading windowed splits below)
+    // is the point. Shows the card's primary discipline.
+    @ViewBuilder
+    private func pinnedWindowBar(card: PlayerCard) -> some View {
+        if card.isPitcher,
+           let season = card.pitchingSeasons?.first,
+           let form = season.currentForm {
+            let effStart = pitchingFormSliderStartGame ?? (form.totalSeasonGames - form.numGames + 1)
+            let (grid, n, startDate) = recomputePitchingFormStats(season: season, fromGameNumber: effStart)
+            pinnedBarBody(
+                headline: "Last \(n) game\(n == 1 ? "" : "s") · Since \(PlayerCardService.formatDateShort(startDate))",
+                statText: PlayerCardView.statValue(in: grid, header: "ERA").map { "\($0) ERA" },
+                value: Binding<Double>(
+                    get: { Double(min(max(effStart, 1), max(form.totalSeasonGames, 2))) },
+                    set: { pitchingFormSliderStartGame = max(1, min(Int($0.rounded()), form.totalSeasonGames)) }
+                ),
+                upper: Double(max(form.totalSeasonGames, 2)),
+                disabled: form.totalSeasonGames < 2 || pitchingGameLogs == nil
+            )
+        } else if let season = card.seasons.first, let form = season.currentForm {
+            let effStart = formSliderStartGame ?? (form.totalSeasonGames - form.numGames + 1)
+            let (grid, n, startDate) = recomputeFormStats(season: season, fromGameNumber: effStart)
+            pinnedBarBody(
+                headline: "Last \(n) game\(n == 1 ? "" : "s") · Since \(PlayerCardService.formatDateShort(startDate))",
+                statText: PlayerCardView.statValue(in: grid, header: "OPS").map { "\($0) OPS" },
+                value: Binding<Double>(
+                    get: { Double(min(max(effStart, 1), max(form.totalSeasonGames, 2))) },
+                    set: { formSliderStartGame = max(1, min(Int($0.rounded()), form.totalSeasonGames)) }
+                ),
+                upper: Double(max(form.totalSeasonGames, 2)),
+                disabled: form.totalSeasonGames < 2 || gameLogs == nil
+            )
+        }
+    }
+
+    private func pinnedBarBody(headline: String, statText: String?,
+                               value: Binding<Double>, upper: Double,
+                               disabled: Bool) -> some View {
+        VStack(spacing: 2) {
+            HStack {
+                Text(headline)
+                    .font(.system(.caption, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let statText {
+                    Text(statText)
+                        .font(.system(.caption, design: .rounded, weight: .semibold))
+                        .foregroundStyle(deepBlue)
+                }
+            }
+            PlainSlider(
+                value: value,
+                range: 1...upper,
+                step: 1,
+                trackTint: deepBlue,
+                isDisabled: disabled
+            )
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color(uiColor: .separator).opacity(0.4))
+                .frame(height: 1)
+        }
+    }
 
     @ViewBuilder
     private func gameLogSection(card: PlayerCard, windowStart: Int? = nil,
@@ -1619,6 +1746,15 @@ struct PlayerCardView: View {
                             rightChipText: PlayerCardView.statValue(in: formGrid, header: "OPS").map { "\($0) OPS" }
                         )
                         .padding(.horizontal, 14)
+                        .background(
+                            GeometryReader { g in
+                                Color.clear
+                                    .onAppear { formSliderGlobalMaxY = g.frame(in: .global).maxY }
+                                    .onChange(of: g.frame(in: .global).maxY) { _, newY in
+                                        formSliderGlobalMaxY = newY
+                                    }
+                            }
+                        )
                     }
                     .task {
                         if gameLogs == nil {
