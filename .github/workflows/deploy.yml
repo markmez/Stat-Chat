@@ -22,8 +22,8 @@
             key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
             envs: APP_STORE_SERVER_API_KEY
             script: |
-              echo "=== DEBUG: tail of refresh.log (temporary) ==="
-              sudo tail -80 /data/refresh.log || true
+              echo "=== DEBUG: splits-stage lines (temporary) ==="
+              sudo grep -n "Computing splits\|per-game split\|Processed all\|Found.*completed games\|No games found\|Inserted.*platoon\|Done in" /data/refresh.log | tail -30 || true
               echo "=== END DEBUG ==="
               cd /opt/statchat/repo
               sudo -u statchat git pull

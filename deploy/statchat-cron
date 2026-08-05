@@ -74,4 +74,4 @@ PATH=/usr/local/bin:/usr/bin:/bin
 
 # Health monitor: every 5 min, pings Healthchecks.io if API + DB are up
 */5 * * * * statchat /opt/statchat/repo/deploy/healthcheck.sh
-# deploy trigger 2026-08-05 (refresh.log debug)
+# deploy trigger 2026-08-05 v2 (splits debug)
