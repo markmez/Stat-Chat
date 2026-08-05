@@ -1771,18 +1771,23 @@ def _w_rates(ab, h, d2, t3, hr, bb, hbp, sf, so):
 
 
 def _w_family_rows(cur, player_id, season, family, perspective, start_date):
-    cur.execute("""
-        SELECT split, SUM(plate_appearances), SUM(at_bats), SUM(hits),
-               SUM(doubles), SUM(triples), SUM(home_runs), SUM(rbi),
-               SUM(walks), SUM(strikeouts), SUM(hit_by_pitch),
-               SUM(sacrifice_flies)
-        FROM game_split_logs
-        WHERE player_id = ? AND season = ? AND family = ?
-          AND perspective = ? AND date >= ?
-        GROUP BY split
-        ORDER BY SUM(plate_appearances) DESC
-    """, (player_id, season, family, perspective, start_date))
-    return cur.fetchall()
+    try:
+        cur.execute("""
+            SELECT split, SUM(plate_appearances), SUM(at_bats), SUM(hits),
+                   SUM(doubles), SUM(triples), SUM(home_runs), SUM(rbi),
+                   SUM(walks), SUM(strikeouts), SUM(hit_by_pitch),
+                   SUM(sacrifice_flies)
+            FROM game_split_logs
+            WHERE player_id = ? AND season = ? AND family = ?
+              AND perspective = ? AND date >= ?
+            GROUP BY split
+            ORDER BY SUM(plate_appearances) DESC
+        """, (player_id, season, family, perspective, start_date))
+        return cur.fetchall()
+    except sqlite3.OperationalError:
+        # game_split_logs doesn't exist until the nightly pipeline's first
+        # run after deploy creates it — treat as "no windowed rows".
+        return []
 
 
 _W_BAT_HEADERS = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO",
