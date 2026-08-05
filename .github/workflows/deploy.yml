@@ -22,11 +22,6 @@
             key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
             envs: APP_STORE_SERVER_API_KEY
             script: |
-              echo "=== DEBUG v4 (temporary) ==="
-              sudo -u statchat git -C /opt/statchat/repo log --oneline -2
-              echo "--- server file: lines around per-game insert block ---"
-              grep -n "Inserted.*per-game\|def resolve_player\|game_split_logs\|Insert platoon splits" /opt/statchat/repo/backend/data_pipeline/pull_live_stats.py | head -12
-              echo "=== END DEBUG ==="
               cd /opt/statchat/repo
               sudo -u statchat git pull
               sudo -u statchat /opt/statchat/venv/bin/pip install -q -r backend/requirements.txt
