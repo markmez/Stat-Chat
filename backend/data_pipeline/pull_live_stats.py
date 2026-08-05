@@ -1656,6 +1656,7 @@ def compute_platoon_splits(conn, season_str):
                 if h2h_key not in h2h_splits:
                     h2h_splits[h2h_key] = empty_bat_stats()
                 accumulate(h2h_splits[h2h_key], result)
+                bump_game("h2h", "bat", batter_id, batter_name, pitcher_name, game_date, result)
 
                 # --- First PA of game (batting only) ---
                 if batter_id not in seen_batters_this_game:
@@ -1664,6 +1665,7 @@ def compute_platoon_splits(conn, season_str):
                     if fpa_key not in bat_first_pa:
                         bat_first_pa[fpa_key] = empty_bat_stats()
                     accumulate(bat_first_pa[fpa_key], result)
+                    bump_game("first_pa", "bat", batter_id, batter_name, "first", game_date, result)
 
                 # --- Pitcher inning splits ---
                 inning = ab.get("inning")
@@ -1673,6 +1675,7 @@ def compute_platoon_splits(conn, season_str):
                     if pi_key not in pitch_inning_splits:
                         pitch_inning_splits[pi_key] = empty_bat_stats()
                     accumulate(pitch_inning_splits[pi_key], result)
+                    bump_game("inning", "pitch", pitcher_id, pitcher_name, inning_label, game_date, result)
 
                 # --- Pitcher times-through-order splits ---
                 tto_pair = (pitcher_id, batter_id)
@@ -1683,6 +1686,7 @@ def compute_platoon_splits(conn, season_str):
                 if pt_key not in pitch_tto_splits:
                     pitch_tto_splits[pt_key] = empty_bat_stats()
                 accumulate(pitch_tto_splits[pt_key], result)
+                bump_game("tto", "pitch", pitcher_id, pitcher_name, tto_label, game_date, result)
 
                 break  # Only process one batterUp per at-bat
 
@@ -1860,6 +1864,13 @@ def compute_platoon_splits(conn, season_str):
         pid = resolve_cached(name)
         if not pid or not gdate:
             continue
+        if family == "h2h":
+            # split carries the opposing pitcher's NAME during accumulation;
+            # store their player_id (skip if unresolvable).
+            opp = resolve_cached(split)
+            if not opp:
+                continue
+            split = opp
         gsl_rows.append((pid, season_year, gdate, family, persp, split,
                          stats["pa"], stats["ab"], stats["h"], stats["2b"],
                          stats["3b"], stats["hr"], stats["rbi"], stats["bb"],
