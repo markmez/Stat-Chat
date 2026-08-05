@@ -43,8 +43,20 @@ struct PlayerCardView: View {
     // shifts down → bar hides → ...) — engage below 100pt, release above
     // 175pt; the 75pt gap exceeds the bar's height so the loop can't close.
     @State private var pinnedBarEngaged = false
+    // Once the splits section (the last window-affected content) has also
+    // scrolled off the top, nothing visible responds to the slider — the
+    // bar dismisses rather than floating uselessly over career sections.
+    @State private var splitsSectionGone = false
     private var showPinnedWindowBar: Bool {
-        splitsMatchWindow && pinnedBarEngaged
+        splitsMatchWindow && pinnedBarEngaged && !splitsSectionGone
+    }
+
+    private func updateSplitsEdge(bottomY y: CGFloat) {
+        if y < 110 && !splitsSectionGone {
+            withAnimation(.easeInOut(duration: 0.15)) { splitsSectionGone = true }
+        } else if y > 170 && splitsSectionGone {
+            withAnimation(.easeInOut(duration: 0.15)) { splitsSectionGone = false }
+        }
     }
 
     private func updatePinnedBar(sliderGlobalMaxY y: CGFloat) {
@@ -105,10 +117,6 @@ struct PlayerCardView: View {
                 LoadingIndicator()
             } else if let card = playerCard {
                 VStack(spacing: 0) {
-                if showPinnedWindowBar {
-                    pinnedWindowBar(card: card)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
                         // Header with back arrow + subtitle
@@ -323,6 +331,16 @@ struct PlayerCardView: View {
                     .padding(.bottom, 80)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                // Pinned bar is an OVERLAY, not a layout sibling: inserting
+                // it must never displace scroll content (a mid-scroll layout
+                // shift reads as stutter under the finger). Content slides
+                // beneath the frosted bar instead.
+                .overlay(alignment: .top) {
+                    if showPinnedWindowBar {
+                        pinnedWindowBar(card: card)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
 
                 floatingSearchBar
                 }
@@ -574,6 +592,15 @@ struct PlayerCardView: View {
                     pitchIdx: $pitchTypeIndex,
                     countIdx: $countSplitIndex
                 )
+                .background(
+                    GeometryReader { g in
+                        Color.clear
+                            .onAppear { updateSplitsEdge(bottomY: g.frame(in: .global).maxY) }
+                            .onChange(of: g.frame(in: .global).maxY) { _, y in
+                                updateSplitsEdge(bottomY: y)
+                            }
+                    }
+                )
 
                 // Fielding (collapsed)
                 fieldingSection(season: current)
@@ -740,6 +767,15 @@ struct PlayerCardView: View {
                 pitchingSplitsSection(
                     season: current, tab: $splitTab,
                     pitchIdx: $pitchTypeIndex, countIdx: $countSplitIndex
+                )
+                .background(
+                    GeometryReader { g in
+                        Color.clear
+                            .onAppear { updateSplitsEdge(bottomY: g.frame(in: .global).maxY) }
+                            .onChange(of: g.frame(in: .global).maxY) { _, y in
+                                updateSplitsEdge(bottomY: y)
+                            }
+                    }
                 )
             }
 
