@@ -1736,3 +1736,206 @@ async def player_game_logs(
         return [log.model_dump() for log in logs]
     finally:
         conn.close()
+
+
+# ============================================================
+# Windowed splits (2026-08-04) — splits scoped to the streak
+# window. Reads per-game rows from game_split_logs (nightly PBP
+# pipeline; current season only) + home/away from game logs.
+# Raw components are SUMmed over the window and rates recomputed
+# with the standard formulas. Returns SplitGrid shapes identical
+# to the season splits so iOS swaps grids in place.
+# ============================================================
+
+class WindowedSplits(BaseModel):
+    start_date: str
+    num_games: int
+    platoon: Optional[SplitGrid] = None
+    home_away: Optional[SplitGrid] = None
+    risp: Optional[SplitGrid] = None
+    pitch_type: Optional[List[SplitGrid]] = None
+    count: Optional[List[SplitGrid]] = None
+
+
+def _w_rates(ab, h, d2, t3, hr, bb, hbp, sf, so):
+    avg = h / ab if ab else None
+    obp_den = ab + bb + hbp + sf
+    obp = (h + bb + hbp) / obp_den if obp_den else None
+    tb = (h - d2 - t3 - hr) + 2 * d2 + 3 * t3 + 4 * hr
+    slg = tb / ab if ab else None
+    ops = obp + slg if obp is not None and slg is not None else None
+    iso = slg - avg if slg is not None and avg is not None else None
+    babip_den = ab - so - hr + sf
+    babip = (h - hr) / babip_den if babip_den > 0 else None
+    return avg, obp, slg, ops, iso, babip
+
+
+def _w_family_rows(cur, player_id, season, family, perspective, start_date):
+    cur.execute("""
+        SELECT split, SUM(plate_appearances), SUM(at_bats), SUM(hits),
+               SUM(doubles), SUM(triples), SUM(home_runs), SUM(rbi),
+               SUM(walks), SUM(strikeouts), SUM(hit_by_pitch),
+               SUM(sacrifice_flies)
+        FROM game_split_logs
+        WHERE player_id = ? AND season = ? AND family = ?
+          AND perspective = ? AND date >= ?
+        GROUP BY split
+        ORDER BY SUM(plate_appearances) DESC
+    """, (player_id, season, family, perspective, start_date))
+    return cur.fetchall()
+
+
+_W_BAT_HEADERS = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO",
+                  "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+_W_PITCH_HEADERS = ["PA", "AB", "H", "2B", "3B", "HR", "BB", "SO",
+                    "BAA", "OBP", "SLG", "OPS"]
+
+
+def _w_row(label, r, perspective):
+    (_, pa, ab, h, d2, t3, hr, rbi, bb, so, hbp, sf) = r
+    avg, obp, slg, ops, iso, babip = _w_rates(ab or 0, h or 0, d2 or 0, t3 or 0,
+                                              hr or 0, bb or 0, hbp or 0,
+                                              sf or 0, so or 0)
+    if perspective == "bat":
+        vals = [str(ab or 0), str(h or 0), str(d2 or 0), str(t3 or 0),
+                str(hr or 0), str(rbi or 0), str(bb or 0), str(so or 0),
+                _safe_str(avg), _safe_str(obp), _safe_str(slg),
+                _safe_str(ops), _safe_str(iso), _safe_str(babip)]
+    else:
+        vals = [str(pa or 0), str(ab or 0), str(h or 0), str(d2 or 0),
+                str(t3 or 0), str(hr or 0), str(bb or 0), str(so or 0),
+                _safe_str(avg), _safe_str(obp), _safe_str(slg), _safe_str(ops)]
+    return SplitRow(label=label, values=vals)
+
+
+def _w_grid(rows, labeler, perspective, order=None):
+    if not rows:
+        return None
+    headers = _W_BAT_HEADERS if perspective == "bat" else _W_PITCH_HEADERS
+    if order:
+        rows = sorted(rows, key=lambda r: order.index(r[0]) if r[0] in order else 99)
+    grid_rows = [_w_row(labeler(r[0]), r, perspective) for r in rows]
+    return SplitGrid(headers=headers, rows=grid_rows)
+
+
+def _w_single_row_grids(rows, perspective, cap):
+    if not rows:
+        return None
+    headers = _W_BAT_HEADERS if perspective == "bat" else _W_PITCH_HEADERS
+    out = []
+    for r in rows[:cap]:
+        out.append(SplitGrid(headers=headers,
+                             rows=[_w_row(str(r[0]), r, perspective)]))
+    return out or None
+
+
+def _w_home_away_batting(cur, player_id, season, start_date):
+    cur.execute("""
+        SELECT vishome, COUNT(*), SUM(at_bats), SUM(runs), SUM(hits),
+               SUM(doubles), SUM(triples), SUM(home_runs), SUM(rbi),
+               SUM(walks), SUM(strikeouts),
+               SUM(COALESCE(hit_by_pitch, 0)), SUM(COALESCE(sacrifice_flies, 0))
+        FROM game_batting_logs
+        WHERE player_id = ? AND season = ? AND date >= ?
+        GROUP BY vishome
+    """, (player_id, season, start_date))
+    rows = cur.fetchall()
+    if not rows:
+        return None
+    headers = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "BB", "SO",
+               "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+    grid_rows = []
+    for r in sorted(rows, key=lambda x: 0 if x[0] == "H" else 1):
+        (vh, g, ab, runs, h, d2, t3, hr, rbi, bb, so, hbp, sf) = r
+        avg, obp, slg, ops, iso, babip = _w_rates(ab or 0, h or 0, d2 or 0,
+                                                  t3 or 0, hr or 0, bb or 0,
+                                                  hbp or 0, sf or 0, so or 0)
+        grid_rows.append(SplitRow(
+            label="Home" if vh == "H" else "Away",
+            values=[str(g), str(ab or 0), str(runs or 0), str(h or 0),
+                    str(d2 or 0), str(t3 or 0), str(hr or 0), str(rbi or 0),
+                    str(bb or 0), str(so or 0), _safe_str(avg), _safe_str(obp),
+                    _safe_str(slg), _safe_str(ops), _safe_str(iso),
+                    _safe_str(babip)]))
+    return SplitGrid(headers=headers, rows=grid_rows)
+
+
+def _w_home_away_pitching(cur, player_id, season, start_date):
+    try:
+        cur.execute("""
+            SELECT vishome, COUNT(*), SUM(ip_outs), SUM(earned_runs),
+                   SUM(hits), SUM(walks), SUM(strikeouts), SUM(home_runs)
+            FROM game_pitching_logs
+            WHERE player_id = ? AND season = ? AND date >= ?
+            GROUP BY vishome
+        """, (player_id, season, start_date))
+        rows = cur.fetchall()
+    except Exception:
+        return None
+    if not rows:
+        return None
+    headers = ["G", "IP", "ER", "H", "HR", "BB", "SO", "ERA", "WHIP", "K/9"]
+    grid_rows = []
+    for r in sorted(rows, key=lambda x: 0 if x[0] == "H" else 1):
+        (vh, g, ip_outs, er, h, bb, so, hr) = r
+        ip = (ip_outs or 0) / 3.0
+        era = 9.0 * (er or 0) / ip if ip else None
+        whip = ((bb or 0) + (h or 0)) / ip if ip else None
+        k9 = 9.0 * (so or 0) / ip if ip else None
+        ip_disp = f"{(ip_outs or 0) // 3}.{(ip_outs or 0) % 3}"
+        grid_rows.append(SplitRow(
+            label="Home" if vh == "H" else "Away",
+            values=[str(g), ip_disp, str(er or 0), str(h or 0), str(hr or 0),
+                    str(bb or 0), str(so or 0),
+                    _safe_str(era, 2), _safe_str(whip, 2), _safe_str(k9, 1)]))
+    return SplitGrid(headers=headers, rows=grid_rows)
+
+
+@router.get("/player-card/windowed-splits")
+async def windowed_splits(
+    name: str,
+    season: int,
+    start_date: str,
+    perspective: str = "bat",
+):
+    """Splits scoped to [start_date, today] for the streak-window toggle."""
+    if perspective not in ("bat", "pitch"):
+        perspective = "bat"
+    conn = _get_conn()
+    try:
+        cur = conn.cursor()
+        resolved = _resolve_player_id(conn, name)
+        if not resolved:
+            return WindowedSplits(start_date=start_date, num_games=0)
+        player_id, _ = resolved
+
+        logs_table = "game_pitching_logs" if perspective == "pitch" else "game_batting_logs"
+        cur.execute(f"SELECT COUNT(*) FROM {logs_table} WHERE player_id = ? AND season = ? AND date >= ?",
+                    (player_id, season, start_date))
+        num_games = cur.fetchone()[0] or 0
+
+        platoon_rows = _w_family_rows(cur, player_id, season, "platoon", perspective, start_date)
+        risp_rows = _w_family_rows(cur, player_id, season, "risp", perspective, start_date)
+        pt_rows = _w_family_rows(cur, player_id, season, "pitch_type", perspective, start_date)
+        count_rows = _w_family_rows(cur, player_id, season, "count", perspective, start_date)
+
+        if perspective == "bat":
+            platoon_labeler = lambda s: "vs LHP" if s == "vs_LHP" else "vs RHP"
+            platoon_order = ["vs_LHP", "vs_RHP"]
+            home_away = _w_home_away_batting(cur, player_id, season, start_date)
+        else:
+            platoon_labeler = lambda s: "vs LHB" if s == "vs_LHB" else "vs RHB"
+            platoon_order = ["vs_LHB", "vs_RHB"]
+            home_away = _w_home_away_pitching(cur, player_id, season, start_date)
+
+        return WindowedSplits(
+            start_date=start_date,
+            num_games=num_games,
+            platoon=_w_grid(platoon_rows, platoon_labeler, perspective, order=platoon_order),
+            home_away=home_away,
+            risp=_w_grid(risp_rows, lambda s: s, perspective, order=["RISP", "Non-RISP"]),
+            pitch_type=_w_single_row_grids(pt_rows, perspective, cap=8),
+            count=_w_single_row_grids(count_rows, perspective, cap=12),
+        )
+    finally:
+        conn.close()
