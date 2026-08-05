@@ -22,6 +22,9 @@
             key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
             envs: APP_STORE_SERVER_API_KEY
             script: |
+              echo "=== DEBUG: tail of refresh.log (temporary) ==="
+              sudo tail -80 /data/refresh.log || true
+              echo "=== END DEBUG ==="
               cd /opt/statchat/repo
               sudo -u statchat git pull
               sudo -u statchat /opt/statchat/venv/bin/pip install -q -r backend/requirements.txt
