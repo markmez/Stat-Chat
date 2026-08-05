@@ -37,6 +37,18 @@ struct PlayerCardView: View {
     // System-wide "splits follow the streak window" mode (persists across
     // players and launches; the window itself stays per-player).
     @AppStorage("splitsMatchStreakWindow") private var splitsMatchWindow = false
+    // Windowed split grids fetched from /player-card/windowed-splits when
+    // window mode is on. nil = fetch failed/off → season splits shown as-is.
+    @State private var windowedGrids: PlayerCardService.WindowedGrids? = nil
+    @State private var pitchingWindowedGrids: PlayerCardService.WindowedGrids? = nil
+
+    /// Window start DATE for the current slider position — the windowed
+    /// endpoint keys on dates. nil until game logs are loaded. Takes the
+    /// ASC-sorted date list (batting or pitching logs).
+    private func windowStartDate(dates: [String]?, startGame: Int?) -> String? {
+        guard let dates, let s = startGame, s >= 1, s <= dates.count else { return nil }
+        return dates[s - 1]
+    }
     // Pinned window bar engagement. Tracked from the in-content slider's
     // global frame with HYSTERESIS: the bar pushes the scroll content down
     // when it appears, so a single threshold oscillates (bar shows → slider
@@ -585,13 +597,30 @@ struct PlayerCardView: View {
                     )
                 }
 
-                // Unified splits section
+                // Unified splits section. When window mode is on and the
+                // windowed grids have arrived, the section receives a season
+                // copy with splits REPLACED by the windowed versions.
+                let _battingWindowKey: String = {
+                    let sd = windowStartDate(
+                        dates: gameLogs?.map(\.date),
+                        startGame: current.currentForm.map { formSliderStartGame ?? ($0.totalSeasonGames - $0.numGames + 1) })
+                    return splitsMatchWindow ? (sd ?? "") : ""
+                }()
                 splitsSection(
-                    season: current,
+                    season: (splitsMatchWindow ? windowedGrids.map { PlayerCardService.overridingSplits(current, with: $0) } : nil) ?? current,
                     tab: $splitTab,
                     pitchIdx: $pitchTypeIndex,
                     countIdx: $countSplitIndex
                 )
+                .task(id: _battingWindowKey) {
+                    guard splitsMatchWindow, !_battingWindowKey.isEmpty else {
+                        windowedGrids = nil
+                        return
+                    }
+                    windowedGrids = await PlayerCardService.fetchWindowedSplits(
+                        name: playerName, season: current.year,
+                        startDate: _battingWindowKey, isPitcher: false)
+                }
                 .background(
                     GeometryReader { g in
                         Color.clear
@@ -763,11 +792,27 @@ struct PlayerCardView: View {
                     )
                 }
 
-                // Pitching splits section
+                // Pitching splits section (windowed override mirrors batting)
+                let _pitchingWindowKey: String = {
+                    let sd = windowStartDate(
+                        dates: pitchingGameLogs?.map(\.date),
+                        startGame: current.currentForm.map { pitchingFormSliderStartGame ?? ($0.totalSeasonGames - $0.numGames + 1) })
+                    return splitsMatchWindow ? (sd ?? "") : ""
+                }()
                 pitchingSplitsSection(
-                    season: current, tab: $splitTab,
+                    season: (splitsMatchWindow ? pitchingWindowedGrids.map { PlayerCardService.overridingSplits(current, with: $0) } : nil) ?? current,
+                    tab: $splitTab,
                     pitchIdx: $pitchTypeIndex, countIdx: $countSplitIndex
                 )
+                .task(id: _pitchingWindowKey) {
+                    guard splitsMatchWindow, !_pitchingWindowKey.isEmpty else {
+                        pitchingWindowedGrids = nil
+                        return
+                    }
+                    pitchingWindowedGrids = await PlayerCardService.fetchWindowedSplits(
+                        name: playerName, season: current.year,
+                        startDate: _pitchingWindowKey, isPitcher: true)
+                }
                 .background(
                     GeometryReader { g in
                         Color.clear
@@ -879,6 +924,34 @@ struct PlayerCardView: View {
 
         if hasData {
             VStack(alignment: .leading, spacing: 8) {
+                // Streak-window scope control — same row as the batting
+                // splits section.
+                if let form = season.currentForm {
+                    let startG = pitchingFormSliderStartGame ?? (form.totalSeasonGames - form.numGames + 1)
+                    let windowN = max(1, form.totalSeasonGames - startG + 1)
+                    HStack(spacing: 10) {
+                        Text("Match streak window")
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(.primary)
+                        Toggle("", isOn: $splitsMatchWindow)
+                            .labelsHidden()
+                            .tint(deepBlue)
+                        if splitsMatchWindow {
+                            Text("Last \(windowN) game\(windowN == 1 ? "" : "s")")
+                                .font(.system(.caption, design: .rounded, weight: .semibold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(deepBlue.opacity(0.1))
+                                .clipShape(Capsule())
+                                .foregroundStyle(deepBlue)
+                                .transition(.opacity)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 4)
+                }
+
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
                         ForEach(SplitTab.allCases.filter { pitchingTabHasData($0, season: season) }, id: \.self) { t in

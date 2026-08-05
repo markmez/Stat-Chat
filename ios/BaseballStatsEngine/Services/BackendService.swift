@@ -168,6 +168,34 @@ final class BackendService: Sendable {
         let rows: [SplitRowData]
     }
 
+    /// Splits scoped to the streak window (GET /player-card/windowed-splits).
+    struct WindowedSplitsData: Decodable, Sendable {
+        let start_date: String
+        let num_games: Int
+        let platoon: SplitGridData?
+        let home_away: SplitGridData?
+        let risp: SplitGridData?
+        let pitch_type: [SplitGridData]?
+        let count: [SplitGridData]?
+    }
+
+    func fetchWindowedSplits(name: String, season: Int, startDate: String,
+                             perspective: String) async throws -> WindowedSplitsData {
+        var comps = URLComponents(
+            url: baseURL.appendingPathComponent("player-card/windowed-splits"),
+            resolvingAgainstBaseURL: false)!
+        comps.queryItems = [
+            URLQueryItem(name: "name", value: name),
+            URLQueryItem(name: "season", value: String(season)),
+            URLQueryItem(name: "start_date", value: startDate),
+            URLQueryItem(name: "perspective", value: perspective),
+        ]
+        var request = URLRequest(url: comps.url!)
+        request.timeoutInterval = 15
+        let (data, _) = try await URLSession.shared.data(for: request)
+        return try JSONDecoder().decode(WindowedSplitsData.self, from: data)
+    }
+
     struct SeasonSplitsData: Decodable, Sendable {
         let year: Int
         let platoon: SplitGridData?

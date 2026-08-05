@@ -201,6 +201,72 @@ enum PlayerCardService {
     private static let db = DatabaseService()
     private static let backendService = BackendService()
 
+    // MARK: - Windowed splits (streak-window toggle, 2026-08-04)
+
+    struct WindowedGrids: Sendable {
+        let numGames: Int
+        let platoon: StatGridParser.StatGrid?
+        let homeAway: StatGridParser.StatGrid?
+        let risp: StatGridParser.StatGrid?
+        let pitchType: [StatGridParser.StatGrid]?
+        let count: [StatGridParser.StatGrid]?
+    }
+
+    static func fetchWindowedSplits(name: String, season: Int, startDate: String,
+                                    isPitcher: Bool) async -> WindowedGrids? {
+        do {
+            let d = try await backendService.fetchWindowedSplits(
+                name: name, season: season, startDate: startDate,
+                perspective: isPitcher ? "pitch" : "bat")
+            return WindowedGrids(
+                numGames: d.num_games,
+                platoon: d.platoon.map(convertSplitGrid),
+                homeAway: d.home_away.map(convertSplitGrid),
+                risp: d.risp.map(convertSplitGrid),
+                pitchType: d.pitch_type.map { $0.map(convertSplitGrid) },
+                count: d.count.map { $0.map(convertSplitGrid) }
+            )
+        } catch {
+            return nil
+        }
+    }
+
+    /// Season copy with splits REPLACED by the windowed grids. Strict per
+    /// family — a family with no windowed rows goes nil (its tab hides)
+    /// rather than silently showing season numbers under a window chip,
+    /// which would be a confidently-wrong display. Streaks/fielding are
+    /// not window-scoped and keep their season values.
+    static func overridingSplits(_ s: SeasonData, with w: WindowedGrids) -> SeasonData {
+        SeasonData(
+            year: s.year, team: s.team, age: s.age, games: s.games,
+            teamGames: s.teamGames, stats: s.stats,
+            countingValues: s.countingValues,
+            platoonSplits: w.platoon,
+            homeAwaySplits: w.homeAway,
+            rispSplits: w.risp,
+            streaks: s.streaks,
+            fieldingStats: s.fieldingStats,
+            pitchTypeSplits: w.pitchType,
+            countSplits: w.count,
+            currentForm: s.currentForm
+        )
+    }
+
+    static func overridingSplits(_ s: PitchingSeasonData, with w: WindowedGrids) -> PitchingSeasonData {
+        PitchingSeasonData(
+            year: s.year, team: s.team, games: s.games,
+            gamesStarted: s.gamesStarted, teamGames: s.teamGames,
+            stats: s.stats, countingValues: s.countingValues,
+            platoonSplits: w.platoon,
+            homeAwaySplits: w.homeAway,
+            rispSplits: w.risp,
+            streaks: s.streaks,
+            pitchTypeSplits: w.pitchType,
+            countSplits: w.count,
+            currentForm: s.currentForm
+        )
+    }
+
     /// The range of seasons available in the local bundled DB.
     static let localMinYear = 2016
     static let localMaxYear = 2025
