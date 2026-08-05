@@ -1396,7 +1396,7 @@ def compute_pitching_home_away_splits(conn, season_year):
     return count
 
 
-def compute_platoon_splits(conn, season_str):
+def compute_platoon_splits(conn, season_str, full_refresh=False):
     """Compute platoon, pitch type, and count splits from play-by-play data.
 
     All three split types are collected in a single pass over the play-by-play API
@@ -1438,6 +1438,26 @@ def compute_platoon_splits(conn, season_str):
         "SLURVE": "Slurve",
     }
 
+    # INCREMENTAL MODE (Phase B, 2026-08-05): when game_split_logs already
+    # holds this season's per-game rows, seed the accumulators from storage
+    # and only fetch PBP for games since MAX(date) minus a 3-day lookback
+    # (late corrections / suspended games). Full replay when the table is
+    # empty (bootstrap) or on the weekly --full-refresh reconciliation,
+    # which doubles as the drift guard. Season-table insert code below is
+    # UNCHANGED either way — parity is structural.
+    seed_cutoff = None
+    if not full_refresh:
+        try:
+            row = conn.execute(
+                "SELECT MAX(date) FROM game_split_logs WHERE season = ?",
+                (season_year,)).fetchone()
+            if row and row[0]:
+                from datetime import datetime as _dt2, timedelta as _td2
+                seed_cutoff = (_dt2.strptime(row[0], "%Y-%m-%d")
+                               - _td2(days=3)).strftime("%Y-%m-%d")
+        except sqlite3.OperationalError:
+            seed_cutoff = None
+
     # Get all game IDs for this season
     data = msf_get(f"{season_str}/games.json")
     if not data:
@@ -1460,6 +1480,10 @@ def compute_platoon_splits(conn, season_str):
                 dt = dt - timedelta(days=1)
             gdate = dt.strftime("%Y-%m-%d")
         games.append((sched.get("id"), gdate))
+    if seed_cutoff:
+        total_completed = len(games)
+        games = [(gid, gd) for gid, gd in games if gd and gd >= seed_cutoff]
+        print(f"    Incremental: {len(games)} of {total_completed} games since {seed_cutoff}")
     print(f"    Found {len(games)} completed games to process")
 
     # Accumulators
@@ -1518,6 +1542,78 @@ def compute_platoon_splits(conn, season_str):
         if key not in by_game:
             by_game[key] = empty_bat_stats()
         accumulate(by_game[key], result)
+
+    # Seed accumulators + by_game from stored per-game rows (incremental
+    # mode only). Rows on/after the cutoff are NOT seeded — those dates get
+    # reprocessed from PBP so corrections land. The season-table inserts
+    # below then see exactly what a full replay would have produced.
+    if seed_cutoff:
+        _name_cache = {}
+
+        def _pname(pid):
+            if pid not in _name_cache:
+                r = conn.execute("SELECT name FROM players WHERE player_id = ?",
+                                 (pid,)).fetchone()
+                _name_cache[pid] = r[0] if r else None
+            return _name_cache[pid]
+
+        def _merge(bucket_dict, key, st):
+            b = bucket_dict.setdefault(key, empty_bat_stats())
+            for k in b:
+                b[k] += st[k]
+
+        seeded = 0
+        for (pid, fam, persp, split, gdate, pa, ab, h, d2, t3, hr, rbi, bb,
+             so, hbp, sf) in conn.execute(
+                """SELECT player_id, family, perspective, split, date,
+                          plate_appearances, at_bats, hits, doubles, triples,
+                          home_runs, rbi, walks, strikeouts, hit_by_pitch,
+                          sacrifice_flies
+                   FROM game_split_logs
+                   WHERE season = ? AND date < ?""",
+                (season_year, seed_cutoff)):
+            name = _pname(pid)
+            if not name:
+                continue
+            st = {"pa": pa or 0, "ab": ab or 0, "h": h or 0, "2b": d2 or 0,
+                  "3b": t3 or 0, "hr": hr or 0, "rbi": rbi or 0, "bb": bb or 0,
+                  "so": so or 0, "hbp": hbp or 0, "sf": sf or 0}
+            gsl_split = split
+            if fam == "platoon" and persp == "bat":
+                _merge(batting_splits, (pid, name, "L" if split == "vs_LHP" else "R"), st)
+            elif fam == "platoon" and persp == "pitch":
+                _merge(pitching_splits, (pid, name, "L" if split == "vs_LHB" else "R"), st)
+            elif fam == "pitch_type":
+                _merge(bat_pitch_type if persp == "bat" else pitch_pitch_type,
+                       (pid, name, split), st)
+            elif fam == "count":
+                _merge(bat_count_splits if persp == "bat" else pitch_count_splits,
+                       (pid, name, split), st)
+            elif fam == "risp":
+                _merge(bat_risp_splits if persp == "bat" else pitch_risp_splits,
+                       (pid, name, split), st)
+            elif fam == "h2h":
+                opp_name = _pname(split)
+                if not opp_name:
+                    continue
+                _merge(h2h_splits, (pid, name, split, opp_name), st)
+                gsl_split = opp_name  # by_game stores opponent NAME pre-insert
+            elif fam == "first_pa":
+                _merge(bat_first_pa, (pid, name), st)
+            elif fam == "inning":
+                _merge(pitch_inning_splits, (pid, name, split), st)
+            elif fam == "tto":
+                _merge(pitch_tto_splits, (pid, name, split), st)
+            else:
+                continue
+            k = (fam, persp, pid, name, gsl_split, gdate)
+            if k in by_game:
+                for kk in by_game[k]:
+                    by_game[k][kk] += st[kk]
+            else:
+                by_game[k] = dict(st)
+            seeded += 1
+        print(f"    Incremental: seeded {seeded} stored per-game rows (dates < {seed_cutoff})")
 
     for i, (gid, game_date) in enumerate(games):
         if i > 0:
@@ -1692,6 +1788,35 @@ def compute_platoon_splits(conn, season_str):
 
         if (i + 1) % 50 == 0:
             print(f"    Processed {i + 1}/{len(games)} games...")
+
+    # Incremental-mode key normalization: seeded entries carry Retrosheet
+    # player_ids in the id slots while fresh-game entries carry MSF ids —
+    # the SAME player can therefore occupy two dict entries, and the season
+    # inserts below use INSERT OR REPLACE, which would keep only the last
+    # one (silent undercount). Collapse id slots onto names — the insert
+    # code only ever consumes the name — so seeded + fresh entries merge
+    # additively before insertion.
+    if seed_cutoff:
+        def _renorm(d, id_slots):
+            out = {}
+            for key, st in d.items():
+                k = list(key)
+                for slot, name_slot in id_slots:
+                    k[slot] = key[name_slot]
+                k = tuple(k)
+                b = out.setdefault(k, empty_bat_stats())
+                for kk in b:
+                    b[kk] += st[kk]
+            d.clear()
+            d.update(out)
+
+        for _d in (batting_splits, pitching_splits, bat_pitch_type,
+                   pitch_pitch_type, bat_count_splits, pitch_count_splits,
+                   bat_risp_splits, pitch_risp_splits, pitch_inning_splits,
+                   pitch_tto_splits):
+            _renorm(_d, [(0, 1)])
+        _renorm(bat_first_pa, [(0, 1)])
+        _renorm(h2h_splits, [(0, 1), (2, 3)])
 
     print(f"    Processed all {len(games)} games: {len(batting_splits)} platoon, "
           f"{len(bat_pitch_type)} pitch type, {len(bat_count_splits)} count, "
@@ -2413,7 +2538,7 @@ def main():
         refresh_career_game_num(conn)
 
         # Compute platoon splits from play-by-play
-        compute_platoon_splits(conn, args.season)
+        compute_platoon_splits(conn, args.season, full_refresh=args.full_refresh)
 
         # Update prominence columns for iOS disambiguation
         print("\nUpdating player prominence columns...")
