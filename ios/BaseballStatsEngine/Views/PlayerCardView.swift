@@ -37,13 +37,22 @@ struct PlayerCardView: View {
     // System-wide "splits follow the streak window" mode (persists across
     // players and launches; the window itself stays per-player).
     @AppStorage("splitsMatchStreakWindow") private var splitsMatchWindow = false
-    // Global-frame bottom edge of the in-content slider, tracked so the
-    // pinned window bar appears only when window mode is ON and the real
-    // slider has scrolled out of view (a persistent global setting needs a
-    // persistent visible indicator).
-    @State private var formSliderGlobalMaxY: CGFloat = .infinity
+    // Pinned window bar engagement. Tracked from the in-content slider's
+    // global frame with HYSTERESIS: the bar pushes the scroll content down
+    // when it appears, so a single threshold oscillates (bar shows → slider
+    // shifts down → bar hides → ...) — engage below 100pt, release above
+    // 175pt; the 75pt gap exceeds the bar's height so the loop can't close.
+    @State private var pinnedBarEngaged = false
     private var showPinnedWindowBar: Bool {
-        splitsMatchWindow && formSliderGlobalMaxY < 130
+        splitsMatchWindow && pinnedBarEngaged
+    }
+
+    private func updatePinnedBar(sliderGlobalMaxY y: CGFloat) {
+        if y < 100 && !pinnedBarEngaged {
+            withAnimation(.easeInOut(duration: 0.15)) { pinnedBarEngaged = true }
+        } else if y > 175 && pinnedBarEngaged {
+            withAnimation(.easeInOut(duration: 0.15)) { pinnedBarEngaged = false }
+        }
     }
     @State private var pitchingGameLogs: [PitchingGameLog]? = nil
     @State private var showPitchingFormProjection = false
@@ -968,9 +977,9 @@ struct PlayerCardView: View {
                         .background(
                             GeometryReader { g in
                                 Color.clear
-                                    .onAppear { formSliderGlobalMaxY = g.frame(in: .global).maxY }
+                                    .onAppear { updatePinnedBar(sliderGlobalMaxY: g.frame(in: .global).maxY) }
                                     .onChange(of: g.frame(in: .global).maxY) { _, newY in
-                                        formSliderGlobalMaxY = newY
+                                        updatePinnedBar(sliderGlobalMaxY: newY)
                                     }
                             }
                         )
@@ -1350,9 +1359,11 @@ struct PlayerCardView: View {
                                disabled: Bool) -> some View {
         VStack(spacing: 2) {
             HStack {
-                Text(headline)
+                (Text("Streak window").foregroundStyle(deepBlue)
+                 + Text(" · \(headline)").foregroundStyle(.secondary))
                     .font(.system(.caption, design: .rounded, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                 Spacer()
                 if let statText {
                     Text(statText)
@@ -1749,9 +1760,9 @@ struct PlayerCardView: View {
                         .background(
                             GeometryReader { g in
                                 Color.clear
-                                    .onAppear { formSliderGlobalMaxY = g.frame(in: .global).maxY }
+                                    .onAppear { updatePinnedBar(sliderGlobalMaxY: g.frame(in: .global).maxY) }
                                     .onChange(of: g.frame(in: .global).maxY) { _, newY in
-                                        formSliderGlobalMaxY = newY
+                                        updatePinnedBar(sliderGlobalMaxY: newY)
                                     }
                             }
                         )
