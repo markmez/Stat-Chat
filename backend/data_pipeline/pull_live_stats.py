@@ -1443,8 +1443,23 @@ def compute_platoon_splits(conn, season_str):
     if not data:
         print("    No games found")
         return 0, 0
-    games = [g["schedule"]["id"] for g in data.get("games", [])
-             if g.get("schedule", {}).get("playedStatus") == "COMPLETED"]
+    # Keep each game's MLB-official date alongside its id (same UTC→Eastern
+    # convention as get_game_dates: pre-6am-UTC starts belong to the prior
+    # day). Dates key the per-game split rows and must match the
+    # game_batting_logs.date convention so windowed queries join cleanly.
+    games = []
+    for g in data.get("games", []):
+        sched = g.get("schedule", {})
+        if sched.get("playedStatus") != "COMPLETED":
+            continue
+        gdate = ""
+        start = sched.get("startTime", "")
+        if start:
+            dt = datetime.strptime(start[:19], "%Y-%m-%dT%H:%M:%S")
+            if dt.hour < 6:
+                dt = dt - timedelta(days=1)
+            gdate = dt.strftime("%Y-%m-%d")
+        games.append((sched.get("id"), gdate))
     print(f"    Found {len(games)} completed games to process")
 
     # Accumulators
@@ -1491,7 +1506,20 @@ def compute_platoon_splits(conn, season_str):
         if result == "SACRIFICE_FLY":
             bucket["sf"] += 1
 
-    for i, gid in enumerate(games):
+    # Per-game split rows (2026-08-04): same accumulation, additionally keyed
+    # by game date, into ONE unified store → game_split_logs table. Powers
+    # the streak-window splits feature (and future windowed chat queries).
+    # The season aggregates above stay byte-identical — this is purely
+    # additive.
+    by_game = {}  # (family, perspective, msf_id, name, split, game_date) → stats
+
+    def bump_game(family, perspective, pid, name, split, game_date, result):
+        key = (family, perspective, pid, name, split, game_date)
+        if key not in by_game:
+            by_game[key] = empty_bat_stats()
+        accumulate(by_game[key], result)
+
+    for i, (gid, game_date) in enumerate(games):
         if i > 0:
             time.sleep(2)  # Rate limit
         try:
@@ -1569,11 +1597,15 @@ def compute_platoon_splits(conn, season_str):
                     if bkey not in batting_splits:
                         batting_splits[bkey] = empty_bat_stats()
                     accumulate(batting_splits[bkey], result)
+                    bump_game("platoon", "bat", batter_id, batter_name,
+                              "vs_LHP" if pitcher_hand == "L" else "vs_RHP", game_date, result)
 
                     pkey = (pitcher_id, pitcher_name, batter_hand)
                     if pkey not in pitching_splits:
                         pitching_splits[pkey] = empty_bat_stats()
                     accumulate(pitching_splits[pkey], result)
+                    bump_game("platoon", "pitch", pitcher_id, pitcher_name,
+                              "vs_LHB" if batter_hand == "L" else "vs_RHB", game_date, result)
 
                 # --- Pitch type splits (requires last pitch type) ---
                 if last_pitch_type:
@@ -1582,11 +1614,13 @@ def compute_platoon_splits(conn, season_str):
                     if bt_key not in bat_pitch_type:
                         bat_pitch_type[bt_key] = empty_bat_stats()
                     accumulate(bat_pitch_type[bt_key], result)
+                    bump_game("pitch_type", "bat", batter_id, batter_name, pt_label, game_date, result)
 
                     pt_key = (pitcher_id, pitcher_name, pt_label)
                     if pt_key not in pitch_pitch_type:
                         pitch_pitch_type[pt_key] = empty_bat_stats()
                     accumulate(pitch_pitch_type[pt_key], result)
+                    bump_game("pitch_type", "pitch", pitcher_id, pitcher_name, pt_label, game_date, result)
 
                 # --- Count splits ---
                 count_str = f"{balls}-{strikes}"
@@ -1594,11 +1628,13 @@ def compute_platoon_splits(conn, season_str):
                 if bc_key not in bat_count_splits:
                     bat_count_splits[bc_key] = empty_bat_stats()
                 accumulate(bat_count_splits[bc_key], result)
+                bump_game("count", "bat", batter_id, batter_name, count_str, game_date, result)
 
                 pc_key = (pitcher_id, pitcher_name, count_str)
                 if pc_key not in pitch_count_splits:
                     pitch_count_splits[pc_key] = empty_bat_stats()
                 accumulate(pitch_count_splits[pc_key], result)
+                bump_game("count", "pitch", pitcher_id, pitcher_name, count_str, game_date, result)
 
                 # --- RISP splits (runners on 2nd and/or 3rd) ---
                 has_risp = ps.get("secondBaseRunner") is not None or ps.get("thirdBaseRunner") is not None
@@ -1607,11 +1643,13 @@ def compute_platoon_splits(conn, season_str):
                 if br_key not in bat_risp_splits:
                     bat_risp_splits[br_key] = empty_bat_stats()
                 accumulate(bat_risp_splits[br_key], result)
+                bump_game("risp", "bat", batter_id, batter_name, risp_label, game_date, result)
 
                 pr_key = (pitcher_id, pitcher_name, risp_label)
                 if pr_key not in pitch_risp_splits:
                     pitch_risp_splits[pr_key] = empty_bat_stats()
                 accumulate(pitch_risp_splits[pr_key], result)
+                bump_game("risp", "pitch", pitcher_id, pitcher_name, risp_label, game_date, result)
 
                 # --- Head-to-head (batter vs specific pitcher) ---
                 h2h_key = (batter_id, batter_name, pitcher_id, pitcher_name)
@@ -1788,6 +1826,52 @@ def compute_platoon_splits(conn, season_str):
         cursor.execute("SELECT player_id FROM players WHERE name = ? LIMIT 1", (name,))
         row = cursor.fetchone()
         return row[0] if row else None
+
+    # --- Per-game split logs (unified: platoon/risp/pitch_type/count ×
+    # bat/pitch, one row per player-game-split). Raw counting stats only —
+    # windowed rates are recomputed at query time from component sums.
+    # Self-backfills: this function replays the whole season every run.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS game_split_logs (
+            player_id TEXT NOT NULL, season INTEGER NOT NULL, date TEXT NOT NULL,
+            family TEXT NOT NULL, perspective TEXT NOT NULL, split TEXT NOT NULL,
+            plate_appearances INTEGER, at_bats INTEGER, hits INTEGER,
+            doubles INTEGER, triples INTEGER, home_runs INTEGER, rbi INTEGER,
+            walks INTEGER, strikeouts INTEGER, hit_by_pitch INTEGER,
+            sacrifice_flies INTEGER,
+            UNIQUE(player_id, season, date, family, perspective, split)
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_gsl_player
+        ON game_split_logs(player_id, season, family, date)
+    """)
+    cursor.execute("DELETE FROM game_split_logs WHERE season = ?", (season_year,))
+
+    _pid_cache = {}
+
+    def resolve_cached(name):
+        if name not in _pid_cache:
+            _pid_cache[name] = resolve_player(name)
+        return _pid_cache[name]
+
+    gsl_rows = []
+    for (family, persp, _msf_id, name, split, gdate), stats in by_game.items():
+        pid = resolve_cached(name)
+        if not pid or not gdate:
+            continue
+        gsl_rows.append((pid, season_year, gdate, family, persp, split,
+                         stats["pa"], stats["ab"], stats["h"], stats["2b"],
+                         stats["3b"], stats["hr"], stats["rbi"], stats["bb"],
+                         stats["so"], stats["hbp"], stats["sf"]))
+    cursor.executemany("""
+        INSERT OR REPLACE INTO game_split_logs
+        (player_id, season, date, family, perspective, split,
+         plate_appearances, at_bats, hits, doubles, triples, home_runs, rbi,
+         walks, strikeouts, hit_by_pitch, sacrifice_flies)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, gsl_rows)
+    print(f"    Inserted {len(gsl_rows)} per-game split rows")
 
     # --- Insert platoon splits ---
     bat_count = 0

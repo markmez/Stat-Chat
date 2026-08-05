@@ -392,6 +392,15 @@ Current form for each pitcher-season — the tail slice with the lowest ERA (opt
 - When a user asks about a pitcher, query the pitching tables (season_pitching_stats, game_pitching_logs, etc.) instead of batting tables.
 - Shared stat names like "strikeouts" or "home runs" should be resolved based on whether the player is a pitcher or batter.
 
+### game_split_logs
+- Per-GAME split rows for the current season (2026+ only), derived nightly from play-by-play. One row per player-game-split.
+- player_id (TEXT), season (INTEGER), date (TEXT, 'YYYY-MM-DD' — matches game_batting_logs.date)
+- family (TEXT) — 'platoon', 'risp', 'pitch_type', or 'count'
+- perspective (TEXT) — 'bat' (batter's view) or 'pitch' (pitcher's view)
+- split (TEXT) — e.g. 'vs_LHP'/'vs_RHP' (platoon bat), 'vs_LHB'/'vs_RHB' (platoon pitch), 'RISP'/'Non-RISP', pitch labels ('4-Seam', 'Slider', ...), ball-strike counts ('0-2', '3-1', ...)
+- Counting stats only: plate_appearances, at_bats, hits, doubles, triples, home_runs, rbi, walks, strikeouts, hit_by_pitch, sacrifice_flies
+- USE FOR date-windowed split questions ("vs lefties over his last 15 games"): SUM components over the date range and recompute rates with the standard formulas. Season-total split questions should still use the pre-aggregated split tables above.
+
 ### awards
 - player_id (TEXT) — references players table
 - award (TEXT) — award type: 'MVP', 'CY' (Cy Young), 'ROY' (Rookie of the Year), 'ALL_STAR', 'GG' (Gold Glove), 'SS' (Silver Slugger), 'HOF' (Hall of Fame), 'WS_MVP', 'ALCS_MVP', 'NLCS_MVP'
