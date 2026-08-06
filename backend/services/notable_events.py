@@ -264,10 +264,11 @@ def _fetch_game_score(game_date, team_code, opponent_code):
     Returns (team_runs, opponent_runs) or (None, None) if not found.
     """
     import requests
+    import sqlite3 as _sq
+    import os as _os
+    import time as _time
 
-    # Check cache first
-    if game_date in _score_cache:
-        cached = _score_cache[game_date]
+    def _lookup(cached):
         for (away, home), (away_r, home_r) in cached.items():
             if away == team_code and home == opponent_code:
                 return away_r, home_r
@@ -275,7 +276,41 @@ def _fetch_game_score(game_date, team_code, opponent_code):
                 return home_r, away_r
         return None, None
 
-    # Fetch all games for this date and cache them
+    # L1: per-worker in-memory cache
+    if game_date in _score_cache:
+        return _lookup(_score_cache[game_date])
+
+    # L2: DB-backed shared cache (2026-08-06). The in-memory cache is
+    # per-gunicorn-worker, so cold workers each re-hit statsapi at 10s per
+    # uncached date — under retry load that serially wedges every worker
+    # (the "everything hangs" outage). The DB cache is shared and survives
+    # restarts. Non-final dates (no rows) are negative-cached for 10 min
+    # via the meta table so in-progress evenings don't re-fetch per request.
+    _db = _sq.connect(_os.getenv("DB_PATH", "/data/baseball_stats_full.db"), timeout=5)
+    try:
+        _db.execute("""CREATE TABLE IF NOT EXISTS game_score_cache (
+            game_date TEXT, away TEXT, home TEXT,
+            away_runs INTEGER, home_runs INTEGER,
+            UNIQUE(game_date, away, home))""")
+        _db.execute("""CREATE TABLE IF NOT EXISTS game_score_cache_meta (
+            game_date TEXT PRIMARY KEY, fetched_at REAL)""")
+        rows = _db.execute(
+            "SELECT away, home, away_runs, home_runs FROM game_score_cache WHERE game_date = ?",
+            (game_date,)).fetchall()
+        if rows:
+            cached = {(r[0], r[1]): (r[2], r[3]) for r in rows}
+            _score_cache[game_date] = cached
+            return _lookup(cached)
+        meta = _db.execute(
+            "SELECT fetched_at FROM game_score_cache_meta WHERE game_date = ?",
+            (game_date,)).fetchone()
+        if meta and (_time.time() - meta[0]) < 600:
+            _score_cache[game_date] = {}
+            return None, None
+    except Exception:
+        pass
+
+    # L3: fetch from MLB Stats API and persist
     try:
         resp = requests.get(
             "https://statsapi.mlb.com/api/v1/schedule",
@@ -285,6 +320,13 @@ def _fetch_game_score(game_date, team_code, opponent_code):
         resp.raise_for_status()
         data = resp.json()
     except Exception:
+        try:
+            _db.execute("INSERT OR REPLACE INTO game_score_cache_meta VALUES (?, ?)",
+                        (game_date, _time.time()))
+            _db.commit()
+            _db.close()
+        except Exception:
+            pass
         return None, None
 
     from services.daily_games import _team_to_retro
@@ -307,15 +349,18 @@ def _fetch_game_score(game_date, team_code, opponent_code):
             date_scores[(away_retro, home_retro)] = (away_runs, home_runs)
 
     _score_cache[game_date] = date_scores
+    try:
+        _db.executemany(
+            "INSERT OR REPLACE INTO game_score_cache VALUES (?, ?, ?, ?, ?)",
+            [(game_date, a, h, ar, hr) for (a, h), (ar, hr) in date_scores.items()])
+        _db.execute("INSERT OR REPLACE INTO game_score_cache_meta VALUES (?, ?)",
+                    (game_date, _time.time()))
+        _db.commit()
+        _db.close()
+    except Exception:
+        pass
 
-    # Look up this specific matchup
-    for (away, home), (away_r, home_r) in date_scores.items():
-        if away == team_code and home == opponent_code:
-            return away_r, home_r
-        if home == team_code and away == opponent_code:
-            return home_r, away_r
-
-    return None, None
+    return _lookup(date_scores)
 
 
 def _get_latest_date(conn, season):
