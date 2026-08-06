@@ -22,10 +22,22 @@
             key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
             envs: APP_STORE_SERVER_API_KEY
             script: |
-              echo "=== DEBUG: crash evidence (temporary) ==="
-              sudo grep -n -i "killed\|memoryerror\|traceback\|FATAL\|Pipeline FAILED" /data/refresh.log | tail -12 || true
+              echo "=== EMERGENCY RECOVERY (temporary) ==="
+              # 1. Stop ALL pipeline processes (bootstrap resumes from
+              #    game_split_logs MAX(date) on next run — no work lost)
+              sudo pkill -f pull_live_stats.py || true
+              sleep 2
+              sudo pkill -9 -f pull_live_stats.py || true
+              rm -f /tmp/statchat_pipeline.lock /tmp/statchat_detection.lock || true
+              # 2. WAL journaling: writers stop blocking readers, permanently
+              sudo -u statchat /opt/statchat/venv/bin/python -c "import sqlite3; c=sqlite3.connect('/data/baseball_stats_full.db', timeout=30); print('journal_mode:', c.execute('PRAGMA journal_mode=WAL').fetchone()); c.close()" || true
+              # 3. Restart the API service
+              sudo systemctl restart statchat
+              sleep 5
+              sudo systemctl is-active statchat || true
               free -m || true
-              echo "=== END DEBUG ==="
+              curl -s --max-time 10 http://127.0.0.1:8000/health || echo "health check failed"
+              echo "=== END RECOVERY ==="
               cd /opt/statchat/repo
               sudo -u statchat git pull
               sudo -u statchat /opt/statchat/venv/bin/pip install -q -r backend/requirements.txt
