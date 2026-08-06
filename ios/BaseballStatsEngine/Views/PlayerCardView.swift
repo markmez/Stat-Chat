@@ -59,8 +59,13 @@ struct PlayerCardView: View {
     // scrolled off the top, nothing visible responds to the slider — the
     // bar dismisses rather than floating uselessly over career sections.
     @State private var splitsSectionGone = false
+    // Game logs are window-coupled REGARDLESS of the splits toggle (Streak
+    // pill + "Streak from here" CTAs), so the bar pins over the log region
+    // unconditionally; the toggle only extends pinning through the splits
+    // region (where it doubles as the window-mode indicator).
+    @State private var gameLogsSectionGone = false
     private var showPinnedWindowBar: Bool {
-        splitsMatchWindow && pinnedBarEngaged && !splitsSectionGone
+        pinnedBarEngaged && (splitsMatchWindow ? !splitsSectionGone : !gameLogsSectionGone)
     }
 
     private func updateSplitsEdge(bottomY y: CGFloat) {
@@ -68,6 +73,14 @@ struct PlayerCardView: View {
             withAnimation(.easeInOut(duration: 0.15)) { splitsSectionGone = true }
         } else if y > 170 && splitsSectionGone {
             withAnimation(.easeInOut(duration: 0.15)) { splitsSectionGone = false }
+        }
+    }
+
+    private func updateGameLogsEdge(bottomY y: CGFloat) {
+        if y < 110 && !gameLogsSectionGone {
+            withAnimation(.easeInOut(duration: 0.15)) { gameLogsSectionGone = true }
+        } else if y > 170 && gameLogsSectionGone {
+            withAnimation(.easeInOut(duration: 0.15)) { gameLogsSectionGone = false }
         }
     }
 
@@ -595,6 +608,15 @@ struct PlayerCardView: View {
                         },
                         isPitching: false
                     )
+                    .background(
+                        GeometryReader { g in
+                            Color.clear
+                                .onAppear { updateGameLogsEdge(bottomY: g.frame(in: .global).maxY) }
+                                .onChange(of: g.frame(in: .global).maxY) { _, y in
+                                    updateGameLogsEdge(bottomY: y)
+                                }
+                        }
+                    )
                 }
 
                 // Unified splits section. When window mode is on and the
@@ -789,6 +811,15 @@ struct PlayerCardView: View {
                             pitchingFormSliderStartGame ?? (form.totalSeasonGames - form.numGames + 1)
                         },
                         isPitching: true
+                    )
+                    .background(
+                        GeometryReader { g in
+                            Color.clear
+                                .onAppear { updateGameLogsEdge(bottomY: g.frame(in: .global).maxY) }
+                                .onChange(of: g.frame(in: .global).maxY) { _, y in
+                                    updateGameLogsEdge(bottomY: y)
+                                }
+                        }
                     )
                 }
 
