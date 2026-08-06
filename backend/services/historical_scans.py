@@ -1192,6 +1192,16 @@ def _league_for_team(team):
     return None
 
 
+def _current_league(conn, player_id):
+    """League of the player's CURRENT team (players.team, pipeline-maintained).
+    A traded player's old-league season row can still top that league's rate
+    boards (frozen stats — legitimate under MLB convention), but lead-change
+    events must not credit their new-league game line for it."""
+    row = conn.execute("SELECT team FROM players WHERE player_id = ?",
+                       (player_id,)).fetchone()
+    return _league_for_team(row[0]) if row and row[0] else None
+
+
 def scan_leaderboard_changes(conn, season, latest_date):
     """Find players who took the lead in a stat leaderboard (MLB, AL, or NL)
     as a result of their most recent game."""
@@ -1333,6 +1343,35 @@ def scan_leaderboard_changes(conn, season, latest_date):
                 if leader_val <= runner_up_val:
                     continue
 
+                # Cross-league frozen lead (Luis Garcia Jr. case, 2026-08-05):
+                # the board row is old-league stats but the player now plays
+                # in the OTHER league — his game today didn't move these
+                # numbers; the runner-up dropped. Attribute to the dropper
+                # (who must have actually played today) and let the
+                # narration call out the irony.
+                if scope in ("AL", "NL") and _current_league(conn, leader_pid) != scope:
+                    ru_played = conn.execute("""
+                        SELECT COUNT(*) FROM game_batting_logs
+                        WHERE player_id = ? AND season = ? AND date = ?
+                    """, (runner_up_pid, season, latest_date)).fetchone()[0]
+                    if not ru_played:
+                        continue
+                    facts.append({
+                        "type": "leaderboard_change",
+                        "player": leader_name,
+                        "player_id": leader_pid,
+                        "team": leader_team,
+                        "stat": col,
+                        "stat_label": label,
+                        "stat_abbrev": abbrev,
+                        "value": leader_val,
+                        "scope": scope,
+                        "runner_up": runner_up_name,
+                        "runner_up_val": runner_up_val,
+                        "cross_league": True,
+                    })
+                    continue
+
                 team = leader_team
                 league = _league_for_team(team)
 
@@ -1455,6 +1494,14 @@ def scan_leaderboard_changes(conn, season, latest_date):
                     })
             else:
                 # Rate stat: leader must have played today (already checked above)
+                _xl = scope in ("AL", "NL") and _current_league(conn, leader_pid) != scope
+                if _xl:
+                    ru_played = conn.execute("""
+                        SELECT COUNT(*) FROM game_pitching_logs
+                        WHERE player_id = ? AND season = ? AND date = ?
+                    """, (runner_up_pid, season, latest_date)).fetchone()[0]
+                    if not ru_played:
+                        continue
                 facts.append({
                     "type": "leaderboard_change",
                     "player": leader_name,
@@ -1468,6 +1515,7 @@ def scan_leaderboard_changes(conn, season, latest_date):
                     "runner_up_val": runner_up_val,
                     "scope": scope,
                     "is_pitching": True,
+                    "cross_league": _xl,
                 })
 
     return facts
@@ -1964,6 +2012,26 @@ def template_facts(conn, facts, season, latest_date):
             else:
                 val_str = str(val)
                 ru_str = str(runner_up_val)
+
+            if f.get("cross_league"):
+                # Frozen-stats lead change: the gainer's numbers didn't move —
+                # the runner-up dropped. Lead with the dropper, and call out
+                # the irony (Mark's wording, 2026-08-05).
+                headline = (f"{runner_up} ({ru_str}) slipped below {player} for the "
+                            f"{scope} lead in {stat_label} ({val_str}) — {player} "
+                            f"still leads despite not even being in the {scope} anymore.")
+                secondary_names.append(runner_up)
+                all_names = ([player] if player else []) + secondary_names
+                events.append({
+                    "headline": headline,
+                    "category": "historical",
+                    "player_names": all_names,
+                    "team_names": [team] if team else [],
+                    "detection_type": None,
+                })
+                if pid:
+                    seen_players.add(pid)
+                continue
 
             # Check if this player previously held this lead (within last 7 days)
             took_verb = "taking"
