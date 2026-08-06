@@ -22,6 +22,10 @@
             key: ${{ secrets.LIGHTSAIL_SSH_KEY }}
             envs: APP_STORE_SERVER_API_KEY
             script: |
+              echo "=== DEBUG: crash evidence (temporary) ==="
+              sudo grep -n -i "killed\|memoryerror\|traceback\|FATAL\|Pipeline FAILED" /data/refresh.log | tail -12 || true
+              free -m || true
+              echo "=== END DEBUG ==="
               cd /opt/statchat/repo
               sudo -u statchat git pull
               sudo -u statchat /opt/statchat/venv/bin/pip install -q -r backend/requirements.txt

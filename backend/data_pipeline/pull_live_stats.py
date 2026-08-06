@@ -1530,20 +1530,101 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
         if result == "SACRIFICE_FLY":
             bucket["sf"] += 1
 
-    # Per-game split rows (2026-08-04): same accumulation, additionally keyed
-    # by game date, into ONE unified store → game_split_logs table. Powers
-    # the streak-window splits feature (and future windowed chat queries).
-    # The season aggregates above stay byte-identical — this is purely
-    # additive.
-    by_game = {}  # (family, perspective, msf_id, name, split, game_date) → stats
+    # Per-game split rows → game_split_logs (2026-08-04; STREAMING rewrite
+    # 2026-08-06 after the accumulate-then-insert version OOM-killed the
+    # bootstrap: ~1.3M dict entries ≈ 600-800MB on a box that also runs the
+    # API). Each game's rows are flushed to the table as the game finishes —
+    # RAM stays at a few hundred entries, and a crash mid-bootstrap leaves
+    # a resumable table (the incremental cutoff continues from MAX(date)
+    # instead of restarting from April).
+    _gsl_cur = conn.cursor()
+    _gsl_cur.execute("""
+        CREATE TABLE IF NOT EXISTS game_split_logs (
+            player_id TEXT NOT NULL, season INTEGER NOT NULL, date TEXT NOT NULL,
+            family TEXT NOT NULL, perspective TEXT NOT NULL, split TEXT NOT NULL,
+            plate_appearances INTEGER, at_bats INTEGER, hits INTEGER,
+            doubles INTEGER, triples INTEGER, home_runs INTEGER, rbi INTEGER,
+            walks INTEGER, strikeouts INTEGER, hit_by_pitch INTEGER,
+            sacrifice_flies INTEGER,
+            UNIQUE(player_id, season, date, family, perspective, split)
+        )
+    """)
+    _gsl_cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_gsl_player
+        ON game_split_logs(player_id, season, family, date)
+    """)
+    if seed_cutoff:
+        _gsl_cur.execute("DELETE FROM game_split_logs WHERE season = ? AND date >= ?",
+                         (season_year, seed_cutoff))
+    else:
+        _gsl_cur.execute("DELETE FROM game_split_logs WHERE season = ?", (season_year,))
+    conn.commit()
+
+    _gsl_pid_cache = {}
+
+    def _gsl_resolve(name):
+        if name not in _gsl_pid_cache:
+            r = conn.execute("SELECT player_id FROM players WHERE name = ? LIMIT 1",
+                             (name,)).fetchone()
+            _gsl_pid_cache[name] = r[0] if r else None
+        return _gsl_pid_cache[name]
+
+    game_rows = {}  # THIS game only: (family, persp, name, split) → stats
 
     def bump_game(family, perspective, pid, name, split, game_date, result):
-        key = (family, perspective, pid, name, split, game_date)
-        if key not in by_game:
-            by_game[key] = empty_bat_stats()
-        accumulate(by_game[key], result)
+        key = (family, perspective, name, split)
+        if key not in game_rows:
+            game_rows[key] = empty_bat_stats()
+        accumulate(game_rows[key], result)
 
-    # Seed accumulators + by_game from stored per-game rows (incremental
+    _gsl_total = 0
+
+    def flush_game_rows(game_date):
+        nonlocal _gsl_total
+        if not game_rows or not game_date:
+            game_rows.clear()
+            return
+        rows = []
+        for (family, persp, name, split), st in game_rows.items():
+            pid = _gsl_resolve(name)
+            if not pid:
+                continue
+            if family == "h2h":
+                split = _gsl_resolve(split)
+                if not split:
+                    continue
+            rows.append((pid, season_year, game_date, family, persp, split,
+                         st["pa"], st["ab"], st["h"], st["2b"], st["3b"],
+                         st["hr"], st["rbi"], st["bb"], st["so"], st["hbp"],
+                         st["sf"]))
+        if rows:
+            # Additive upsert: doubleheaders flush the SAME (player, date,
+            # split) key twice — game 2 must ADD to game 1, not replace it.
+            _gsl_cur.executemany("""
+                INSERT INTO game_split_logs
+                (player_id, season, date, family, perspective, split,
+                 plate_appearances, at_bats, hits, doubles, triples, home_runs,
+                 rbi, walks, strikeouts, hit_by_pitch, sacrifice_flies)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(player_id, season, date, family, perspective, split)
+                DO UPDATE SET
+                    plate_appearances = plate_appearances + excluded.plate_appearances,
+                    at_bats = at_bats + excluded.at_bats,
+                    hits = hits + excluded.hits,
+                    doubles = doubles + excluded.doubles,
+                    triples = triples + excluded.triples,
+                    home_runs = home_runs + excluded.home_runs,
+                    rbi = rbi + excluded.rbi,
+                    walks = walks + excluded.walks,
+                    strikeouts = strikeouts + excluded.strikeouts,
+                    hit_by_pitch = hit_by_pitch + excluded.hit_by_pitch,
+                    sacrifice_flies = sacrifice_flies + excluded.sacrifice_flies
+            """, rows)
+            conn.commit()
+            _gsl_total += len(rows)
+        game_rows.clear()
+
+    # Seed accumulators from stored per-game rows (incremental
     # mode only). Rows on/after the cutoff are NOT seeded — those dates get
     # reprocessed from PBP so corrections land. The season-table inserts
     # below then see exactly what a full replay would have produced.
@@ -1578,7 +1659,6 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
             st = {"pa": pa or 0, "ab": ab or 0, "h": h or 0, "2b": d2 or 0,
                   "3b": t3 or 0, "hr": hr or 0, "rbi": rbi or 0, "bb": bb or 0,
                   "so": so or 0, "hbp": hbp or 0, "sf": sf or 0}
-            gsl_split = split
             if fam == "platoon" and persp == "bat":
                 _merge(batting_splits, (pid, name, "L" if split == "vs_LHP" else "R"), st)
             elif fam == "platoon" and persp == "pitch":
@@ -1597,7 +1677,6 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
                 if not opp_name:
                     continue
                 _merge(h2h_splits, (pid, name, split, opp_name), st)
-                gsl_split = opp_name  # by_game stores opponent NAME pre-insert
             elif fam == "first_pa":
                 _merge(bat_first_pa, (pid, name), st)
             elif fam == "inning":
@@ -1606,12 +1685,6 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
                 _merge(pitch_tto_splits, (pid, name, split), st)
             else:
                 continue
-            k = (fam, persp, pid, name, gsl_split, gdate)
-            if k in by_game:
-                for kk in by_game[k]:
-                    by_game[k][kk] += st[kk]
-            else:
-                by_game[k] = dict(st)
             seeded += 1
         print(f"    Incremental: seeded {seeded} stored per-game rows (dates < {seed_cutoff})")
 
@@ -1786,8 +1859,12 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
 
                 break  # Only process one batterUp per at-bat
 
+        flush_game_rows(game_date)
+
         if (i + 1) % 50 == 0:
             print(f"    Processed {i + 1}/{len(games)} games...")
+
+    print(f"    Streamed {_gsl_total} per-game split rows to game_split_logs")
 
     # Incremental-mode key normalization: seeded entries carry Retrosheet
     # player_ids in the id slots while fresh-game entries carry MSF ids —
@@ -1956,58 +2033,6 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
         row = cursor.fetchone()
         return row[0] if row else None
 
-    # --- Per-game split logs (unified: platoon/risp/pitch_type/count ×
-    # bat/pitch, one row per player-game-split). Raw counting stats only —
-    # windowed rates are recomputed at query time from component sums.
-    # Self-backfills: this function replays the whole season every run.
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS game_split_logs (
-            player_id TEXT NOT NULL, season INTEGER NOT NULL, date TEXT NOT NULL,
-            family TEXT NOT NULL, perspective TEXT NOT NULL, split TEXT NOT NULL,
-            plate_appearances INTEGER, at_bats INTEGER, hits INTEGER,
-            doubles INTEGER, triples INTEGER, home_runs INTEGER, rbi INTEGER,
-            walks INTEGER, strikeouts INTEGER, hit_by_pitch INTEGER,
-            sacrifice_flies INTEGER,
-            UNIQUE(player_id, season, date, family, perspective, split)
-        )
-    """)
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_gsl_player
-        ON game_split_logs(player_id, season, family, date)
-    """)
-    cursor.execute("DELETE FROM game_split_logs WHERE season = ?", (season_year,))
-
-    _pid_cache = {}
-
-    def resolve_cached(name):
-        if name not in _pid_cache:
-            _pid_cache[name] = resolve_player(name)
-        return _pid_cache[name]
-
-    gsl_rows = []
-    for (family, persp, _msf_id, name, split, gdate), stats in by_game.items():
-        pid = resolve_cached(name)
-        if not pid or not gdate:
-            continue
-        if family == "h2h":
-            # split carries the opposing pitcher's NAME during accumulation;
-            # store their player_id (skip if unresolvable).
-            opp = resolve_cached(split)
-            if not opp:
-                continue
-            split = opp
-        gsl_rows.append((pid, season_year, gdate, family, persp, split,
-                         stats["pa"], stats["ab"], stats["h"], stats["2b"],
-                         stats["3b"], stats["hr"], stats["rbi"], stats["bb"],
-                         stats["so"], stats["hbp"], stats["sf"]))
-    cursor.executemany("""
-        INSERT OR REPLACE INTO game_split_logs
-        (player_id, season, date, family, perspective, split,
-         plate_appearances, at_bats, hits, doubles, triples, home_runs, rbi,
-         walks, strikeouts, hit_by_pitch, sacrifice_flies)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, gsl_rows)
-    print(f"    Inserted {len(gsl_rows)} per-game split rows")
 
     # --- Insert platoon splits ---
     bat_count = 0
