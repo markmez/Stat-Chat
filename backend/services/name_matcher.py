@@ -2125,6 +2125,17 @@ def parse_platoon_leaderboard(input_str: str) -> Optional[dict]:
     """Detect platoon leaderboard queries like 'most HR against lefties'.
     Returns dict with stat, hand, is_pitching, season, limit."""
     lower = input_str.strip().lower()
+
+    # Date-window qualifiers ("since July 15", "in the last 30 days",
+    # "since the all-star break") are the query engine's job — its
+    # split × window executor composes them over game_split_logs.
+    # Claiming here silently ships full-season platoon numbers
+    # (2026-08-07 wrong-slice fix, same treatment as parse_team_stats).
+    if (re.search(r'\b(?:since|after)\s+(?:the\s+)?[a-z]+', lower)
+            or re.search(r'\b(?:last|past)\s+\d+\s*(?:day|week|month|game)', lower)
+            or "all-star break" in lower or "all star break" in lower):
+        return None
+
     league_result = detect_league(lower)
     if league_result:
         lower = league_result[1]
