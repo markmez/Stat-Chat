@@ -1586,6 +1586,21 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
     # empty (bootstrap) or on the weekly --full-refresh reconciliation,
     # which doubles as the drift guard. Season-table insert code below is
     # UNCHANGED either way — parity is structural.
+    # Schema migration (2026-08-07): game_split_logs rows are now keyed by
+    # game_id so re-flushing the same game REPLACES instead of ADDING —
+    # overlapping pipeline runs (healthcheck kill/restart cycles during the
+    # 8-19h crawls) double-to-quadruple-counted rows under the old additive
+    # doubleheader upsert. Old-schema data is corrupt by construction:
+    # drop it, which empties MAX(date) below and forces a clean full replay.
+    try:
+        _gsl_cols = {r[1] for r in conn.execute("PRAGMA table_info(game_split_logs)")}
+        if _gsl_cols and "game_id" not in _gsl_cols:
+            print("    game_split_logs: old (game-less) schema — dropping corrupt table, full rebuild this run")
+            conn.execute("DROP TABLE game_split_logs")
+            conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
     seed_cutoff = None
     if not full_refresh:
         try:
@@ -1682,12 +1697,13 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
     _gsl_cur.execute("""
         CREATE TABLE IF NOT EXISTS game_split_logs (
             player_id TEXT NOT NULL, season INTEGER NOT NULL, date TEXT NOT NULL,
+            game_id TEXT NOT NULL DEFAULT '',
             family TEXT NOT NULL, perspective TEXT NOT NULL, split TEXT NOT NULL,
             plate_appearances INTEGER, at_bats INTEGER, hits INTEGER,
             doubles INTEGER, triples INTEGER, home_runs INTEGER, rbi INTEGER,
             walks INTEGER, strikeouts INTEGER, hit_by_pitch INTEGER,
             sacrifice_flies INTEGER,
-            UNIQUE(player_id, season, date, family, perspective, split)
+            UNIQUE(player_id, season, date, game_id, family, perspective, split)
         )
     """)
     _gsl_cur.execute("""
@@ -1720,7 +1736,7 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
 
     _gsl_total = 0
 
-    def flush_game_rows(game_date):
+    def flush_game_rows(game_date, game_id):
         nonlocal _gsl_total
         if not game_rows or not game_date:
             game_rows.clear()
@@ -1734,32 +1750,22 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
                 split = _gsl_resolve(split)
                 if not split:
                     continue
-            rows.append((pid, season_year, game_date, family, persp, split,
+            rows.append((pid, season_year, game_date, str(game_id or ""),
+                         family, persp, split,
                          st["pa"], st["ab"], st["h"], st["2b"], st["3b"],
                          st["hr"], st["rbi"], st["bb"], st["so"], st["hbp"],
                          st["sf"]))
         if rows:
-            # Additive upsert: doubleheaders flush the SAME (player, date,
-            # split) key twice — game 2 must ADD to game 1, not replace it.
+            # Keyed by game_id, so reprocessing a game (kill/restart,
+            # lookback, overlapping runs) REPLACES its rows — idempotent.
+            # Doubleheaders are two game_ids = two rows per date; readers
+            # aggregate with SUM, so nothing downstream changes.
             _gsl_cur.executemany("""
-                INSERT INTO game_split_logs
-                (player_id, season, date, family, perspective, split,
+                INSERT OR REPLACE INTO game_split_logs
+                (player_id, season, date, game_id, family, perspective, split,
                  plate_appearances, at_bats, hits, doubles, triples, home_runs,
                  rbi, walks, strikeouts, hit_by_pitch, sacrifice_flies)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(player_id, season, date, family, perspective, split)
-                DO UPDATE SET
-                    plate_appearances = plate_appearances + excluded.plate_appearances,
-                    at_bats = at_bats + excluded.at_bats,
-                    hits = hits + excluded.hits,
-                    doubles = doubles + excluded.doubles,
-                    triples = triples + excluded.triples,
-                    home_runs = home_runs + excluded.home_runs,
-                    rbi = rbi + excluded.rbi,
-                    walks = walks + excluded.walks,
-                    strikeouts = strikeouts + excluded.strikeouts,
-                    hit_by_pitch = hit_by_pitch + excluded.hit_by_pitch,
-                    sacrifice_flies = sacrifice_flies + excluded.sacrifice_flies
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, rows)
             conn.commit()
             _gsl_total += len(rows)
@@ -2000,7 +2006,7 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
 
                 break  # Only process one batterUp per at-bat
 
-        flush_game_rows(game_date)
+        flush_game_rows(game_date, gid)
 
         if (i + 1) % 50 == 0:
             print(f"    Processed {i + 1}/{len(games)} games...")
@@ -2625,6 +2631,22 @@ def main():
     parser.add_argument("--full-refresh", action="store_true",
                         help="Wipe and re-pull all game logs (weekly reconciliation)")
     args = parser.parse_args()
+
+    # Single-pipeline lock (2026-08-07): overlapping runs (cron + healthcheck
+    # restarts + /admin/refresh during multi-hour crawls) were the root cause
+    # of game_split_logs double-counting. flock is kernel-held: it releases
+    # automatically if the process is killed, so a stale lock can't wedge the
+    # nightly runs. Lock lives next to the DB so every launch path (cron,
+    # API-spawned, manual) contends on the same file.
+    import fcntl
+    _lock_path = os.path.join(os.path.dirname(os.path.abspath(args.db)),
+                              "pipeline.lock")
+    _lock_fh = open(_lock_path, "w")
+    try:
+        fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("Another pipeline run holds the lock — exiting (not an error).")
+        return
 
     # Auto-detect season
     if args.season is None:

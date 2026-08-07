@@ -211,12 +211,17 @@ if [ "$DATA_STALE" -eq 1 ]; then
     #       pipeline run takes 30-90 min; freshness only updates on
     #       completion, so it ALWAYS looks stale during a live run)
     #
-    # Use min_age_seconds=5400 on kill-pipeline so processes younger
-    # than 90 min are left alive. The response's `running` count tells
-    # us how many young (in-progress) processes were preserved — if >0,
-    # we skip the /admin/refresh too, since a healthy pipeline is
-    # already running.
-    KILL_RESPONSE=$(curl -fsS -m 30 -X POST "$API_BASE/admin/kill-pipeline?min_age_seconds=5400" -H "$AUTH_HDR" 2>&1 || true)
+    # Use min_age_seconds=43200 (12h) on kill-pipeline: legitimate full
+    # split-rebuild crawls run 8-11h, and the old 90-min threshold created
+    # a kill/restart carousel during them (each restart re-crawled from
+    # scratch; overlapping adds were the game_split_logs double-counting
+    # root cause, 2026-08-07). Normal incremental runs finish in minutes;
+    # a genuinely hung process now lingers up to 12h before self-heal,
+    # which the pipeline flock makes safe (nothing else can start anyway).
+    # The response's `running` count tells us how many young (in-progress)
+    # processes were preserved — if >0, we skip the /admin/refresh too,
+    # since a healthy pipeline is already running.
+    KILL_RESPONSE=$(curl -fsS -m 30 -X POST "$API_BASE/admin/kill-pipeline?min_age_seconds=43200" -H "$AUTH_HDR" 2>&1 || true)
     KILLED=$(echo "$KILL_RESPONSE" | grep -oE '"killed":[0-9]+' | grep -oE '[0-9]+' | head -1 || echo 0)
     RUNNING=$(echo "$KILL_RESPONSE" | grep -oE '"running":[0-9]+' | grep -oE '[0-9]+' | head -1 || echo 0)
 
