@@ -96,7 +96,7 @@ struct ResultsView: View {
                                 }
 
                                 if appState.isLoading && appState.currentStreamingText.isEmpty {
-                                    LoadingIndicator()
+                                    LoadingIndicator(notice: appState.loadingNotice)
                                         .frame(maxWidth: .infinity, alignment: .center)
                                         .padding(.top, 12)
                                         .id("loading")

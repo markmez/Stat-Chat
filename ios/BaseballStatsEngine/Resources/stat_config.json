@@ -3,201 +3,697 @@
   "version": 2,
   "stat_aliases": {
     "home_runs": {
-      "aliases": ["home runs", "homers", "dingers", "hr", "home run", "hrs", "homer", "dinger", "taters"],
-      "abbrev": "HR", "name": "Home Runs", "is_rate": false
+      "aliases": [
+        "home runs",
+        "homers",
+        "dingers",
+        "hr",
+        "home run",
+        "hrs",
+        "homer",
+        "dinger",
+        "taters"
+      ],
+      "abbrev": "HR",
+      "name": "Home Runs",
+      "is_rate": false
     },
     "batting_avg": {
-      "aliases": ["batting average", "average", "avg", "ba", "batting avg", "batting"],
-      "abbrev": "AVG", "name": "Batting Average", "is_rate": true
+      "aliases": [
+        "batting average",
+        "average",
+        "avg",
+        "ba",
+        "batting avg",
+        "batting"
+      ],
+      "abbrev": "AVG",
+      "name": "Batting Average",
+      "is_rate": true
     },
     "rbi": {
-      "aliases": ["runs batted in", "rbis", "rbi", "ribbies"],
-      "abbrev": "RBI", "name": "RBI", "is_rate": false
+      "aliases": [
+        "runs batted in",
+        "rbis",
+        "rbi",
+        "ribbies"
+      ],
+      "abbrev": "RBI",
+      "name": "RBI",
+      "is_rate": false
     },
     "ops": {
-      "aliases": ["on base plus slugging", "ops"],
-      "fallback_aliases": ["best hitter", "best hitters", "best batter", "best batters", "top hitter", "top hitters", "top batter", "top batters", "greatest hitter", "greatest hitters", "greatest batter", "greatest batters", "best overall hitter", "best overall batter"],
-      "abbrev": "OPS", "name": "OPS", "is_rate": true
+      "aliases": [
+        "on base plus slugging",
+        "ops"
+      ],
+      "fallback_aliases": [
+        "best hitter",
+        "best hitters",
+        "best batter",
+        "best batters",
+        "top hitter",
+        "top hitters",
+        "top batter",
+        "top batters",
+        "greatest hitter",
+        "greatest hitters",
+        "greatest batter",
+        "greatest batters",
+        "best overall hitter",
+        "best overall batter"
+      ],
+      "abbrev": "OPS",
+      "name": "OPS",
+      "is_rate": true
     },
     "ops_plus": {
-      "aliases": ["ops+", "ops plus", "adjusted ops"],
-      "abbrev": "OPS+", "name": "OPS+", "is_rate": true
+      "aliases": [
+        "ops+",
+        "ops plus",
+        "adjusted ops"
+      ],
+      "abbrev": "OPS+",
+      "name": "OPS+",
+      "is_rate": true
     },
     "stolen_bases": {
-      "aliases": ["stolen bases", "steals", "sb", "sbs", "stolen base", "bags", "steal", "stole"],
-      "abbrev": "SB", "name": "Stolen Bases", "is_rate": false
+      "aliases": [
+        "stolen bases",
+        "steals",
+        "sb",
+        "sbs",
+        "stolen base",
+        "bags",
+        "steal",
+        "stole"
+      ],
+      "abbrev": "SB",
+      "name": "Stolen Bases",
+      "is_rate": false
     },
     "strikeouts": {
-      "aliases": ["strikeouts", "ks", "k's", "strikeout", "punchouts", "so", "struck out"],
-      "abbrev": "SO", "name": "Strikeouts", "is_rate": false
+      "aliases": [
+        "strikeouts",
+        "ks",
+        "k's",
+        "strikeout",
+        "punchouts",
+        "so",
+        "struck out"
+      ],
+      "abbrev": "SO",
+      "name": "Strikeouts",
+      "is_rate": false
     },
     "walks": {
-      "aliases": ["bases on balls", "walks", "bb", "walk"],
-      "abbrev": "BB", "name": "Walks", "is_rate": false
+      "aliases": [
+        "bases on balls",
+        "walks",
+        "bb",
+        "walk"
+      ],
+      "abbrev": "BB",
+      "name": "Walks",
+      "is_rate": false
     },
     "obp": {
-      "aliases": ["on-base percentage", "on base percentage", "obp", "on-base", "on base"],
-      "abbrev": "OBP", "name": "On-Base Percentage", "is_rate": true
+      "aliases": [
+        "on-base percentage",
+        "on base percentage",
+        "obp",
+        "on-base",
+        "on base"
+      ],
+      "abbrev": "OBP",
+      "name": "On-Base Percentage",
+      "is_rate": true
     },
     "slg": {
-      "aliases": ["slugging percentage", "slugging", "slg"],
-      "abbrev": "SLG", "name": "Slugging Percentage", "is_rate": true
+      "aliases": [
+        "slugging percentage",
+        "slugging",
+        "slg"
+      ],
+      "abbrev": "SLG",
+      "name": "Slugging Percentage",
+      "is_rate": true
     },
     "runs": {
-      "aliases": ["runs scored", "runs", "run"],
-      "abbrev": "R", "name": "Runs", "is_rate": false
+      "aliases": [
+        "runs scored",
+        "runs",
+        "run"
+      ],
+      "abbrev": "R",
+      "name": "Runs",
+      "is_rate": false
     },
     "hits": {
-      "aliases": ["hits", "hit", "h"],
-      "abbrev": "H", "name": "Hits", "is_rate": false
+      "aliases": [
+        "hits",
+        "hit",
+        "h"
+      ],
+      "abbrev": "H",
+      "name": "Hits",
+      "is_rate": false
     },
     "doubles": {
-      "aliases": ["doubles", "double", "2b"],
-      "abbrev": "2B", "name": "Doubles", "is_rate": false
+      "aliases": [
+        "doubles",
+        "double",
+        "2b"
+      ],
+      "abbrev": "2B",
+      "name": "Doubles",
+      "is_rate": false
     },
     "triples": {
-      "aliases": ["triples", "triple", "3b"],
-      "abbrev": "3B", "name": "Triples", "is_rate": false
+      "aliases": [
+        "triples",
+        "triple",
+        "3b"
+      ],
+      "abbrev": "3B",
+      "name": "Triples",
+      "is_rate": false
     },
     "games": {
-      "aliases": ["games played", "games", "game"],
-      "abbrev": "G", "name": "Games", "is_rate": false
+      "aliases": [
+        "games played",
+        "games",
+        "game"
+      ],
+      "abbrev": "G",
+      "name": "Games",
+      "is_rate": false
     },
     "iso": {
-      "aliases": ["isolated power", "iso", "power"],
-      "abbrev": "ISO", "name": "Isolated Power", "is_rate": true
+      "aliases": [
+        "isolated power",
+        "iso",
+        "power"
+      ],
+      "abbrev": "ISO",
+      "name": "Isolated Power",
+      "is_rate": true
     },
     "babip": {
-      "aliases": ["batting average on balls in play", "babip"],
-      "abbrev": "BABIP", "name": "BABIP", "is_rate": true
+      "aliases": [
+        "batting average on balls in play",
+        "babip"
+      ],
+      "abbrev": "BABIP",
+      "name": "BABIP",
+      "is_rate": true
     },
     "at_bats": {
-      "aliases": ["at-bats", "at bats", "ab"],
-      "abbrev": "AB", "name": "At Bats", "is_rate": false
+      "aliases": [
+        "at-bats",
+        "at bats",
+        "ab"
+      ],
+      "abbrev": "AB",
+      "name": "At Bats",
+      "is_rate": false
     },
     "caught_stealing": {
-      "aliases": ["caught stealing", "cs"],
-      "abbrev": "CS", "name": "Caught Stealing", "is_rate": false
+      "aliases": [
+        "caught stealing",
+        "cs"
+      ],
+      "abbrev": "CS",
+      "name": "Caught Stealing",
+      "is_rate": false
     },
     "hit_by_pitch": {
-      "aliases": ["hit by pitch", "hbp"],
-      "abbrev": "HBP", "name": "Hit By Pitch", "is_rate": false
+      "aliases": [
+        "hit by pitch",
+        "hbp"
+      ],
+      "abbrev": "HBP",
+      "name": "Hit By Pitch",
+      "is_rate": false
     },
     "intentional_walks": {
-      "aliases": ["intentional walks", "ibb"],
-      "abbrev": "IBB", "name": "Intentional Walks", "is_rate": false
+      "aliases": [
+        "intentional walks",
+        "ibb"
+      ],
+      "abbrev": "IBB",
+      "name": "Intentional Walks",
+      "is_rate": false
     },
     "era": {
-      "aliases": ["earned run average", "era"],
-      "fallback_aliases": ["best pitcher", "best pitchers", "top pitcher", "top pitchers", "greatest pitcher", "greatest pitchers", "best starting pitcher", "best starting pitchers", "best starter", "best starters", "top starter", "top starters", "ace pitcher"],
-      "abbrev": "ERA", "name": "ERA", "is_rate": true
+      "aliases": [
+        "earned run average",
+        "era"
+      ],
+      "fallback_aliases": [
+        "best pitcher",
+        "best pitchers",
+        "top pitcher",
+        "top pitchers",
+        "greatest pitcher",
+        "greatest pitchers",
+        "best starting pitcher",
+        "best starting pitchers",
+        "best starter",
+        "best starters",
+        "top starter",
+        "top starters",
+        "ace pitcher"
+      ],
+      "abbrev": "ERA",
+      "name": "ERA",
+      "is_rate": true
     },
     "whip": {
-      "aliases": ["walks and hits per innings pitched", "whip"],
-      "abbrev": "WHIP", "name": "WHIP", "is_rate": true
+      "aliases": [
+        "walks and hits per innings pitched",
+        "whip"
+      ],
+      "abbrev": "WHIP",
+      "name": "WHIP",
+      "is_rate": true
     },
     "k_per_9": {
-      "aliases": ["strikeouts per 9 innings", "k/9", "k per 9", "strikeouts per nine"],
-      "abbrev": "K/9", "name": "K/9", "is_rate": true
+      "aliases": [
+        "strikeouts per 9 innings",
+        "k/9",
+        "k per 9",
+        "strikeouts per nine",
+        "ks per 9",
+        "ks/9",
+        "k's per 9",
+        "strikeouts per 9"
+      ],
+      "abbrev": "K/9",
+      "name": "K/9",
+      "is_rate": true
     },
     "bb_per_9": {
-      "aliases": ["walks per 9 innings", "bb/9", "bb per 9", "walks per nine"],
-      "abbrev": "BB/9", "name": "BB/9", "is_rate": true
+      "aliases": [
+        "walks per 9 innings",
+        "bb/9",
+        "bb per 9",
+        "walks per nine",
+        "bbs per 9",
+        "walks per 9"
+      ],
+      "abbrev": "BB/9",
+      "name": "BB/9",
+      "is_rate": true
     },
     "k_per_bb": {
-      "aliases": ["strikeout to walk ratio", "k/bb", "k per bb", "strikeout walk ratio"],
-      "abbrev": "K/BB", "name": "K/BB", "is_rate": true
+      "aliases": [
+        "strikeout to walk ratio",
+        "k/bb",
+        "k per bb",
+        "strikeout walk ratio"
+      ],
+      "abbrev": "K/BB",
+      "name": "K/BB",
+      "is_rate": true
     },
     "h_per_9": {
-      "aliases": ["hits per 9 innings", "h/9", "h per 9", "hits per nine"],
-      "abbrev": "H/9", "name": "H/9", "is_rate": true
+      "aliases": [
+        "hits per 9 innings",
+        "h/9",
+        "h per 9",
+        "hits per nine",
+        "hits per 9"
+      ],
+      "abbrev": "H/9",
+      "name": "H/9",
+      "is_rate": true
     },
     "hr_per_9": {
-      "aliases": ["home runs per 9 innings", "hr/9", "hr per 9"],
-      "abbrev": "HR/9", "name": "HR/9", "is_rate": true
+      "aliases": [
+        "home runs per 9 innings",
+        "hr/9",
+        "hr per 9",
+        "hrs per 9",
+        "home runs per 9",
+        "homers per 9"
+      ],
+      "abbrev": "HR/9",
+      "name": "HR/9",
+      "is_rate": true
     },
     "baa": {
-      "aliases": ["batting average against", "baa", "opponents batting average", "opponent avg"],
-      "abbrev": "BAA", "name": "BAA", "is_rate": true
+      "aliases": [
+        "batting average against",
+        "baa",
+        "opponents batting average",
+        "opponent avg"
+      ],
+      "abbrev": "BAA",
+      "name": "BAA",
+      "is_rate": true
     },
     "era_plus": {
-      "aliases": ["era+", "era plus", "adjusted era"],
-      "abbrev": "ERA+", "name": "ERA+", "is_rate": true
+      "aliases": [
+        "era+",
+        "era plus",
+        "adjusted era"
+      ],
+      "abbrev": "ERA+",
+      "name": "ERA+",
+      "is_rate": true
     },
     "wins": {
-      "aliases": ["wins", "win", "w"],
-      "abbrev": "W", "name": "Wins", "is_rate": false
+      "aliases": [
+        "wins",
+        "win",
+        "w"
+      ],
+      "abbrev": "W",
+      "name": "Wins",
+      "is_rate": false
     },
     "losses": {
-      "aliases": ["losses", "loss"],
-      "abbrev": "L", "name": "Losses", "is_rate": false
+      "aliases": [
+        "losses",
+        "loss"
+      ],
+      "abbrev": "L",
+      "name": "Losses",
+      "is_rate": false
     },
     "saves": {
-      "aliases": ["saves", "save", "sv"],
-      "abbrev": "SV", "name": "Saves", "is_rate": false
+      "aliases": [
+        "saves",
+        "save",
+        "sv"
+      ],
+      "abbrev": "SV",
+      "name": "Saves",
+      "is_rate": false
     },
     "innings_pitched": {
-      "aliases": ["innings pitched", "ip", "innings"],
-      "abbrev": "IP", "name": "Innings Pitched", "is_rate": false
+      "aliases": [
+        "innings pitched",
+        "ip",
+        "innings"
+      ],
+      "abbrev": "IP",
+      "name": "Innings Pitched",
+      "is_rate": false
     },
     "quality_starts": {
-      "aliases": ["quality starts", "quality start", "qs"],
-      "abbrev": "QS", "name": "Quality Starts", "is_rate": false
+      "aliases": [
+        "quality starts",
+        "quality start",
+        "qs"
+      ],
+      "abbrev": "QS",
+      "name": "Quality Starts",
+      "is_rate": false
     },
     "complete_games": {
-      "aliases": ["complete games", "complete game", "cg"],
-      "abbrev": "CG", "name": "Complete Games", "is_rate": false
+      "aliases": [
+        "complete games",
+        "complete game",
+        "cg"
+      ],
+      "abbrev": "CG",
+      "name": "Complete Games",
+      "is_rate": false
     },
     "games_finished": {
-      "aliases": ["games finished", "game finished", "gf"],
-      "abbrev": "GF", "name": "Games Finished", "is_rate": false
+      "aliases": [
+        "games finished",
+        "game finished",
+        "gf"
+      ],
+      "abbrev": "GF",
+      "name": "Games Finished",
+      "is_rate": false
     },
     "wild_pitches": {
-      "aliases": ["wild pitches", "wild pitch", "wp"],
-      "abbrev": "WP", "name": "Wild Pitches", "is_rate": false
+      "aliases": [
+        "wild pitches",
+        "wild pitch",
+        "wp"
+      ],
+      "abbrev": "WP",
+      "name": "Wild Pitches",
+      "is_rate": false
     },
     "balks": {
-      "aliases": ["balks", "bk"],
-      "abbrev": "BK", "name": "Balks", "is_rate": false
+      "aliases": [
+        "balks",
+        "bk"
+      ],
+      "abbrev": "BK",
+      "name": "Balks",
+      "is_rate": false
     },
     "batters_faced": {
-      "aliases": ["batters faced", "bf"],
-      "abbrev": "BF", "name": "Batters Faced", "is_rate": false
+      "aliases": [
+        "batters faced",
+        "bf"
+      ],
+      "abbrev": "BF",
+      "name": "Batters Faced",
+      "is_rate": false
     }
   },
   "pitching_only_stats": [
-    "era", "whip", "k_per_9", "bb_per_9", "k_per_bb", "h_per_9", "hr_per_9",
-    "baa", "era_plus", "wins", "losses", "saves", "innings_pitched",
-    "quality_starts", "complete_games", "games_finished", "wild_pitches",
-    "balks", "batters_faced"
+    "era",
+    "whip",
+    "k_per_9",
+    "bb_per_9",
+    "k_per_bb",
+    "h_per_9",
+    "hr_per_9",
+    "baa",
+    "era_plus",
+    "wins",
+    "losses",
+    "saves",
+    "innings_pitched",
+    "quality_starts",
+    "complete_games",
+    "games_finished",
+    "wild_pitches",
+    "balks",
+    "batters_faced"
   ],
   "common_word_last_names": [
-    "bare", "bass", "beam", "beer", "below", "belt", "bench", "best",
-    "board", "bolt", "bond", "bone", "brain", "brief", "brush", "bunch",
-    "cage", "camp", "cash", "cave", "center", "chance", "child", "choice",
-    "class", "clear", "click", "close", "command", "cook", "cotton", "court",
-    "crane", "cross", "dam", "dark", "deal", "dear", "deer", "delay", "dial",
-    "dock", "done", "dove", "drill", "duke", "dull", "dye", "eagle", "earl",
-    "edge", "else", "end", "every", "face", "fair", "fast", "fastest",
-    "fear", "field", "flag", "fleet", "flowers", "fold", "font", "force",
-    "free", "freeze", "friend", "frost", "good", "gore", "grace", "grant",
-    "gray", "green", "grey", "guest", "hack", "hall", "halt", "hammer", "hand",
-    "hare", "hatch", "hawk", "head", "heal", "heard", "heat", "highest",
-    "holder", "horn", "horse", "host", "house", "hurt", "jump", "just",
-    "key", "kitchen", "knack", "lamb", "lamp", "land", "law", "league",
-    "level", "light", "loan", "lock", "long", "longest", "love", "low",
-    "lowest", "luck", "mace", "marsh", "marvel", "may", "means", "minor",
-    "mock", "mole", "money", "more", "moss", "most", "nation", "nix",
-    "north", "offer", "office", "overall", "pace", "pack", "page", "parent",
-    "park", "peace", "peel", "penny", "person", "pie", "pole", "pool",
-    "pop", "pose", "post", "pride", "rain", "rash", "ray", "read", "ready",
-    "reed", "reel", "rest", "rich", "rock", "root", "rush", "sample",
-    "sand", "score", "sell", "service", "sharp", "shave", "shaw", "shell",
-    "shortest", "show", "slowest", "span", "speed", "spring", "steer",
-    "stem", "stern", "still", "stock", "stone", "story", "stout", "strain",
-    "strand", "strong", "stump", "such", "swift", "then", "thorn", "till",
-    "trace", "trade", "wade", "walk", "ward", "way", "web", "wells",
-    "west", "wild", "will", "winter", "wise", "wolf", "word", "worth"
+    "bare",
+    "bass",
+    "beam",
+    "beer",
+    "below",
+    "belt",
+    "bench",
+    "best",
+    "board",
+    "bolt",
+    "bond",
+    "bone",
+    "brain",
+    "brief",
+    "brush",
+    "bunch",
+    "cage",
+    "camp",
+    "cash",
+    "cave",
+    "center",
+    "chance",
+    "child",
+    "choice",
+    "class",
+    "clear",
+    "click",
+    "close",
+    "command",
+    "cook",
+    "cotton",
+    "court",
+    "crane",
+    "cross",
+    "dam",
+    "dark",
+    "deal",
+    "dear",
+    "deer",
+    "delay",
+    "dial",
+    "dock",
+    "done",
+    "dove",
+    "drill",
+    "duke",
+    "dull",
+    "dye",
+    "eagle",
+    "earl",
+    "edge",
+    "else",
+    "end",
+    "every",
+    "face",
+    "fair",
+    "fast",
+    "fastest",
+    "fear",
+    "field",
+    "flag",
+    "fleet",
+    "flowers",
+    "fold",
+    "font",
+    "force",
+    "free",
+    "freeze",
+    "friend",
+    "frost",
+    "good",
+    "gore",
+    "grace",
+    "grant",
+    "gray",
+    "green",
+    "grey",
+    "guest",
+    "hack",
+    "hall",
+    "halt",
+    "hammer",
+    "hand",
+    "hare",
+    "hatch",
+    "hawk",
+    "head",
+    "heal",
+    "heard",
+    "heat",
+    "highest",
+    "holder",
+    "horn",
+    "horse",
+    "host",
+    "house",
+    "hurt",
+    "jump",
+    "just",
+    "key",
+    "kitchen",
+    "knack",
+    "lamb",
+    "lamp",
+    "land",
+    "law",
+    "league",
+    "level",
+    "light",
+    "loan",
+    "lock",
+    "long",
+    "longest",
+    "love",
+    "low",
+    "lowest",
+    "luck",
+    "mace",
+    "marsh",
+    "marvel",
+    "may",
+    "means",
+    "minor",
+    "mock",
+    "mole",
+    "money",
+    "more",
+    "moss",
+    "most",
+    "nation",
+    "nix",
+    "north",
+    "offer",
+    "office",
+    "overall",
+    "pace",
+    "pack",
+    "page",
+    "parent",
+    "park",
+    "peace",
+    "peel",
+    "penny",
+    "person",
+    "pie",
+    "pole",
+    "pool",
+    "pop",
+    "pose",
+    "post",
+    "pride",
+    "rain",
+    "rash",
+    "ray",
+    "read",
+    "ready",
+    "reed",
+    "reel",
+    "rest",
+    "rich",
+    "rock",
+    "root",
+    "rush",
+    "sample",
+    "sand",
+    "score",
+    "sell",
+    "service",
+    "sharp",
+    "shave",
+    "shaw",
+    "shell",
+    "shortest",
+    "show",
+    "slowest",
+    "span",
+    "speed",
+    "spring",
+    "steer",
+    "stem",
+    "stern",
+    "still",
+    "stock",
+    "stone",
+    "story",
+    "stout",
+    "strain",
+    "strand",
+    "strong",
+    "stump",
+    "such",
+    "swift",
+    "then",
+    "thorn",
+    "till",
+    "trace",
+    "trade",
+    "wade",
+    "walk",
+    "ward",
+    "way",
+    "web",
+    "wells",
+    "west",
+    "wild",
+    "will",
+    "winter",
+    "wise",
+    "wolf",
+    "word",
+    "worth"
   ],
   "nickname_aliases": {
     "jazz chisholm": "Jazz Chisholm Jr.",
@@ -225,6 +721,11 @@
     "fernando tatis junior": "Fernando Tatis Jr.",
     "vladimir guerrero junior": "Vladimir Guerrero Jr.",
     "lance mccullers junior": "Lance McCullers Jr.",
+    "luis garcia jr.": "Luis Garcia Jr.",
+    "luis garcia jr": "Luis Garcia Jr.",
+    "luis garcia junior": "Luis Garcia Jr.",
+    "luis garcía jr.": "Luis Garcia Jr.",
+    "luis garcía jr": "Luis Garcia Jr.",
     "otani": "Shohei Ohtani",
     "otani's": "Shohei Ohtani",
     "shohei otani": "Shohei Ohtani",
@@ -232,55 +733,258 @@
     "shoei otani": "Shohei Ohtani"
   },
   "disambig_sr_jr_map": {
-    "bobby witt": ["Bobby Witt Jr.", "Bobby Witt"],
-    "fernando tatis": ["Fernando Tatis Jr.", "Fernando Tatis"],
-    "vladimir guerrero": ["Vladimir Guerrero Jr.", "Vladimir Guerrero"],
-    "lance mccullers": ["Lance McCullers Jr.", "Lance McCullers"]
+    "bobby witt": [
+      "Bobby Witt Jr.",
+      "Bobby Witt"
+    ],
+    "fernando tatis": [
+      "Fernando Tatis Jr.",
+      "Fernando Tatis"
+    ],
+    "vladimir guerrero": [
+      "Vladimir Guerrero Jr.",
+      "Vladimir Guerrero"
+    ],
+    "lance mccullers": [
+      "Lance McCullers Jr.",
+      "Lance McCullers"
+    ],
+    "luis garcia": [
+      "Luis Garcia Jr.",
+      "Luis Garcia"
+    ]
   },
-  "al_teams": ["ANA", "ATH", "BAL", "BOS", "CHA", "CLE", "DET", "HOU", "KCA", "MIN", "NYA", "SEA", "TBA", "TEX", "TOR"],
-  "nl_teams": ["ARI", "ATL", "CHN", "CIN", "COL", "LAN", "MIA", "MIL", "NYN", "PHI", "PIT", "SDN", "SFN", "SLN", "WAS"],
+  "al_teams": [
+    "ANA",
+    "ATH",
+    "BAL",
+    "BOS",
+    "CHA",
+    "CLE",
+    "DET",
+    "HOU",
+    "KCA",
+    "MIN",
+    "NYA",
+    "SEA",
+    "TBA",
+    "TEX",
+    "TOR"
+  ],
+  "nl_teams": [
+    "ARI",
+    "ATL",
+    "CHN",
+    "CIN",
+    "COL",
+    "LAN",
+    "MIA",
+    "MIL",
+    "NYN",
+    "PHI",
+    "PIT",
+    "SDN",
+    "SFN",
+    "SLN",
+    "WAS"
+  ],
   "fame_list": [
-    "Aaron Judge", "Adrian Beltre", "Al Kaline", "Albert Pujols", "Alex Bregman",
-    "Alex Rodriguez", "Andre Dawson", "Andrew McCutchen", "Andy Pettitte", "Babe Ruth",
-    "Barry Bonds", "Barry Larkin", "Bernie Williams", "Billy Wagner", "Bob Feller",
-    "Bob Gibson", "Bobby Grich", "Brooks Robinson", "Bryce Harper", "Buster Posey",
-    "CC Sabathia", "Cal Ripken", "Carl Yastrzemski", "Carlos Beltran", "Carlton Fisk",
-    "Charlie Gehringer", "Chase Utley", "Chipper Jones", "Chris Sale", "Christian Yelich",
-    "Christy Mathewson", "Clayton Kershaw", "Corbin Burnes", "Corey Seager", "Craig Biggio",
-    "Craig Kimbrel", "Curt Schilling", "Cy Young", "Dale Murphy", "Dave Parker",
-    "Dave Winfield", "David Ortiz", "David Price", "David Wright", "Dennis Eckersley",
-    "Derek Jeter", "Dizzy Dean", "Don Drysdale", "Don Mattingly", "Duke Snider",
-    "Dustin Pedroia", "Eddie Collins", "Eddie Mathews", "Eddie Murray", "Edgar Martinez",
-    "Ernie Banks", "Felix Hernandez", "Fernando Tatis Jr.", "Fernando Valenzuela",
-    "Francisco Lindor", "Frank Robinson", "Frank Thomas", "Fred Lynn", "Freddie Freeman",
-    "Gary Carter", "Gary Sheffield", "George Brett", "Gerrit Cole", "Giancarlo Stanton",
-    "Hank Aaron", "Harmon Killebrew", "Honus Wagner", "Ichiro Suzuki", "Ivan Rodriguez",
-    "Jackie Robinson", "Jacob deGrom", "Jim Bunning", "Jim Palmer", "Jim Rice", "Jim Thome",
-    "Jimmie Foxx", "Jimmy Rollins", "Joe DiMaggio", "Joe Mauer", "Joe Morgan", "Joey Votto",
-    "Johan Santana", "John Smoltz", "Johnny Bench", "Jorge Posada", "Jose Altuve",
-    "Jose Bautista", "Jose Ramirez", "Josh Donaldson", "Josh Hamilton", "Juan Marichal",
-    "Juan Soto", "Justin Verlander", "Keith Hernandez", "Ken Boyer", "Kirby Puckett",
-    "Kris Bryant", "Lance Berkman", "Larry Doby", "Larry Walker", "Lee Smith", "Lefty Grove",
-    "Lou Brock", "Lou Gehrig", "Luis Aparicio", "Madison Bumgarner", "Manny Ramirez",
-    "Mark McGwire", "Max Scherzer", "Mel Ott", "Mickey Mantle", "Miguel Cabrera",
-    "Mike Piazza", "Mike Schmidt", "Mike Trout", "Mookie Betts", "Nellie Fox", "Nelson Cruz",
-    "Nolan Arenado", "Nolan Ryan", "Nomar Garciaparra", "Ozzie Smith", "Paul Goldschmidt",
-    "Paul Molitor", "Pedro Martinez", "Pete Alonso", "Pete Alexander", "Pete Rose",
-    "Rafael Palmeiro", "Ralph Kiner", "Randy Johnson", "Reggie Jackson", "Rich Gossage",
-    "Rickey Henderson", "Roberto Alomar", "Roberto Clemente", "Robin Yount", "Robinson Cano",
-    "Rod Carew", "Roger Clemens", "Roger Maris", "Ron Santo", "Ronald Acuña Jr.",
-    "Roy Campanella", "Roy Halladay", "Ryan Braun", "Ryan Howard", "Ryne Sandberg",
-    "Salvador Perez", "Sammy Sosa", "Sandy Koufax", "Satchel Paige", "Scott Rolen",
-    "Shohei Ohtani", "Stan Musial", "Steve Carlton", "Steve Garvey", "Ted Williams",
-    "Todd Helton", "Tom Glavine", "Tom Seaver", "Tony Gwynn", "Tony Perez", "Trea Turner",
-    "Trevor Hoffman", "Tris Speaker", "Ty Cobb", "Vida Blue", "Vladimir Guerrero",
-    "Wade Boggs", "Walter Johnson", "Warren Spahn", "Whitey Ford", "Willie Mays",
-    "Willie McCovey", "Willie Stargell", "Yadier Molina", "Yogi Berra", "Yu Darvish",
+    "Aaron Judge",
+    "Adrian Beltre",
+    "Al Kaline",
+    "Albert Pujols",
+    "Alex Bregman",
+    "Alex Rodriguez",
+    "Andre Dawson",
+    "Andrew McCutchen",
+    "Andy Pettitte",
+    "Babe Ruth",
+    "Barry Bonds",
+    "Barry Larkin",
+    "Bernie Williams",
+    "Billy Wagner",
+    "Bob Feller",
+    "Bob Gibson",
+    "Bobby Grich",
+    "Brooks Robinson",
+    "Bryce Harper",
+    "Buster Posey",
+    "CC Sabathia",
+    "Cal Ripken",
+    "Carl Yastrzemski",
+    "Carlos Beltran",
+    "Carlton Fisk",
+    "Charlie Gehringer",
+    "Chase Utley",
+    "Chipper Jones",
+    "Chris Sale",
+    "Christian Yelich",
+    "Christy Mathewson",
+    "Clayton Kershaw",
+    "Corbin Burnes",
+    "Corey Seager",
+    "Craig Biggio",
+    "Craig Kimbrel",
+    "Curt Schilling",
+    "Cy Young",
+    "Dale Murphy",
+    "Dave Parker",
+    "Dave Winfield",
+    "David Ortiz",
+    "David Price",
+    "David Wright",
+    "Dennis Eckersley",
+    "Derek Jeter",
+    "Dizzy Dean",
+    "Don Drysdale",
+    "Don Mattingly",
+    "Duke Snider",
+    "Dustin Pedroia",
+    "Eddie Collins",
+    "Eddie Mathews",
+    "Eddie Murray",
+    "Edgar Martinez",
+    "Ernie Banks",
+    "Felix Hernandez",
+    "Fernando Tatis Jr.",
+    "Fernando Valenzuela",
+    "Francisco Lindor",
+    "Frank Robinson",
+    "Frank Thomas",
+    "Fred Lynn",
+    "Freddie Freeman",
+    "Gary Carter",
+    "Gary Sheffield",
+    "George Brett",
+    "Gerrit Cole",
+    "Giancarlo Stanton",
+    "Hank Aaron",
+    "Harmon Killebrew",
+    "Honus Wagner",
+    "Ichiro Suzuki",
+    "Ivan Rodriguez",
+    "Jackie Robinson",
+    "Jacob deGrom",
+    "Jim Bunning",
+    "Jim Palmer",
+    "Jim Rice",
+    "Jim Thome",
+    "Jimmie Foxx",
+    "Jimmy Rollins",
+    "Joe DiMaggio",
+    "Joe Mauer",
+    "Joe Morgan",
+    "Joey Votto",
+    "Johan Santana",
+    "John Smoltz",
+    "Johnny Bench",
+    "Jorge Posada",
+    "Jose Altuve",
+    "Jose Bautista",
+    "Jose Ramirez",
+    "Josh Donaldson",
+    "Josh Hamilton",
+    "Juan Marichal",
+    "Juan Soto",
+    "Justin Verlander",
+    "Keith Hernandez",
+    "Ken Boyer",
+    "Kirby Puckett",
+    "Kris Bryant",
+    "Lance Berkman",
+    "Larry Doby",
+    "Larry Walker",
+    "Lee Smith",
+    "Lefty Grove",
+    "Lou Brock",
+    "Lou Gehrig",
+    "Luis Aparicio",
+    "Madison Bumgarner",
+    "Manny Ramirez",
+    "Mark McGwire",
+    "Max Scherzer",
+    "Mel Ott",
+    "Mickey Mantle",
+    "Miguel Cabrera",
+    "Mike Piazza",
+    "Mike Schmidt",
+    "Mike Trout",
+    "Mookie Betts",
+    "Nellie Fox",
+    "Nelson Cruz",
+    "Nolan Arenado",
+    "Nolan Ryan",
+    "Nomar Garciaparra",
+    "Ozzie Smith",
+    "Paul Goldschmidt",
+    "Paul Molitor",
+    "Pedro Martinez",
+    "Pete Alonso",
+    "Pete Alexander",
+    "Pete Rose",
+    "Rafael Palmeiro",
+    "Ralph Kiner",
+    "Randy Johnson",
+    "Reggie Jackson",
+    "Rich Gossage",
+    "Rickey Henderson",
+    "Roberto Alomar",
+    "Roberto Clemente",
+    "Robin Yount",
+    "Robinson Cano",
+    "Rod Carew",
+    "Roger Clemens",
+    "Roger Maris",
+    "Ron Santo",
+    "Ronald Acuña Jr.",
+    "Roy Campanella",
+    "Roy Halladay",
+    "Ryan Braun",
+    "Ryan Howard",
+    "Ryne Sandberg",
+    "Salvador Perez",
+    "Sammy Sosa",
+    "Sandy Koufax",
+    "Satchel Paige",
+    "Scott Rolen",
+    "Shohei Ohtani",
+    "Stan Musial",
+    "Steve Carlton",
+    "Steve Garvey",
+    "Ted Williams",
+    "Todd Helton",
+    "Tom Glavine",
+    "Tom Seaver",
+    "Tony Gwynn",
+    "Tony Perez",
+    "Trea Turner",
+    "Trevor Hoffman",
+    "Tris Speaker",
+    "Ty Cobb",
+    "Vida Blue",
+    "Vladimir Guerrero",
+    "Wade Boggs",
+    "Walter Johnson",
+    "Warren Spahn",
+    "Whitey Ford",
+    "Willie Mays",
+    "Willie McCovey",
+    "Willie Stargell",
+    "Yadier Molina",
+    "Yogi Berra",
+    "Yu Darvish",
     "Zack Greinke"
   ],
   "pitcher_prominence_list": [
-    "Roki Sasaki", "Jackson Jobe", "Andrew Painter", "Tatsuya Imai",
-    "AJ Smith-Shawver", "Chase Burns", "Cade Horton", "Bobby Miller",
-    "Jared Jones", "Hurston Waldrep"
+    "Roki Sasaki",
+    "Jackson Jobe",
+    "Andrew Painter",
+    "Tatsuya Imai",
+    "AJ Smith-Shawver",
+    "Chase Burns",
+    "Cade Horton",
+    "Bobby Miller",
+    "Jared Jones",
+    "Hurston Waldrep"
   ]
 }

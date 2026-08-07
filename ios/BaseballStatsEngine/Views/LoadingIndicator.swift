@@ -1,6 +1,11 @@
 import SwiftUI
 
 struct LoadingIndicator: View {
+    /// Persistent expectation-setting line for slow (compound-dimension)
+    /// queries — sits one line above the rotating fillers, styled the same,
+    /// and stays put while the fillers keep pulsing beneath it.
+    var notice: String? = nil
+
     @State private var baseball1Opacity: Double = 0.0
     @State private var baseball2Opacity: Double = 0.0
     @State private var baseball3Opacity: Double = 0.0
@@ -76,6 +81,15 @@ struct LoadingIndicator: View {
                 .offset(x: 10, y: 10)
         }
         .frame(width: 44, height: 44)
+
+        // Slow-query notice — persistent, above the rotating fillers
+        if let notice {
+            Text(notice)
+                .font(.system(.subheadline, design: .rounded, weight: .medium))
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.center)
+                .transition(.opacity)
+        }
 
         // Baseball phrases — appear after 3s, rotate every 3s
         if showPhrase {

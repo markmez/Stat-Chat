@@ -28,6 +28,9 @@ final class AppState: SearchHistoryTracking {
     var messages: [Message] = []
     var isLoading = false
     var currentStreamingText = ""
+    /// Backend "notice" event for slow (compound-dimension) queries —
+    /// shown above the loading fillers while the answer is computed.
+    var loadingNotice: String?
     /// Buffer for smooth streaming: network fills this, display timer drains it
     private var streamingBuffer = ""
     private var displayedLength = 0
@@ -197,6 +200,7 @@ final class AppState: SearchHistoryTracking {
         messages.append(Message(role: .user, content: trimmed, inputMethod: inputMethod))
         isLoading = true
         currentStreamingText = ""
+        loadingNotice = nil
         streamingBuffer = ""
         displayedLength = 0
         streamingComplete = false
@@ -219,7 +223,11 @@ final class AppState: SearchHistoryTracking {
                     question: trimmed,
                     deviceId: Self.deviceId,
                     history: historyForBackend,
-                    inputMethod: inputMethod
+                    inputMethod: inputMethod,
+                    onNotice: { [self] notice in
+                        guard !Task.isCancelled else { return }
+                        loadingNotice = notice
+                    }
                 ) { [self] chunk in
                     guard !Task.isCancelled, streamingIndex < messages.count else { return }
                     streamingBuffer += chunk

@@ -35,6 +35,7 @@ final class BackendService: Sendable {
         deviceId: String,
         history: [(String, String)],
         inputMethod: String = "keyboard",
+        onNotice: (@MainActor @Sendable (String) -> Void)? = nil,
         onChunk: @escaping @MainActor @Sendable (String) -> Void
     ) async throws -> QueryResult {
         let url = baseURL.appendingPathComponent("query")
@@ -92,6 +93,12 @@ final class BackendService: Sendable {
                 if let text = event["text"] as? String {
                     await onChunk(text)
                     fullText += text
+                }
+            case "notice":
+                // Expectation-setting line for slow (compound-dimension)
+                // queries — shown above the loading fillers.
+                if let text = event["text"] as? String {
+                    await onNotice?(text)
                 }
             case "done":
                 wasIntercepted = event["intercepted"] as? Bool ?? false
