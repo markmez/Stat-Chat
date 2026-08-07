@@ -492,6 +492,12 @@ def classify_intercept_only(query: str) -> tuple[str, int, str, bool]:
         return ("error", ms, f"err: {body['error'][:120]}", False)
     if body.get("intercepted"):
         preview = body.get("result_preview") or ""
+        # Plan-coverage guard refusal: try_intercept returns the in-band
+        # __DIMS_DROPPED__ sentinel, which /query converts to a planner
+        # route. From the audit's perspective that's a MISS (LLM tiers
+        # answer), not an intercept.
+        if preview.strip() == "__DIMS_DROPPED__":
+            return ("miss", ms, "dims-dropped -> planner", False)
         snip = preview.replace("\n", " ")[:90]
         return ("intercepted", ms, snip, _is_zero_result(preview))
     return ("miss", ms, "", False)
