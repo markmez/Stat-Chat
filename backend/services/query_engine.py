@@ -2945,6 +2945,14 @@ def _ambiguous_suggest(plan: QueryPlan) -> str:
 _GUARDED_DIMS = ("since_date", "end_date", "team_code", "team_context",
                  "league", "player_name", "split_context")
 
+# Async-safe per-request signal: set when the coverage guard refuses a
+# result. query.py reads it to route the fallthrough to the PLANNER
+# (multi-step, can compose arbitrary dimensions via game_split_logs etc.)
+# instead of single-shot Haiku SQL, which silently drops filters it can't
+# compose — the exact wrong-slice the guard just refused to ship.
+import contextvars
+dims_dropped_ctx = contextvars.ContextVar("qe_dims_dropped", default=False)
+
 
 def _plan_dims_dropped(plan: "QueryPlan", honored: set) -> set:
     dropped = set()
@@ -3068,6 +3076,7 @@ def execute(plan: QueryPlan) -> Optional[str]:
                         response_preview=f"type={plan.query_type} dropped={sorted(_dropped)}")
                 except Exception:
                     pass
+                dims_dropped_ctx.set(True)
                 conn.close()
                 return None
 

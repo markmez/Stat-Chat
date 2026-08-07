@@ -1791,7 +1791,17 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
 
     # Haiku SQL fallback — skip for insight queries (hard AND soft: an
     # analysis-shaped query that missed the structural tiers needs the
-    # planner's multi-step reasoning, not a single Haiku SQL shot)
+    # planner's multi-step reasoning, not a single Haiku SQL shot).
+    # ALSO skip when the engine's plan-coverage guard refused a result for
+    # dropped dimensions ("best yankee hitter against lefties since July
+    # 15"): the query provably composes dimensions, and single-shot Haiku
+    # SQL silently drops the ones it can't compose — the exact wrong slice
+    # the guard just refused. The planner composes them correctly.
+    from services.query_engine import dims_dropped_ctx as _ddc
+    if _ddc.get():
+        logger.info("haiku_skip_dims_dropped question=%r", question)
+        skip_haiku_sql = True
+        _ddc.set(False)
     if not skip_haiku_sql:
         haiku_result = await _try_haiku_sql(question)
     else:
