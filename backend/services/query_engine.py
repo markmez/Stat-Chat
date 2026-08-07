@@ -2931,6 +2931,32 @@ def _ambiguous_suggest(plan: QueryPlan) -> str:
         return f"\n[SUGGEST]{alt}[/SUGGEST]"
 
 
+# Plan-coverage guard (2026-08-07): decompose extracts cross-cutting
+# dimensions that individual executors may silently ignore (streak league
+# board for "Derek Jeter longest hitting streak"; season leaderboard for
+# "best Yankee hitter since July 1"). Each annotated executor branch
+# declares which dimensions it HONORS; a result produced while a populated
+# dimension went unhonored is refused — the query falls through to the
+# LLM tiers, which can cross arbitrary dimensions, instead of shipping a
+# confidently wrong slice. Fallthroughs are logged as response_type
+# 'plan_dims_dropped' — that log is the ranked wishlist for native
+# executor intersections. Unannotated branches (honored is None) skip the
+# check.
+_GUARDED_DIMS = ("since_date", "end_date", "team_code", "team_context",
+                 "league", "player_name", "split_context")
+
+
+def _plan_dims_dropped(plan: "QueryPlan", honored: set) -> set:
+    dropped = set()
+    for dim in _GUARDED_DIMS:
+        if dim in honored:
+            continue
+        val = getattr(plan, dim, None)
+        if val not in (None, "", [], {}):
+            dropped.add(dim)
+    return dropped
+
+
 def execute(plan: QueryPlan) -> Optional[str]:
     """Execute a QueryPlan and return formatted response text, or None."""
     if not plan.is_valid:
@@ -2939,6 +2965,7 @@ def execute(plan: QueryPlan) -> Optional[str]:
     conn = _get_db()
     try:
         result = None
+        honored: Optional[set] = None  # None = branch not annotated, skip guard
         if plan.query_type == "award_lookup":
             result = _execute_award_lookup(conn, plan)
             if result:
@@ -2959,32 +2986,46 @@ def execute(plan: QueryPlan) -> Optional[str]:
             # "100 RBI in 3 straight seasons" — per_season + streak_sequence
             # means season-level consistency, not game-level streaks
             if plan.per_season:
+                honored = {"league"}
                 result = _execute_per_season_threshold(conn, plan)
             else:
+                honored = {"player_name", "team_code"}
                 result = _execute_streak_sequence(conn, plan)
         elif plan.query_type == "game_log_count":
+            honored = {"player_name"}
             result = _execute_game_log_count(conn, plan)
         elif plan.query_type == "game_log_extreme":
+            honored = {"player_name"}
             result = _execute_game_log_extreme(conn, plan)
         elif plan.query_type == "team_ranking":
+            honored = {"league"}
             result = _execute_team_ranking(conn, plan)
         elif plan.query_type == "team_conditional_record":
+            honored = {"team_code", "team_context"}
             result = _execute_team_conditional_record(conn, plan)
         elif plan.query_type == "player_career_filtered":
+            honored = {"player_name"}
             result = _execute_player_career_filtered(conn, plan)
         elif plan.query_type == "per_team_leaders":
+            honored = {"league"}
             result = _execute_per_team_leaders(conn, plan)
         elif plan.query_type == "player_single_season_max":
+            honored = {"player_name"}
             result = _execute_player_single_season_max(plan)
         elif plan.query_type == "player_sliding_window":
+            honored = {"player_name"}
             result = _execute_player_sliding_window(plan)
         elif plan.team_context is not None:
+            honored = {"team_context", "team_code"}
             result = _execute_team_context_leaderboard(conn, plan)
         elif plan.split_context is not None:
+            honored = {"split_context", "league"}
             result = _execute_split_leaderboard(conn, plan)
         elif plan.query_type == "count":
+            honored = {"league"}
             result = _execute_count(conn, plan)
         elif plan.query_type == "superlative":
+            honored = {"league", "team_code"}
             result = _execute_superlative(conn, plan)
         elif plan.query_type == "threshold":
             # career_game_window + threshold = cumulative-over-window
@@ -2995,6 +3036,7 @@ def execute(plan: QueryPlan) -> Optional[str]:
             if plan.career_game_window:
                 result = _execute_game_window_leaderboard(conn, plan)
             else:
+                honored = {"league"}
                 result = _execute_threshold(conn, plan)
         elif plan.query_type == "leaderboard":
             # Player-scoped guard (2026-08-03, same class as the streak fix):
@@ -3009,7 +3051,25 @@ def execute(plan: QueryPlan) -> Optional[str]:
                     (plan.original_question or "").lower()):
                 result = None
             else:
+                honored = {"league", "team_code", "since_date", "end_date"}
                 result = _execute_leaderboard(conn, plan)
+
+        # Plan-coverage guard: refuse results that ignored populated dims.
+        if result and honored is not None:
+            _dropped = _plan_dims_dropped(plan, honored)
+            if _dropped:
+                logger.warning("plan_dims_dropped dims=%s type=%s q=%r",
+                               sorted(_dropped), plan.query_type,
+                               (plan.original_question or "")[:120])
+                try:
+                    from services.metering import log_query as _lq
+                    _lq((plan.original_question or "")[:200], "system",
+                        "plan_dims_dropped",
+                        response_preview=f"type={plan.query_type} dropped={sorted(_dropped)}")
+                except Exception:
+                    pass
+                conn.close()
+                return None
 
         # Collect all "see also" alternatives, output as single combined DIDYOUMEAN
         see_also = []
@@ -4453,6 +4513,17 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
                 f"WHERE act.player_id = {gl}.player_id AND act.season >= ?)"
             )
             query_params.append(last_year)
+        # Team scoping ("best Yankee hitter since July 1") — the executor
+        # historically dropped plan.team_code on this branch (2026-08-07).
+        # Slash-aware so mid-season movers count.
+        if plan.team_code:
+            _tc_table = "season_pitching_stats" if plan.is_pitching else "season_batting_stats"
+            where_parts.append(
+                f"EXISTS (SELECT 1 FROM {_tc_table} tc "
+                f"WHERE tc.player_id = {gl}.player_id AND tc.season = {gl}.season "
+                f"AND (tc.team = ? OR tc.team LIKE ? OR tc.team LIKE ?))"
+            )
+            query_params += [plan.team_code, f"{plan.team_code}/%", f"%/{plan.team_code}"]
 
         where = f"WHERE {' AND '.join(where_parts)}"
 
@@ -4643,7 +4714,14 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     # has_year: True when rows contain a season column (index 2).
     # Aggregated counting stats (since_YYYY grouped by player) only have name + stat_val.
     has_year = (plan.scope in ("all_time",) or plan.scope.startswith("since_")) and len(rows[0]) > 2 if rows else False
-    title = f"**{scope_label} {title_prefix}{name} Leaders{filter_label}**\n" if not has_year else f"**{title_prefix}{name} Leaders{filter_label} ({scope_label})**\n"
+    _team_label = ""
+    if plan.team_code:
+        from services.response_builder import _team_full_name as _tfn
+        try:
+            _team_label = f"{_tfn(plan.team_code)} "
+        except Exception:
+            _team_label = f"{plan.team_code} "
+    title = f"**{scope_label} {_team_label}{title_prefix}{name} Leaders{filter_label}**\n" if not has_year else f"**{_team_label}{title_prefix}{name} Leaders{filter_label} ({scope_label})**\n"
 
     user_has_ip_pa_filter = bool(proration_subtitle)
     parts = [title]

@@ -3496,6 +3496,15 @@ def parse_team_stats(input_str: str) -> Optional[dict]:
     """Detect team stat queries. Returns dict with team_code, stat, season."""
     lower = input_str.strip().lower()
 
+    # Date-window qualifiers ("since July 1", "in the last 30 days",
+    # "after the all-star break") are the query engine's job — claiming
+    # here silently ships full-season numbers (2026-08-07 wrong-slice fix).
+    if (re.search(r'\b(?:since|after)\s+(?:the\s+)?[a-z]+', lower)
+            or re.search(r'\b(?:last|past)\s+\d+\s*(?:day|week|month|game)', lower)
+            or "all-star break" in lower or "all star break" in lower):
+        return None
+
+
     team_code = match_team(lower)
     if not team_code:
         return None
@@ -3517,6 +3526,15 @@ def parse_team_stats(input_str: str) -> Optional[dict]:
 def parse_team_total(input_str: str) -> Optional[dict]:
     """Detect team total queries. Returns dict with team_code, stat, season."""
     lower = input_str.strip().lower()
+
+    # Date-window qualifiers ("since July 1", "in the last 30 days",
+    # "after the all-star break") are the query engine's job — claiming
+    # here silently ships full-season numbers (2026-08-07 wrong-slice fix).
+    if (re.search(r'\b(?:since|after)\s+(?:the\s+)?[a-z]+', lower)
+            or re.search(r'\b(?:last|past)\s+\d+\s*(?:day|week|month|game)', lower)
+            or "all-star break" in lower or "all star break" in lower):
+        return None
+
 
     team_code = match_team(lower)
     if not team_code:
