@@ -1908,6 +1908,12 @@ async def debug_decompose(
         "streak_length": plan.streak_length,
         "threshold": plan.threshold,
         "compare_years": plan.compare_years,
+        "team_code": plan.team_code,
+        "team_context": str(plan.team_context) if plan.team_context else None,
+        "split_context": str(plan.split_context) if plan.split_context else None,
+        "league": plan.league,
+        "since_date": plan.since_date,
+        "end_date": plan.end_date,
         "result_preview": (result or "")[:300],
     }
 
