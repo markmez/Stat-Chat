@@ -424,11 +424,16 @@ TESTS: list[tuple[str, str, str]] = [
     # New short path filters to one player early, no GROUP BY.
     # Must intercept AND include the player name in the response.
     # ============================================================
-    ("Skubal ERA in day games", "intercepted",
+    # 2026-08-07: these three previously "passed" by serving a LEAGUE-WIDE
+    # board mislabeled as a single-player answer (shallow audit can't see
+    # content). The plan-coverage guard now refuses that wrong slice; the
+    # correct current behavior is LLM-tier fallthrough until a native
+    # player+game-context executor exists (see plan_dims_dropped log).
+    ("Skubal ERA in day games", "sonnet",
      "Single-player + team_context", "Skubal"),
-    ("Judge OPS in extra innings", "intercepted",
+    ("Judge OPS in extra innings", "sonnet",
      "Single-player + team_context", "Judge"),
-    ("Ohtani home runs in night games", "intercepted",
+    ("Ohtani home runs in night games", "sonnet",
      "Single-player + team_context", "Ohtani"),
     # Split + team_context combination — must bail (fall through to Sonnet).
     # No per-PA data to combine handedness with day/night filtering.
