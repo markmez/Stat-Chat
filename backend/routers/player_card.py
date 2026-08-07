@@ -893,6 +893,24 @@ def _fetch_pitching_career_home_away_splits(conn: sqlite3.Connection, player_id:
 # Dict[year, List[SplitGrid]] for the multi-row pitch_type / count flavors.
 # ---------------------------------------------------------------------------
 
+def _gsl_games_map(conn, player_id, family, perspective):
+    """{(season, split): games} from game_split_logs (2026+ only). Lets
+    current-season split grids carry G in the streak-aligned format;
+    seasons without per-game grain keep the legacy format."""
+    try:
+        return {(r[0], r[1]): r[2] for r in conn.execute("""
+            SELECT season, split, COUNT(DISTINCT date)
+            FROM game_split_logs
+            WHERE player_id = ? AND family = ? AND perspective = ?
+            GROUP BY season, split""", (player_id, family, perspective))}
+    except Exception:
+        return {}
+
+
+_SPLIT_HEADERS_ALIGNED = ["G", "AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO",
+                          "AVG", "OBP", "SLG", "OPS", "BABIP"]
+
+
 def _fetch_all_season_platoon_splits(conn, player_id) -> dict:
     """Batch all-seasons batting platoon splits."""
     try:
@@ -909,15 +927,24 @@ def _fetch_all_season_platoon_splits(conn, player_id) -> dict:
         for r in cur.fetchall():
             by_season.setdefault(r[0], []).append(r[1:])
         headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+        gmap = _gsl_games_map(conn, player_id, "platoon", "bat")
         result = {}
         for year, rows in by_season.items():
+            aligned = all(gmap.get((year, r[0])) is not None for r in rows[:2])
             grid_rows = []
             for r in rows[:2]:
                 label = "vs LHP" if r[0] == "vs_LHP" else "vs RHP"
-                vals = [_safe_str(v) for v in r[1:]]
+                if aligned:
+                    vals = ([str(gmap[(year, r[0])])]
+                            + [_safe_str(v) for v in r[1:-2]]
+                            + [_safe_str(r[-1])])
+                else:
+                    vals = [_safe_str(v) for v in r[1:]]
                 grid_rows.append(SplitRow(label=label, values=vals))
             if grid_rows:
-                result[year] = SplitGrid(headers=headers, rows=grid_rows)
+                result[year] = SplitGrid(
+                    headers=_SPLIT_HEADERS_ALIGNED if aligned else headers,
+                    rows=grid_rows)
         return result
     except Exception:
         return {}
@@ -939,13 +966,13 @@ def _fetch_all_season_home_away_splits(conn, player_id) -> dict:
         by_season = {}
         for r in cur.fetchall():
             by_season.setdefault(r[0], []).append(r[1:])
-        headers = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+        headers = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "BABIP"]
         result = {}
         for year, rows in by_season.items():
             grid_rows = []
             for r in rows[:2]:
                 label = "Home" if r[0] == "home" else "Away"
-                vals = [_safe_str(v) for v in r[1:]]
+                vals = [_safe_str(v) for v in r[1:-2]] + [_safe_str(r[-1])]
                 grid_rows.append(SplitRow(label=label, values=vals))
             if grid_rows:
                 result[year] = SplitGrid(headers=headers, rows=grid_rows)
@@ -970,15 +997,24 @@ def _fetch_all_season_risp_splits(conn, player_id) -> dict:
         for r in cur.fetchall():
             by_season.setdefault(r[0], []).append(r[1:])
         headers = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+        gmap = _gsl_games_map(conn, player_id, "risp", "bat")
         result = {}
         for year, rows in by_season.items():
+            aligned = all(gmap.get((year, r[0])) is not None for r in rows[:2])
             grid_rows = []
             for r in rows[:2]:
                 label = "RISP" if r[0] == "RISP" else "Non-RISP"
-                vals = [_safe_str(v) for v in r[1:]]
+                if aligned:
+                    vals = ([str(gmap[(year, r[0])])]
+                            + [_safe_str(v) for v in r[1:-2]]
+                            + [_safe_str(r[-1])])
+                else:
+                    vals = [_safe_str(v) for v in r[1:]]
                 grid_rows.append(SplitRow(label=label, values=vals))
             if grid_rows:
-                result[year] = SplitGrid(headers=headers, rows=grid_rows)
+                result[year] = SplitGrid(
+                    headers=_SPLIT_HEADERS_ALIGNED if aligned else headers,
+                    rows=grid_rows)
         return result
     except Exception:
         return {}
@@ -1776,7 +1812,7 @@ def _w_family_rows(cur, player_id, season, family, perspective, start_date):
             SELECT split, SUM(plate_appearances), SUM(at_bats), SUM(hits),
                    SUM(doubles), SUM(triples), SUM(home_runs), SUM(rbi),
                    SUM(walks), SUM(strikeouts), SUM(hit_by_pitch),
-                   SUM(sacrifice_flies)
+                   SUM(sacrifice_flies), COUNT(DISTINCT date)
             FROM game_split_logs
             WHERE player_id = ? AND season = ? AND family = ?
               AND perspective = ? AND date >= ?
@@ -1790,26 +1826,30 @@ def _w_family_rows(cur, player_id, season, family, perspective, start_date):
         return []
 
 
-_W_BAT_HEADERS = ["AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO",
-                  "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
-_W_PITCH_HEADERS = ["PA", "AB", "H", "2B", "3B", "HR", "BB", "SO",
+# Aligned with the streak-module stat set (Mark, 2026-08-07): + G, keep
+# BABIP, drop ISO (derivable as SLG-AVG on-screen). R is structurally
+# impossible for split contexts (runs score after the PA ends).
+_W_BAT_HEADERS = ["G", "AB", "H", "2B", "3B", "HR", "RBI", "BB", "SO",
+                  "AVG", "OBP", "SLG", "OPS", "BABIP"]
+_W_PITCH_HEADERS = ["G", "PA", "AB", "H", "2B", "3B", "HR", "BB", "SO",
                     "BAA", "OBP", "SLG", "OPS"]
 
 
 def _w_row(label, r, perspective):
-    (_, pa, ab, h, d2, t3, hr, rbi, bb, so, hbp, sf) = r
+    (_, pa, ab, h, d2, t3, hr, rbi, bb, so, hbp, sf, g) = r
     avg, obp, slg, ops, iso, babip = _w_rates(ab or 0, h or 0, d2 or 0, t3 or 0,
                                               hr or 0, bb or 0, hbp or 0,
                                               sf or 0, so or 0)
     if perspective == "bat":
-        vals = [str(ab or 0), str(h or 0), str(d2 or 0), str(t3 or 0),
-                str(hr or 0), str(rbi or 0), str(bb or 0), str(so or 0),
-                _safe_str(avg), _safe_str(obp), _safe_str(slg),
-                _safe_str(ops), _safe_str(iso), _safe_str(babip)]
+        vals = [str(g or 0), str(ab or 0), str(h or 0), str(d2 or 0),
+                str(t3 or 0), str(hr or 0), str(rbi or 0), str(bb or 0),
+                str(so or 0), _safe_str(avg), _safe_str(obp), _safe_str(slg),
+                _safe_str(ops), _safe_str(babip)]
     else:
-        vals = [str(pa or 0), str(ab or 0), str(h or 0), str(d2 or 0),
-                str(t3 or 0), str(hr or 0), str(bb or 0), str(so or 0),
-                _safe_str(avg), _safe_str(obp), _safe_str(slg), _safe_str(ops)]
+        vals = [str(g or 0), str(pa or 0), str(ab or 0), str(h or 0),
+                str(d2 or 0), str(t3 or 0), str(hr or 0), str(bb or 0),
+                str(so or 0), _safe_str(avg), _safe_str(obp), _safe_str(slg),
+                _safe_str(ops)]
     return SplitRow(label=label, values=vals)
 
 
@@ -1848,7 +1888,7 @@ def _w_home_away_batting(cur, player_id, season, start_date):
     if not rows:
         return None
     headers = ["G", "AB", "R", "H", "2B", "3B", "HR", "RBI", "BB", "SO",
-               "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP"]
+               "AVG", "OBP", "SLG", "OPS", "BABIP"]
     grid_rows = []
     for r in sorted(rows, key=lambda x: 0 if x[0] == "H" else 1):
         (vh, g, ab, runs, h, d2, t3, hr, rbi, bb, so, hbp, sf) = r
@@ -1860,8 +1900,7 @@ def _w_home_away_batting(cur, player_id, season, start_date):
             values=[str(g), str(ab or 0), str(runs or 0), str(h or 0),
                     str(d2 or 0), str(t3 or 0), str(hr or 0), str(rbi or 0),
                     str(bb or 0), str(so or 0), _safe_str(avg), _safe_str(obp),
-                    _safe_str(slg), _safe_str(ops), _safe_str(iso),
-                    _safe_str(babip)]))
+                    _safe_str(slg), _safe_str(ops), _safe_str(babip)]))
     return SplitGrid(headers=headers, rows=grid_rows)
 
 
