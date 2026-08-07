@@ -128,9 +128,12 @@ struct PlayerCardView: View {
         case platoon = "Platoon"
         case homeAway = "Home\nAway"
         case risp = "RISP"
-        case streaks = "Streaks"
         case byPitch = "By Pitch"
         case byCount = "By Count"
+        // Last deliberately (2026-08-07): pre-computed streaks read awkwardly
+        // as the first thing above window-scoped splits, but still earn a
+        // spot at the end.
+        case streaks = "Streaks"
     }
 
     var body: some View {
@@ -961,7 +964,7 @@ struct PlayerCardView: View {
                     let startG = pitchingFormSliderStartGame ?? (form.totalSeasonGames - form.numGames + 1)
                     let windowN = max(1, form.totalSeasonGames - startG + 1)
                     HStack(spacing: 10) {
-                        Text("Match streak window")
+                        Text("Splits match streak window")
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(.primary)
                         Toggle("", isOn: $splitsMatchWindow)
@@ -1336,7 +1339,7 @@ struct PlayerCardView: View {
                     // right-aligned — in a content card that strands the
                     // switch across a dead gap).
                     HStack(spacing: 10) {
-                        Text("Match streak window")
+                        Text("Splits match streak window")
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(.primary)
                         Toggle("", isOn: $splitsMatchWindow)
