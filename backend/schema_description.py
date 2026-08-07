@@ -400,6 +400,19 @@ Current form for each pitcher-season — the tail slice with the lowest ERA (opt
 - split (TEXT) — e.g. 'vs_LHP'/'vs_RHP' (platoon bat), 'vs_LHB'/'vs_RHB' (platoon pitch), 'RISP'/'Non-RISP', pitch labels ('4-Seam', 'Slider', ...), ball-strike counts ('0-2', '3-1', ...)
 - Counting stats only: plate_appearances, at_bats, hits, doubles, triples, home_runs, rbi, walks, strikeouts, hit_by_pitch, sacrifice_flies
 - USE FOR date-windowed split questions ("vs lefties over his last 15 games"): SUM components over the date range and recompute rates with the standard formulas. Season-total split questions should still use the pre-aggregated split tables above.
+- WORKED EXAMPLE — "best Yankees hitter vs lefties since July 15" in ONE query (do NOT enumerate the roster player-by-player):
+    SELECT p.name,
+           1.0*(SUM(g.hits)+SUM(g.walks)+SUM(g.hit_by_pitch))/NULLIF(SUM(g.at_bats)+SUM(g.walks)+SUM(g.hit_by_pitch)+SUM(g.sacrifice_flies),0)
+           + 1.0*(SUM(g.hits)+SUM(g.doubles)+2*SUM(g.triples)+3*SUM(g.home_runs))/NULLIF(SUM(g.at_bats),0) AS ops
+    FROM game_split_logs g
+    JOIN players p ON p.player_id = g.player_id
+    WHERE g.season = 2026 AND g.family = 'platoon' AND g.perspective = 'bat'
+      AND g.split = 'vs_LHP' AND g.date >= '2026-07-15'
+      AND EXISTS (SELECT 1 FROM season_batting_stats s WHERE s.player_id = g.player_id
+                  AND s.season = 2026 AND (s.team = 'NYA' OR s.team LIKE 'NYA/%' OR s.team LIKE '%/NYA'))
+    GROUP BY g.player_id HAVING SUM(g.at_bats) >= 10
+    ORDER BY ops DESC LIMIT 10;
+  Same pattern composes any family ('risp', 'pitch_type', 'count') × team × date window.
 
 ### awards
 - player_id (TEXT) — references players table
