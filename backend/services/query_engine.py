@@ -2975,6 +2975,32 @@ def _plan_dims_dropped(plan: "QueryPlan", honored: set) -> set:
     return dropped
 
 
+def _dims_refusal(conn, plan: "QueryPlan", dropped) -> str:
+    """Log a coverage refusal and return the in-band sentinel.
+
+    Shared by the plan-coverage guard and executors that decline a
+    multi-dim shape they can't compose natively. The sentinel propagates
+    up through try_intercept, short-circuits the remaining interceptor
+    parsers, and routes query.py past the mapper and Haiku SQL straight
+    to the planner."""
+    logger.warning("plan_dims_dropped dims=%s type=%s q=%r",
+                   sorted(dropped), plan.query_type,
+                   (plan.original_question or "")[:120])
+    try:
+        from services.metering import log_query as _lq
+        _lq((plan.original_question or "")[:200], "system",
+            "plan_dims_dropped",
+            response_preview=f"type={plan.query_type} dropped={sorted(dropped)}")
+    except Exception:
+        pass
+    dims_dropped_ctx.set(True)
+    try:
+        conn.close()
+    except Exception:
+        pass
+    return "__DIMS_DROPPED__"
+
+
 def execute(plan: QueryPlan) -> Optional[str]:
     """Execute a QueryPlan and return formatted response text, or None."""
     if not plan.is_valid:
@@ -3037,8 +3063,26 @@ def execute(plan: QueryPlan) -> Optional[str]:
             honored = {"team_context", "team_code", "player_name"}
             result = _execute_team_context_leaderboard(conn, plan)
         elif plan.split_context is not None:
-            honored = {"split_context", "league"}
-            result = _execute_split_leaderboard(conn, plan)
+            if plan.since_date or plan.end_date or plan.team_code:
+                # Native split × team × date-window composition over
+                # game_split_logs ("best yankee hitter against lefties
+                # since July 15") — one SQL, ~2s, replaces the ~90s planner
+                # stopgap for this class.
+                honored = {"split_context", "league", "team_code",
+                           "since_date", "end_date"}
+                result = _execute_split_window_leaderboard(conn, plan)
+                if result is None:
+                    # Shape recognized but not natively composable (unmapped
+                    # family like home/away, uncomputable stat like ERA,
+                    # pre-2026 season): refuse so the planner takes it —
+                    # simpler tiers would serve a partial slice.
+                    return _dims_refusal(
+                        conn, plan,
+                        [d for d in ("since_date", "end_date", "team_code")
+                         if getattr(plan, d, None)] or ["split_context"])
+            else:
+                honored = {"split_context", "league"}
+                result = _execute_split_leaderboard(conn, plan)
         elif plan.query_type == "count":
             honored = {"league"}
             result = _execute_count(conn, plan)
@@ -3076,26 +3120,7 @@ def execute(plan: QueryPlan) -> Optional[str]:
         if result and honored is not None:
             _dropped = _plan_dims_dropped(plan, honored)
             if _dropped:
-                logger.warning("plan_dims_dropped dims=%s type=%s q=%r",
-                               sorted(_dropped), plan.query_type,
-                               (plan.original_question or "")[:120])
-                try:
-                    from services.metering import log_query as _lq
-                    _lq((plan.original_question or "")[:200], "system",
-                        "plan_dims_dropped",
-                        response_preview=f"type={plan.query_type} dropped={sorted(_dropped)}")
-                except Exception:
-                    pass
-                dims_dropped_ctx.set(True)
-                conn.close()
-                # In-band sentinel instead of relying on the contextvar (it
-                # proved unreliable in prod: guard fired on the RISP probe,
-                # Haiku SQL still answered). A truthy return propagates up
-                # through every qe_execute call site and short-circuits the
-                # remaining interceptor parsers — also correct: any simpler
-                # parser matching a provably multi-dim question would drop
-                # dims by definition. query.py converts it back to a miss.
-                return "__DIMS_DROPPED__"
+                return _dims_refusal(conn, plan, _dropped)
 
         # Collect all "see also" alternatives, output as single combined DIDYOUMEAN
         see_also = []
@@ -5707,6 +5732,197 @@ def _execute_split_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
         plan.stat, plan.split_context, season, plan.limit, plan.league,
         sort_asc=plan.sort_asc,
     )
+
+
+# Legacy split-context table → game_split_logs (family, perspective,
+# fixed_splits). Split VALUES are shared between the legacy season tables
+# and gsl by design ('vs_LHP', 'RISP', '0-2', '4-Seam', ...), so
+# split_context.filter_values pass straight through; fixed_splits covers
+# single-split tables whose filter_col is None. home/away tables are absent
+# on purpose (not a gsl family — derivable from game logs; the planner
+# handles those windowed shapes via vishome).
+_GSL_TABLE_MAP = {
+    "platoon_splits": ("platoon", "bat", None),
+    "risp_batting_splits": ("risp", "bat", None),
+    "risp_pitching_splits": ("risp", "pitch", None),
+    "count_batting_splits": ("count", "bat", None),
+    "count_pitching_splits": ("count", "pitch", None),
+    "pitch_type_batting_splits": ("pitch_type", "bat", None),
+    "pitch_type_pitching_splits": ("pitch_type", "pitch", None),
+    "first_pa_batting_splits": ("first_pa", "bat", ["first"]),
+    "pitching_inning_splits": ("inning", "pitch", None),
+    "pitching_tto_splits": ("tto", "pitch", None),
+}
+
+
+def _execute_split_window_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
+    """Split × team × date-window leaderboard over game_split_logs.
+
+    Composes the dimensions the season split tables can't ("best yankee
+    hitter against lefties since July 15"): per-game split rows summed
+    over the window, optional slash-aware team / league scoping via the
+    season tables, rates recomputed from components. Pitch-perspective
+    rows hold the batters-faced line, so pitching boards are rate-against
+    (lowest OPS against first).
+
+    Returns None when the shape can't be composed (unmapped family,
+    uncomputable stat like ERA — gsl has no ER/outs, pre-2026 season):
+    the caller refuses with the dims sentinel so the planner takes it,
+    never a partial slice.
+    """
+    sc = plan.split_context
+    mapping = _GSL_TABLE_MAP.get(sc.table)
+    if mapping is None:
+        return None
+    family, perspective, fixed_splits = mapping
+    splits = fixed_splits if fixed_splits is not None else list(sc.filter_values or [])
+    if not splits:
+        return None
+
+    season = plan.season or date.today().year
+    if season < 2026:  # gsl coverage begins with the 2026 bootstrap
+        return None
+
+    is_pitching = bool(sc.is_pitching)
+    g = "g"
+    _rate_formulas = {
+        "batting_avg": f"CAST(SUM({g}.hits) AS REAL) / NULLIF(SUM({g}.at_bats), 0)",
+        "obp": (f"CAST(SUM({g}.hits) + SUM({g}.walks) + SUM(COALESCE({g}.hit_by_pitch, 0)) AS REAL) / "
+                f"NULLIF(SUM({g}.at_bats) + SUM({g}.walks) + SUM(COALESCE({g}.hit_by_pitch, 0)) + SUM(COALESCE({g}.sacrifice_flies, 0)), 0)"),
+        "slg": (f"CAST(SUM({g}.hits) - SUM({g}.doubles) - SUM({g}.triples) - SUM({g}.home_runs) "
+                f"+ 2*SUM({g}.doubles) + 3*SUM({g}.triples) + 4*SUM({g}.home_runs) AS REAL) / NULLIF(SUM({g}.at_bats), 0)"),
+        "ops": (f"(CAST(SUM({g}.hits) + SUM({g}.walks) + SUM(COALESCE({g}.hit_by_pitch, 0)) AS REAL) / "
+                f"NULLIF(SUM({g}.at_bats) + SUM({g}.walks) + SUM(COALESCE({g}.hit_by_pitch, 0)) + SUM(COALESCE({g}.sacrifice_flies, 0)), 0)) + "
+                f"(CAST(SUM({g}.hits) - SUM({g}.doubles) - SUM({g}.triples) - SUM({g}.home_runs) "
+                f"+ 2*SUM({g}.doubles) + 3*SUM({g}.triples) + 4*SUM({g}.home_runs) AS REAL) / NULLIF(SUM({g}.at_bats), 0))"),
+        "iso": f"CAST(SUM({g}.doubles) + 2*SUM({g}.triples) + 3*SUM({g}.home_runs) AS REAL) / NULLIF(SUM({g}.at_bats), 0)",
+    }
+    _counting_cols = {"hits", "home_runs", "rbi", "walks", "strikeouts",
+                      "doubles", "triples", "at_bats", "plate_appearances"}
+
+    stat_col = plan.stat.db_column if plan.stat else "ops"
+    if stat_col in _rate_formulas:
+        stat_expr, is_rate = _rate_formulas[stat_col], True
+    elif stat_col in _counting_cols:
+        stat_expr, is_rate = f"SUM({g}.{stat_col})", False
+    else:
+        return None  # ERA/WHIP/etc. — gsl stores no earned runs or outs
+
+    where_parts = [f"{g}.season = ?", f"{g}.family = ?", f"{g}.perspective = ?",
+                   f"{g}.split IN ({', '.join('?' * len(splits))})"]
+    params: list = [season, family, perspective] + splits
+
+    # Floor the start date at the season opener (mirrors the date_range branch)
+    since_date = plan.since_date
+    date_was_floored = False
+    if since_date:
+        try:
+            requested_start = datetime.strptime(since_date, "%Y-%m-%d").date()
+            season_opener = date(season, 3, 25)
+            if requested_start.year == season and requested_start < season_opener:
+                since_date = season_opener.isoformat()
+                date_was_floored = True
+        except Exception:
+            pass
+        where_parts.append(f"{g}.date >= ?")
+        params.append(since_date)
+    if plan.end_date:
+        where_parts.append(f"{g}.date <= ?")
+        params.append(plan.end_date)
+
+    ss_table = "season_pitching_stats" if is_pitching else "season_batting_stats"
+    if plan.team_code:
+        where_parts.append(
+            f"EXISTS (SELECT 1 FROM {ss_table} tc "
+            f"WHERE tc.player_id = {g}.player_id AND tc.season = {g}.season "
+            f"AND (tc.team = ? OR tc.team LIKE ? OR tc.team LIKE ?))")
+        params += [plan.team_code, f"{plan.team_code}/%", f"%/{plan.team_code}"]
+    if plan.league in ("AL", "NL"):
+        from services.response_builder import _league_team_clause
+        where_parts.append(
+            f"EXISTS (SELECT 1 FROM {ss_table} lg "
+            f"WHERE lg.player_id = {g}.player_id AND lg.season = {g}.season "
+            f"AND {_league_team_clause(plan.league, 'lg')})")
+
+    # Prorated qualifier for rate stats. Split PAs are a fraction of total
+    # (~25-45% for platoon/RISP, less for narrow counts) — 0.5 split-PA/day
+    # keeps regulars and drops cups of coffee. Floor 10, cap 150.
+    having = ""
+    min_pa = None
+    if is_rate:
+        try:
+            start = (datetime.strptime(since_date, "%Y-%m-%d").date()
+                     if since_date else date(season, 3, 25))
+            end = date.today()
+            if plan.end_date:
+                end = min(datetime.strptime(plan.end_date, "%Y-%m-%d").date(), end)
+            days = max((end - start).days + 1, 1)
+        except Exception:
+            days = 30
+        min_pa = max(10, min(int(days * 0.5), 150))
+        having = f"HAVING SUM({g}.plate_appearances) >= {min_pa}"
+
+    asc = bool(plan.sort_asc)
+    if is_pitching and is_rate:
+        asc = not asc  # "toughest on lefties" = LOWEST rate against
+    order = "ASC" if asc else "DESC"
+
+    cur = conn.cursor()
+    cur.execute(
+        f"SELECT p.name, {stat_expr} AS stat_val, SUM({g}.plate_appearances) AS pa "
+        f"FROM game_split_logs {g} "
+        f"JOIN players p ON p.player_id = {g}.player_id "
+        f"WHERE {' AND '.join(where_parts)} "
+        f"GROUP BY {g}.player_id "
+        f"{having} "
+        f"ORDER BY stat_val {order} LIMIT ?",
+        tuple(params + [plan.limit]),
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return _zero_result_sentence(plan) + _empty_result_pills(plan)
+
+    # Scope label (compact version of the date_range branch's labeling)
+    if since_date:
+        try:
+            start_dt = datetime.strptime(since_date, "%Y-%m-%d")
+            if plan.end_date:
+                end_dt = datetime.strptime(plan.end_date, "%Y-%m-%d")
+                scope_label = (f"{start_dt.strftime('%B %-d, %Y')} "
+                               f"– {end_dt.strftime('%B %-d, %Y')}")
+            else:
+                scope_label = f"Since {start_dt.strftime('%B %-d, %Y')}"
+                if date_was_floored:
+                    scope_label += " (season opener)"
+        except Exception:
+            scope_label = f"Since {since_date}"
+    else:
+        scope_label = str(season)
+
+    team_label = ""
+    if plan.team_code:
+        from services.response_builder import _team_full_name as _tfn
+        try:
+            team_label = f"{_tfn(plan.team_code)} "
+        except Exception:
+            team_label = f"{plan.team_code} "
+    league_label = f"{plan.league} " if plan.league in ("AL", "NL") else ""
+
+    abbrev = plan.stat.display_abbrev if plan.stat else "OPS"
+    if is_pitching and is_rate:
+        abbrev = f"{abbrev} Against"
+
+    parts = [f"**{scope_label} {league_label}{team_label}{abbrev} Leaders {sc.label}**\n"]
+    parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+    parts.append("[LEADERBOARD]")
+    parts.append(f"HEADER: {abbrev}, PA")
+    for i, row in enumerate(rows):
+        val = _format_val(stat_col, row[1], is_rate)
+        parts.append(f"ROW {i+1}. {row[0]}: {val}, {int(row[2] or 0)}")
+    parts.append("[/LEADERBOARD]")
+    if min_pa:
+        parts.append(f"\n_Min. {min_pa} PA {sc.label.lower()} in this span._")
+    return "\n".join(parts)
 
 
 def _execute_team_context_single_player(conn, plan: QueryPlan) -> Optional[str]:
