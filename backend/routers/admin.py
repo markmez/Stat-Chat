@@ -1781,14 +1781,18 @@ async def rebuild_monthly_aggregates_endpoint(
 @router.post("/run-sql")
 async def run_sql(
     sql: str = "",
+    db: str = "stats",
     authorization: str | None = Header(None),
 ):
-    """Run a SQL statement against the DB. USE WITH EXTREME CAUTION."""
+    """Run a SQL statement against the DB. USE WITH EXTREME CAUTION.
+    db=stats (default) targets the baseball DB; db=metering targets
+    metering.db (query_log, answer_judgments, ...)."""
     verify_admin(authorization)
     if not sql:
         raise HTTPException(400, "No SQL provided")
     try:
-        conn = sqlite3.connect(DB_PATH)
+        _target = METERING_DB_PATH if db == "metering" else DB_PATH
+        conn = sqlite3.connect(_target)
         if sql.strip().upper().startswith("SELECT"):
             rows = conn.execute(sql).fetchall()
             conn.close()
