@@ -386,12 +386,50 @@ def pull_season_batting(conn, season_str):
         print("    No new data (304)")
         return 0
 
-    totals = _merge_traded_entries(data.get("playerStatsTotals", []))
+    raw_totals = data.get("playerStatsTotals", [])
+    totals = _merge_traded_entries(raw_totals)
     cursor = conn.cursor()
     count = 0
 
     # Delete existing data for this season (full replace)
     cursor.execute("DELETE FROM season_batting_stats WHERE season = ?", (season_year,))
+
+    # Per-team component rows (2026-08-07): league leaderboards need
+    # LEAGUE-ACCRUED stats for traded players (MLB convention — Garcia
+    # still leads the NL in SLG on his frozen Nationals numbers), while
+    # the main table's merged row serves "season = season" display.
+    # Counting components only; rates computed at query time.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS season_batting_by_team (
+            player_id TEXT NOT NULL, season INTEGER NOT NULL, team TEXT NOT NULL,
+            games INTEGER, plate_appearances INTEGER, at_bats INTEGER,
+            hits INTEGER, doubles INTEGER, triples INTEGER, home_runs INTEGER,
+            runs INTEGER, rbi INTEGER, stolen_bases INTEGER, walks INTEGER,
+            strikeouts INTEGER, hit_by_pitch INTEGER, sacrifice_flies INTEGER,
+            UNIQUE(player_id, season, team)
+        )
+    """)
+    cursor.execute("DELETE FROM season_batting_by_team WHERE season = ?", (season_year,))
+    for entry in raw_totals:
+        player = entry.get("player", {})
+        stats = (entry.get("stats") or {}).get("batting", {})
+        if not stats:
+            continue
+        team_abbrev = (entry.get("team") or {}).get("abbreviation", "")
+        pid = find_or_create_player(cursor, player, team_abbrev, season_year)
+        ab = safe_int(stats.get("atBats")); h = safe_int(stats.get("hits"))
+        bb = safe_int(stats.get("batterWalks")); hbp = safe_int(stats.get("hitByPitch"))
+        sf = safe_int(stats.get("batterSacrificeFlies"))
+        cursor.execute("""
+            INSERT OR REPLACE INTO season_batting_by_team
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (pid, season_year, retro_team(team_abbrev),
+              safe_int((entry.get("stats") or {}).get("gamesPlayed")),
+              ab + bb + hbp + sf, ab, h,
+              safe_int(stats.get("secondBaseHits")), safe_int(stats.get("thirdBaseHits")),
+              safe_int(stats.get("homeruns")), safe_int(stats.get("runs")),
+              safe_int(stats.get("runsBattedIn")), safe_int(stats.get("stolenBases")),
+              bb, safe_int(stats.get("batterStrikeouts")), hbp, sf))
 
     for entry in totals:
         player = entry.get("player", {})
@@ -455,11 +493,48 @@ def pull_season_pitching(conn, season_str):
         print("    No new data (304)")
         return 0
 
-    totals = _merge_traded_entries(data.get("playerStatsTotals", []))
+    raw_totals = data.get("playerStatsTotals", [])
+    totals = _merge_traded_entries(raw_totals)
     cursor = conn.cursor()
     count = 0
 
     cursor.execute("DELETE FROM season_pitching_stats WHERE season = ?", (season_year,))
+
+    # Per-team pitching components (league-accrued leaderboards; see
+    # season_batting_by_team comment).
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS season_pitching_by_team (
+            player_id TEXT NOT NULL, season INTEGER NOT NULL, team TEXT NOT NULL,
+            games INTEGER, wins INTEGER, losses INTEGER, saves INTEGER,
+            ip_outs INTEGER, hits INTEGER, earned_runs INTEGER,
+            walks INTEGER, strikeouts INTEGER, home_runs INTEGER,
+            UNIQUE(player_id, season, team)
+        )
+    """)
+    cursor.execute("DELETE FROM season_pitching_by_team WHERE season = ?", (season_year,))
+    for entry in raw_totals:
+        player = entry.get("player", {})
+        stats = (entry.get("stats") or {}).get("pitching", {})
+        if not stats:
+            continue
+        team_abbrev = (entry.get("team") or {}).get("abbreviation", "")
+        pid = find_or_create_player(cursor, player, team_abbrev, season_year)
+        ip_raw = safe_float(stats.get("inningsPitched"), 0)
+        ip_whole = int(ip_raw)
+        ip_frac = int(round((ip_raw - ip_whole) * 10))
+        ip_outs = ip_whole * 3 + (ip_frac if ip_frac in (0, 1, 2) else 0)
+        cursor.execute("""
+            INSERT OR REPLACE INTO season_pitching_by_team
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (pid, season_year, retro_team(team_abbrev),
+              safe_int((entry.get("stats") or {}).get("gamesPlayed")),
+              safe_int(stats.get("wins")), safe_int(stats.get("losses")),
+              safe_int(stats.get("saves")), ip_outs,
+              safe_int(stats.get("hitsAllowed")),
+              safe_int(stats.get("earnedRunsAllowed")),
+              safe_int(stats.get("pitcherWalks")),
+              safe_int(stats.get("pitcherStrikeouts")),
+              safe_int(stats.get("homerunsAllowed"))))
 
     for entry in totals:
         player = entry.get("player", {})

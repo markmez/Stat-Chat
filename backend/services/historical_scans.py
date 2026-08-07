@@ -1202,6 +1202,73 @@ def _current_league(conn, player_id):
     return _league_for_team(row[0]) if row and row[0] else None
 
 
+# League-accrued leaderboard aggregation (2026-08-07, MLB convention):
+# per-team component rows are SUMMED PER PLAYER over that league's teams —
+# so an intra-league trade (WAS→NYN) combines into one NL line, while a
+# cross-league trade (WAS→NYA) leaves only the NL-accrued portion on the
+# NL board, frozen. Qualification applies to league-accrued PA/IP.
+_BT_OBP = ("1.0*(SUM(bt.hits)+SUM(bt.walks)+SUM(bt.hit_by_pitch))/"
+           "NULLIF(SUM(bt.at_bats)+SUM(bt.walks)+SUM(bt.hit_by_pitch)+SUM(bt.sacrifice_flies),0)")
+_BT_SLG = ("1.0*(SUM(bt.hits)+SUM(bt.doubles)+2*SUM(bt.triples)+3*SUM(bt.home_runs))/"
+           "NULLIF(SUM(bt.at_bats),0)")
+_BT_EXPRS = {
+    "batting_avg": "1.0*SUM(bt.hits)/NULLIF(SUM(bt.at_bats),0)",
+    "obp": _BT_OBP,
+    "slg": _BT_SLG,
+    "ops": f"({_BT_OBP}) + ({_BT_SLG})",
+}
+
+
+def _league_top_batting(conn, season, col, is_rate, min_pa, min_val, league_teams):
+    """Top 3 for a league scope from season_batting_by_team. Returns [] if
+    the table is missing/empty (pre-first-pull) — caller falls back."""
+    val_expr = _BT_EXPRS.get(col, f"SUM(bt.{col})")
+    having = f"HAVING SUM(bt.plate_appearances) >= {min_pa}" if is_rate else (
+        f"HAVING {val_expr} >= {min_val}" if min_val else "")
+    teams = ",".join(repr(t) for t in league_teams)
+    try:
+        return conn.execute(f"""
+            SELECT bt.player_id, p.name, {val_expr} AS val,
+                   GROUP_CONCAT(DISTINCT bt.team) AS team
+            FROM season_batting_by_team bt
+            JOIN players p ON bt.player_id = p.player_id
+            WHERE bt.season = ? AND bt.team IN ({teams})
+            GROUP BY bt.player_id
+            {having}
+            ORDER BY val DESC
+            LIMIT 3
+        """, (season,)).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+
+_PT_ERA = "9.0*SUM(bt.earned_runs)/NULLIF(SUM(bt.ip_outs)/3.0,0)"
+_PT_WHIP = "1.0*(SUM(bt.walks)+SUM(bt.hits))/NULLIF(SUM(bt.ip_outs)/3.0,0)"
+_PT_EXPRS = {"era": _PT_ERA, "whip": _PT_WHIP}
+
+
+def _league_top_pitching(conn, season, col, is_rate, min_ip_outs, min_val,
+                         league_teams, order):
+    val_expr = _PT_EXPRS.get(col, f"SUM(bt.{col})")
+    having = f"HAVING SUM(bt.ip_outs) >= {min_ip_outs}" if is_rate else (
+        f"HAVING {val_expr} >= {min_val}" if min_val else "")
+    teams = ",".join(repr(t) for t in league_teams)
+    try:
+        return conn.execute(f"""
+            SELECT bt.player_id, p.name, {val_expr} AS val,
+                   GROUP_CONCAT(DISTINCT bt.team) AS team
+            FROM season_pitching_by_team bt
+            JOIN players p ON bt.player_id = p.player_id
+            WHERE bt.season = ? AND bt.team IN ({teams})
+            GROUP BY bt.player_id
+            {having}
+            ORDER BY val {order}
+            LIMIT 3
+        """, (season,)).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+
 def scan_leaderboard_changes(conn, season, latest_date):
     """Find players who took the lead in a stat leaderboard (MLB, AL, or NL)
     as a result of their most recent game."""
@@ -1229,20 +1296,29 @@ def scan_leaderboard_changes(conn, season, latest_date):
         pa_filter = f"AND s.plate_appearances >= {min_pa_rate}" if is_rate else ""
         val_filter = f"AND s.{col} >= {min_val}" if min_val else ""
 
-        # Get top 3 for MLB, AL, NL
+        # Get top 3 for MLB, AL, NL. League scopes aggregate LEAGUE-ACCRUED
+        # stats per player from the by-team table (intra-league trades sum;
+        # cross-league portions stay frozen on the old league's board);
+        # fallback to the merged table until the by-team table populates.
         for scope, team_filter in [
             ("MLB", ""),
             ("AL", f"AND s.team IN ({','.join(repr(t) for t in AL_TEAMS)})"),
             ("NL", f"AND s.team IN ({','.join(repr(t) for t in NL_TEAMS)})"),
         ]:
-            rows = conn.execute(f"""
-                SELECT p.player_id, p.name, s.{col}, s.team
-                FROM season_batting_stats s
-                JOIN players p ON s.player_id = p.player_id
-                WHERE s.season = ? {pa_filter} {val_filter} {team_filter}
-                ORDER BY s.{col} DESC
-                LIMIT 3
-            """, (season,)).fetchall()
+            rows = []
+            if scope != "MLB":
+                rows = _league_top_batting(
+                    conn, season, col, is_rate, min_pa_rate, min_val,
+                    AL_TEAMS if scope == "AL" else NL_TEAMS)
+            if not rows:
+                rows = conn.execute(f"""
+                    SELECT p.player_id, p.name, s.{col}, s.team
+                    FROM season_batting_stats s
+                    JOIN players p ON s.player_id = p.player_id
+                    WHERE s.season = ? {pa_filter} {val_filter} {team_filter}
+                    ORDER BY s.{col} DESC
+                    LIMIT 3
+                """, (season,)).fetchall()
 
             if len(rows) < 2:
                 continue
@@ -1422,14 +1498,20 @@ def scan_leaderboard_changes(conn, season, latest_date):
             ("AL", f"AND sp.team IN ({','.join(repr(t) for t in AL_TEAMS)})"),
             ("NL", f"AND sp.team IN ({','.join(repr(t) for t in NL_TEAMS)})"),
         ]:
-            rows = conn.execute(f"""
-                SELECT p.player_id, p.name, sp.{col}, sp.team
-                FROM season_pitching_stats sp
-                JOIN players p ON sp.player_id = p.player_id
-                WHERE sp.season = ? {ip_filter} {val_filter} {team_filter}
-                ORDER BY sp.{col} {order}
-                LIMIT 3
-            """, (season,)).fetchall()
+            rows = []
+            if scope != "MLB":
+                rows = _league_top_pitching(
+                    conn, season, col, is_rate, min_ip_outs_val, min_val,
+                    AL_TEAMS if scope == "AL" else NL_TEAMS, order)
+            if not rows:
+                rows = conn.execute(f"""
+                    SELECT p.player_id, p.name, sp.{col}, sp.team
+                    FROM season_pitching_stats sp
+                    JOIN players p ON sp.player_id = p.player_id
+                    WHERE sp.season = ? {ip_filter} {val_filter} {team_filter}
+                    ORDER BY sp.{col} {order}
+                    LIMIT 3
+                """, (season,)).fetchall()
 
             if len(rows) < 2:
                 continue
