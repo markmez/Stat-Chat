@@ -1710,6 +1710,14 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
         CREATE INDEX IF NOT EXISTS idx_gsl_player
         ON game_split_logs(player_id, season, family, date)
     """)
+    # Family-first index for leaderboard scans (split × team × window
+    # executor: WHERE season/family/perspective/split + date range). The
+    # player-first index above can't serve those; without this they were
+    # full-table scans (7-35s observed).
+    _gsl_cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_gsl_family
+        ON game_split_logs(season, family, perspective, split, date)
+    """)
     if seed_cutoff:
         _gsl_cur.execute("DELETE FROM game_split_logs WHERE season = ? AND date >= ?",
                          (season_year, seed_cutoff))

@@ -140,6 +140,13 @@ def _detect_since_date(lower: str) -> Optional[str]:
     if _tw_since:
         return _tw_since
 
+    # "this month" / "this week" — calendar-anchored open windows
+    if "this month" in lower:
+        return f"{today.year}-{today.month:02d}-01"
+    if "this week" in lower:
+        monday = today - timedelta(days=today.weekday())
+        return monday.isoformat()
+
     # "since the all-star break" — use actual ASG dates (1933-2026, see _ASG_DATES above)
     if "all-star break" in lower or "all star break" in lower:
         # Check if user specified a year: "2024 all star break"

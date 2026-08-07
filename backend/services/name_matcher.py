@@ -3510,9 +3510,14 @@ def parse_team_stats(input_str: str) -> Optional[dict]:
     # Date-window qualifiers ("since July 1", "in the last 30 days",
     # "after the all-star break") are the query engine's job — claiming
     # here silently ships full-season numbers (2026-08-07 wrong-slice fix).
+    # Same for split qualifiers ("Best Yankees hitter vs lefties this
+    # month" was claimed here as a full-season roster grid): the engine's
+    # split × team × window executor owns those.
     if (re.search(r'\b(?:since|after)\s+(?:the\s+)?[a-z]+', lower)
             or re.search(r'\b(?:last|past)\s+\d+\s*(?:day|week|month|game)', lower)
-            or "all-star break" in lower or "all star break" in lower):
+            or "this month" in lower or "this week" in lower
+            or "all-star break" in lower or "all star break" in lower
+            or _detect_split_context(lower) is not None):
         return None
 
 
@@ -3541,9 +3546,12 @@ def parse_team_total(input_str: str) -> Optional[dict]:
     # Date-window qualifiers ("since July 1", "in the last 30 days",
     # "after the all-star break") are the query engine's job — claiming
     # here silently ships full-season numbers (2026-08-07 wrong-slice fix).
+    # Split qualifiers likewise (split × team × window executor).
     if (re.search(r'\b(?:since|after)\s+(?:the\s+)?[a-z]+', lower)
             or re.search(r'\b(?:last|past)\s+\d+\s*(?:day|week|month|game)', lower)
-            or "all-star break" in lower or "all star break" in lower):
+            or "this month" in lower or "this week" in lower
+            or "all-star break" in lower or "all star break" in lower
+            or _detect_split_context(lower) is not None):
         return None
 
 
