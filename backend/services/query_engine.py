@@ -3004,7 +3004,7 @@ def execute(plan: QueryPlan) -> Optional[str]:
             honored = {"team_code", "team_context"}
             result = _execute_team_conditional_record(conn, plan)
         elif plan.query_type == "player_career_filtered":
-            honored = {"player_name"}
+            honored = {"player_name", "team_code"}
             result = _execute_player_career_filtered(conn, plan)
         elif plan.query_type == "per_team_leaders":
             honored = {"league"}
@@ -3016,7 +3016,7 @@ def execute(plan: QueryPlan) -> Optional[str]:
             honored = {"player_name"}
             result = _execute_player_sliding_window(plan)
         elif plan.team_context is not None:
-            honored = {"team_context", "team_code"}
+            honored = {"team_context", "team_code", "player_name"}
             result = _execute_team_context_leaderboard(conn, plan)
         elif plan.split_context is not None:
             honored = {"split_context", "league"}
