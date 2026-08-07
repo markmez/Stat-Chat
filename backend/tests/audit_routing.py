@@ -424,17 +424,19 @@ TESTS: list[tuple[str, str, str]] = [
     # New short path filters to one player early, no GROUP BY.
     # Must intercept AND include the player name in the response.
     # ============================================================
-    # 2026-08-07: these three previously "passed" by serving a LEAGUE-WIDE
-    # board mislabeled as a single-player answer (shallow audit can't see
-    # content). The plan-coverage guard now refuses that wrong slice; the
-    # correct current behavior is LLM-tier fallthrough until a native
-    # player+game-context executor exists (see plan_dims_dropped log).
-    ("Skubal ERA in day games", "sonnet",
-     "Single-player + team_context", "Skubal"),
+    # 2026-08-07: the plan-coverage guard exposed that the engine's
+    # leaderboard branch was SHADOWING the correct day/night parser further
+    # down the chain (these used to "pass" as mislabeled league boards).
+    # With the guard refusing the wrong slice, the real parser answers —
+    # must_contain now demands the split label so the old wrong-slice can
+    # never silently return. "Extra innings" has no parser yet → grounded
+    # LLM fallthrough is correct (see plan_dims_dropped log).
+    ("Skubal ERA in day games", "intercepted",
+     "Single-player + team_context", "day games"),
     ("Judge OPS in extra innings", "sonnet",
-     "Single-player + team_context", "Judge"),
-    ("Ohtani home runs in night games", "sonnet",
-     "Single-player + team_context", "Ohtani"),
+     "Single-player + team_context"),
+    ("Ohtani home runs in night games", "intercepted",
+     "Single-player + team_context", "night games"),
     # Split + team_context combination — must bail (fall through to Sonnet).
     # No per-PA data to combine handedness with day/night filtering.
     ("Skubal ERA against lefties in day games", "sonnet",
