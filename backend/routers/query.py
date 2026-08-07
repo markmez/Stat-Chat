@@ -1745,6 +1745,19 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                   input_method=input_method, response_preview=intercepted)
         return
 
+    # Plan-coverage guard refusal check — read BEFORE the intent mapper. A
+    # guard refusal means the engine PARSED every dimension but can't compose
+    # them: a capability miss, not a vocabulary miss. The mapper's rewrite can
+    # only "succeed" on such a query by losing a dimension (it rewrote "best
+    # yankee hitter against lefties since July 15" into a league-wide vs-LHP
+    # board — mapped, intercepted, wrong). Same reasoning bans single-shot
+    # Haiku SQL below. Planner is the only tier that composes; go there.
+    from services.query_engine import dims_dropped_ctx as _ddc
+    dims_dropped = _ddc.get()
+    if dims_dropped:
+        _ddc.set(False)
+        logger.info("dims_dropped_skip_to_planner question=%r", question)
+
     # 3a. Intent mapper — first fallback after an interceptor miss. One cheap
     # Haiku call rewrites wild phrasing ("AZ diamondbacks stats", "judge
     # dingers this yr") into the canonical form the engine's parsers
@@ -1753,7 +1766,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     # On a re-intercept miss the canonical form still replaces the question
     # downstream — cleaner English helps the SQL tiers too. Any mapper
     # error/timeout falls through with the original question unchanged.
-    if not is_insight_hard:
+    if not is_insight_hard and not dims_dropped:
         try:
             from services.intent_mapper import map_to_canonical
             mapped = await asyncio.wait_for(map_to_canonical(question), timeout=6.0)
@@ -1792,13 +1805,11 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     # Haiku SQL fallback — skip for insight queries (hard AND soft: an
     # analysis-shaped query that missed the structural tiers needs the
     # planner's multi-step reasoning, not a single Haiku SQL shot).
-    # ALSO skip when the engine's plan-coverage guard refused a result for
-    # dropped dimensions ("best yankee hitter against lefties since July
-    # 15"): the query provably composes dimensions, and single-shot Haiku
-    # SQL silently drops the ones it can't compose — the exact wrong slice
-    # the guard just refused. The planner composes them correctly.
-    from services.query_engine import dims_dropped_ctx as _ddc
-    if _ddc.get():
+    # ALSO skip on a plan-coverage guard refusal (dims_dropped above — the
+    # re-intercept of a mapped form can trip the guard too, hence the fresh
+    # ctx read): single-shot Haiku SQL silently drops the dimensions it
+    # can't compose — the exact wrong slice the guard just refused.
+    if dims_dropped or _ddc.get():
         logger.info("haiku_skip_dims_dropped question=%r", question)
         skip_haiku_sql = True
         _ddc.set(False)
