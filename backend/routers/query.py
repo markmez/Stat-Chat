@@ -1863,11 +1863,13 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                          "(walk-offs, inside-the-park HRs, leadoff/pinch-hit HR "
                          "situations, etc.) as queryable stats.")
         elif _is_compound(question):
-            logger.info("insight_skip_compound_split question=%r", question)
-            skip_planner = True
-            gate_note = ("The app's database has single-dimension splits (vs "
-                         "LHP/RHP, home/away, RISP, by pitch type, by count) but "
-                         "does not store this COMBINATION of split dimensions.")
+            # Gate NARROWED 2026-08-08 (checklist item 6, sunset clause):
+            # game_split_logs now stores per-game split rows, so the planner
+            # CAN compose split × date-window × team for the current season
+            # (schema_description documents the recipe). The gate still
+            # blocks Haiku SQL (single-shot drops filters), and historical
+            # seasons remain uncomposable — the planner says so honestly.
+            logger.info("insight_compound_split_to_planner question=%r", question)
         elif _is_situation(question):
             logger.info("insight_skip_situation question=%r", question)
             skip_planner = True
