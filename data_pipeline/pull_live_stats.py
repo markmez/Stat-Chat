@@ -315,6 +315,66 @@ def find_or_create_player(cursor, player_info, team_abbrev, season):
     return _redirect_alias(cursor, pid)
 
 
+def _merge_traded_entries(totals):
+    """One MSF entry per player: traded players' per-team entries merged.
+
+    Season = season regardless of team/league changes (Mark, 2026-08-07).
+    Counting stats are deep-summed (inningsPitched summed in THIRDS — it's
+    baseball decimal notation, not a float); rates are recomputed downstream
+    from the summed components. The merged row's team becomes "OLD/NEW"
+    (retro codes, ordered by games desc) — the Retrosheet convention for
+    mid-season trades that downstream code already handles. players.team
+    gets the CURRENT team (the one with fewer games)."""
+    def _ip_to_outs(v):
+        try:
+            f = float(v)
+            whole = int(f)
+            frac = int(round((f - whole) * 10))
+            return whole * 3 + (frac if frac in (0, 1, 2) else 0)
+        except Exception:
+            return 0
+
+    def _deep_sum(a, b):
+        out = dict(a or {})
+        for k, v in (b or {}).items():
+            cur = out.get(k)
+            if isinstance(v, dict):
+                out[k] = _deep_sum(cur if isinstance(cur, dict) else {}, v)
+            elif k == "inningsPitched":
+                outs = _ip_to_outs(cur if cur is not None else 0) + _ip_to_outs(v)
+                out[k] = f"{outs // 3}.{outs % 3}"
+            elif isinstance(v, (int, float)) and not isinstance(v, bool) and                     isinstance(cur, (int, float)) and not isinstance(cur, bool):
+                out[k] = cur + v
+            elif cur is None:
+                out[k] = v
+        return out
+
+    by_pid = {}
+    result = []
+    for entry in totals:
+        pid = (entry.get("player") or {}).get("id")
+        if pid is None:
+            result.append(entry)
+            continue
+        games = safe_int(((entry.get("stats") or {}).get("gamesPlayed")))
+        abbrev = (entry.get("team") or {}).get("abbreviation", "")
+        if pid not in by_pid:
+            by_pid[pid] = {"entry": entry, "teams": [(abbrev, games)]}
+            result.append(entry)
+        else:
+            rec = by_pid[pid]
+            rec["entry"]["stats"] = _deep_sum(rec["entry"].get("stats"), entry.get("stats"))
+            rec["teams"].append((abbrev, games))
+
+    for rec in by_pid.values():
+        if len(rec["teams"]) > 1:
+            ordered = sorted(rec["teams"], key=lambda t: -t[1])
+            rec["entry"]["_retro_team"] = "/".join(retro_team(a) for a, _ in ordered)
+            # Current team = fewest games (newest mid-season)
+            rec["entry"]["_current_abbrev"] = ordered[-1][0]
+    return result
+
+
 def pull_season_batting(conn, season_str):
     """Pull season batting stats from MySportsFeeds."""
     season_year = detect_season(season_str)
@@ -326,7 +386,7 @@ def pull_season_batting(conn, season_str):
         print("    No new data (304)")
         return 0
 
-    totals = data.get("playerStatsTotals", [])
+    totals = _merge_traded_entries(data.get("playerStatsTotals", []))
     cursor = conn.cursor()
     count = 0
 
@@ -342,7 +402,9 @@ def pull_season_batting(conn, season_str):
             continue
 
         team_abbrev = team_info.get("abbreviation", "")
-        pid = find_or_create_player(cursor, player, team_abbrev, season_year)
+        pid = find_or_create_player(cursor, player,
+                                    entry.get("_current_abbrev") or team_abbrev,
+                                    season_year)
 
         ab = safe_int(stats.get("atBats"))
         h = safe_int(stats.get("hits"))
@@ -365,7 +427,8 @@ def pull_season_batting(conn, season_str):
              batting_avg, obp, slg, ops, iso, babip)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            pid, season_year, retro_team(team_abbrev),
+            pid, season_year,
+            entry.get("_retro_team") or retro_team(team_abbrev),
             safe_int(all_stats.get("gamesPlayed")),
             pa, ab, h, doubles, triples, hr,
             safe_int(stats.get("runs")),
@@ -392,7 +455,7 @@ def pull_season_pitching(conn, season_str):
         print("    No new data (304)")
         return 0
 
-    totals = data.get("playerStatsTotals", [])
+    totals = _merge_traded_entries(data.get("playerStatsTotals", []))
     cursor = conn.cursor()
     count = 0
 
@@ -408,7 +471,9 @@ def pull_season_pitching(conn, season_str):
             continue
 
         team_abbrev = team_info.get("abbreviation", "")
-        pid = find_or_create_player(cursor, player, team_abbrev, season_year)
+        pid = find_or_create_player(cursor, player,
+                                    entry.get("_current_abbrev") or team_abbrev,
+                                    season_year)
 
         ip_raw = safe_float(stats.get("inningsPitched"), 0)
         # Convert IP float (e.g., 6.1 = 6 1/3) to outs
@@ -447,7 +512,8 @@ def pull_season_pitching(conn, season_str):
              era, whip, k_per_9, bb_per_9, k_per_bb, h_per_9, hr_per_9, baa)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            pid, season_year, retro_team(team_abbrev),
+            pid, season_year,
+            entry.get("_retro_team") or retro_team(team_abbrev),
             safe_int(all_stats.get("gamesPlayed")),
             safe_int(misc.get("gamesStarted")),
             safe_int(stats.get("gamesFinished")),
