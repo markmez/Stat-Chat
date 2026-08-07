@@ -223,9 +223,20 @@ def _split_pa_floor(conn, season: int, table: str,
 
 
 def _league_team_clause(league: str, alias: str) -> str:
-    """Return a SQL clause filtering by AL or NL team codes."""
+    """Return a SQL clause filtering by AL or NL team codes.
+
+    Slash-aware (2026-08-07, traded-player model): merged season rows for
+    mid-season movers carry 'OLD/NEW' team codes. A player belongs to a
+    league's board if ANY slash component is in that league — an intra-
+    league mover's merged row IS his league-accrued line; a cross-league
+    mover appears on both boards (strict per-league accrued VALUES for
+    that rarer case are the by-team-table upgrade, task #17)."""
     teams = _AL_TEAMS if league == "AL" else _NL_TEAMS
-    return f"{alias}.team IN ({teams})"
+    slash_matches = " OR ".join(
+        f"('/' || {alias}.team || '/') LIKE '%/' || {t} || '/%'"
+        for t in teams.split(",")
+    )
+    return f"({alias}.team IN ({teams}) OR {slash_matches})"
 
 
 def _rookie_filter(prefix: str, is_pitching: bool = False) -> str:
