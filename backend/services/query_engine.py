@@ -849,6 +849,12 @@ def decompose(question: str) -> QueryPlan:
     _has_stat_keyword = bool(re.search(
         r'\b(?:home runs?|hr|rbi|hits?|avg|ops|obp|slg|era|whip|strikeouts?|stolen bases?|wins?|saves?|innings)\b',
         lower))
+    # "since the all-star break" is a DATE idiom, not an awards question —
+    # ALL_STAR must never claim it ("which dodgers pitcher has been toughest
+    # on lefties since the all star break" was hijacked to All-Star winners;
+    # the interceptor's force-route already had this exemption, decompose
+    # didn't).
+    _asg_break = "all-star break" in lower or "all star break" in lower
 
     # --- Two-award same-season intersection ---
     # "every player who has won both MVP and Gold Glove in the same season",
@@ -860,6 +866,8 @@ def decompose(question: str) -> QueryPlan:
         matched_codes: list = []
         seen_codes: set = set()
         for award_text, award_code in sorted(_AWARD_LOOKUP_PATTERNS.items(), key=lambda x: -len(x[0])):
+            if award_code == "ALL_STAR" and _asg_break:
+                continue
             if award_text in lower and award_code not in seen_codes:
                 seen_codes.add(award_code)
                 matched_codes.append(award_code)
@@ -885,6 +893,8 @@ def decompose(question: str) -> QueryPlan:
 
     if not _has_stat_keyword:
         for award_text, award_code in sorted(_AWARD_LOOKUP_PATTERNS.items(), key=lambda x: -len(x[0])):
+            if award_code == "ALL_STAR" and _asg_break:
+                continue
             if award_text in lower:
                 plan.query_type = "award_lookup"
                 plan.award_filter = award_code
@@ -3078,7 +3088,14 @@ def execute(plan: QueryPlan) -> Optional[str]:
                     pass
                 dims_dropped_ctx.set(True)
                 conn.close()
-                return None
+                # In-band sentinel instead of relying on the contextvar (it
+                # proved unreliable in prod: guard fired on the RISP probe,
+                # Haiku SQL still answered). A truthy return propagates up
+                # through every qe_execute call site and short-circuits the
+                # remaining interceptor parsers — also correct: any simpler
+                # parser matching a provably multi-dim question would drop
+                # dims by definition. query.py converts it back to a miss.
+                return "__DIMS_DROPPED__"
 
         # Collect all "see also" alternatives, output as single combined DIDYOUMEAN
         see_also = []

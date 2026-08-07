@@ -1552,6 +1552,10 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     # 2. Follow-up rewrite — try local patterns BEFORE interceptor so short
     # follow-ups like "what about Soto" get rewritten, not intercepted as-is.
     rewritten_query: str | None = None
+    # Set when the plan-coverage guard refuses a result for dropped dims
+    # (in-band "__DIMS_DROPPED__" sentinel from query_engine via any
+    # try_intercept call). Skips mapper + Haiku SQL; routes to planner.
+    dims_dropped = False
     if history and len(question.split()) < 10:
         # 2a. Canned responses for follow-ups that don't need a new query
         # (e.g., "what else?" on a list we already know is complete).
@@ -1578,6 +1582,9 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 intercepted = try_intercept(local_rewrite)
             except Exception as e:
                 logger.warning("intercept_rewrite_error error=%s", e)
+                intercepted = None
+            if intercepted == "__DIMS_DROPPED__":
+                dims_dropped = True
                 intercepted = None
             if intercepted is not None:
                 logger.info("followup_local_intercepted rewritten=%r", local_rewrite)
@@ -1612,6 +1619,9 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                     intercepted = try_intercept(rewritten)
                 except Exception as e:
                     logger.warning("intercept_rewrite_error error=%s", e)
+                    intercepted = None
+                if intercepted == "__DIMS_DROPPED__":
+                    dims_dropped = True
                     intercepted = None
                 if intercepted is not None:
                     logger.info("followup_intercepted rewritten=%r", rewritten)
@@ -1726,6 +1736,9 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
             except Exception:
                 pass
             intercepted = None
+    if intercepted == "__DIMS_DROPPED__":
+        dims_dropped = True
+        intercepted = None
     if intercepted is not None:
         no_count = intercepted.startswith("__NO_COUNT__")
         if no_count:
@@ -1753,9 +1766,10 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     # board — mapped, intercepted, wrong). Same reasoning bans single-shot
     # Haiku SQL below. Planner is the only tier that composes; go there.
     from services.query_engine import dims_dropped_ctx as _ddc
-    dims_dropped = _ddc.get()
-    if dims_dropped:
+    if _ddc.get():  # belt-and-braces alongside the in-band sentinel
+        dims_dropped = True
         _ddc.set(False)
+    if dims_dropped:
         logger.info("dims_dropped_skip_to_planner question=%r", question)
 
     # 3a. Intent mapper — first fallback after an interceptor miss. One cheap
@@ -1778,6 +1792,9 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 intercepted = try_intercept(mapped)
             except Exception as e:
                 logger.warning("intercept_mapped_error mapped=%r error=%s", mapped, e)
+                intercepted = None
+            if intercepted == "__DIMS_DROPPED__":
+                dims_dropped = True
                 intercepted = None
             if intercepted is not None:
                 no_count = intercepted.startswith("__NO_COUNT__")
@@ -1889,6 +1906,14 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                          "situations, specific base-out states, etc.).")
 
         if not skip_planner:
+            if dims_dropped:
+                # Expectation-setting notice, fired ONLY for the compound-
+                # dimension class (guard refusal → planner): those run ~90s;
+                # generic planner runs median ~17s and keep the client-side
+                # loading fillers alone. Older clients ignore unknown SSE
+                # event types; iOS renders this above the fillers.
+                yield event({"type": "notice",
+                             "text": "This one takes some digging — I'll have the answer in about 90 seconds."})
             agen = plan_and_execute_stream(question)
             first_text = True
             full_text = ""
