@@ -2533,6 +2533,17 @@ def detect_league_leaders(conn, season, latest_date=None):
 # Tonight's Matchup Previews
 # ---------------------------------------------------------------------------
 
+def _et_today():
+    """Today's date in US/Eastern — the feed's clock. The server runs UTC,
+    so between 8pm and midnight ET, date.today() is already TOMORROW; using
+    it for On This Date / matchup previews published next-day cards early
+    (bit us 2026-08-12 when a late-evening redetect posted Aug 13 OTD cards
+    on Aug 12). Baseball days are ET days."""
+    from zoneinfo import ZoneInfo
+    from datetime import datetime as _dt
+    return _dt.now(ZoneInfo("America/New_York")).date()
+
+
 def detect_matchup_previews(conn, season):
     """Generate matchup preview feed cards for tonight's games.
 
@@ -2565,8 +2576,8 @@ def detect_matchup_previews(conn, season):
         pass
 
     from datetime import timedelta
-    today = date.today().isoformat()
-    suppression_cutoff = (date.today() - timedelta(days=12)).isoformat()
+    today = _et_today().isoformat()
+    suppression_cutoff = (_et_today() - timedelta(days=12)).isoformat()
 
     # Step 1: Get recently featured pitchers (suppress for 12 days)
     suppressed = set()
@@ -2935,7 +2946,7 @@ def detect_on_this_date(conn, season, latest_date, target_date=None, attach_date
     events = []
 
     try:
-        today = (target_date or date.today().isoformat())
+        today = (target_date or _et_today().isoformat())
         month_day = today[5:]  # "04-09" from "2026-04-09"
     except:
         return events

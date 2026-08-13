@@ -649,7 +649,7 @@ def detect_history_claims(conn, season, latest_date):
             "SELECT COUNT(*) FROM game_pitching_logs"
             " WHERE player_id = ? AND season = ? AND is_start = 1 AND date <= ?",
             (pid, season, hi)).fetchone()[0]
-        if n_starts not in (2, 3):
+        if not (2 <= n_starts <= 25):
             continue
         shelf = f"pitcher_first_{n_starts}_starts"
         row = conn.execute(
@@ -659,8 +659,10 @@ def detect_history_claims(conn, season, latest_date):
         if not row:
             continue
         name, k, bb, detail_line = row
-        if (k or 0) < 12:
-            continue  # unremarkable lines can't have empty reference classes
+        # pre-filter: ~5 K/start is the floor of "maybe historic"; the
+        # dominance count below is the real judge
+        if (k or 0) < max(12, 5 * n_starts):
+            continue
         story_key = f"{pid}|{shelf}"
         if told.get(story_key):
             continue
@@ -690,6 +692,50 @@ def detect_history_claims(conn, season, latest_date):
             "priority": 1,
         })
         told[story_key] = hi
+
+    # Batter short-burst combos vs the window shelves (the Acuña card):
+    # window ends ON latest_date, so the completing game is the anchor.
+    for pid, name in conn.execute(
+            "SELECT b.player_id, p.name FROM game_batting_logs b"
+            " JOIN players p ON p.player_id = b.player_id"
+            " WHERE b.season = ? AND b.date = ? AND b.home_runs > 0",
+            (season, hi)).fetchall():
+        for K in (4, 6, 10):
+            w = conn.execute(
+                "SELECT SUM(home_runs), SUM(stolen_bases) FROM"
+                " (SELECT home_runs, stolen_bases FROM game_batting_logs"
+                "  WHERE player_id = ? AND season = ? AND date <= ?"
+                "  ORDER BY date DESC LIMIT ?)", (pid, season, hi, K)).fetchone()
+            hr_w, sb_w = w[0] or 0, w[1] or 0
+            if hr_w < 4 or sb_w < 2:
+                continue
+            story_key = f"{pid}|w{K}hrsb|{hr_w}|{sb_w}"
+            if told.get(story_key):
+                continue
+            comps = conn.execute(
+                "SELECT DISTINCT player_name, season FROM historical_index"
+                " WHERE scan_type = ? AND season < ? AND value >= ? AND value2 >= ?"
+                " ORDER BY season", (f"window{K}_hr_sb", season, hr_w, sb_w)).fetchall()
+            if len(comps) > 6:
+                continue
+            if comps:
+                names_list = ", ".join(f"{n2} ({y})" for n2, y in comps[:5])
+                headline = (f"With {hr_w} home runs and {sb_w} steals in his last {K}"
+                            f" games, {name} joins {names_list} as the only players"
+                            f" since 1920 to do it in a {K}-game span.")
+            else:
+                headline = (f"{name} has {hr_w} home runs and {sb_w} steals in his"
+                            f" last {K} games — no player since 1920 has matched"
+                            f" that in a {K}-game span.")
+            events.append({
+                "headline": headline, "detail": "", "category": "Rare Company",
+                "game_date": hi, "player_names": [name] + [c[0] for c in comps[:3]],
+                "team_names": [], "detection_type": f"history_claim_window{K}_hr_sb",
+                "priority": 1,
+            })
+            told[story_key] = hi
+            break  # one burst card per player per day (smallest qualifying K wins)
+
     _set_state(conn, "history_claims", told)
     conn.commit()
     return events
