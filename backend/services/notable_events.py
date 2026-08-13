@@ -4077,9 +4077,28 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False, target_d
     print("  Running Tier 2 detectors...")
     events += _safe_detect("career_milestones", detect_career_milestones, conn, season, latest_date)
     events += _safe_detect("rarities", detect_rarities, conn, season, latest_date)
-    events += _safe_detect("hot_streaks_pelt", detect_hot_streaks_pelt, conn, season, latest_date, cooldowns=cooldowns)
+    # RETIRED 2026-08-12: detect_hot_streaks_pelt. Its PELT-table windows are
+    # season-long segments for most players, which is why hot-streak cards
+    # rarely fired. detect_form_edges (trend_engine) finds windows by
+    # open-ended change-point on each player's own series — the profile
+    # slider's current-form logic, unified. Code kept for rollback.
     t2_count = len(events) - t1_count
     print(f"    Tier 2: {t2_count} events")
+
+    # Trend & discovery engines (2026-08-12) — design log in memory
+    # project-trend-discovery-engine.md; deterministic sentences only.
+    print("  Running trend & discovery engines...")
+    from services.trend_engine import (
+        detect_trend_cells, detect_uniqueness_claims, detect_droughts,
+        detect_form_edges, detect_history_claims,
+    )
+    _t0 = len(events)
+    events += _safe_detect("trend_cells", detect_trend_cells, conn, season, latest_date)
+    events += _safe_detect("uniqueness_claims", detect_uniqueness_claims, conn, season, latest_date)
+    events += _safe_detect("hr_droughts", detect_droughts, conn, season, latest_date)
+    events += _safe_detect("form_edges", detect_form_edges, conn, season, latest_date)
+    events += _safe_detect("history_claims", detect_history_claims, conn, season, latest_date)
+    print(f"    Trend & discovery: {len(events) - _t0} events")
 
     # Records & personal bests
     print("  Running records detection...")
