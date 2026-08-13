@@ -497,6 +497,14 @@ def detect_form_edges(conn, season, latest_date):
         " WHERE b.season = ? AND b.date = ? AND s.plate_appearances >= 200",
         (season, season, hi)).fetchall()]
     told = _state(conn, "form_stories", {})
+    # Cross-engine dedup: a player featured by the trend scan (any family)
+    # within the cooldown window doesn't also get a Current Form card —
+    # Merrill drew both on day one.
+    trend_last = _state(conn, "trend_player_last", {})
+    D = datetime.strptime(hi, "%Y-%m-%d").date()
+    played = [pid for pid in played
+              if not (trend_last.get(pid)
+                      and (D - date.fromisoformat(trend_last[pid])).days < PLAYER_COOLDOWN_D)]
     cands = []
     for pid in played:
         rows = _series(conn, pid, "overall", season, hi)
