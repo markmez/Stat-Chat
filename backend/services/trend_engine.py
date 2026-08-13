@@ -408,16 +408,96 @@ def detect_uniqueness_claims(conn, season, latest_date):
             f"The {tname} are the only team with {trio[0][1]} players at 25+ home runs.",
             "No other club has more than two 25-homer hitters.", [])
 
+    # Mark's rule (2026-08-12 QA): every feed card is pegged to the GAME
+    # EVENT that made it true, and the event leads the sentence. A claim
+    # that is true but unanchored (nobody did the triggering thing on
+    # latest_date) stays UNFIRED — state records only fired claims, so it
+    # keeps re-checking daily and fires the first day its subject anchors
+    # it (e.g. the 3rd White Sox hitter's 25th HR, or the leader adding
+    # HR #44 while still the only one at 40+).
+    def _y(col, pid_expr, name):
+        nm = name.replace("'", "''")
+        row = conn.execute(
+            f"SELECT SUM({col}) FROM game_batting_logs b JOIN players p"
+            f" ON p.player_id = b.player_id WHERE p.name = '{nm}'"
+            f" AND b.season = ? AND b.date = ?", (season, hi)).fetchone()
+        return row[0] or 0
+
+    def _ordinal(n):
+        s = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+        return f"{n}{s}"
+
+    anchored = {}
+    if "hr_only" in claims:
+        name, total = hr[0][0], hr[0][1]
+        y = _y("home_runs", None, name)
+        if y > 0:
+            th = int(claims["hr_only"][0].split("only player with ")[1].split("+")[0])
+            anchored["hr_only"] = (
+                f"{name} hit his {_ordinal(total)} home run — he's the only player"
+                f" with {th}+ this season.", claims["hr_only"][1], [name])
+    if "sb_only" in claims:
+        name, total = sb[0][0], sb[0][1]
+        y = _y("stolen_bases", None, name)
+        if y > 0:
+            th = int(claims["sb_only"][0].split("only player with ")[1].split("+")[0])
+            anchored["sb_only"] = (
+                f"{name} stole his {_ordinal(total)} base — he's the only player"
+                f" with {th}+ this season.", claims["sb_only"][1], [name])
+    if "era_only" in claims:
+        name = era[0][0]
+        nm = name.replace("'", "''")
+        st = conn.execute(
+            f"SELECT SUM(strikeouts), SUM(earned_runs), SUM(ip_outs) FROM game_pitching_logs g"
+            f" JOIN players p ON p.player_id = g.player_id WHERE p.name = '{nm}'"
+            f" AND g.season = ? AND g.date = ? AND g.is_start = 1", (season, hi)).fetchone()
+        if st and st[2]:
+            ip = f"{st[2] // 3}.{st[2] % 3}" if st[2] % 3 else f"{st[2] // 3}"
+            anchored["era_only"] = (
+                f"{name} threw {ip} innings with {st[0]} strikeouts and {st[1]} earned"
+                f" run{'s' if st[1] != 1 else ''} — he's the only qualified starter"
+                f" with an ERA under {claims['era_only'][0].split('under ')[1].rstrip('.')}.",
+                claims["era_only"][1], [name])
+    if "catcher_only" in claims:
+        name = cats[0][0]
+        if _y("hits", None, name) + _y("walks", None, name) > 0:
+            anchored["catcher_only"] = (
+                claims["catcher_only"][0], claims["catcher_only"][1], [name])
+    if "team_hr_trio" in claims:
+        # anchor = a trio member crossed 25 HR on latest_date
+        team_code = trio[0][0]
+        members = conn.execute(
+            "SELECT p.name, SUM(b.home_runs) hr FROM game_batting_logs b"
+            " JOIN players p ON p.player_id = b.player_id"
+            " JOIN season_batting_stats s ON s.player_id = b.player_id AND s.season = ?"
+            " WHERE b.season = ? AND b.date <= ? AND s.team = ?"
+            " GROUP BY b.player_id HAVING hr >= 25", (season, season, hi, team_code)).fetchall()
+        for mname, mtotal in members:
+            y = _y("home_runs", None, mname)
+            if y > 0 and (mtotal - y) < 25 <= mtotal:
+                base = claims["team_hr_trio"][0]
+                base = base[0].lower() + base[1:].rstrip(".")
+                anchored["team_hr_trio"] = (
+                    f"{mname} hit his {_ordinal(mtotal)} home run, making {base}.",
+                    claims["team_hr_trio"][1], [mname])
+                break
+
     prev = _state(conn, "uniqueness_claims", {})
     events = []
-    for key, (headline, detail, players) in claims.items():
-        if prev.get(key) != headline:  # newly true or the claim changed
+    fired_state = dict(prev)
+    for key, (headline, detail, players) in anchored.items():
+        if prev.get(key) != claims[key][0]:  # not already fired for this claim text
             events.append({
                 "headline": headline, "detail": detail, "category": "Only One",
                 "game_date": hi, "player_names": players, "team_names": [],
                 "detection_type": f"uniqueness_{key}", "priority": 2,
             })
-    _set_state(conn, "uniqueness_claims", {k: v[0] for k, v in claims.items()})
+            fired_state[key] = claims[key][0]
+    # claims that turned false reset so a future re-anchor can fire again
+    for key in list(fired_state):
+        if key not in claims:
+            del fired_state[key]
+    _set_state(conn, "uniqueness_claims", fired_state)
     conn.commit()
     return events
 
