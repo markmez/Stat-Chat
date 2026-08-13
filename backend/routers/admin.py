@@ -59,6 +59,23 @@ _PIPELINE_LOCK_PATH = "/tmp/statchat_pipeline.lock"
 _PIPELINE_LOCK_STALE_SECONDS = 5400  # 90 min — matches refresh.sh
 
 
+@router.post("/build-history-shelves")
+async def build_history_shelves(authorization: str | None = Header(None)):
+    """Launch the Phase-2 historical_index shelf-widening build detached
+    (nice -19, own session — survives API restarts, never blocks workers).
+    Poll progress: SELECT value FROM trend_state WHERE key='shelf_build_progress'."""
+    verify_admin(authorization)
+    import subprocess, sys
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "scripts", "build_history_shelves.py")
+    log_path = "/tmp/build_history_shelves.log"
+    with open(log_path, "a") as lf:
+        proc = subprocess.Popen(
+            ["nice", "-n", "19", sys.executable, script],
+            stdout=lf, stderr=subprocess.STDOUT, start_new_session=True)
+    return {"status": "started", "pid": proc.pid, "log": log_path}
+
+
 @router.post("/refresh")
 async def refresh_live_data(
     season: str | None = None,
