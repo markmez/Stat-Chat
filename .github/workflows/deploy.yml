@@ -9,6 +9,14 @@
         - 'schema_description.py'
         - 'deploy/**'
 
+  # Serialize deploys: a push-trigger and a manual dispatch racing each other
+  # collide on the box's git index.lock — both pulls fail silently and the
+  # service restarts on OLD code (bit us 2026-08-13: box stuck on b248d85
+  # through two "successful" deploys of 9a5ab32).
+  concurrency:
+    group: deploy-backend
+    cancel-in-progress: false
+
   jobs:
     deploy:
       runs-on: ubuntu-latest
@@ -25,7 +33,7 @@
             capture_stdout: true
             script: |
               cd /opt/statchat/repo
-              sudo -u statchat git pull 2>&1 || echo "GIT PULL FAILED rc=$?"
+              sudo -u statchat git pull 2>&1 || { echo "GIT PULL FAILED rc=$? — aborting deploy"; exit 1; }
               sudo -u statchat git rev-parse --short HEAD
               sudo -u statchat git status --porcelain | head -5
               sudo -u statchat /opt/statchat/venv/bin/pip install -q -r backend/requirements.txt
