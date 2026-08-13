@@ -3971,6 +3971,7 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False, target_d
     to backfill events for a specific game date after a copy/logic fix.
     Implies force=True.
     """
+    print("  detect_all build: trend-engine-v1 (9a5ab32+)")
     if from_poll and is_detection_locked():
         print("  Detection locked (daily pipeline running) — skipping")
         return 0
