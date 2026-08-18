@@ -4265,8 +4265,18 @@ def detect_all(db_path=None, season=None, from_poll=False, force=False, target_d
     # from prior runs (which may have been computed on incomplete data) are removed.
     # Events for prior dates are NOT touched — they were computed when that date
     # was latest_date and the data was complete.
+    # Trend/discovery engines are TRANSITION-fired with novelty state: they
+    # emit a card once and then decline to re-emit ("story already told").
+    # The wipe-and-recompute contract deletes anything not re-emitted, so
+    # their cards were being erased by the next poll run (2026-08-13..16:
+    # a week of cards silently vanished). Exclude them like ai_insight.
     conn.execute("""
         DELETE FROM notable_events WHERE game_date = ? AND detection_type != 'ai_insight'
+          AND detection_type NOT LIKE 'trend_%'
+          AND detection_type NOT LIKE 'uniqueness_%'
+          AND detection_type NOT LIKE 'hr_drought%'
+          AND detection_type NOT LIKE 'form_edge%'
+          AND detection_type NOT LIKE 'history_claim%'
     """, (latest_date,))
     conn.commit()
 
