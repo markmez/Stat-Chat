@@ -115,6 +115,17 @@ struct NotableEventsFeed: View {
         if wasNew { saveSeenHeadlines() }
     }
 
+    /// Fire-and-forget engagement beacon → dashboard Feed Interactions panel.
+    private static func beacon(_ action: String, _ item: String = "") {
+        guard let url = URL(string: "https://api.secondsignalapps.com/feed-interaction") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "action": action, "item": item, "device_id": AppState.deviceId])
+        URLSession.shared.dataTask(with: req).resume()
+    }
+
     var body: some View {
         if !events.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
@@ -165,6 +176,7 @@ struct NotableEventsFeed: View {
             .environment(\.openURL, OpenURLAction { url in
                 guard url.scheme == "statchat" else { return .systemAction }
                 let name = url.lastPathComponent.removingPercentEncoding ?? url.lastPathComponent
+                Self.beacon("tap", "\(url.host ?? ""):\(name)")
                 if url.host == "player" {
                     onPlayerTap?(name)
                 } else if url.host == "team" {
@@ -178,6 +190,9 @@ struct NotableEventsFeed: View {
                 }
                 return .handled
             })
+            .onChange(of: trayExpanded) { expanded in
+                if expanded { Self.beacon("open") }
+            }
         }
 
         Color.clear.frame(height: 0)
