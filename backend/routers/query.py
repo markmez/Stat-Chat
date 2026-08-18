@@ -2047,3 +2047,21 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     log_query(question, device_id, "knowledge_miss", duration_ms=_elapsed_ms(),
               is_followup=bool(rewritten_query), original_query=original_question if rewritten_query else None,
               input_method=input_method, response_preview="".join(_resp_buf))
+
+
+from fastapi import Body as _Body
+
+@router.post("/feed-interaction")
+async def feed_interaction(payload: dict = _Body(...)):
+    """Client beacon for feed engagement (tray opens, card taps). Feeds the
+    dashboard's Feed Interactions panel — the evidence base for the
+    is-the-tray-too-hidden design question (2026-08-17). No quota impact."""
+    action = str(payload.get("action", ""))[:20] or "open"
+    device_id = str(payload.get("device_id", ""))[:64] or "unknown"
+    item = str(payload.get("item", ""))[:200]
+    try:
+        from services.metering import log_query
+        log_query(item or action, device_id, f"feed_{action}", input_method="feed")
+    except Exception:
+        pass
+    return {"status": "ok"}

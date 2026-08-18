@@ -3311,6 +3311,23 @@ async def dashboard(
         <td><strong>${total_cost:.3f}</strong></td>
     </tr>"""
 
+    # Feed Interactions panel (tray opens / card taps, 14d) — evidence for
+    # the feed-placement design question.
+    fi_rows = conn.execute("""
+        SELECT response_type, COUNT(*), COUNT(DISTINCT device_id)
+        FROM query_log WHERE response_type LIKE 'feed_%'
+          AND timestamp >= datetime('now', '-14 days')
+        GROUP BY response_type ORDER BY 2 DESC""").fetchall()
+    fi_html = "".join(
+        f"<tr><td>{t.replace('feed_', '')}</td><td>{n}</td><td>{d}</td>"
+        f"<td>{n / d:.1f}</td></tr>" for t, n, d in fi_rows if d)
+    fi_top = conn.execute("""
+        SELECT query_text, COUNT(*) FROM query_log
+        WHERE response_type = 'feed_tap' AND timestamp >= datetime('now', '-14 days')
+        GROUP BY query_text ORDER BY 2 DESC LIMIT 8""").fetchall()
+    fi_top_html = "".join(
+        f"<tr><td>{h[:90]}</td><td>{n}</td></tr>" for h, n in fi_top)
+
     # Build "Slowest Queries" panel — top 20 by avg latency, min 3 samples.
     # Drives the post-launch decision about which team-context buckets are
     # worth materializing vs. leaving live.
@@ -3787,6 +3804,11 @@ async def dashboard(
   <span class="page-info" id="page-info"></span>
   <button id="next-btn" onclick="changePage(1)">Next &rarr;</button>
 </div>
+
+<h2>Feed Interactions <span style="font-weight:normal;font-size:13px;color:#888;">(last 14 days)</span></h2>
+<table><tr><th>Action</th><th>Total</th><th>Devices</th><th>Per device</th></tr>{fi_html}</table>
+<h3 style="margin-top:8px;">Most-tapped cards</h3>
+<table><tr><th>Card</th><th>Taps</th></tr>{fi_top_html}</table>
 
 <h2>Feed Events</h2>
 <div class="date-picker">
