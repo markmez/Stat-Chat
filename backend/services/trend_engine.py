@@ -45,12 +45,6 @@ CONTEXTS = {
     "fastballs": ("pitch_type", ["4-Seam", "2-Seam", "Sinker", "Cutter"], "vs fastballs", "pitch", False),
     "breaking":  ("pitch_type", ["Slider", "Curve"], "vs breaking balls", "pitch", False),
     "offspeed":  ("pitch_type", ["Change", "Split"], "vs offspeed", "pitch", False),
-    "4-Seam":    ("pitch_type", ["4-Seam"], "vs four-seamers", "pitch", True),
-    "Sinker":    ("pitch_type", ["Sinker"], "vs sinkers", "pitch", True),
-    "Cutter":    ("pitch_type", ["Cutter"], "vs cutters", "pitch", True),
-    "Slider":    ("pitch_type", ["Slider"], "vs sliders", "pitch", True),
-    "Curve":     ("pitch_type", ["Curve"], "vs curveballs", "pitch", True),
-    "Change":    ("pitch_type", ["Change"], "vs changeups", "pitch", True),
 }
 GROUP_OF = {"4-Seam": "fastballs", "2-Seam": "fastballs", "Sinker": "fastballs",
             "Cutter": "fastballs", "Slider": "breaking", "Curve": "breaking",
@@ -164,6 +158,23 @@ def _md(datestr):
 # ---------------------------------------------------------------------------
 # Engine 1: league-today cell scan
 # ---------------------------------------------------------------------------
+
+
+def _game_line(conn, player_id, season, hi):
+    """'1-for-4' / '2-for-5 with 2 HR' for latest_date, or None."""
+    r = conn.execute(
+        "SELECT SUM(at_bats), SUM(hits), SUM(home_runs) FROM game_batting_logs"
+        " WHERE player_id = ? AND season = ? AND date = ?",
+        (player_id, season, hi)).fetchone()
+    if not r or r[0] is None:
+        return None
+    ab, h, hr = r[0] or 0, r[1] or 0, r[2] or 0
+    if ab == 0:
+        return None
+    line = f"{h}-for-{ab}"
+    if hr:
+        line += f" with {hr} HR" if hr > 1 else " with a HR"
+    return line
 
 def _cutoff_join(n, hi, alias):
     return (f"JOIN (SELECT player_id, MIN(date) cut FROM"
@@ -301,14 +312,16 @@ def detect_trend_cells(conn, season, latest_date):
             if before and now:
                 verb = "climbed" if hot else "slipped"
                 traj = f" His season OPS has {verb} from {_fmt(before)} to {_fmt(now)} in that span."
-            headline = (f"{c['player']}: a {_fmt(e_ops)} OPS over his last {n_games} games"
+            gl = _game_line(conn, c["pid"], season, hi)
+            lead = f"{c['player']} went {gl} and now has" if gl else f"{c['player']} has"
+            headline = (f"{lead} a {_fmt(e_ops)} OPS over his last {n_games} games"
                         f" (since {_md(start)}).{traj}")
-            detail = f"{e_pa} PA in the stretch."
+            detail = ""
         else:
             fold = " (all fastball types)" if (c["specific"] and ctx in GROUP_OF.values()) else ""
-            headline = (f"{c['player']} {label}{fold} since {_md(start)}:"
-                        f" a {_fmt(e_ops)} OPS over his last {n_games} games.")
-            detail = f"{e_pa} PA in the split. Season mark {label}: {_fmt(c['sv'])}."
+            headline = (f"{c['player']} has hit {label}{fold} to a {_fmt(e_ops)} OPS"
+                        f" over his last {n_games} games (since {_md(start)}).")
+            detail = f"His season mark {label} is {_fmt(c['sv'])}."
         events.append({
             "headline": headline, "detail": detail, "category": "Trend",
             "game_date": hi, "player_names": [c["player"]], "team_names": [],
@@ -609,11 +622,11 @@ def detect_form_edges(conn, season, latest_date):
             (pid, season, start, hi)).fetchone()[0]
         hot = diff > 0
         word = "hottest" if hot else "coldest"
-        headline = (f"{name}: a {_fmt(e_ops)} OPS over his last {n_games} games"
-                    f" (since {_md(start)}).")
-        detail = (f"One of the {word} stretches in baseball right now — "
-                  f"{'+' if hot else ''}{int(round(diff * 1000))} points of OPS"
-                  f" versus his play before it ({e_pa} PA).")
+        gl = _game_line(conn, pid, season, hi)
+        lead = f"{name} went {gl} and is now at" if gl else f"{name} is at"
+        headline = (f"{lead} a {_fmt(e_ops)} OPS over his last {n_games} games"
+                    f" (since {_md(start)}) — one of the {word} stretches in baseball.")
+        detail = f"He had a {_fmt(prior)} OPS before this run began."
         events.append({
             "headline": headline, "detail": detail,
             "category": "Current Form", "game_date": hi,
@@ -722,7 +735,7 @@ def detect_history_claims(conn, season, latest_date):
                 names_list = ", ".join(f"{n2} ({y})" for n2, y in comps[:5])
                 headline = (f"With {hr_w} home runs and {sb_w} steals in his last {K}"
                             f" games, {name} joins {names_list} as the only players"
-                            f" since 1920 to do it in a {K}-game span.")
+                            f" since 1920 to do so in a {K}-game span.")
             else:
                 headline = (f"{name} has {hr_w} home runs and {sb_w} steals in his"
                             f" last {K} games — no player since 1920 has matched"
