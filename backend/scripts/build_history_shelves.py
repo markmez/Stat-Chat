@@ -158,6 +158,16 @@ def main():
     if batch:
         conn.executemany(ins, batch)
         conn.commit()
+    # Part C: oddity shelves (single SQL each)
+    conn.execute("DELETE FROM historical_index WHERE scan_type = 'start_scoreless_no_k'")
+    conn.execute("""INSERT INTO historical_index
+        (scan_type, player_id, player_name, team, season, value, value2, detail)
+        SELECT 'start_scoreless_no_k', g.player_id, p.name, NULL, g.season,
+               MAX(g.ip_outs), NULL, 'longest scoreless 0-K start (outs)'
+        FROM game_pitching_logs g JOIN players p ON p.player_id = g.player_id
+        WHERE g.is_start = 1 AND g.runs = 0 AND g.strikeouts = 0 AND g.ip_outs >= 12
+        GROUP BY g.player_id, g.season""")
+    conn.commit()
     conn.execute("CREATE INDEX IF NOT EXISTS idx_hi_scan ON historical_index(scan_type, season)")
     conn.commit()
     progress(conn, "done", n_done, f"total {time.time() - t0:.0f}s")

@@ -706,6 +706,37 @@ def detect_history_claims(conn, season, latest_date):
         })
         told[story_key] = hi
 
+    # Scoreless-without-a-K starts vs history (Mark QA item 3: prove the
+    # oddity is interesting). Anchored to yesterday's start by definition.
+    for pid, name, outs in conn.execute(
+            "SELECT g.player_id, p.name, g.ip_outs FROM game_pitching_logs g"
+            " JOIN players p ON p.player_id = g.player_id"
+            " WHERE g.season = ? AND g.date = ? AND g.is_start = 1"
+            " AND g.runs = 0 AND g.strikeouts = 0 AND g.ip_outs >= 15",
+            (season, hi)).fetchall():
+        story_key = f"{pid}|noK|{hi}"
+        if told.get(story_key):
+            continue
+        last = conn.execute(
+            "SELECT player_name, season FROM historical_index"
+            " WHERE scan_type = 'start_scoreless_no_k' AND season < ? AND value >= ?"
+            " ORDER BY season DESC LIMIT 1", (season, outs)).fetchone()
+        ip = f"{outs // 3}" + (f".{outs % 3}" if outs % 3 else "")
+        if last:
+            headline = (f"{name} threw {ip} scoreless innings without a single"
+                        f" strikeout — the longest such start since"
+                        f" {last[0]} in {last[1]}.")
+        else:
+            headline = (f"{name} threw {ip} scoreless innings without a single"
+                        f" strikeout — the longest such start since at least 1920.")
+        events.append({
+            "headline": headline, "detail": "", "category": "Rare Company",
+            "game_date": hi, "player_names": [name] + ([last[0]] if last else []),
+            "team_names": [], "detection_type": "history_claim_scoreless_no_k",
+            "priority": 1,
+        })
+        told[story_key] = hi
+
     # Batter short-burst combos vs the window shelves (the Acuña card):
     # window ends ON latest_date, so the completing game is the anchor.
     for pid, name in conn.execute(
