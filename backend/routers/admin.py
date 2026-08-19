@@ -3330,7 +3330,7 @@ async def dashboard(
     </tr>"""
 
     # Unique devices (proxy for unique users) — excludes test/system rigs.
-    ud_html = ""
+    ud_at, ud_tabs_btns, ud_tab_first = 0, "", 0
     try:
         _udc = sqlite3.connect(METERING_DB_PATH)
         _excl = ("'wild-query-eval','local-test','system','audit-routing-script-001',"
@@ -3358,11 +3358,17 @@ async def dashboard(
                 f" AND device_id NOT IN (SELECT device_id FROM internal_devices)",
                 _rp).fetchone()[0]
         _udc.close()
-        ud_html = "".join(
-            f"<div class='stat-card'><div class='label'>{k}</div>"
-            f"<div class='value'>{v}</div></div>" for k, v in _ud.items())
+        ud_at = _ud.get("All time", 0)
+        _tabs = [(k, v) for k, v in _ud.items() if k != "All time"]
+        ud_tabs_btns = "".join(
+            f"<button type='button' class='ud-tab' data-v='{v}'"
+            f" style='border:1px solid #cbd5e1;background:#fff;color:#1A40B3;padding:3px 10px;"
+            f"border-radius:6px;margin-right:6px;cursor:pointer;font-size:12px;'"
+            f" onclick='udTab(this)'>{k}</button>" for k, v in _tabs)
+        ud_tab_first = _tabs[1][1] if len(_tabs) > 1 else (_tabs[0][1] if _tabs else 0)
     except Exception as _ud_e:
-        ud_html = f"<div class='stat-card'><div class='label'>error</div><div class='value' style='font-size:12px;'>{_ud_e}</div></div>"
+        ud_at, ud_tab_first = "—", "—"
+        ud_tabs_btns = f"<span style='color:#888;font-size:12px;'>error: {_ud_e}</span>"
 
     # Feed Interactions panel (tray opens / card taps, 14d) — evidence for
     # the feed-placement design question. Own metering connection (the
@@ -3797,7 +3803,6 @@ async def dashboard(
 </script>
 
 <h2>Users <span style="font-weight:normal;font-size:13px;color:#888;">(measured as unique devices; internal and test devices excluded)</span></h2>
-<div class="stat-cards">{ud_html}</div>
 <div class="date-picker">
   <label>From:</label>
   <input type="date" id="ud-from" value="{ud_from or ''}">
@@ -3806,15 +3811,32 @@ async def dashboard(
   <button onclick="applyUdRange()">Apply</button>
   <button class="reset" onclick="resetUdRange()">Reset</button>
 </div>
+<div class="stat-cards">
+  <div class="stat-card">
+    <div class="label">All time</div>
+    <div class="value">{ud_at}</div>
+  </div>
+  <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;">
+    <div style="margin-bottom:6px;">{ud_tabs_btns}</div>
+    <div id="ud-tab-value" style="font-size:24px;font-weight:700;color:#1A40B3;">{ud_tab_first}</div>
+  </div>
+</div>
+<script>
+function udTab(btn) {{
+  document.querySelectorAll('.ud-tab').forEach(function(b) {{ b.style.background='#fff'; b.style.color='#1A40B3'; }});
+  btn.style.background='#1A40B3'; btn.style.color='#fff';
+  document.getElementById('ud-tab-value').textContent = btn.dataset.v;
+}}
+</script>
 
 <h2>Queries</h2>
 <div class="stat-cards">
   <div class="stat-card">
     <div class="label">Total</div>
     <div class="value">{total:,}</div>
-    <div style="font-size:11px;color:rgba(255,255,255,0.85);margin-top:2px;">{unique_q:,} unique</div>
   </div>
 </div>
+<div style="font-size:12px;color:#666;margin:-10px 0 16px;">{unique_q:,} unique queries</div>
 <h3 style="margin-bottom:8px;">All Queries <label style="font-weight:normal;font-size:13px;margin-left:12px;"><input type="checkbox" {"checked" if exclude_internal else ""} onchange="const u=new URL(location);u.searchParams.set('exclude_internal',this.checked?1:0);location=u;"> exclude Mark</label></h3>
 <div class="date-picker">
   <label>From:</label>
