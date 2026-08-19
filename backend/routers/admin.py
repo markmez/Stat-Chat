@@ -3250,7 +3250,7 @@ async def dashboard(
                COUNT(*) AS samples,
                GROUP_CONCAT(DISTINCT response_type) AS types
         FROM query_log
-        WHERE duration_ms IS NOT NULL{date_filter}
+        WHERE duration_ms IS NOT NULL{date_filter}{_internal_excl if exclude_internal else ''}
         GROUP BY query_text
         HAVING samples >= 3 AND avg_ms IS NOT NULL
         ORDER BY avg_ms DESC
@@ -3837,15 +3837,16 @@ function udTab(btn) {{
   </div>
 </div>
 <div style="font-size:12px;color:#666;margin:-10px 0 16px;">{unique_q:,} unique queries</div>
-<h3 style="margin-bottom:8px;">All Queries <label style="font-weight:normal;font-size:13px;margin-left:12px;"><input type="checkbox" {"checked" if exclude_internal else ""} onchange="const u=new URL(location);u.searchParams.set('exclude_internal',this.checked?1:0);location=u;"> exclude Mark</label></h3>
+<h3 style="margin-bottom:8px;">All Queries</h3>
 <div class="date-picker">
   <label>From:</label>
   <input type="date" id="date-from" value="{date_from or ''}">
   <label>To:</label>
   <input type="date" id="date-to" value="{date_to or ''}">
+  <label style="font-size:12px;color:#666;margin-left:8px;"><input type="checkbox" id="exclude-internal-cb" {"checked" if exclude_internal else ""}> exclude Mark</label>
+  <label style="font-size:12px;color:#666;"><input type="checkbox" id="range-all"> apply to all sections</label>
   <button onclick="applyDateRange()">Apply</button>
   <button class="reset" onclick="resetDateRange()">Reset</button>
-  <label style="font-size:12px;color:#666;margin-left:10px;"><input type="checkbox" id="range-all"> apply to all sections</label>
 </div>
 <div class="filter-bar" id="filter-bar">
   Showing: <span id="filter-label"></span>
@@ -4059,6 +4060,9 @@ function applyDateRange() {{
   const url = new URL(window.location);
   if (from) url.searchParams.set('date_from', from); else url.searchParams.delete('date_from');
   if (to) url.searchParams.set('date_to', to); else url.searchParams.delete('date_to');
+  const cb = document.getElementById('exclude-internal-cb');
+  if (cb && cb.checked) url.searchParams.set('exclude_internal', 1);
+  else url.searchParams.delete('exclude_internal');
   if (document.getElementById('range-all') && document.getElementById('range-all').checked) {{
     if (from) url.searchParams.set('ud_from', from); else url.searchParams.delete('ud_from');
     if (to) url.searchParams.set('ud_to', to); else url.searchParams.delete('ud_to');
@@ -4085,6 +4089,7 @@ function resetDateRange() {{
   const url = new URL(window.location);
   url.searchParams.delete('date_from');
   url.searchParams.delete('date_to');
+  url.searchParams.delete('exclude_internal');
   window.location = url;
 }}
 
