@@ -3184,6 +3184,7 @@ async def dashboard(
     authorization: str | None = Header(None),
     date_from: str | None = None,
     date_to: str | None = None,
+    exclude_internal: int = 0,
 ):
     """Admin dashboard showing query analytics."""
     verify_admin(authorization, key)
@@ -3193,6 +3194,10 @@ async def dashboard(
     # Migrate legacy "intercepted" rows
     conn.execute("UPDATE query_log SET response_type = 'query engine' WHERE response_type = 'intercepted'")
     conn.commit()
+    conn.execute("CREATE TABLE IF NOT EXISTS internal_devices (device_id TEXT PRIMARY KEY, note TEXT)")
+    # Totals/breakdown ALWAYS exclude internal devices (Mark 2026-08-18);
+    # the All Queries list keeps them unless ?exclude_internal=1 (toggle).
+    _internal_excl = " AND device_id NOT IN (SELECT device_id FROM internal_devices)"
 
     # Date range filter
     date_filter = ""
@@ -3223,6 +3228,7 @@ async def dashboard(
                MAX(q1.duration_ms) AS max_ms
         FROM query_log AS q1
         WHERE 1=1{date_filter.replace('timestamp', 'q1.timestamp')}
+        {(_internal_excl.replace('device_id NOT IN', 'q1.device_id NOT IN') if exclude_internal else '')}
         GROUP BY q1.query_text
         ORDER BY cnt DESC, last_seen DESC
         LIMIT 1000
@@ -3249,7 +3255,7 @@ async def dashboard(
     breakdown = conn.execute(f"""
         SELECT response_type, COUNT(*) as cnt
         FROM query_log
-        WHERE 1=1{date_filter}
+        WHERE 1=1{date_filter}{_internal_excl}
         GROUP BY response_type
         ORDER BY cnt DESC
     """, date_params).fetchall()
@@ -3813,7 +3819,7 @@ async def dashboard(
 </table>
 </div>
 
-<h2>All Queries</h2>
+<h2>All Queries <label style="font-weight:normal;font-size:13px;margin-left:12px;"><input type="checkbox" {"checked" if exclude_internal else ""} onchange="const u=new URL(location);u.searchParams.set('exclude_internal',this.checked?1:0);location=u;"> exclude Mark</label></h2>
 <div class="date-picker">
   <label>From:</label>
   <input type="date" id="date-from" value="{date_from or ''}">
