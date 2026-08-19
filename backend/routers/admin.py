@@ -3317,6 +3317,7 @@ async def dashboard(
         _udc = sqlite3.connect(METERING_DB_PATH)
         _excl = ("'wild-query-eval','local-test','system','audit-routing-script-001',"
                  "'beacon-smoke-test','unknown'")
+        _udc.execute("CREATE TABLE IF NOT EXISTS internal_devices (device_id TEXT PRIMARY KEY, note TEXT)")
         _ud = {}
         for label, clause in (("Today", "date(timestamp) = date('now')"),
                               ("7 days", "timestamp >= datetime('now','-7 days')"),
@@ -3324,7 +3325,8 @@ async def dashboard(
                               ("All time", "1=1")):
             _ud[label] = _udc.execute(
                 f"SELECT COUNT(DISTINCT device_id) FROM query_log"
-                f" WHERE {clause} AND device_id NOT IN ({_excl})").fetchone()[0]
+                f" WHERE {clause} AND device_id NOT IN ({_excl})"
+                f" AND device_id NOT IN (SELECT device_id FROM internal_devices)").fetchone()[0]
         _udc.close()
         ud_html = "".join(f"<td style='padding:6px 18px 6px 0;'><b style='font-size:20px;'>{v}</b>"
                           f"<br><span style='color:#888;font-size:12px;'>{k}</span></td>"
@@ -3339,10 +3341,12 @@ async def dashboard(
     fi_html = fi_top_html = ""
     try:
         _fic = sqlite3.connect(METERING_DB_PATH)
+        _fic.execute("CREATE TABLE IF NOT EXISTS internal_devices (device_id TEXT PRIMARY KEY, note TEXT)")
         _fi_rows = _fic.execute("""
             SELECT response_type, COUNT(*), COUNT(DISTINCT device_id)
             FROM query_log WHERE response_type LIKE 'feed_%'
               AND timestamp >= datetime('now', '-14 days')
+              AND device_id NOT IN (SELECT device_id FROM internal_devices)
             GROUP BY response_type ORDER BY 2 DESC""").fetchall()
         fi_html = "".join(
             f"<tr><td>{t.replace('feed_', '')}</td><td>{n}</td><td>{d}</td>"
@@ -3350,6 +3354,7 @@ async def dashboard(
         _fi_top = _fic.execute("""
             SELECT query_text, COUNT(*) FROM query_log
             WHERE response_type = 'feed_tap' AND timestamp >= datetime('now', '-14 days')
+              AND device_id NOT IN (SELECT device_id FROM internal_devices)
             GROUP BY query_text ORDER BY 2 DESC LIMIT 8""").fetchall()
         fi_top_html = "".join(
             f"<tr><td>{str(h)[:90]}</td><td>{n}</td></tr>" for h, n in _fi_top)
