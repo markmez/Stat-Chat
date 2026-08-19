@@ -3358,11 +3358,11 @@ async def dashboard(
                 f" AND device_id NOT IN (SELECT device_id FROM internal_devices)",
                 _rp).fetchone()[0]
         _udc.close()
-        ud_html = "".join(f"<td style='padding:6px 18px 6px 0;'><b style='font-size:20px;'>{v}</b>"
-                          f"<br><span style='color:#888;font-size:12px;'>{k}</span></td>"
-                          for k, v in _ud.items())
+        ud_html = "".join(
+            f"<div class='stat-card'><div class='label'>{k}</div>"
+            f"<div class='value'>{v}</div></div>" for k, v in _ud.items())
     except Exception as _ud_e:
-        ud_html = f"<td style='color:#888;'>error: {_ud_e}</td>"
+        ud_html = f"<div class='stat-card'><div class='label'>error</div><div class='value' style='font-size:12px;'>{_ud_e}</div></div>"
 
     # Feed Interactions panel (tray opens / card taps, 14d) — evidence for
     # the feed-placement design question. Own metering connection (the
@@ -3767,16 +3767,6 @@ async def dashboard(
 <body>
 <h1>StatChat Dashboard</h1>
 
-<div class="stat-cards">
-  <div class="stat-card">
-    <div class="label">Total Queries</div>
-    <div class="value">{total:,}</div>
-  </div>
-  <div class="stat-card">
-    <div class="label">Unique Queries</div>
-    <div class="value">{unique_q:,}</div>
-  </div>
-</div>
 <script>
 // Synchronous: decide card visibility AND count BEFORE anything paints.
 // Each card ships a JSON array of recent error timestamps (newest first,
@@ -3806,8 +3796,8 @@ async def dashboard(
 }})();
 </script>
 
-<h2>Unique Devices <span style="font-weight:normal;font-size:13px;color:#888;">(test devices excluded)</span></h2>
-<table><tr>{ud_html}</tr></table>
+<h2>Users <span style="font-weight:normal;font-size:13px;color:#888;">(measured as unique devices; internal and test devices excluded)</span></h2>
+<div class="stat-cards">{ud_html}</div>
 <div class="date-picker">
   <label>From:</label>
   <input type="date" id="ud-from" value="{ud_from or ''}">
@@ -3817,7 +3807,15 @@ async def dashboard(
   <button class="reset" onclick="resetUdRange()">Reset</button>
 </div>
 
-<h2>All Queries <label style="font-weight:normal;font-size:13px;margin-left:12px;"><input type="checkbox" {"checked" if exclude_internal else ""} onchange="const u=new URL(location);u.searchParams.set('exclude_internal',this.checked?1:0);location=u;"> exclude Mark</label></h2>
+<h2>Queries</h2>
+<div class="stat-cards">
+  <div class="stat-card">
+    <div class="label">Total</div>
+    <div class="value">{total:,}</div>
+    <div style="font-size:11px;color:rgba(255,255,255,0.85);margin-top:2px;">{unique_q:,} unique</div>
+  </div>
+</div>
+<h3 style="margin-bottom:8px;">All Queries <label style="font-weight:normal;font-size:13px;margin-left:12px;"><input type="checkbox" {"checked" if exclude_internal else ""} onchange="const u=new URL(location);u.searchParams.set('exclude_internal',this.checked?1:0);location=u;"> exclude Mark</label></h3>
 <div class="date-picker">
   <label>From:</label>
   <input type="date" id="date-from" value="{date_from or ''}">
