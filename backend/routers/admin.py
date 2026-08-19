@@ -3788,6 +3788,9 @@ async def dashboard(
 }})();
 </script>
 
+<h2>Unique Devices <span style="font-weight:normal;font-size:13px;color:#888;">(test devices excluded)</span></h2>
+<table><tr>{ud_html}</tr></table>
+
 <h2>Cost Breakdown by Response Type</h2>
 <div class="breakdown">
 <table>
@@ -3838,9 +3841,6 @@ async def dashboard(
   <span class="page-info" id="page-info"></span>
   <button id="next-btn" onclick="changePage(1)">Next &rarr;</button>
 </div>
-
-<h2>Unique Devices <span style="font-weight:normal;font-size:13px;color:#888;">(test devices excluded)</span></h2>
-<table><tr>{ud_html}</tr></table>
 
 <h2>Feed Interactions <span style="font-weight:normal;font-size:13px;color:#888;">(last 14 days)</span></h2>
 <table><tr><th>Action</th><th>Total</th><th>Devices</th><th>Per device</th></tr>{fi_html}</table>
