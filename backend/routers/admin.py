@@ -3311,6 +3311,27 @@ async def dashboard(
         <td><strong>${total_cost:.3f}</strong></td>
     </tr>"""
 
+    # Unique devices (proxy for unique users) — excludes test/system rigs.
+    ud_html = ""
+    try:
+        _udc = sqlite3.connect(METERING_DB_PATH)
+        _excl = ("'wild-query-eval','local-test','system','audit-routing-script-001',"
+                 "'beacon-smoke-test','unknown'")
+        _ud = {}
+        for label, clause in (("Today", "date(timestamp) = date('now')"),
+                              ("7 days", "timestamp >= datetime('now','-7 days')"),
+                              ("30 days", "timestamp >= datetime('now','-30 days')"),
+                              ("All time", "1=1")):
+            _ud[label] = _udc.execute(
+                f"SELECT COUNT(DISTINCT device_id) FROM query_log"
+                f" WHERE {clause} AND device_id NOT IN ({_excl})").fetchone()[0]
+        _udc.close()
+        ud_html = "".join(f"<td style='padding:6px 18px 6px 0;'><b style='font-size:20px;'>{v}</b>"
+                          f"<br><span style='color:#888;font-size:12px;'>{k}</span></td>"
+                          for k, v in _ud.items())
+    except Exception as _ud_e:
+        ud_html = f"<td style='color:#888;'>error: {_ud_e}</td>"
+
     # Feed Interactions panel (tray opens / card taps, 14d) — evidence for
     # the feed-placement design question. Own metering connection (the
     # shared `conn` may point elsewhere by here) and fully defensive: this
@@ -3812,6 +3833,9 @@ async def dashboard(
   <span class="page-info" id="page-info"></span>
   <button id="next-btn" onclick="changePage(1)">Next &rarr;</button>
 </div>
+
+<h2>Unique Devices <span style="font-weight:normal;font-size:13px;color:#888;">(test devices excluded)</span></h2>
+<table><tr>{ud_html}</tr></table>
 
 <h2>Feed Interactions <span style="font-weight:normal;font-size:13px;color:#888;">(last 14 days)</span></h2>
 <table><tr><th>Action</th><th>Total</th><th>Devices</th><th>Per device</th></tr>{fi_html}</table>
