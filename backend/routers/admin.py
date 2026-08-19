@@ -3234,7 +3234,7 @@ async def dashboard(
         {(_internal_excl.replace('device_id NOT IN', 'q1.device_id NOT IN') if exclude_internal else '')}
         {_not_feed.replace('response_type', 'q1.response_type')}
         GROUP BY q1.query_text
-        ORDER BY cnt DESC, last_seen DESC
+        ORDER BY last_seen DESC, cnt DESC
         LIMIT 1000
     """, date_params).fetchall()
 
@@ -3265,6 +3265,12 @@ async def dashboard(
     """, date_params).fetchall()
 
     total = sum(r[1] for r in breakdown)
+    # True unique-query count: uncapped (the list LIMITs at 1000) and always
+    # excluding internal devices + feed beacons, regardless of list toggle.
+    unique_q = conn.execute(f"""
+        SELECT COUNT(DISTINCT query_text) FROM query_log
+        WHERE 1=1{date_filter}{_internal_excl}{_not_feed}
+    """, date_params).fetchone()[0]
 
     # Alert-card timestamps per category. No 24h window — we ship the actual
     # timestamp list (capped at 1000) and the browser filters against its
@@ -3765,7 +3771,7 @@ async def dashboard(
   </div>
   <div class="stat-card">
     <div class="label">Unique Queries</div>
-    <div class="value">{len(queries):,}</div>
+    <div class="value">{unique_q:,}</div>
   </div>
   <div class="stat-card alert-card" data-filter="client_event" data-timestamps='{_alert_ts_json(client_event_ts)}' style="display: none; background: linear-gradient(135deg, #b45309, #f59e0b); cursor: pointer;" onclick="filterBy('client_event')">
     <div class="label">Client Issues</div>
@@ -3811,11 +3817,35 @@ async def dashboard(
 
 <h2>Unique Devices <span style="font-weight:normal;font-size:13px;color:#888;">(test devices excluded)</span></h2>
 <table><tr>{ud_html}</tr></table>
-<div style="margin:4px 0 20px;font-size:13px;color:#555;">
-  Custom range: <input type="date" id="ud-from" value="{date_from or ''}">
-  to <input type="date" id="ud-to" value="{date_to or ''}">
-  <button onclick="var u=new URL(location);var f=document.getElementById('ud-from').value;var t=document.getElementById('ud-to').value;f?u.searchParams.set('date_from',f):u.searchParams.delete('date_from');t?u.searchParams.set('date_to',t):u.searchParams.delete('date_to');location=u;">Apply</button>
-  <span style="color:#999;">(also filters the query panels below)</span>
+<div style="margin:4px 0 20px;font-size:12px;color:#999;">Custom range: use the date picker in All Queries below — the range cell appears here when one is set.</div>
+
+<h2>All Queries <label style="font-weight:normal;font-size:13px;margin-left:12px;"><input type="checkbox" {"checked" if exclude_internal else ""} onchange="const u=new URL(location);u.searchParams.set('exclude_internal',this.checked?1:0);location=u;"> exclude Mark</label></h2>
+<div class="date-picker">
+  <label>From:</label>
+  <input type="date" id="date-from" value="{date_from or ''}">
+  <label>To:</label>
+  <input type="date" id="date-to" value="{date_to or ''}">
+  <button onclick="applyDateRange()">Apply</button>
+  <button class="reset" onclick="resetDateRange()">Reset</button>
+</div>
+<div class="filter-bar" id="filter-bar">
+  Showing: <span id="filter-label"></span>
+  <span class="filter-x" onclick="clearFilter()">&times;</span>
+</div>
+<table id="qtable">
+  <tr>
+    <th>Query</th>
+    <th class="sortable" onclick="sortBy('count')" id="th-count">Count</th>
+    <th>Type</th>
+    <th class="sortable" onclick="sortBy('avgms')" id="th-avgms">Avg ms</th>
+    <th class="sortable" onclick="sortBy('time')" id="th-time">Last (ET)<span class="arrow"> &#x25BE;</span></th>
+  </tr>
+  {query_rows}
+</table>
+<div class="pagination">
+  <button id="prev-btn" onclick="changePage(-1)" disabled>&larr; Prev</button>
+  <span class="page-info" id="page-info"></span>
+  <button id="next-btn" onclick="changePage(1)">Next &rarr;</button>
 </div>
 
 <h2>Cost Breakdown by Response Type</h2>
@@ -3838,35 +3868,6 @@ async def dashboard(
   </tr>
   {slowest_html if slowest_html else '<tr><td colspan="5" style="color:#888;font-style:italic;padding:12px;">No queries with timing data yet.</td></tr>'}
 </table>
-</div>
-
-<h2>All Queries <label style="font-weight:normal;font-size:13px;margin-left:12px;"><input type="checkbox" {"checked" if exclude_internal else ""} onchange="const u=new URL(location);u.searchParams.set('exclude_internal',this.checked?1:0);location=u;"> exclude Mark</label></h2>
-<div class="date-picker">
-  <label>From:</label>
-  <input type="date" id="date-from" value="{date_from or ''}">
-  <label>To:</label>
-  <input type="date" id="date-to" value="{date_to or ''}">
-  <button onclick="applyDateRange()">Apply</button>
-  <button class="reset" onclick="resetDateRange()">Reset</button>
-</div>
-<div class="filter-bar" id="filter-bar">
-  Showing: <span id="filter-label"></span>
-  <span class="filter-x" onclick="clearFilter()">&times;</span>
-</div>
-<table id="qtable">
-  <tr>
-    <th>Query</th>
-    <th class="sortable" onclick="sortBy('count')" id="th-count">Count<span class="arrow"> &#x25BE;</span></th>
-    <th>Type</th>
-    <th class="sortable" onclick="sortBy('avgms')" id="th-avgms">Avg ms</th>
-    <th class="sortable" onclick="sortBy('time')" id="th-time">Last (ET)</th>
-  </tr>
-  {query_rows}
-</table>
-<div class="pagination">
-  <button id="prev-btn" onclick="changePage(-1)" disabled>&larr; Prev</button>
-  <span class="page-info" id="page-info"></span>
-  <button id="next-btn" onclick="changePage(1)">Next &rarr;</button>
 </div>
 
 <h2>Feed Interactions <span style="font-weight:normal;font-size:13px;color:#888;">(last 14 days)</span></h2>
@@ -3938,7 +3939,7 @@ const PAGE_SIZE = 30;
 // Admin key for authenticated AJAX endpoints (grading). Read from the
 // current URL so the same `?key=...` we arrived with is reused.
 const ADMIN_KEY = new URLSearchParams(location.search).get('key') || '';
-let currentSort = 'count';
+let currentSort = 'time';
 let currentFilter = null;
 let currentPage = 0;
 
