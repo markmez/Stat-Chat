@@ -3198,6 +3198,9 @@ async def dashboard(
     # Totals/breakdown ALWAYS exclude internal devices (Mark 2026-08-18);
     # the All Queries list keeps them unless ?exclude_internal=1 (toggle).
     _internal_excl = " AND device_id NOT IN (SELECT device_id FROM internal_devices)"
+    # Feed beacons (feed_open/feed_tap) are interactions, not queries — they
+    # live in their own panel and stay out of query totals and the list.
+    _not_feed = " AND response_type NOT LIKE 'feed_%'"
 
     # Date range filter
     date_filter = ""
@@ -3229,6 +3232,7 @@ async def dashboard(
         FROM query_log AS q1
         WHERE 1=1{date_filter.replace('timestamp', 'q1.timestamp')}
         {(_internal_excl.replace('device_id NOT IN', 'q1.device_id NOT IN') if exclude_internal else '')}
+        {_not_feed.replace('response_type', 'q1.response_type')}
         GROUP BY q1.query_text
         ORDER BY cnt DESC, last_seen DESC
         LIMIT 1000
@@ -3255,7 +3259,7 @@ async def dashboard(
     breakdown = conn.execute(f"""
         SELECT response_type, COUNT(*) as cnt
         FROM query_log
-        WHERE 1=1{date_filter}{_internal_excl}
+        WHERE 1=1{date_filter}{_internal_excl}{_not_feed}
         GROUP BY response_type
         ORDER BY cnt DESC
     """, date_params).fetchall()
@@ -3333,6 +3337,17 @@ async def dashboard(
                 f"SELECT COUNT(DISTINCT device_id) FROM query_log"
                 f" WHERE {clause} AND device_id NOT IN ({_excl})"
                 f" AND device_id NOT IN (SELECT device_id FROM internal_devices)").fetchone()[0]
+        if date_from or date_to:
+            _rc, _rp = [], []
+            if date_from:
+                _rc.append("date(timestamp) >= date(?)"); _rp.append(date_from)
+            if date_to:
+                _rc.append("date(timestamp) <= date(?)"); _rp.append(date_to)
+            _ud[f"{date_from or 'start'} to {date_to or 'now'}"] = _udc.execute(
+                f"SELECT COUNT(DISTINCT device_id) FROM query_log"
+                f" WHERE {' AND '.join(_rc)} AND device_id NOT IN ({_excl})"
+                f" AND device_id NOT IN (SELECT device_id FROM internal_devices)",
+                _rp).fetchone()[0]
         _udc.close()
         ud_html = "".join(f"<td style='padding:6px 18px 6px 0;'><b style='font-size:20px;'>{v}</b>"
                           f"<br><span style='color:#888;font-size:12px;'>{k}</span></td>"
@@ -3796,6 +3811,12 @@ async def dashboard(
 
 <h2>Unique Devices <span style="font-weight:normal;font-size:13px;color:#888;">(test devices excluded)</span></h2>
 <table><tr>{ud_html}</tr></table>
+<div style="margin:4px 0 20px;font-size:13px;color:#555;">
+  Custom range: <input type="date" id="ud-from" value="{date_from or ''}">
+  to <input type="date" id="ud-to" value="{date_to or ''}">
+  <button onclick="var u=new URL(location);var f=document.getElementById('ud-from').value;var t=document.getElementById('ud-to').value;f?u.searchParams.set('date_from',f):u.searchParams.delete('date_from');t?u.searchParams.set('date_to',t):u.searchParams.delete('date_to');location=u;">Apply</button>
+  <span style="color:#999;">(also filters the query panels below)</span>
+</div>
 
 <h2>Cost Breakdown by Response Type</h2>
 <div class="breakdown">
