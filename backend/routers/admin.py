@@ -3312,21 +3312,29 @@ async def dashboard(
     </tr>"""
 
     # Feed Interactions panel (tray opens / card taps, 14d) — evidence for
-    # the feed-placement design question.
-    fi_rows = conn.execute("""
-        SELECT response_type, COUNT(*), COUNT(DISTINCT device_id)
-        FROM query_log WHERE response_type LIKE 'feed_%'
-          AND timestamp >= datetime('now', '-14 days')
-        GROUP BY response_type ORDER BY 2 DESC""").fetchall()
-    fi_html = "".join(
-        f"<tr><td>{t.replace('feed_', '')}</td><td>{n}</td><td>{d}</td>"
-        f"<td>{n / d:.1f}</td></tr>" for t, n, d in fi_rows if d)
-    fi_top = conn.execute("""
-        SELECT query_text, COUNT(*) FROM query_log
-        WHERE response_type = 'feed_tap' AND timestamp >= datetime('now', '-14 days')
-        GROUP BY query_text ORDER BY 2 DESC LIMIT 8""").fetchall()
-    fi_top_html = "".join(
-        f"<tr><td>{h[:90]}</td><td>{n}</td></tr>" for h, n in fi_top)
+    # the feed-placement design question. Own metering connection (the
+    # shared `conn` may point elsewhere by here) and fully defensive: this
+    # panel must never 500 the dashboard.
+    fi_html = fi_top_html = ""
+    try:
+        _fic = sqlite3.connect(METERING_DB_PATH)
+        _fi_rows = _fic.execute("""
+            SELECT response_type, COUNT(*), COUNT(DISTINCT device_id)
+            FROM query_log WHERE response_type LIKE 'feed_%'
+              AND timestamp >= datetime('now', '-14 days')
+            GROUP BY response_type ORDER BY 2 DESC""").fetchall()
+        fi_html = "".join(
+            f"<tr><td>{t.replace('feed_', '')}</td><td>{n}</td><td>{d}</td>"
+            f"<td>{n / d:.1f}</td></tr>" for t, n, d in _fi_rows if d)
+        _fi_top = _fic.execute("""
+            SELECT query_text, COUNT(*) FROM query_log
+            WHERE response_type = 'feed_tap' AND timestamp >= datetime('now', '-14 days')
+            GROUP BY query_text ORDER BY 2 DESC LIMIT 8""").fetchall()
+        fi_top_html = "".join(
+            f"<tr><td>{str(h)[:90]}</td><td>{n}</td></tr>" for h, n in _fi_top)
+        _fic.close()
+    except Exception as _fi_e:
+        fi_html = f'<tr><td colspan="4" style="color:#888;">panel error: {_fi_e}</td></tr>'
 
     # Build "Slowest Queries" panel — top 20 by avg latency, min 3 samples.
     # Drives the post-launch decision about which team-context buckets are
