@@ -3847,14 +3847,6 @@ async def dashboard(
   <button id="next-btn" onclick="changePage(1)">Next &rarr;</button>
 </div>
 
-<h2>Cost Breakdown by Response Type</h2>
-<div class="breakdown">
-<table>
-  <tr><th>Type</th><th>Count</th><th>%</th><th>Est. Cost</th></tr>
-  {breakdown_html}
-</table>
-</div>
-
 <h2>Slowest Queries <span style="font-weight:normal;font-size:13px;color:#888;">(min 3 samples, by avg ms)</span></h2>
 <div class="breakdown">
 <table>
@@ -3866,6 +3858,14 @@ async def dashboard(
     <th>Type</th>
   </tr>
   {slowest_html if slowest_html else '<tr><td colspan="5" style="color:#888;font-style:italic;padding:12px;">No queries with timing data yet.</td></tr>'}
+</table>
+</div>
+
+<h2>Cost Breakdown by Response Type</h2>
+<div class="breakdown">
+<table>
+  <tr><th>Type</th><th>Count</th><th>%</th><th>Est. Cost</th></tr>
+  {breakdown_html}
 </table>
 </div>
 
