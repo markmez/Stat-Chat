@@ -3874,6 +3874,8 @@ async def dashboard(
 <h3 style="margin-top:8px;">Most-tapped cards</h3>
 <table><tr><th>Card</th><th>Taps</th></tr>{fi_top_html}</table>
 
+<!-- Feed Events panel excluded per Mark 2026-08-18; DOM kept hidden for JS id integrity -->
+<div style="display:none">
 <h2>Feed Events</h2>
 <div class="date-picker">
   <label>From:</label>
@@ -3933,6 +3935,7 @@ async def dashboard(
   </div>
 </div>
 
+</div>
 <script>
 const PAGE_SIZE = 30;
 // Admin key for authenticated AJAX endpoints (grading). Read from the
