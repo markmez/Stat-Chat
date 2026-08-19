@@ -3184,6 +3184,8 @@ async def dashboard(
     authorization: str | None = Header(None),
     date_from: str | None = None,
     date_to: str | None = None,
+    ud_from: str | None = None,
+    ud_to: str | None = None,
     exclude_internal: int = 0,
 ):
     """Admin dashboard showing query analytics."""
@@ -3343,13 +3345,14 @@ async def dashboard(
                 f"SELECT COUNT(DISTINCT device_id) FROM query_log"
                 f" WHERE {clause} AND device_id NOT IN ({_excl})"
                 f" AND device_id NOT IN (SELECT device_id FROM internal_devices)").fetchone()[0]
-        if date_from or date_to:
+        _uf, _ut = (ud_from or date_from), (ud_to or date_to)
+        if _uf or _ut:
             _rc, _rp = [], []
-            if date_from:
-                _rc.append("date(timestamp) >= date(?)"); _rp.append(date_from)
-            if date_to:
-                _rc.append("date(timestamp) <= date(?)"); _rp.append(date_to)
-            _ud[f"{date_from or 'start'} to {date_to or 'now'}"] = _udc.execute(
+            if _uf:
+                _rc.append("date(timestamp) >= date(?)"); _rp.append(_uf)
+            if _ut:
+                _rc.append("date(timestamp) <= date(?)"); _rp.append(_ut)
+            _ud[f"{_uf or 'start'} to {_ut or 'now'}"] = _udc.execute(
                 f"SELECT COUNT(DISTINCT device_id) FROM query_log"
                 f" WHERE {' AND '.join(_rc)} AND device_id NOT IN ({_excl})"
                 f" AND device_id NOT IN (SELECT device_id FROM internal_devices)",
@@ -3773,18 +3776,6 @@ async def dashboard(
     <div class="label">Unique Queries</div>
     <div class="value">{unique_q:,}</div>
   </div>
-  <div class="stat-card alert-card" data-filter="client_event" data-timestamps='{_alert_ts_json(client_event_ts)}' style="display: none; background: linear-gradient(135deg, #b45309, #f59e0b); cursor: pointer;" onclick="filterBy('client_event')">
-    <div class="label">Client Issues</div>
-    <div class="value">0</div>
-  </div>
-  <div class="stat-card alert-card" data-filter="server_error" data-timestamps='{_alert_ts_json(server_error_ts)}' style="display: none; background: linear-gradient(135deg, #991b1b, #ef4444); cursor: pointer;" onclick="filterBy('server_error')">
-    <div class="label">Server Errors</div>
-    <div class="value">0</div>
-  </div>
-  <div class="stat-card alert-card" data-filter="query_engine_error" data-timestamps='{_alert_ts_json(query_engine_error_ts)}' style="display: none; background: linear-gradient(135deg, #7f1d1d, #dc2626); cursor: pointer;" onclick="filterBy('query_engine_error')">
-    <div class="label">Query Engine Errors</div>
-    <div class="value">0</div>
-  </div>
 </div>
 <script>
 // Synchronous: decide card visibility AND count BEFORE anything paints.
@@ -3817,7 +3808,14 @@ async def dashboard(
 
 <h2>Unique Devices <span style="font-weight:normal;font-size:13px;color:#888;">(test devices excluded)</span></h2>
 <table><tr>{ud_html}</tr></table>
-<div style="margin:4px 0 20px;font-size:12px;color:#999;">Custom range: use the date picker in All Queries below — the range cell appears here when one is set.</div>
+<div class="date-picker">
+  <label>From:</label>
+  <input type="date" id="ud-from" value="{ud_from or ''}">
+  <label>To:</label>
+  <input type="date" id="ud-to" value="{ud_to or ''}">
+  <button onclick="applyUdRange()">Apply</button>
+  <button class="reset" onclick="resetUdRange()">Reset</button>
+</div>
 
 <h2>All Queries <label style="font-weight:normal;font-size:13px;margin-left:12px;"><input type="checkbox" {"checked" if exclude_internal else ""} onchange="const u=new URL(location);u.searchParams.set('exclude_internal',this.checked?1:0);location=u;"> exclude Mark</label></h2>
 <div class="date-picker">
@@ -3827,6 +3825,7 @@ async def dashboard(
   <input type="date" id="date-to" value="{date_to or ''}">
   <button onclick="applyDateRange()">Apply</button>
   <button class="reset" onclick="resetDateRange()">Reset</button>
+  <label style="font-size:12px;color:#666;margin-left:10px;"><input type="checkbox" id="range-all"> apply to all sections</label>
 </div>
 <div class="filter-bar" id="filter-bar">
   Showing: <span id="filter-label"></span>
@@ -4037,6 +4036,25 @@ function applyDateRange() {{
   const url = new URL(window.location);
   if (from) url.searchParams.set('date_from', from); else url.searchParams.delete('date_from');
   if (to) url.searchParams.set('date_to', to); else url.searchParams.delete('date_to');
+  if (document.getElementById('range-all') && document.getElementById('range-all').checked) {{
+    if (from) url.searchParams.set('ud_from', from); else url.searchParams.delete('ud_from');
+    if (to) url.searchParams.set('ud_to', to); else url.searchParams.delete('ud_to');
+  }}
+  window.location = url;
+}}
+
+function applyUdRange() {{
+  const url = new URL(window.location);
+  const f = document.getElementById('ud-from').value;
+  const t = document.getElementById('ud-to').value;
+  if (f) url.searchParams.set('ud_from', f); else url.searchParams.delete('ud_from');
+  if (t) url.searchParams.set('ud_to', t); else url.searchParams.delete('ud_to');
+  window.location = url;
+}}
+function resetUdRange() {{
+  const url = new URL(window.location);
+  url.searchParams.delete('ud_from');
+  url.searchParams.delete('ud_to');
   window.location = url;
 }}
 
@@ -4293,6 +4311,22 @@ document.addEventListener('keydown', e => {{
   if (e.key === 'Escape' && overlayCurrentId !== null) closeGradeOverlay();
 }});
 </script>
+
+<h2 style="margin-top:40px;">Diagnostics <span style="font-weight:normal;font-size:13px;color:#888;">(cards appear only when there are unacknowledged errors)</span></h2>
+<div class="stat-cards">
+  <div class="stat-card alert-card" data-filter="client_event" data-timestamps='{_alert_ts_json(client_event_ts)}' style="display: none; background: linear-gradient(135deg, #b45309, #f59e0b); cursor: pointer;" onclick="filterBy('client_event')">
+    <div class="label">Client Issues</div>
+    <div class="value">0</div>
+  </div>
+  <div class="stat-card alert-card" data-filter="server_error" data-timestamps='{_alert_ts_json(server_error_ts)}' style="display: none; background: linear-gradient(135deg, #991b1b, #ef4444); cursor: pointer;" onclick="filterBy('server_error')">
+    <div class="label">Server Errors</div>
+    <div class="value">0</div>
+  </div>
+  <div class="stat-card alert-card" data-filter="query_engine_error" data-timestamps='{_alert_ts_json(query_engine_error_ts)}' style="display: none; background: linear-gradient(135deg, #7f1d1d, #dc2626); cursor: pointer;" onclick="filterBy('query_engine_error')">
+    <div class="label">Query Engine Errors</div>
+    <div class="value">0</div>
+    </div>
+</div>
 </body>
 </html>"""
 
