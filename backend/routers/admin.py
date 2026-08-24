@@ -3338,6 +3338,7 @@ async def dashboard(
         _udc.execute("CREATE TABLE IF NOT EXISTS internal_devices (device_id TEXT PRIMARY KEY, note TEXT)")
         _ud = {}
         for label, clause in (("Today", "date(timestamp) = date('now')"),
+                              ("Yesterday", "date(timestamp) = date('now','-1 day')"),
                               ("7 days", "timestamp >= datetime('now','-7 days')"),
                               ("30 days", "timestamp >= datetime('now','-30 days')"),
                               ("All time", "1=1")):
