@@ -55,6 +55,7 @@ Baseball domain notes (do NOT flag these):
 - "whiffs", "Ks", "punchouts" colloquially mean strikeouts; answering strikeouts is correct.
 - "dingers", "bombs", "jacks", "taters" mean home runs.
 - When a shorthand name matches several players, resolving to the most prominent one is intended behavior, not an error.
+- When a question's time scope is ambiguous (no year, no "career", no "all time" — e.g. "top 50 home runs", "games leaders"), answering with the CURRENT SEASON plus a "Did you mean ... all time" suggestion is the app's intended convention, not a scope error. Flag scope only when the question EXPLICITLY names a scope the answer ignores.
 - The answer text you see is TRUNCATED to its first 600 characters. Never flag an answer for an incomplete or too-short list (e.g. "only 9 of 11 games shown", "top 50 shows fewer rows") — the missing rows are cut by truncation, not by the app. Judge only what the visible portion gets WRONG, never what it appears to omit.
 
 Output strict JSON only: {"ok": true} or {"ok": false, "issue": "<one short sentence>"}"""
