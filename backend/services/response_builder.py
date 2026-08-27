@@ -2128,6 +2128,106 @@ def build_platoon_splits(name: str, hand: Optional[str] = None, season=0) -> Opt
         conn.close()
 
 
+def _slate_ready(conn) -> bool:
+    return bool(conn.execute(
+        "SELECT name FROM sqlite_master WHERE name='upcoming_games'").fetchone())
+
+
+def _et_now():
+    from zoneinfo import ZoneInfo
+    from datetime import datetime as _dt
+    return _dt.now(ZoneInfo("America/New_York"))
+
+
+def _game_time_et(start_utc: str) -> str:
+    from zoneinfo import ZoneInfo
+    from datetime import datetime as _dt
+    try:
+        dt = _dt.strptime(start_utc[:19], "%Y-%m-%dT%H:%M:%S").replace(
+            tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("America/New_York"))
+        return dt.strftime("%-I:%M %p ET")
+    except Exception:
+        return ""
+
+
+def build_team_next_game(team_code: str) -> Optional[str]:
+    """Next scheduled game for a team, from the nightly slate table."""
+    conn = _get_db()
+    try:
+        if not _slate_ready(conn):
+            return None
+        now = _et_now()
+        today = now.date().isoformat()
+        rows = conn.execute(
+            "SELECT date, start_utc, home, away, venue FROM upcoming_games"
+            " WHERE (home = ? OR away = ?) AND date >= ?"
+            " ORDER BY date, start_utc LIMIT 2",
+            (team_code, team_code, today)).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return None
+    d, start, home, away, venue = rows[0]
+    at_home = home == team_code
+    team = _team_full_name(team_code)
+    opp = _team_full_name(away if at_home else home)
+    when_time = _game_time_et(start)
+    if d == today:
+        when = "tonight" if now.hour >= 15 else "today"
+    else:
+        from datetime import date as _date, timedelta as _td
+        when = ("tomorrow" if _date.fromisoformat(d) == now.date() + _td(days=1)
+                else "on " + _date.fromisoformat(d).strftime("%A, %B %-d"))
+    verb = "host" if at_home else "visit"
+    line = f"The {team} {verb} the {opp} {when}"
+    if when_time:
+        line += f" at {when_time}"
+    if venue and at_home is False:
+        line += f" ({venue})"
+    elif venue:
+        line += f" ({venue})"
+    line += "."
+    # doubleheader: second game same day
+    if len(rows) > 1 and rows[1][0] == d:
+        t2 = _game_time_et(rows[1][1])
+        if t2:
+            line += f" Game 2 of the doubleheader starts at {t2}."
+    return line
+
+
+def build_todays_slate() -> Optional[str]:
+    """Today's full MLB slate (ET), from the nightly slate table."""
+    conn = _get_db()
+    try:
+        if not _slate_ready(conn):
+            return None
+        now = _et_now()
+        today = now.date().isoformat()
+        rows = conn.execute(
+            "SELECT start_utc, home, away FROM upcoming_games"
+            " WHERE date = ? ORDER BY start_utc", (today,)).fetchall()
+        nxt = None
+        if not rows:
+            nxt = conn.execute(
+                "SELECT date, COUNT(*) FROM upcoming_games WHERE date > ?"
+                " GROUP BY date ORDER BY date LIMIT 1", (today,)).fetchone()
+    finally:
+        conn.close()
+    if not rows:
+        if nxt:
+            from datetime import date as _date
+            return (f"No MLB games left on today's slate. Next up: "
+                    f"{nxt[1]} games on {_date.fromisoformat(nxt[0]).strftime('%A, %B %-d')}.")
+        return None
+    title = f"**Today's Games — {now.strftime('%B %-d')}**"
+    lines = [title, ""]
+    for start, home, away in rows:
+        t = _game_time_et(start)
+        lines.append(f"{_team_full_name(away)} at {_team_full_name(home)}"
+                     + (f" — {t}" if t else ""))
+    return "\n".join(lines)
+
+
 def build_career_value_lookup(stat_info, value: int) -> Optional[str]:
     """Who has exactly N career <stat>? Exact matches, else the closest."""
     conn = _get_db()

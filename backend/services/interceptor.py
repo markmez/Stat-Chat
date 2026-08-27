@@ -689,6 +689,20 @@ def try_intercept(question: str):
     # No player name in query; ranks across all players who faced the
     # specified handedness. Routes batting and pitching variants based on
     # is_pitching flag from the parser.
+    tng = nm.parse_team_next_game(trimmed)
+    if tng:
+        response = rb.build_team_next_game(tng["team_code"])
+        if response:
+            logger.info("team_next_game question=%r", trimmed)
+            return response
+
+    slate = nm.parse_todays_slate(trimmed)
+    if slate is not None:
+        response = rb.build_todays_slate()
+        if response:
+            logger.info("todays_slate question=%r", trimmed)
+            return response
+
     cvl = nm.parse_career_value_lookup(trimmed)
     if cvl:
         response = rb.build_career_value_lookup(cvl["stat"], cvl["value"])
