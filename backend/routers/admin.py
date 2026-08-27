@@ -3479,7 +3479,7 @@ async def dashboard(
 
         query_rows += f"""
         <tr class="{row_class}" data-count="{cnt}" data-ts="{raw_ts}" data-types="{types_attr}" data-context="{context_attr}" data-avgms="{avg_ms or 0}">
-            <td class="query-text">{chevron}{escaped}</td>
+            <td class="query-text">{chevron}{escaped} <span class="replay-btn" data-q="{escaped}" onclick="event.stopPropagation(); replayQuery(this.dataset.q)" title="Re-run and preview as it renders on the phone">&#9654;</span></td>
             <td class="count">{cnt}</td>
             <td class="types">{type_badges} {method_badges}</td>
             <td class="latency {slow_class}">{latency_text}</td>
@@ -3769,6 +3769,33 @@ async def dashboard(
   .pagination button:disabled {{ opacity: 0.3; cursor: default; }}
   .pagination button:not(:disabled):active {{ background: #f0f0f0; }}
   .pagination .page-info {{ color: #888; }}
+  .replay-btn {{ color: #b6c6e4; cursor: pointer; font-size: 11px; margin-left: 6px; }}
+  .replay-btn:hover {{ color: #1A40B3; }}
+  #phone-backdrop {{ position: fixed; inset: 0; background: rgba(15,23,42,.55); display: none;
+    z-index: 999; align-items: flex-start; justify-content: center; padding: 30px 0; overflow: auto; }}
+  #phone-frame {{ width: 390px; max-height: 84vh; background: #F6F8FB; border-radius: 34px;
+    box-shadow: 0 24px 70px rgba(0,0,0,.45); overflow-y: auto; padding: 18px 14px 22px;
+    font-family: -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif; color: #17222E; }}
+  #phone-frame .ph-q {{ color: #8a97a8; font-size: 13px; text-align: center; margin: 2px 0 12px; }}
+  #phone-frame .ph-card {{ background: #fff; border-radius: 14px; padding: 12px 14px; margin-bottom: 12px;
+    box-shadow: 0 1px 3px rgba(20,40,80,.07); }}
+  #phone-frame p {{ font-size: 15px; line-height: 1.45; margin: 0 0 10px; }}
+  #phone-frame .ph-name {{ color: #1A66C9; font-weight: 600; }}
+  #phone-frame table {{ width: 100%; border-collapse: collapse; }}
+  #phone-frame th {{ font-size: 11px; color: #8a97a8; text-transform: uppercase; letter-spacing: .04em;
+    text-align: right; padding: 4px 4px; font-weight: 600; }}
+  #phone-frame th:first-child {{ text-align: left; }}
+  #phone-frame td {{ font-size: 15px; padding: 7px 4px; border-top: 1px solid #eef2f7;
+    text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }}
+  #phone-frame td:first-child {{ text-align: left; color: #1A66C9; font-weight: 600;
+    max-width: 190px; overflow: hidden; text-overflow: ellipsis; }}
+  #phone-frame .ph-sub {{ color: #8a97a8; font-size: 12px; margin: -4px 0 8px; }}
+  #phone-frame .ph-pill {{ display: inline-block; background: #E8F0FE; color: #1A40B3; font-size: 13px;
+    padding: 6px 12px; border-radius: 18px; margin: 4px 6px 2px 0; }}
+  #phone-frame .ph-tip {{ color: #8a97a8; font-size: 12px; font-style: italic; margin: 0 0 8px; }}
+  #phone-frame .ph-wait {{ color: #8a97a8; text-align: center; padding: 40px 0; font-size: 14px; }}
+  #phone-close {{ position: sticky; top: 0; float: right; background: #fff; border: 1px solid #dde6ef;
+    border-radius: 50%; width: 28px; height: 28px; cursor: pointer; color: #556; font-size: 14px; }}
 </style>
 </head>
 <body>
@@ -4339,6 +4366,127 @@ document.getElementById('overlay-backdrop').addEventListener('click', e => {{
 document.addEventListener('keydown', e => {{
   if (e.key === 'Escape' && overlayCurrentId !== null) closeGradeOverlay();
 }});
+</script>
+
+<div id="phone-backdrop" onclick="if(event.target.id==='phone-backdrop')closePhone()">
+  <div id="phone-frame">
+    <button id="phone-close" onclick="closePhone()">&times;</button>
+    <div class="ph-q" id="phone-q"></div>
+    <div id="phone-body"><div class="ph-wait">running&hellip;</div></div>
+  </div>
+</div>
+<script>
+function closePhone() {{ document.getElementById('phone-backdrop').style.display = 'none'; }}
+document.addEventListener('keydown', function(e) {{ if (e.key === 'Escape') closePhone(); }});
+
+function phEsc(s) {{
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}}
+
+function renderStatChat(raw) {{
+  var out = [];
+  // pills first (they can appear anywhere) — collect then strip
+  var pills = [];
+  raw = raw.replace(/\[(SUGGEST|SEEALSO|DIDYOUMEAN)\]([\s\S]*?)\[\/\1\]/g,
+    function(_, k, v) {{ pills.push(v.trim()); return ''; }});
+  raw = raw.replace(/\[TEAMCARD:([A-Z]+)\]/g, function(_, c) {{
+    pills.push('\u2192 opens Team Card: ' + c); return ''; }});
+  // containers
+  var blocks = raw.split(/(\[LEADERBOARD\][\s\S]*?\[\/LEADERBOARD\]|\[STATGRID\][\s\S]*?\[\/STATGRID\]|\[GAMELOGS\][\s\S]*?(?:\[\/GAMELOGS\]|$))/);
+  blocks.forEach(function(b) {{
+    if (!b.trim()) return;
+    var m = b.match(/^\[(LEADERBOARD|STATGRID)\]([\s\S]*?)\[\/\1\]$/);
+    if (m) {{
+      var lines = m[2].trim().split('\n').filter(function(l) {{ return l.trim(); }});
+      var header = [], rows = [];
+      lines.forEach(function(l) {{
+        l = l.trim();
+        if (l.indexOf('HEADER:') === 0) header = l.slice(7).split(',').map(function(x) {{ return x.trim(); }});
+        else if (l.indexOf('ROW') === 0) {{
+          var body = l.slice(3).trim();
+          var ci = body.indexOf(':');
+          var label = ci >= 0 ? body.slice(0, ci) : body;
+          var vals = ci >= 0 ? body.slice(ci + 1).split(',').map(function(x) {{ return x.trim(); }}) : [];
+          rows.push([label].concat(vals));
+        }}
+      }});
+      var h = '<div class="ph-card"><table><tr><th></th>' +
+        header.map(function(x) {{ return '<th>' + phEsc(x) + '</th>'; }}).join('') + '</tr>';
+      rows.forEach(function(r) {{
+        h += '<tr>' + r.map(function(c, i) {{ return '<td>' + phEsc(c) + '</td>'; }}).join('') + '</tr>';
+      }});
+      out.push(h + '</table></div>');
+      return;
+    }}
+    var g = b.match(/^\[GAMELOGS\]([\s\S]*?)(?:\[\/GAMELOGS\]|$)$/);
+    if (g) {{
+      var h2 = '<div class="ph-card"><table>';
+      g[1].trim().split('\n').forEach(function(l) {{
+        var p = l.replace(/^GAME\s*/, '').split('|');
+        if (p.length === 2) h2 += '<tr><td>' + phEsc(p[0].trim()) + '</td><td style="text-align:left;color:#17222E;font-weight:400;">' + phEsc(p[1].trim()) + '</td></tr>';
+      }});
+      out.push(h2 + '</table></div>');
+      return;
+    }}
+    // prose block: handle SUBTITLE/CONTEXT/TIP + bold + paragraphs
+    var t = b;
+    t = t.replace(/\[SUBTITLE\]([\s\S]*?)\[\/SUBTITLE\]/g, '\x01SUB$1\x01');
+    t = t.replace(/\[CONTEXT\]([\s\S]*?)\[\/CONTEXT\]/g, '\x01SUB$1\x01');
+    t = t.replace(/\[TIP\]([\s\S]*?)\[\/TIP\]/g, '\x01TIP$1\x01');
+    t.split('\x01').forEach(function(seg) {{
+      if (!seg.trim()) return;
+      if (seg.indexOf('SUB') === 0) {{ out.push('<div class="ph-sub">' + phEsc(seg.slice(3)) + '</div>'); return; }}
+      if (seg.indexOf('TIP') === 0) {{ out.push('<div class="ph-tip">' + phEsc(seg.slice(3)) + '</div>'); return; }}
+      seg.split(/\n{{2,}}/).forEach(function(par) {{
+        if (!par.trim()) return;
+        var html = phEsc(par.trim()).replace(/\*\*([^*]+)\*\*/g, '<span class="ph-name">$1</span>');
+        out.push('<p>' + html.replace(/\n/g, '<br>') + '</p>');
+      }});
+    }});
+  }});
+  if (pills.length) {{
+    out.push('<div>' + pills.map(function(p) {{ return '<span class="ph-pill">' + phEsc(p) + '</span>'; }}).join('') + '</div>');
+  }}
+  return out.join('');
+}}
+
+async function replayQuery(q) {{
+  document.getElementById('phone-backdrop').style.display = 'flex';
+  document.getElementById('phone-q').textContent = q;
+  document.getElementById('phone-body').innerHTML = '<div class="ph-wait">running&hellip;</div>';
+  try {{
+    var resp = await fetch('/query', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ question: q, device_id: 'dashboard-replay', no_count: true, history: [] }})
+    }});
+    var reader = resp.body.getReader();
+    var dec = new TextDecoder();
+    var buf = '', text = '';
+    while (true) {{
+      var r = await reader.read();
+      if (r.done) break;
+      buf += dec.decode(r.value, {{ stream: true }});
+      var lines = buf.split('\n');
+      buf = lines.pop();
+      lines.forEach(function(l) {{
+        if (l.indexOf('data: ') !== 0) return;
+        try {{
+          var ev = JSON.parse(l.slice(6));
+          if (ev.type === 'text') {{ text += ev.text; }}
+          else if (ev.type === 'notice') {{
+            document.getElementById('phone-body').innerHTML =
+              '<div class="ph-wait">' + phEsc(ev.text) + '</div>';
+          }}
+        }} catch (e) {{}}
+      }});
+    }}
+    document.getElementById('phone-body').innerHTML =
+      renderStatChat(text) || '<div class="ph-wait">(empty response)</div>';
+  }} catch (e) {{
+    document.getElementById('phone-body').innerHTML = '<div class="ph-wait">error: ' + phEsc(String(e)) + '</div>';
+  }}
+}}
 </script>
 
 <h2 style="margin-top:40px;">Diagnostics <span style="font-weight:normal;font-size:13px;color:#888;">(cards appear only when there are unacknowledged errors)</span></h2>

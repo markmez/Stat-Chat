@@ -35,7 +35,7 @@ JUDGE_MODEL = os.getenv("ROUTING_MODEL", "claude-haiku-4-5-20251001")
 JUDGED_TYPES = ("query engine", "intercepted", "mapped", "haiku", "planner")
 
 # Internal/test devices whose traffic shouldn't be judged.
-EXCLUDED_DEVICES = ("wild-query-eval", "local-test", "system")
+EXCLUDED_DEVICES = ("wild-query-eval", "local-test", "system", "dashboard-replay")
 
 JUDGE_PROMPT = """You review answers from a baseball stats app. Formatting tags like [STATGRID], [LEADERBOARD], [SUGGEST], [TIP], [SEEALSO], [SUBTITLE], [CONTEXT], [DIDYOUMEAN], [TEAMCARD:XXX] are normal UI markup — ignore them.
 
