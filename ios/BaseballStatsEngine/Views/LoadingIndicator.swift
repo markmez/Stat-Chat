@@ -42,6 +42,15 @@ struct LoadingIndicator: View {
 
     var body: some View {
         VStack(spacing: 12) {
+        // Slow-query notice — persistent, ABOVE the animation (Mark 8/27)
+        if let notice {
+            Text(notice)
+                .font(.system(.subheadline, design: .rounded, weight: .medium))
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+                .transition(.opacity)
+        }
         ZStack {
             // Sparkle center — builds up, holds, dissolves, repeats
             PhaseAnimator(SparklePhase.allCases) { phase in
@@ -81,15 +90,6 @@ struct LoadingIndicator: View {
                 .offset(x: 10, y: 10)
         }
         .frame(width: 44, height: 44)
-
-        // Slow-query notice — persistent, above the rotating fillers
-        if let notice {
-            Text(notice)
-                .font(.system(.subheadline, design: .rounded, weight: .medium))
-                .foregroundStyle(.primary)
-                .multilineTextAlignment(.center)
-                .transition(.opacity)
-        }
 
         // Baseball phrases — appear after 3s, rotate every 3s
         if showPhrase {
