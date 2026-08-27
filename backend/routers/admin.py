@@ -4397,7 +4397,7 @@ function renderStatChat(raw) {{
     if (!b.trim()) return;
     var m = b.match(/^\[(LEADERBOARD|STATGRID)\]([\s\S]*?)\[\/\1\]$/);
     if (m) {{
-      var lines = m[2].trim().split('\n').filter(function(l) {{ return l.trim(); }});
+      var lines = m[2].trim().split('\\n').filter(function(l) {{ return l.trim(); }});
       var header = [], rows = [];
       lines.forEach(function(l) {{
         l = l.trim();
@@ -4421,7 +4421,7 @@ function renderStatChat(raw) {{
     var g = b.match(/^\[GAMELOGS\]([\s\S]*?)(?:\[\/GAMELOGS\]|$)$/);
     if (g) {{
       var h2 = '<div class="ph-card"><table>';
-      g[1].trim().split('\n').forEach(function(l) {{
+      g[1].trim().split('\\n').forEach(function(l) {{
         var p = l.replace(/^GAME\s*/, '').split('|');
         if (p.length === 2) h2 += '<tr><td>' + phEsc(p[0].trim()) + '</td><td style="text-align:left;color:#17222E;font-weight:400;">' + phEsc(p[1].trim()) + '</td></tr>';
       }});
@@ -4430,17 +4430,17 @@ function renderStatChat(raw) {{
     }}
     // prose block: handle SUBTITLE/CONTEXT/TIP + bold + paragraphs
     var t = b;
-    t = t.replace(/\[SUBTITLE\]([\s\S]*?)\[\/SUBTITLE\]/g, '\x01SUB$1\x01');
-    t = t.replace(/\[CONTEXT\]([\s\S]*?)\[\/CONTEXT\]/g, '\x01SUB$1\x01');
-    t = t.replace(/\[TIP\]([\s\S]*?)\[\/TIP\]/g, '\x01TIP$1\x01');
-    t.split('\x01').forEach(function(seg) {{
+    t = t.replace(/\[SUBTITLE\]([\s\S]*?)\[\/SUBTITLE\]/g, '\\x01SUB$1\\x01');
+    t = t.replace(/\[CONTEXT\]([\s\S]*?)\[\/CONTEXT\]/g, '\\x01SUB$1\\x01');
+    t = t.replace(/\[TIP\]([\s\S]*?)\[\/TIP\]/g, '\\x01TIP$1\\x01');
+    t.split('\\x01').forEach(function(seg) {{
       if (!seg.trim()) return;
       if (seg.indexOf('SUB') === 0) {{ out.push('<div class="ph-sub">' + phEsc(seg.slice(3)) + '</div>'); return; }}
       if (seg.indexOf('TIP') === 0) {{ out.push('<div class="ph-tip">' + phEsc(seg.slice(3)) + '</div>'); return; }}
-      seg.split(/\n{{2,}}/).forEach(function(par) {{
+      seg.split(/\\n{{2,}}/).forEach(function(par) {{
         if (!par.trim()) return;
         var html = phEsc(par.trim()).replace(/\*\*([^*]+)\*\*/g, '<span class="ph-name">$1</span>');
-        out.push('<p>' + html.replace(/\n/g, '<br>') + '</p>');
+        out.push('<p>' + html.replace(/\\n/g, '<br>') + '</p>');
       }});
     }});
   }});
@@ -4467,7 +4467,7 @@ async function replayQuery(q) {{
       var r = await reader.read();
       if (r.done) break;
       buf += dec.decode(r.value, {{ stream: true }});
-      var lines = buf.split('\n');
+      var lines = buf.split('\\n');
       buf = lines.pop();
       lines.forEach(function(l) {{
         if (l.indexOf('data: ') !== 0) return;
