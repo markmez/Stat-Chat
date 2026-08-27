@@ -1912,7 +1912,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 # appeared because it only fired on the rare guard-refusal
                 # path; the compound path below keeps its longer estimate.
                 yield event({"type": "notice",
-                             "text": "This one needs a deeper look.\nUsually 15 to 30 seconds."})
+                             "text": "This one needs a deeper look.\nUsually under a minute."})
             if dims_dropped:
                 # Expectation-setting notice, fired ONLY for the compound-
                 # dimension class (guard refusal → planner): those run ~90s;
