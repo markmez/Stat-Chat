@@ -2121,6 +2121,28 @@ def parse_platoon_splits(input_str: str) -> Optional[dict]:
             (["career", "all time", "all-time", "lifetime"] if is_career else [])}
 
 
+def parse_career_value_lookup(input_str: str) -> Optional[dict]:
+    """'most hits 2260' / 'who has 2260 hits' → which player's CAREER total
+    equals that value (judge-flagged gap, 2026-08-26). Number must be >= 100
+    so 'top 50 most home runs' (a limit, not a value) never lands here; bail
+    on 'top N' phrasing, explicit years, and rate stats."""
+    lower = input_str.strip().lower()
+    if re.search(r'\btop\s+\d+', lower) or re.search(r'\b(19|20)\d{2}\b', lower):
+        return None
+    m = re.search(r'\b(\d{3,4})\b', lower)
+    if not m:
+        return None
+    value = int(m.group(1))
+    if value < 100:
+        return None
+    if _has_player_name(lower):
+        return None
+    stat = match_stat(lower.replace(m.group(1), ' '))
+    if not stat or getattr(stat, 'is_rate', False):
+        return None
+    return {"stat": stat, "value": value}
+
+
 def parse_platoon_leaderboard(input_str: str) -> Optional[dict]:
     """Detect platoon leaderboard queries like 'most HR against lefties'.
     Returns dict with stat, hand, is_pitching, season, limit."""

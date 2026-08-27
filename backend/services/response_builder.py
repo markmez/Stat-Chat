@@ -2128,6 +2128,39 @@ def build_platoon_splits(name: str, hand: Optional[str] = None, season=0) -> Opt
         conn.close()
 
 
+def build_career_value_lookup(stat_info, value: int) -> Optional[str]:
+    """Who has exactly N career <stat>? Exact matches, else the closest."""
+    conn = _get_db()
+    is_p = getattr(stat_info, 'is_pitching', False) or stat_info.db_column in (
+        "wins", "losses", "saves", "ip_outs")
+    table = "season_pitching_stats" if is_p else "season_batting_stats"
+    col = stat_info.db_column
+    try:
+        rows = conn.execute(
+            f"SELECT p.name, SUM(s.{col}) t, MAX(s.season) last FROM {table} s"
+            f" JOIN players p ON p.player_id = s.player_id"
+            f" GROUP BY s.player_id HAVING t IS NOT NULL"
+            f" ORDER BY ABS(t - ?) ASC, last DESC LIMIT 4", (value,)).fetchall()
+    except Exception:
+        return None
+    finally:
+        conn.close()
+    if not rows:
+        return None
+    label = stat_info.display_name.lower()
+    exact = [r for r in rows if r[1] == value]
+    if exact:
+        if len(exact) == 1:
+            nm_, _, last = exact[0]
+            return (f"**{nm_}** has exactly **{value:,}** career {label}"
+                    f" (through {last}).")
+        names = ", ".join(f"**{r[0]}**" for r in exact)
+        return f"Players with exactly **{value:,}** career {label}: {names}."
+    near = ", ".join(f"**{r[0]}** ({r[1]:,})" for r in rows[:3])
+    return (f"No player has exactly {value:,} career {label}."
+            f" Closest: {near}.")
+
+
 def build_platoon_stat_single(name: str, hand: str, season, stat_info) -> Optional[str]:
     """Single stat from platoon splits: 'Judge home runs vs lefties 2025'.
 

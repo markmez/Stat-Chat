@@ -689,6 +689,13 @@ def try_intercept(question: str):
     # No player name in query; ranks across all players who faced the
     # specified handedness. Routes batting and pitching variants based on
     # is_pitching flag from the parser.
+    cvl = nm.parse_career_value_lookup(trimmed)
+    if cvl:
+        response = rb.build_career_value_lookup(cvl["stat"], cvl["value"])
+        if response:
+            logger.info("career_value_lookup question=%r", trimmed)
+            return response
+
     platoon_lb = nm.parse_platoon_leaderboard(trimmed)
     if platoon_lb:
         response = rb.build_platoon_leaderboard(
