@@ -192,15 +192,24 @@ perspective, or thresholds — you must infer them the same way our parsers do.
      LIMIT 30;
    For pitching direction: JOIN through season_pitching_stats sps the same way; use ERA/WHIP/BAA formulas from section 5.
 
-7) PRESENTATION — ANSWER FIRST, TABLES BY CHOICE
-   Lead with the answer in prose. Tables are OPT-IN: nothing you query is
-   shown to the user unless you call present_table (at most once) with a
-   purpose-built display query — max 10 rows, sorted by the metric that
-   answers the question, ONLY the entities your answer discusses, and a
-   title naming the exact slice ("Blue Jays vs RHP — 2026"). Research
-   queries are never displayed: when your answer names one player, never
-   show the whole roster you considered. Prose-only is often the best
-   presentation — call nothing in that case.
+7) PRESENTATION — VERDICT FIRST, THEN THE RECEIPTS
+   Lead with the answer in prose. Research queries are NEVER displayed:
+   when your answer names one player, never show the whole roster you
+   considered.
+
+   ATTACHING THE RECEIPTS (preferred): end your final answer with ONE
+   extra line, on its own line, in exactly this form:
+       TABLE: <title> || <one SELECT>
+   The line itself is never shown; the query runs server-side and the
+   table renders AFTER your prose. Rules: <=10 rows; sorted by the metric
+   your reasoning used; ONLY the entities your answer discusses; columns
+   = the numbers your prose cited; title names the exact slice ("Blue
+   Jays vs RHP — 2026"). Keep the whole line under 400 characters.
+   ATTACH THE RECEIPTS whenever your answer names two or more players or
+   teams alongside numbers — that comparison card is the house style.
+   Skip it only when a table genuinely adds nothing (single fact,
+   narrative history). present_table remains available mid-research, but
+   the trailing TABLE line is preferred (zero added latency).
 
    LEADERBOARD COLUMN RULES (when your display query is a ranked list):
    For leaderboards, SELECT exactly ONE stat column: the stat the user asked about (or the implicit default — OPS for batting "best/worst", ERA for pitching). No slash line, no supporting stats, no raw counters. This matches the structural query engine's pattern and avoids the trailing-column truncation that plagues narrow iOS leaderboards.
@@ -246,6 +255,31 @@ MAX_TOOL_ROUNDS = 8  # prevent runaway query chains
 # mandates no preamble prose) never streams; a round that opens with a
 # sustained run of text is the final narration and streams live from here on.
 HOLDBACK_CHARS = 200
+# Rolling tail held back during live streaming so the trailing TABLE
+# directive (the "receipts" card) is intercepted server-side and never
+# reaches the screen. Must exceed the directive's max length (~400).
+TAIL_KEEP = 600
+
+
+def _split_table_directive(text: str):
+    """Split a trailing 'TABLE: <title> || <sql>' line off the answer.
+    Returns (clean_text, (title, sql) | None)."""
+    idx = text.rfind("\nTABLE:")
+    if idx < 0:
+        if text.startswith("TABLE:"):
+            idx = 0
+        else:
+            return text, None
+    line = text[idx:].strip()
+    if idx == 0:
+        clean = ""
+    else:
+        clean = text[:idx].rstrip()
+    body = line[len("TABLE:"):].strip()
+    if "||" not in body:
+        return clean, None
+    title, sql = body.split("||", 1)
+    return clean, (title.strip()[:120], sql.strip())
 
 # System prompt as a cache-marked content block. The planner re-sends the
 # full conversation every tool round — the cache breakpoint means rounds 2+
@@ -332,21 +366,15 @@ async def plan_and_execute_stream(question: str):
                             getattr(ev.delta, "type", "") == "text_delta" and \
                             not tool_use_seen:
                         buffer += ev.delta.text
-                        if not flushed_this_round and len(buffer) >= HOLDBACK_CHARS:
-                            # Sustained prose with no tool call — this is the
-                            # narration. Ship the grid first, then go live.
-                            if not emitted:
-                                grid = display_grid
-                                if grid:
-                                    yield ("grid", grid)
-                            yield ("text", buffer)
-                            flushed_this_round = buffer
-                            emitted += buffer
-                            buffer = ""
-                        elif flushed_this_round:
-                            yield ("text", ev.delta.text)
-                            flushed_this_round += ev.delta.text
-                            emitted += ev.delta.text
+                        # Go live once sustained prose confirms narration, but
+                        # always keep a TAIL_KEEP rolling holdback so a
+                        # trailing TABLE directive never reaches the screen.
+                        if len(buffer) >= HOLDBACK_CHARS and len(buffer) > TAIL_KEEP:
+                            part = buffer[:-TAIL_KEEP]
+                            yield ("text", part)
+                            flushed_this_round += part
+                            emitted += part
+                            buffer = buffer[-TAIL_KEEP:]
                 final_msg = await stream.get_final_message()
 
             stop_reason = final_msg.stop_reason
@@ -363,22 +391,35 @@ async def plan_and_execute_stream(question: str):
                     yield ("failed", None)
                     return
                 logger.info("insight_engine: answered in %d rounds", round_num + 1)
+                # Receipts: strip a trailing TABLE directive from the full
+                # answer, execute it locally (~ms), render AFTER the prose —
+                # verdict first, then the evidence card. flushed_this_round
+                # is a byte-exact prefix of the CLEAN text because the
+                # rolling TAIL_KEEP holdback never emitted the directive.
+                answer, _directive = _split_table_directive(answer)
+                if _directive:
+                    _dt, _dsql = _directive
+                    if _dsql.strip().upper().startswith("SELECT"):
+                        try:
+                            _shown = await loop.run_in_executor(
+                                None, _execute_tool_sql, conn, _dsql)
+                            if _shown.get("rows"):
+                                display_grid = {"columns": _shown["columns"],
+                                                "rows": _shown["rows"][:10],
+                                                "title": _dt}
+                        except Exception as _e:
+                            logger.info("receipts directive failed: %s", _e)
                 if not emitted:
-                    # Short answer that never crossed the holdback — emit whole.
                     answer = answer.strip()
-                    grid = display_grid
-                    if grid:
-                        yield ("grid", grid)
                     yield ("text", answer)
                     emitted = answer
                 else:
-                    # Emit whatever the holdback stream hasn't sent yet.
-                    # flushed_this_round is always a byte-exact prefix of
-                    # this round's text deltas, which concatenate to answer.
                     remainder = answer[len(flushed_this_round):]
                     if remainder:
                         yield ("text", remainder)
                         emitted += remainder
+                if display_grid:
+                    yield ("grid", display_grid)
                 yield ("done", {
                     "text": emitted,
                     "grounded": bool(tool_results_history),
