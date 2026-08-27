@@ -111,6 +111,15 @@ Per-team per-game results. **Two rows per game** — one from each team's perspe
 
 For "team had won at least 40 games at the time" filters, JOIN player game logs to team_game_results on (team, date) and filter on `wins_after - (CASE WHEN result='W' THEN 1 ELSE 0 END) >= 40` — that's the W count BEFORE the game. Player game logs don't store team directly; derive via JOIN to team_game_results on `tgr.date = gbl.date AND tgr.opponent = gbl.opponent AND tgr.is_home = (CASE WHEN gbl.vishome='H' THEN 1 ELSE 0 END)`.
 
+### upcoming_games
+Scheduled (not yet played) games, refreshed nightly — TODAY'S SLATE AND BEYOND.
+- game_id (INTEGER), date (TEXT, YYYY-MM-DD, US/Eastern game date)
+- start_utc (TEXT, ISO datetime), home / away (TEXT, Retrosheet team codes), venue (TEXT)
+- USE FOR "who do the X play today/tonight/tomorrow", "what games are on today",
+  "when do the Yankees play next". No probable pitchers yet — if asked who is
+  starting, give the matchup from this table and say the probable starters
+  aren't available.
+
 ### league_averages
 Per-season league-wide batting averages, computed from all players in season_batting_stats.
 - season (INTEGER, primary key) — year

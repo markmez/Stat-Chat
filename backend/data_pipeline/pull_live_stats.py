@@ -1624,9 +1624,27 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
     # day). Dates key the per-game split rows and must match the
     # game_batting_logs.date convention so windowed queries join cleanly.
     games = []
+    upcoming = []
     for g in data.get("games", []):
         sched = g.get("schedule", {})
         if sched.get("playedStatus") != "COMPLETED":
+            # Upcoming-slate capture (2026-08-26, Mark): scheduled games from
+            # the SAME games.json call — zero extra API cost. Powers "who do
+            # the Jays play today" / "who's pitching tonight" style queries
+            # (4 distinct devices asked in 10 days with nothing to stand on).
+            if sched.get("playedStatus") in ("SCHEDULED", "UNPLAYED"):
+                start = sched.get("startTime", "")
+                gd = ""
+                if start:
+                    dtu = datetime.strptime(start[:19], "%Y-%m-%dT%H:%M:%S")
+                    if dtu.hour < 6:
+                        dtu = dtu - timedelta(days=1)
+                    gd = dtu.strftime("%Y-%m-%d")
+                home = retro_team(((sched.get("homeTeam") or {}).get("abbreviation")) or "")
+                away = retro_team(((sched.get("awayTeam") or {}).get("abbreviation")) or "")
+                if gd and home and away:
+                    upcoming.append((sched.get("id"), gd, start, home, away,
+                                     (sched.get("venue") or {}).get("name")))
             continue
         gdate = ""
         start = sched.get("startTime", "")
@@ -1641,6 +1659,19 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
         games = [(gid, gd) for gid, gd in games if gd and gd >= seed_cutoff]
         print(f"    Incremental: {len(games)} of {total_completed} games since {seed_cutoff}")
     print(f"    Found {len(games)} completed games to process")
+
+    try:
+        conn.execute("""CREATE TABLE IF NOT EXISTS upcoming_games (
+            game_id INTEGER PRIMARY KEY, date TEXT, start_utc TEXT,
+            home TEXT, away TEXT, venue TEXT)""")
+        conn.execute("DELETE FROM upcoming_games")
+        conn.executemany(
+            "INSERT OR REPLACE INTO upcoming_games VALUES (?,?,?,?,?,?)",
+            [u for u in upcoming if u[1] >= date.today().isoformat()][:250])
+        conn.commit()
+        print(f"    Upcoming slate: {min(len(upcoming), 250)} scheduled games stored")
+    except Exception as e:
+        print(f"    Upcoming slate store failed: {e}")
 
     # Accumulators
     batting_splits = {}       # (msf_batter_id, batter_name, pitcher_hand) → stats
