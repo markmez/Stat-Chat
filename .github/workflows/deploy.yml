@@ -36,6 +36,9 @@
               sudo -u statchat git pull 2>&1 || { echo "GIT PULL FAILED rc=$? — aborting deploy"; exit 1; }
               sudo -u statchat git rev-parse --short HEAD
               sudo -u statchat git status --porcelain | head -5
+              echo "--- refresh.log tail ---"
+              sudo tail -40 /data/refresh.log 2>/dev/null || echo "no refresh.log"
+              echo "--- end log ---"
               sudo -u statchat /opt/statchat/venv/bin/pip install -q -r backend/requirements.txt
               sudo cp deploy/statchat-cron /etc/cron.d/statchat
               sudo chmod 644 /etc/cron.d/statchat
