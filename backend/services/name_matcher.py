@@ -2146,14 +2146,31 @@ def parse_team_h2h_recent(input_str: str) -> Optional[dict]:
     return {"team_a": team_a, "team_b": team_b, "n": n}
 
 
+def parse_probables(input_str: str) -> Optional[dict]:
+    """'whos pitching tonight' / 'probable pitchers today' / 'who is
+    starting for the yankees tomorrow' / 'pitchers today mlb'."""
+    lower = input_str.strip().lower()
+    if _has_player_name(lower):
+        return None
+    proby = re.search(r"\bprobables?\b|\bprobable pitchers?\b", lower)
+    pitchy = re.search(r"\b(?:who'?s|who is|who are)?\s*(?:pitching|starting)\b|\bstarting pitchers?\b|\bpitchers\b", lower)
+    dayy = re.search(r"\b(today|tonight|tomorrow)\b", lower)
+    if not (proby or (pitchy and dayy)):
+        return None
+    if not proby and not re.search(r"\b(pitch|pitcher|pitchers|pitching|starting|starter|starters)\b", lower):
+        return None
+    return {"team_code": match_team(lower)}
+
+
 def parse_team_next_game(input_str: str) -> Optional[dict]:
     """'who do the yankees play tonight' / 'when do the jays play next' /
     'blue jays game today' -> next scheduled game from upcoming_games.
     Slate facts are lookups; they must never cost a 30s Sonnet run."""
     lower = input_str.strip().lower()
-    if not re.search(r'\b(today|tonight|tomorrow|next)\b', lower):
+    if not re.search(r"\b(today|tonight|tomorrow|next)\b", lower) \
+            and not re.search(r"\b(what|when)\s+time\b|\bgame time\b|\bwhen (?:do|does|are|is)\b", lower):
         return None
-    if not re.search(r'\b(play|playing|game|games|face|facing|matchup|opponent)\b', lower):
+    if not re.search(r"\b(play|playing|plays|game|games|face|facing|matchup|opponent|got)\b", lower):
         return None
     team_code = match_team(lower)
     if not team_code:
@@ -2167,9 +2184,9 @@ def parse_todays_slate(input_str: str) -> Optional[dict]:
     lower = input_str.strip().lower()
     if match_team(lower) or _has_player_name(lower):
         return None
-    if not re.search(r'\b(today|tonight|tonite)\b', lower) and "slate" not in lower:
+    if not re.search(r"\b(today|tonight|tonite)\b", lower) and "slate" not in lower:
         return None
-    if not re.search(r'\b(game|games|slate|playing|schedule|matchup|matchups)\b', lower):
+    if not re.search(r"\b(game|games|slate|playing|schedule|matchup|matchups|on)\b", lower):
         return None
     return {}
 

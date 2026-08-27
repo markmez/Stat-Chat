@@ -59,6 +59,20 @@ _PIPELINE_LOCK_PATH = "/tmp/statchat_pipeline.lock"
 _PIPELINE_LOCK_STALE_SECONDS = 5400  # 90 min — matches refresh.sh
 
 
+@router.post("/update-probables")
+async def update_probables(authorization: str | None = Header(None)):
+    """Fetch probable starters for today/tomorrow into upcoming_games
+    (detached). Status: trend_state key 'probables_status'."""
+    verify_admin(authorization)
+    import subprocess, sys
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "scripts", "update_probables.py")
+    with open("/tmp/update_probables.log", "a") as lf:
+        proc = subprocess.Popen(["nice", "-n", "10", sys.executable, script],
+                                stdout=lf, stderr=subprocess.STDOUT, start_new_session=True)
+    return {"status": "started", "pid": proc.pid}
+
+
 @router.post("/build-history-shelves")
 async def build_history_shelves(authorization: str | None = Header(None)):
     """Launch the Phase-2 historical_index shelf-widening build detached

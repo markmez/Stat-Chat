@@ -2182,6 +2182,55 @@ def _game_time_et(start_utc: str) -> str:
         return ""
 
 
+def build_probables(team_code) -> Optional[str]:
+    """Probable starters — one team's next game, or the whole slate."""
+    conn = _get_db()
+    try:
+        if not _slate_ready(conn):
+            return None
+        try:
+            conn.execute("SELECT home_probable FROM upcoming_games LIMIT 1")
+        except Exception:
+            return None
+        now = _et_now()
+        today = now.date().isoformat()
+        if team_code:
+            r = conn.execute(
+                "SELECT date, start_utc, home, away, home_probable, away_probable"
+                " FROM upcoming_games WHERE (home = ? OR away = ?) AND date >= ?"
+                " ORDER BY date, start_utc LIMIT 1", (team_code, team_code, today)).fetchone()
+            if not r:
+                return None
+            d, start, home, away, hp, ap = r
+            t = _game_time_et(start)
+            when = "Tonight" if (d == today and now.hour >= 15) else ("Today" if d == today else "Next up")
+            if not (hp or ap):
+                return (f"{when}: {_team_full_name(away)} at {_team_full_name(home)}"
+                        + (f", {t}" if t else "") + ". Probable starters aren't posted yet.")
+            return (f"{when}: {_team_full_name(away)} at {_team_full_name(home)}"
+                    + (f", {t}" if t else "")
+                    + f" — {ap or 'TBD'} vs {hp or 'TBD'}.")
+        rows = conn.execute(
+            "SELECT start_utc, home, away, home_probable, away_probable FROM upcoming_games"
+            " WHERE date = ? ORDER BY start_utc", (today,)).fetchall()
+        if not rows:
+            return None
+        known = [r for r in rows if r[3] or r[4]]
+        title = f"**Probable Starters — {now.strftime('%B %-d')}**"
+        lines = [title, ""]
+        for start, home, away, hp, ap in rows:
+            t = _game_time_et(start)
+            lines.append(f"{_team_full_name(away)} at {_team_full_name(home)}"
+                         + (f" — {ap or 'TBD'} vs {hp or 'TBD'}")
+                         + (f" ({t})" if t else ""))
+        if not known:
+            lines.append("")
+            lines.append("Starters aren't posted yet for today's slate.")
+        return "\n".join(lines)
+    finally:
+        conn.close()
+
+
 def build_team_next_game(team_code: str) -> Optional[str]:
     """Next scheduled game for a team, from the nightly slate table."""
     conn = _get_db()
@@ -2224,6 +2273,18 @@ def build_team_next_game(team_code: str) -> Optional[str]:
         t2 = _game_time_et(rows[1][1])
         if t2:
             line += f" Game 2 of the doubleheader starts at {t2}."
+    conn = _get_db()
+    try:
+        pr = conn.execute(
+            "SELECT away_probable, home_probable FROM upcoming_games"
+            " WHERE (home = ? OR away = ?) AND date >= ? ORDER BY date, start_utc LIMIT 1",
+            (team_code, team_code, today)).fetchone()
+        if pr and (pr[0] or pr[1]):
+            line += f" Probable starters: {pr[0] or 'TBD'} vs {pr[1] or 'TBD'}."
+    except Exception:
+        pass
+    finally:
+        conn.close()
     return line
 
 
@@ -2235,9 +2296,14 @@ def build_todays_slate() -> Optional[str]:
             return None
         now = _et_now()
         today = now.date().isoformat()
-        rows = conn.execute(
-            "SELECT start_utc, home, away FROM upcoming_games"
-            " WHERE date = ? ORDER BY start_utc", (today,)).fetchall()
+        try:
+            rows = conn.execute(
+                "SELECT start_utc, home, away, away_probable, home_probable"
+                " FROM upcoming_games WHERE date = ? ORDER BY start_utc", (today,)).fetchall()
+        except Exception:
+            rows = [(s, h, aw, None, None) for s, h, aw in conn.execute(
+                "SELECT start_utc, home, away FROM upcoming_games"
+                " WHERE date = ? ORDER BY start_utc", (today,)).fetchall()]
         nxt = None
         if not rows:
             nxt = conn.execute(
@@ -2253,10 +2319,12 @@ def build_todays_slate() -> Optional[str]:
         return None
     title = f"**Today's Games — {now.strftime('%B %-d')}**"
     lines = [title, ""]
-    for start, home, away in rows:
+    for start, home, away, ap, hp in rows:
         t = _game_time_et(start)
-        lines.append(f"{_team_full_name(away)} at {_team_full_name(home)}"
-                     + (f" — {t}" if t else ""))
+        ln = f"{_team_full_name(away)} at {_team_full_name(home)}" + (f" — {t}" if t else "")
+        if ap or hp:
+            ln += f" ({ap or 'TBD'} vs {hp or 'TBD'})"
+        lines.append(ln)
     return "\n".join(lines)
 
 

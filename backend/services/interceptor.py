@@ -708,6 +708,13 @@ def try_intercept(question: str):
             logger.info("team_h2h_recent question=%r", trimmed)
             return response
 
+    prb = nm.parse_probables(trimmed)
+    if prb:
+        response = rb.build_probables(prb.get("team_code"))
+        if response:
+            logger.info("probables question=%r", trimmed)
+            return response
+
     tng = nm.parse_team_next_game(trimmed)
     if tng:
         response = rb.build_team_next_game(tng["team_code"])
