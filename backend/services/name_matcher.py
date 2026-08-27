@@ -3592,6 +3592,7 @@ def parse_team_stats(input_str: str) -> Optional[dict]:
             or re.search(r'\b(?:last|past)\s+\d+\s*(?:day|week|month|game)', lower)
             or "this month" in lower or "this week" in lower
             or "all-star break" in lower or "all star break" in lower
+            or re.search(r'\b(?:vs\.?|versus)\s+\S', lower) is not None
             or _detect_split_context(lower) is not None):
         return None
 
@@ -3626,6 +3627,7 @@ def parse_team_total(input_str: str) -> Optional[dict]:
             or re.search(r'\b(?:last|past)\s+\d+\s*(?:day|week|month|game)', lower)
             or "this month" in lower or "this week" in lower
             or "all-star break" in lower or "all star break" in lower
+            or re.search(r'\b(?:vs\.?|versus)\s+\S', lower) is not None
             or _detect_split_context(lower) is not None):
         return None
 

@@ -205,6 +205,18 @@ def try_intercept(question: str):
         return None
 
     import re
+
+    # Curated typo normalization — EXPLICIT map only, never fuzzy (the
+    # fuzzyMatch trap: edit-distance matching collides with player names,
+    # e.g. 'ganes'~'Gomes'). Observed-in-the-wild unit-word typos that
+    # defeat both the parsers AND their bail regexes ('last 5 ganes'
+    # slipped past parse_team_stats' window bail into a TEAMCARD claim).
+    for _typo, _fix in (("ganes", "games"), ("gmaes", "games"), ("gamse", "games"),
+                        ("metings", "meetings"), ("meetigns", "meetings"),
+                        ("tonite", "tonight"), ("picthers", "pitchers"),
+                        ("pichers", "pitchers"), ("standigns", "standings")):
+        trimmed = re.sub(rf"\b{_typo}\b", _fix, trimmed, flags=re.I)
+
     lower = trimmed.lower()
 
     # Game-event qualifiers we don't model structurally — see
