@@ -1906,6 +1906,13 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                          "situations, specific base-out states, etc.).")
 
         if not skip_planner:
+            if not dims_dropped:
+                # Every planner run gets an expectation-setting notice
+                # (median 17s, p75 21s). Mark 2026-08-26: the notice never
+                # appeared because it only fired on the rare guard-refusal
+                # path; the compound path below keeps its longer estimate.
+                yield event({"type": "notice",
+                             "text": "This one needs a deeper look — usually 15 to 30 seconds."})
             if dims_dropped:
                 # Expectation-setting notice, fired ONLY for the compound-
                 # dimension class (guard refusal → planner): those run ~90s;
@@ -1941,6 +1948,9 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                         question=question,
                     )
                     if grid_block:
+                        _gt = (item.get("title") or "").strip()
+                        if _gt:
+                            grid_block = f"**{_gt}**\n" + grid_block
                         yield event({"type": "text", "text": grid_block + "\n\n"})
                         planner_streamed = True
                 elif kind == "text":

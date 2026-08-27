@@ -40,6 +40,28 @@ def _log_err(source: str, error_type: str, msg: str, question: str, extra: dict 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
 
+PRESENT_TOOL_DEF = {
+    "name": "present_table",
+    "description": (
+        "Display ONE table to the user alongside your answer. Call at most "
+        "once, AFTER your research, with a purpose-built display query: max "
+        "10 rows, sorted by the metric that answers the question, only the "
+        "entities your answer actually discusses, plus a title naming the "
+        "exact slice. Research queries are NEVER shown to the user — if you "
+        "don't call this, the answer is prose only, which is often best."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string",
+                      "description": "Names the exact slice, e.g. 'Blue Jays vs RHP — 2026'"},
+            "sql": {"type": "string",
+                    "description": "Display SELECT: <=10 rows, sorted, relevant entities only"},
+        },
+        "required": ["title", "sql"],
+    },
+}
+
 TOOL_DEF = {
     "name": "execute_sql",
     "description": (
@@ -170,7 +192,17 @@ perspective, or thresholds — you must infer them the same way our parsers do.
      LIMIT 30;
    For pitching direction: JOIN through season_pitching_stats sps the same way; use ERA/WHIP/BAA formulas from section 5.
 
-7) PRESENTATION — LEADERBOARDS (multi-row ranked results)
+7) PRESENTATION — ANSWER FIRST, TABLES BY CHOICE
+   Lead with the answer in prose. Tables are OPT-IN: nothing you query is
+   shown to the user unless you call present_table (at most once) with a
+   purpose-built display query — max 10 rows, sorted by the metric that
+   answers the question, ONLY the entities your answer discusses, and a
+   title naming the exact slice ("Blue Jays vs RHP — 2026"). Research
+   queries are never displayed: when your answer names one player, never
+   show the whole roster you considered. Prose-only is often the best
+   presentation — call nothing in that case.
+
+   LEADERBOARD COLUMN RULES (when your display query is a ranked list):
    For leaderboards, SELECT exactly ONE stat column: the stat the user asked about (or the implicit default — OPS for batting "best/worst", ERA for pitching). No slash line, no supporting stats, no raw counters. This matches the structural query engine's pattern and avoids the trailing-column truncation that plagues narrow iOS leaderboards.
      - "Best/worst" batting (OPS default) → SELECT name (or team), OPS — ONLY.
      - "Best AVG" → SELECT name, AVG — ONLY.
@@ -275,6 +307,7 @@ async def plan_and_execute_stream(question: str):
     conn.execute("PRAGMA query_only = ON")
 
     tool_results_history: list[dict] = []
+    display_grid: dict | None = None
     messages: list[dict] = [{"role": "user", "content": question}]
     emitted = ""  # all text already yielded to the caller (spans rounds)
 
@@ -288,7 +321,7 @@ async def plan_and_execute_stream(question: str):
                 model=MAIN_MODEL,
                 max_tokens=4000,
                 system=_SYSTEM_BLOCKS,
-                tools=[TOOL_DEF],
+                tools=[TOOL_DEF, PRESENT_TOOL_DEF],
                 messages=messages,
             ) as stream:
                 async for ev in stream:
@@ -303,7 +336,7 @@ async def plan_and_execute_stream(question: str):
                             # Sustained prose with no tool call — this is the
                             # narration. Ship the grid first, then go live.
                             if not emitted:
-                                grid = _primary_tool_result(tool_results_history)
+                                grid = display_grid
                                 if grid:
                                     yield ("grid", grid)
                             yield ("text", buffer)
@@ -333,7 +366,7 @@ async def plan_and_execute_stream(question: str):
                 if not emitted:
                     # Short answer that never crossed the holdback — emit whole.
                     answer = answer.strip()
-                    grid = _primary_tool_result(tool_results_history)
+                    grid = display_grid
                     if grid:
                         yield ("grid", grid)
                     yield ("text", answer)
@@ -361,6 +394,32 @@ async def plan_and_execute_stream(question: str):
                     sql = (block.input or {}).get("sql", "")
                     purpose = (block.input or {}).get("purpose", "")
                     logger.info("insight_engine: step %d — %s", round_num + 1, purpose)
+
+                    if getattr(block, "name", "") == "present_table":
+                        title = str((block.input or {}).get("title", ""))[:120]
+                        if sql.strip().upper().startswith("SELECT"):
+                            try:
+                                shown = await loop.run_in_executor(
+                                    None, _execute_tool_sql, conn, sql)
+                                if shown.get("rows"):
+                                    display_grid = {
+                                        "columns": shown["columns"],
+                                        "rows": shown["rows"][:10],
+                                        "title": title,
+                                    }
+                                    msg = {"status": "table queued for display"}
+                                else:
+                                    msg = {"error": "display query returned no rows; answer in prose"}
+                            except Exception as e:
+                                msg = {"error": str(e)}
+                        else:
+                            msg = {"error": "Only SELECT queries allowed"}
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_id,
+                            "content": json.dumps(msg, default=str),
+                        })
+                        continue
 
                     if not sql.strip().upper().startswith("SELECT"):
                         tool_results.append({
