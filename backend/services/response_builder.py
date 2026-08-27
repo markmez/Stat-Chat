@@ -2128,6 +2128,38 @@ def build_platoon_splits(name: str, hand: Optional[str] = None, season=0) -> Opt
         conn.close()
 
 
+def build_team_h2h_recent(team_a: str, team_b: str, n: int) -> Optional[str]:
+    """Last n head-to-head results between two teams (team_game_results,
+    2025+). Summary record line + per-game scores, newest first."""
+    conn = _get_db()
+    try:
+        rows = conn.execute(
+            "SELECT date, result, team_runs, opp_runs, is_home, season"
+            " FROM team_game_results WHERE team = ? AND opponent = ?"
+            " AND COALESCE(gametype, 'regular') = 'regular'"
+            " ORDER BY date DESC, game_number DESC LIMIT ?",
+            (team_a, team_b, n)).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return None
+    a, b = _team_full_name(team_a), _team_full_name(team_b)
+    wins = sum(1 for r in rows if r[1] == "W")
+    losses = sum(1 for r in rows if r[1] == "L")
+    from datetime import date as _date
+    cur_year = _date.today().year
+    header = (f"**{a} vs {b} — last {len(rows)} meetings**\n"
+              f"The {a} are {wins}-{losses} in the last {len(rows)}"
+              f" against the {b}.\n")
+    lines = []
+    for d, res, tr, orns, home, season in rows:
+        dt = _date.fromisoformat(d)
+        ds = dt.strftime("%b %-d") if season == cur_year else dt.strftime("%b %-d, %Y")
+        site = "vs" if home else "at"
+        lines.append(f"GAME {ds}|{'W' if res == 'W' else 'L'} {tr}-{orns} {site} {b}")
+    return header + "\n[GAMELOGS]\n" + "\n".join(lines) + "\n[/GAMELOGS]"
+
+
 def _slate_ready(conn) -> bool:
     return bool(conn.execute(
         "SELECT name FROM sqlite_master WHERE name='upcoming_games'").fetchone())

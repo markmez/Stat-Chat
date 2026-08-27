@@ -2121,6 +2121,31 @@ def parse_platoon_splits(input_str: str) -> Optional[dict]:
             (["career", "all time", "all-time", "lifetime"] if is_career else [])}
 
 
+def parse_team_h2h_recent(input_str: str) -> Optional[dict]:
+    """'sox vs cubs last 5 games' / 'yankees vs red sox last 10 meetings'
+    -> recent head-to-head results from team_game_results. Bare 'sox'
+    resolves crosstown: White Sox when the other side is the Cubs,
+    Red Sox otherwise."""
+    lower = input_str.strip().lower()
+    m = re.search(r'^(.*?)\b(?:vs\.?|versus|against)\b(.*?)\b(?:last|past)\s+(\d{1,2})\s*(?:games?|meetings?|matchups?)\b', lower)
+    if not m:
+        return None
+    if _has_player_name(lower):
+        return None
+    left, right, n = m.group(1).strip(), m.group(2).strip(), int(m.group(3))
+    if not (1 <= n <= 30):
+        return None
+    team_b = match_team(right)
+    team_a = match_team(left)
+    if not team_a and re.search(r'\bsox\b', left):
+        team_a = "CHA" if team_b == "CHN" else "BOS"
+    if not team_b and re.search(r'\bsox\b', right):
+        team_b = "CHA" if team_a == "CHN" else "BOS"
+    if not team_a or not team_b or team_a == team_b:
+        return None
+    return {"team_a": team_a, "team_b": team_b, "n": n}
+
+
 def parse_team_next_game(input_str: str) -> Optional[dict]:
     """'who do the yankees play tonight' / 'when do the jays play next' /
     'blue jays game today' -> next scheduled game from upcoming_games.

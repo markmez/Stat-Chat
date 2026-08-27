@@ -689,6 +689,13 @@ def try_intercept(question: str):
     # No player name in query; ranks across all players who faced the
     # specified handedness. Routes batting and pitching variants based on
     # is_pitching flag from the parser.
+    h2h = nm.parse_team_h2h_recent(trimmed)
+    if h2h:
+        response = rb.build_team_h2h_recent(h2h["team_a"], h2h["team_b"], h2h["n"])
+        if response:
+            logger.info("team_h2h_recent question=%r", trimmed)
+            return response
+
     tng = nm.parse_team_next_game(trimmed)
     if tng:
         response = rb.build_team_next_game(tng["team_code"])
