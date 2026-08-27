@@ -1912,7 +1912,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 # appeared because it only fired on the rare guard-refusal
                 # path; the compound path below keeps its longer estimate.
                 yield event({"type": "notice",
-                             "text": "This one needs a deeper look — usually 15 to 30 seconds."})
+                             "text": "This one needs a deeper look.\nUsually 15 to 30 seconds."})
             if dims_dropped:
                 # Expectation-setting notice, fired ONLY for the compound-
                 # dimension class (guard refusal → planner): those run ~90s;
@@ -1920,7 +1920,7 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
                 # loading fillers alone. Older clients ignore unknown SSE
                 # event types; iOS renders this above the fillers.
                 yield event({"type": "notice",
-                             "text": "This one takes some digging — I'll have the answer in about 90 seconds."})
+                             "text": "This one takes some digging.\nUsually 1 to 2 minutes."})
             agen = plan_and_execute_stream(question)
             first_text = True
             full_text = ""
