@@ -2791,9 +2791,9 @@ def _find_compelling_matchup_stat(conn, batter_name, pitcher_name, season):
         if h2h and h2h[0] and h2h[0] >= 1:
             pa, hits, hr, ab = h2h
             if hr and hr >= 1:
-                return f"{batter_name} is {hits}-for-{ab} with {hr} HR in {pa} PA against {pitcher_name} this season."
+                return f"{batter_name} is {hits}-for-{ab} with {hr} HR in {pa} career PA against {pitcher_name}."
             elif ab and ab > 0:
-                return f"{batter_name} is {hits}-for-{ab} in {pa} PA against {pitcher_name} this season."
+                return f"{batter_name} is {hits}-for-{ab} in {pa} career PA against {pitcher_name}."
 
         # --- Tier 2: Pitch mix angle ---
         # Find pitcher's top pitches, check batter's splits against them
