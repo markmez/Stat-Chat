@@ -563,6 +563,15 @@ def try_intercept(question: str):
     # 1. Comparison — "Judge vs Soto", "Compare Lindor and Witt"
     comp = nm.parse_comparison(trimmed)
     if comp:
+        # Claim-confidence: both names + comparison markers must account for
+        # the whole query, or this parser declines (2026-08-31 discipline).
+        _cmp_consumed = [comp["name2"], "vs", "vs.", "v.", "versus", "compare",
+                         "compared", "better", "than", "head", "head-to-head",
+                         "or", "matchup"]
+        if nm._residual_qualifier_words(trimmed.strip().lower(), comp["name1"],
+                                        extra_consumed=_cmp_consumed):
+            comp = None
+    if comp:
         p1, p2 = comp["name1"], comp["name2"]
         season = comp["season"]
         alts = comp.get("alternatives", [])

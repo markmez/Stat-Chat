@@ -3641,16 +3641,77 @@ def build_player_date_range(name: str, since_date: Optional[str] = None,
         conn.close()
 
 
+def build_pitcher_vs_team(name: str, opponent_code: str,
+                          season=None) -> Optional[str]:
+    """A pitcher's line vs a specific opponent, from game_pitching_logs.
+    season=None -> career; else that season. Focused card + recent starts."""
+    conn = _get_db()
+    try:
+        display_name, _ = _get_player_info(conn, name)
+        where = ["p.name = ?", "g.opponent = ?"]
+        params = [_sanitize(name), opponent_code]
+        if season:
+            where.append("g.season = ?"); params.append(season)
+        row = conn.execute(
+            "SELECT COUNT(*), SUM(g.is_start), SUM(g.win), SUM(g.loss), SUM(g.save),"
+            " SUM(g.ip_outs), SUM(g.hits), SUM(g.earned_runs), SUM(g.walks),"
+            " SUM(g.strikeouts), SUM(g.home_runs)"
+            " FROM game_pitching_logs g JOIN players p ON p.player_id = g.player_id"
+            " WHERE " + " AND ".join(where), tuple(params)).fetchone()
+        if not row or not row[0]:
+            return None
+        games, gs, w, l, sv, outs, h, er, bb, so, hr = [x or 0 for x in row]
+        if not outs:
+            return None
+        ip = f"{outs // 3}.{outs % 3}" if outs % 3 else f"{outs // 3}"
+        era = 9.0 * er / (outs / 3.0)
+        whip = (h + bb) / (outs / 3.0)
+        recent = conn.execute(
+            "SELECT g.date, g.ip_outs, g.earned_runs, g.strikeouts, g.win, g.loss"
+            " FROM game_pitching_logs g JOIN players p ON p.player_id = g.player_id"
+            " WHERE " + " AND ".join(where) + " ORDER BY g.date DESC LIMIT 5",
+            tuple(params)).fetchall()
+    finally:
+        conn.close()
+    opp = _team_full_name(opponent_code)
+    scope = str(season) if season else "Career"
+    parts = [f"**{display_name} vs {opp}** ({scope})\n"]
+    parts.append("[STATGRID]")
+    parts.append("HEADER: G, GS, W, L, IP, SO, ERA, WHIP")
+    parts.append(f"ROW {display_name}: {games}, {gs}, {w}, {l}, {ip}, {so},"
+                 f" {era:.2f}, {whip:.2f}")
+    parts.append("[/STATGRID]")
+    if recent:
+        parts.append("")
+        parts.append("[GAMELOGS]")
+        from datetime import date as _date
+        for d, o2, er2, so2, w2, l2 in recent:
+            dt = _date.fromisoformat(d)
+            ds = dt.strftime("%b %-d, %Y")
+            ip2 = f"{(o2 or 0) // 3}.{(o2 or 0) % 3}" if (o2 or 0) % 3 else f"{(o2 or 0) // 3}"
+            res = "W" if w2 else ("L" if l2 else "ND")
+            parts.append(f"GAME {ds}|{res}, {ip2} IP, {er2 or 0} ER, {so2 or 0} K")
+        parts.append("[/GAMELOGS]")
+    parts.append(f"\n[SUGGEST]{display_name} stats[/SUGGEST]")
+    parts.append(f"[SUGGEST]{display_name} game log[/SUGGEST]")
+    return "\n".join(parts)
+
+
 def build_player_vs_team(name: str, opponent_code: str,
                          season: Optional[int] = None) -> Optional[str]:
     """A player's batting line vs a specific opponent, from game logs.
 
     Powers "{player} vs the {team}". season=None → career split (all years);
-    else that season only. Batting only — returns None if no batting rows so
-    pitchers / unknown players fall through to Haiku.
+    else that season only. Pitchers get a pitching line vs the opponent
+    (2026-08-31 — the batting-only fallthrough let the comparison parser
+    claim "Cease against the Guardians" with a 1981 retiree named
+    Cleveland); batters get the batting line as before.
     """
     if not opponent_code:
         return None
+    from services import name_matcher as _nm
+    if _nm.is_pitcher(name):
+        return build_pitcher_vs_team(name, opponent_code, season)
     conn = _get_db()
     try:
         display_name, _ = _get_player_info(conn, name)

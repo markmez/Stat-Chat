@@ -1530,6 +1530,17 @@ def parse_comparison(input_str: str) -> Optional[dict]:
     # Year-over-year comparison — not a player comparison
     if re.search(r'20[012]\d\s*(?:vs\.?|versus|compared to|to)\s*20[012]\d', input_str.lower()):
         return None
+    # Team-guard (2026-08-31, the Reggie Cleveland incident): if the query
+    # names a TEAM, this is a player-vs-team split (or team query), never a
+    # player comparison — "Cease against the Cleveland Guardians" must not
+    # resolve 'Cleveland' to a pitcher who retired in 1981. Multi-word team
+    # aliases only: single-word aliases ("angels") can't be surname homonyms,
+    # but city words ("boston", "cleveland") collide with player names.
+    _cg_lower = " " + input_str.strip().lower() + " "
+    for _alias, _code in team_alias_map.items():
+        if " " in _alias or len(_alias) > 5:
+            if f" {_alias} " in _cg_lower or f" {_alias}s " in _cg_lower:
+                return None
     season = detect_season(input_str)
     cleaned = input_str.strip().lower()
 
@@ -2579,6 +2590,7 @@ def parse_pitching_tto(input_str: str) -> Optional[dict]:
 # — leaving one of those is exactly the "ignored qualifier" signal we bail on.
 _GUARD_FILLER = {
     "jr", "sr", "junior", "senior",  # name suffixes consumed by alias layer
+    "record", "records", "numbers", "line",  # generic ask-words ("Cease's record vs CLE")
     "the", "a", "an", "in", "of", "by", "for", "to", "and", "or", "with",
     "who", "what", "which", "how", "many", "much", "did", "do", "does", "has",
     "had", "have", "is", "was", "were", "are", "been", "be",
