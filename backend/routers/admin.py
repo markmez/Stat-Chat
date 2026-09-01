@@ -3596,6 +3596,192 @@ async def dashboard(
             <td class="reason-cell">{reason_cell}</td>
         </tr>"""
 
+    _phone_overlay = r'''
+<style>
+  .ph-h { font-size: 13px; font-weight: 700; color: #55606e; text-transform: uppercase;
+    letter-spacing: .05em; margin: 14px 2px 6px; }
+  .ph-entity { font-size: 16px; font-weight: 700; color: #17222E; margin: 0 0 8px; }
+  .ph-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ph-chip { background: #F2F5F9; border-radius: 8px; padding: 5px 9px; min-width: 44px; text-align: center; }
+  .ph-chip .k { font-size: 9px; color: #8a97a8; text-transform: uppercase; letter-spacing: .03em; }
+  .ph-chip .v { font-size: 14px; font-weight: 600; color: #17222E; font-variant-numeric: tabular-nums; }
+</style>
+<div id="phone-backdrop" onclick="if(event.target.id==='phone-backdrop')closePhone()">
+  <div id="phone-frame">
+    <button id="phone-close" onclick="closePhone()">&times;</button>
+    <div class="ph-q" id="phone-q"></div>
+    <div id="phone-body"><div class="ph-wait">running&hellip;</div></div>
+  </div>
+</div>
+<script>
+function closePhone() { document.getElementById('phone-backdrop').style.display = 'none'; }
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closePhone(); });
+
+function phEsc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function phIsNum(s) { return /^[.\d][\d.,%+-]*$/.test(s.trim()); }
+
+function phPills(raw, pills) {
+  ['SUGGEST', 'SEEALSO', 'DIDYOUMEAN'].forEach(function(tag) {
+    var re = new RegExp('\\[' + tag + '\\]([\\s\\S]*?)\\[\\/' + tag + '\\]', 'g');
+    raw = raw.replace(re, function(_, v) { pills.push(v.trim()); return ''; });
+  });
+  raw = raw.replace(/\[TEAMCARD:([A-Z]+)\]/g, function(_, c) {
+    pills.push('→ opens Team Card: ' + c); return ''; });
+  raw = raw.replace(/\[TIP\]([\s\S]*?)\[\/TIP\]/g, '');
+  return raw;
+}
+
+function phStatGrid(inner) {
+  var header = [], cards = [];
+  inner.trim().split('\n').forEach(function(l) {
+    l = l.trim();
+    if (l.indexOf('HEADER:') === 0) {
+      header = l.slice(7).split(',').map(function(x) { return x.trim(); });
+    } else if (l.indexOf('ROW') === 0) {
+      var body = l.slice(3).replace(/^:/, '').trim();
+      var vals = body.split(',').map(function(x) { return x.trim(); });
+      var label = '';
+      if (vals.length && !phIsNum(vals[0])) label = vals.shift();
+      if (label && body.indexOf(label + ':') === 0) {
+        // "ROW Cumulative: 7, 1..." form — label already separated
+      }
+      var ci = label.indexOf(':');
+      if (ci >= 0 && phIsNum(label.slice(ci + 1))) {
+        vals.unshift(label.slice(ci + 1).trim());
+        label = label.slice(0, ci);
+      }
+      var chips = '';
+      for (var i = 0; i < header.length && i < vals.length; i++) {
+        if (vals[i] === '' || vals[i] === '--') continue;
+        chips += '<div class="ph-chip"><div class="k">' + phEsc(header[i]) +
+                 '</div><div class="v">' + phEsc(vals[i]) + '</div></div>';
+      }
+      cards.push('<div class="ph-card">' +
+        (label ? '<div class="ph-entity">' + phEsc(label) + '</div>' : '') +
+        '<div class="ph-chips">' + chips + '</div></div>');
+    }
+  });
+  return cards.join('');
+}
+
+function phLeaderboard(inner) {
+  var header = [], rows = [];
+  inner.trim().split('\n').forEach(function(l) {
+    l = l.trim();
+    if (l.indexOf('HEADER:') === 0) header = l.slice(7).split(',').map(function(x) { return x.trim(); });
+    else if (l.indexOf('ROW') === 0) {
+      var body = l.slice(3).trim();
+      var ci = body.indexOf(':');
+      var label = ci >= 0 ? body.slice(0, ci) : body;
+      var vals = ci >= 0 ? body.slice(ci + 1).split(',').map(function(x) { return x.trim(); }) : [];
+      rows.push([label].concat(vals));
+    }
+  });
+  var h = '<div class="ph-card"><table><tr><th></th>' +
+    header.map(function(x) { return '<th>' + phEsc(x) + '</th>'; }).join('') + '</tr>';
+  rows.forEach(function(r) {
+    h += '<tr>' + r.map(function(c) { return '<td>' + phEsc(c) + '</td>'; }).join('') + '</tr>';
+  });
+  return h + '</table></div>';
+}
+
+function phGameLogs(inner) {
+  var h = '<div class="ph-card"><table>';
+  inner.trim().split('\n').forEach(function(l) {
+    var p = l.replace(/^GAME\s*/, '').split('|');
+    if (p.length === 2) h += '<tr><td>' + phEsc(p[0].trim()) +
+      '</td><td style="text-align:left;color:#17222E;font-weight:400;">' + phEsc(p[1].trim()) + '</td></tr>';
+  });
+  return h + '</table></div>';
+}
+
+function renderStatChat(raw) {
+  var out = [], pills = [];
+  raw = phPills(raw, pills);
+  var blocks = raw.split(/(\[LEADERBOARD\][\s\S]*?\[\/LEADERBOARD\]|\[STATGRID\][\s\S]*?\[\/STATGRID\]|\[GAMELOGS\][\s\S]*?(?:\[\/GAMELOGS\]|$))/);
+  blocks.forEach(function(b) {
+    if (!b.trim()) return;
+    var m;
+    if ((m = b.match(/^\[LEADERBOARD\]([\s\S]*?)\[\/LEADERBOARD\]$/))) { out.push(phLeaderboard(m[1])); return; }
+    if ((m = b.match(/^\[STATGRID\]([\s\S]*?)\[\/STATGRID\]$/))) { out.push(phStatGrid(m[1])); return; }
+    if ((m = b.match(/^\[GAMELOGS\]([\s\S]*?)(?:\[\/GAMELOGS\]|$)$/))) { out.push(phGameLogs(m[1])); return; }
+    var t = b;
+    t = t.replace(/\[SUBTITLE\]([\s\S]*?)\[\/SUBTITLE\]/g, '@@SUB@@$1@@END@@');
+    t = t.replace(/\[CONTEXT\]([\s\S]*?)\[\/CONTEXT\]/g, '@@SUB@@$1@@END@@');
+    t.split(/@@END@@/).forEach(function(seg) {
+      if (!seg.trim()) return;
+      var si = seg.indexOf('@@SUB@@');
+      if (si >= 0) {
+        var before = seg.slice(0, si);
+        if (before.trim()) renderProse(before, out);
+        out.push('<div class="ph-sub">' + phEsc(seg.slice(si + 7).trim()) + '</div>');
+        return;
+      }
+      renderProse(seg, out);
+    });
+  });
+  if (pills.length) {
+    out.push('<div>' + pills.map(function(p) { return '<span class="ph-pill">' + phEsc(p) + '</span>'; }).join('') + '</div>');
+  }
+  return out.join('');
+}
+
+function renderProse(seg, out) {
+  seg.split(/\n{2,}/).forEach(function(par) {
+    par = par.trim();
+    if (!par) return;
+    if (par.length < 40 && par.slice(-1) === ':') {
+      out.push('<div class="ph-h">' + phEsc(par.slice(0, -1)) + '</div>');
+      return;
+    }
+    var html = phEsc(par).replace(/\*\*([^*]+)\*\*/g, '<span class="ph-name">$1</span>');
+    out.push('<p>' + html.replace(/\n/g, '<br>') + '</p>');
+  });
+}
+
+async function replayQuery(q) {
+  document.getElementById('phone-backdrop').style.display = 'flex';
+  document.getElementById('phone-q').textContent = q;
+  document.getElementById('phone-body').innerHTML = '<div class="ph-wait">running&hellip;</div>';
+  try {
+    var resp = await fetch('/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q, device_id: 'dashboard-replay', no_count: true, history: [] })
+    });
+    var reader = resp.body.getReader();
+    var dec = new TextDecoder();
+    var buf = '', text = '';
+    while (true) {
+      var r = await reader.read();
+      if (r.done) break;
+      buf += dec.decode(r.value, { stream: true });
+      var lines = buf.split('\n');
+      buf = lines.pop();
+      lines.forEach(function(l) {
+        if (l.indexOf('data: ') !== 0) return;
+        try {
+          var ev = JSON.parse(l.slice(6));
+          if (ev.type === 'text') { text += ev.text; }
+          else if (ev.type === 'notice') {
+            document.getElementById('phone-body').innerHTML =
+              '<div class="ph-wait">' + phEsc(ev.text).replace(/\n/g, '<br>') + '</div>';
+          }
+        } catch (e) {}
+      });
+    }
+    document.getElementById('phone-body').innerHTML =
+      renderStatChat(text) || '<div class="ph-wait">(empty response)</div>';
+  } catch (e) {
+    document.getElementById('phone-body').innerHTML = '<div class="ph-wait">error: ' + phEsc(String(e)) + '</div>';
+  }
+}
+</script>
+'''
+
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -4382,126 +4568,7 @@ document.addEventListener('keydown', e => {{
 }});
 </script>
 
-<div id="phone-backdrop" onclick="if(event.target.id==='phone-backdrop')closePhone()">
-  <div id="phone-frame">
-    <button id="phone-close" onclick="closePhone()">&times;</button>
-    <div class="ph-q" id="phone-q"></div>
-    <div id="phone-body"><div class="ph-wait">running&hellip;</div></div>
-  </div>
-</div>
-<script>
-function closePhone() {{ document.getElementById('phone-backdrop').style.display = 'none'; }}
-document.addEventListener('keydown', function(e) {{ if (e.key === 'Escape') closePhone(); }});
-
-function phEsc(s) {{
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}}
-
-function renderStatChat(raw) {{
-  var out = [];
-  // pills first (they can appear anywhere) — collect then strip
-  var pills = [];
-  raw = raw.replace(/\[(SUGGEST|SEEALSO|DIDYOUMEAN)\]([\s\S]*?)\[\/\1\]/g,
-    function(_, k, v) {{ pills.push(v.trim()); return ''; }});
-  raw = raw.replace(/\[TEAMCARD:([A-Z]+)\]/g, function(_, c) {{
-    pills.push('\u2192 opens Team Card: ' + c); return ''; }});
-  // containers
-  var blocks = raw.split(/(\[LEADERBOARD\][\s\S]*?\[\/LEADERBOARD\]|\[STATGRID\][\s\S]*?\[\/STATGRID\]|\[GAMELOGS\][\s\S]*?(?:\[\/GAMELOGS\]|$))/);
-  blocks.forEach(function(b) {{
-    if (!b.trim()) return;
-    var m = b.match(/^\[(LEADERBOARD|STATGRID)\]([\s\S]*?)\[\/\1\]$/);
-    if (m) {{
-      var lines = m[2].trim().split('\\n').filter(function(l) {{ return l.trim(); }});
-      var header = [], rows = [];
-      lines.forEach(function(l) {{
-        l = l.trim();
-        if (l.indexOf('HEADER:') === 0) header = l.slice(7).split(',').map(function(x) {{ return x.trim(); }});
-        else if (l.indexOf('ROW') === 0) {{
-          var body = l.slice(3).trim();
-          var ci = body.indexOf(':');
-          var label = ci >= 0 ? body.slice(0, ci) : body;
-          var vals = ci >= 0 ? body.slice(ci + 1).split(',').map(function(x) {{ return x.trim(); }}) : [];
-          rows.push([label].concat(vals));
-        }}
-      }});
-      var h = '<div class="ph-card"><table><tr><th></th>' +
-        header.map(function(x) {{ return '<th>' + phEsc(x) + '</th>'; }}).join('') + '</tr>';
-      rows.forEach(function(r) {{
-        h += '<tr>' + r.map(function(c, i) {{ return '<td>' + phEsc(c) + '</td>'; }}).join('') + '</tr>';
-      }});
-      out.push(h + '</table></div>');
-      return;
-    }}
-    var g = b.match(/^\[GAMELOGS\]([\s\S]*?)(?:\[\/GAMELOGS\]|$)$/);
-    if (g) {{
-      var h2 = '<div class="ph-card"><table>';
-      g[1].trim().split('\\n').forEach(function(l) {{
-        var p = l.replace(/^GAME\s*/, '').split('|');
-        if (p.length === 2) h2 += '<tr><td>' + phEsc(p[0].trim()) + '</td><td style="text-align:left;color:#17222E;font-weight:400;">' + phEsc(p[1].trim()) + '</td></tr>';
-      }});
-      out.push(h2 + '</table></div>');
-      return;
-    }}
-    // prose block: handle SUBTITLE/CONTEXT/TIP + bold + paragraphs
-    var t = b;
-    t = t.replace(/\[SUBTITLE\]([\s\S]*?)\[\/SUBTITLE\]/g, '\\x01SUB$1\\x01');
-    t = t.replace(/\[CONTEXT\]([\s\S]*?)\[\/CONTEXT\]/g, '\\x01SUB$1\\x01');
-    t = t.replace(/\[TIP\]([\s\S]*?)\[\/TIP\]/g, '\\x01TIP$1\\x01');
-    t.split('\\x01').forEach(function(seg) {{
-      if (!seg.trim()) return;
-      if (seg.indexOf('SUB') === 0) {{ out.push('<div class="ph-sub">' + phEsc(seg.slice(3)) + '</div>'); return; }}
-      if (seg.indexOf('TIP') === 0) {{ out.push('<div class="ph-tip">' + phEsc(seg.slice(3)) + '</div>'); return; }}
-      seg.split(/\\n{{2,}}/).forEach(function(par) {{
-        if (!par.trim()) return;
-        var html = phEsc(par.trim()).replace(/\*\*([^*]+)\*\*/g, '<span class="ph-name">$1</span>');
-        out.push('<p>' + html.replace(/\\n/g, '<br>') + '</p>');
-      }});
-    }});
-  }});
-  if (pills.length) {{
-    out.push('<div>' + pills.map(function(p) {{ return '<span class="ph-pill">' + phEsc(p) + '</span>'; }}).join('') + '</div>');
-  }}
-  return out.join('');
-}}
-
-async function replayQuery(q) {{
-  document.getElementById('phone-backdrop').style.display = 'flex';
-  document.getElementById('phone-q').textContent = q;
-  document.getElementById('phone-body').innerHTML = '<div class="ph-wait">running&hellip;</div>';
-  try {{
-    var resp = await fetch('/query', {{
-      method: 'POST',
-      headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{ question: q, device_id: 'dashboard-replay', no_count: true, history: [] }})
-    }});
-    var reader = resp.body.getReader();
-    var dec = new TextDecoder();
-    var buf = '', text = '';
-    while (true) {{
-      var r = await reader.read();
-      if (r.done) break;
-      buf += dec.decode(r.value, {{ stream: true }});
-      var lines = buf.split('\\n');
-      buf = lines.pop();
-      lines.forEach(function(l) {{
-        if (l.indexOf('data: ') !== 0) return;
-        try {{
-          var ev = JSON.parse(l.slice(6));
-          if (ev.type === 'text') {{ text += ev.text; }}
-          else if (ev.type === 'notice') {{
-            document.getElementById('phone-body').innerHTML =
-              '<div class="ph-wait">' + phEsc(ev.text) + '</div>';
-          }}
-        }} catch (e) {{}}
-      }});
-    }}
-    document.getElementById('phone-body').innerHTML =
-      renderStatChat(text) || '<div class="ph-wait">(empty response)</div>';
-  }} catch (e) {{
-    document.getElementById('phone-body').innerHTML = '<div class="ph-wait">error: ' + phEsc(String(e)) + '</div>';
-  }}
-}}
-</script>
+{_phone_overlay}
 
 <h2 style="margin-top:40px;">Diagnostics <span style="font-weight:normal;font-size:13px;color:#888;">(cards appear only when there are unacknowledged errors)</span></h2>
 <div class="stat-cards">
