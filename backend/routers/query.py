@@ -1684,7 +1684,12 @@ async def _stream(question: str, device_id: str, history: list[dict], contextual
     def _insight_level(q: str) -> str | None:
         lower = q.lower()
         hard_signals = [
-            "optimal", "lineup", "build me", "build a",
+            # "lineup" alone REMOVED 2026-09-01 (sunset): it hard-gated
+            # "Cease vs the Guardians lineup", now a native engine answer
+            # (pitcher_vs_lineup). Constructive lineup asks still match via
+            # "optimal"/"build me"/"build a"/explicit phrases below.
+            "optimal", "build me", "build a", "optimal lineup",
+            "best lineup", "set my lineup",
             "roster", "draft", "fantasy",
             "if i were", "if you were",
             "strategy", "should i",
