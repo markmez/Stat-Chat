@@ -212,6 +212,7 @@ def try_intercept(question: str):
     # defeat both the parsers AND their bail regexes ('last 5 ganes'
     # slipped past parse_team_stats' window bail into a TEAMCARD claim).
     for _typo, _fix in (("ganes", "games"), ("gmaes", "games"), ("gamse", "games"),
+                        ("clevland", "cleveland"), ("cleaveland", "cleveland"),
                         ("metings", "meetings"), ("meetigns", "meetings"),
                         ("tonite", "tonight"), ("picthers", "pitchers"),
                         ("pichers", "pitchers"), ("standigns", "standings")):
