@@ -579,8 +579,15 @@ def try_intercept(question: str):
         if alts:
             see_also = f"\n[SEEALSO]{','.join(alts)}[/SEEALSO]"
 
-        if nm.is_pitcher(p1) and nm.is_pitcher(p2):
+        _p1_pitch, _p2_pitch = nm.is_pitcher(p1), nm.is_pitcher(p2)
+        if _p1_pitch and _p2_pitch:
             response = rb.build_pitching_comparison(p1, p2, season)
+        elif _p1_pitch != _p2_pitch:
+            # Batter vs pitcher is a MATCHUP, not a comparison (the Kikuchi
+            # batting-line-of-zeros incident, 2026-08-31): head-to-head
+            # history first, then the profile vs handedness and pitch mix.
+            batter, pitcher = (p2, p1) if _p1_pitch else (p1, p2)
+            response = rb.build_batter_vs_pitcher(batter, pitcher)
         else:
             response = rb.build_comparison(p1, p2, season)
         if response:
