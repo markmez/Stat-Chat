@@ -59,6 +59,21 @@ _PIPELINE_LOCK_PATH = "/tmp/statchat_pipeline.lock"
 _PIPELINE_LOCK_STALE_SECONDS = 5400  # 90 min — matches refresh.sh
 
 
+@router.post("/build-career-h2h")
+async def build_career_h2h(authorization: str | None = Header(None)):
+    """Backfill career head-to-head (1920-2025) from Retrosheet plays CSVs
+    (public, no auth). Detached, nice -19. Progress: trend_state key
+    'career_h2h_progress'."""
+    verify_admin(authorization)
+    import subprocess, sys
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "scripts", "build_career_h2h.py")
+    with open("/tmp/build_career_h2h.log", "a") as lf:
+        proc = subprocess.Popen(["nice", "-n", "19", sys.executable, script],
+                                stdout=lf, stderr=subprocess.STDOUT, start_new_session=True)
+    return {"status": "started", "pid": proc.pid}
+
+
 @router.post("/update-probables")
 async def update_probables(authorization: str | None = Header(None)):
     """Fetch probable starters for today/tomorrow into upcoming_games
