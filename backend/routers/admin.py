@@ -69,9 +69,9 @@ async def build_career_h2h(authorization: str | None = Header(None)):
     script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "scripts", "build_career_h2h.py")
     with open("/tmp/build_career_h2h.log", "a") as lf:
-        proc = subprocess.Popen(["nice", "-n", "19", sys.executable, script],
+        proc = subprocess.Popen(["nice", "-n", "19", sys.executable, script, "--fill-missing"],
                                 stdout=lf, stderr=subprocess.STDOUT, start_new_session=True)
-    return {"status": "started", "pid": proc.pid}
+    return {"status": "started", "mode": "fill-missing", "pid": proc.pid}
 
 
 @router.post("/update-probables")

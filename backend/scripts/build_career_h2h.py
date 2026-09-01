@@ -19,16 +19,20 @@ Progress: trend_state key 'career_h2h_progress'.
 Data license: Retrosheet (retrosheet.org), free use with attribution —
 already credited in schema_description.py.
 """
+import argparse
 import csv
 import io
 import json
 import os
+import socket
 import sqlite3
 import sys
 import time
 import urllib.request
 import zipfile
 from datetime import datetime
+
+socket.setdefaulttimeout(90)
 
 DB = os.environ.get("DB_PATH", os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "baseball_stats.db"))
@@ -43,23 +47,42 @@ def progress(conn, note):
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--fill-missing", action="store_true",
+                    help="Only fetch seasons absent from head_to_head; no wipe."
+                    " For gap-filling after download-timeout skips.")
+    args = ap.parse_args()
     conn = sqlite3.connect(DB)
     conn.execute("PRAGMA busy_timeout = 60000")
     conn.execute("""CREATE TABLE IF NOT EXISTS trend_state (
         key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_h2h_pair ON head_to_head(batter_id, pitcher_id)")
-    conn.execute("DELETE FROM head_to_head WHERE season < 2026")
+    years = list(YEARS)
+    if args.fill_missing:
+        have = {r[0] for r in conn.execute(
+            "SELECT DISTINCT season FROM head_to_head WHERE season < 2026")}
+        years = [y for y in YEARS if y not in have]
+        progress(conn, {"fill_missing": years[:30], "count": len(years)})
+    else:
+        conn.execute("DELETE FROM head_to_head WHERE season < 2026")
     conn.commit()
 
     t0 = time.time()
     total_pairs = 0
     done_years = 0
-    for y in YEARS:
+    for y in years:
         tmp = f"/tmp/{y}plays.zip"
-        try:
-            urllib.request.urlretrieve(URL.format(y=y), tmp)
-        except Exception as e:
-            progress(conn, {"year": y, "skip": str(e)[:80], "pairs": total_pairs})
+        ok = False
+        for attempt in range(3):
+            try:
+                urllib.request.urlretrieve(URL.format(y=y), tmp)
+                ok = True
+                break
+            except Exception as e:
+                last_err = e
+                time.sleep(20 * (attempt + 1))  # back off; retrosheet throttles
+        if not ok:
+            progress(conn, {"year": y, "skip": str(last_err)[:80], "pairs": total_pairs})
             continue
         agg = {}
         try:
