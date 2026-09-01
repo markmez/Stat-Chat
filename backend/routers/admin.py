@@ -15,7 +15,7 @@ import time
 from datetime import date, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -57,6 +57,45 @@ def verify_admin(authorization: str | None, key: str | None = None):
 
 _PIPELINE_LOCK_PATH = "/tmp/statchat_pipeline.lock"
 _PIPELINE_LOCK_STALE_SECONDS = 5400  # 90 min — matches refresh.sh
+
+
+@router.post("/upload-h2h")
+async def upload_h2h(request: Request, authorization: str | None = Header(None)):
+    """Accept a gzipped CSV of head_to_head rows aggregated off-box.
+
+    Exists because retrosheet.org rate-limited the box's IP mid-backfill
+    (2026-09-01): the missing seasons were aggregated locally and shipped
+    here. Wipes each uploaded season first (idempotent), inserts the rest.
+    Row format = head_to_head column order, empty string -> NULL.
+    """
+    verify_admin(authorization)
+    import csv as _csv
+    import gzip as _gzip
+    import io as _io
+    body = await request.body()
+    text = _gzip.decompress(body).decode()
+    rows = []
+    for r in _csv.reader(_io.StringIO(text)):
+        if len(r) != 18:
+            continue
+        rows.append([None if x == "" else x for x in r])
+    if not rows:
+        return {"status": "empty"}
+    seasons = sorted({int(r[2]) for r in rows})
+    if any(s >= 2026 for s in seasons):
+        return {"status": "rejected", "reason": "2026 rows are MSF-owned"}
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("PRAGMA busy_timeout = 60000")
+        conn.executemany("DELETE FROM head_to_head WHERE season = ?",
+                         [(s,) for s in seasons])
+        conn.executemany(
+            "INSERT INTO head_to_head VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            rows)
+        conn.commit()
+    finally:
+        conn.close()
+    return {"status": "ok", "rows": len(rows), "seasons": seasons}
 
 
 @router.post("/kill-h2h-build")
