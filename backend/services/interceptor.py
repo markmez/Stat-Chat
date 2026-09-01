@@ -584,10 +584,11 @@ def try_intercept(question: str):
             response = rb.build_pitching_comparison(p1, p2, season)
         elif _p1_pitch != _p2_pitch:
             # Batter vs pitcher is a MATCHUP, not a comparison (the Kikuchi
-            # batting-line-of-zeros incident, 2026-08-31): head-to-head
-            # history first, then the profile vs handedness and pitch mix.
+            # batting-line-of-zeros incident, 2026-08-31). Delegate to the
+            # existing matchup engine — comparison's fuzzier name matching
+            # acts as the typo net parse_matchup lacks ("De La Crus").
             batter, pitcher = (p2, p1) if _p1_pitch else (p1, p2)
-            response = rb.build_batter_vs_pitcher(batter, pitcher)
+            response = rb.build_matchup(batter, pitcher, season)
         else:
             response = rb.build_comparison(p1, p2, season)
         if response:
