@@ -6803,7 +6803,7 @@ def build_matchup(batter_name: str, pitcher_name: str,
         # H2H — show even with 1 PA
         if h2h and h2h[0]:
             pa = h2h[0]
-            parts.append(f"**Head-to-Head ({pa} PA)**")
+            parts.append(f"**Head-to-Head This Season ({pa} PA)**")
             parts.append("[STATGRID]")
             parts.append("HEADER: PA, AB, H, HR, BB, SO, AVG, OBP, SLG, OPS")
             parts.append(f"ROW {batter_display}: {h2h[0]}, {h2h[1]}, {h2h[2]}, {h2h[3]}, "
@@ -6811,6 +6811,12 @@ def build_matchup(batter_name: str, pitcher_name: str,
                         f"{_format_rate(h2h[6])}, {_format_rate(h2h[7])}, "
                         f"{_format_rate(h2h[8])}, {_format_rate(h2h[9])}")
             parts.append("[/STATGRID]\n")
+        else:
+            # Absence must be explicit, not ambiguous (Mark 2026-08-31):
+            # an omitted H2H section reads as "no data" when it means
+            # "no meetings". Scope is honest — the table is this-season
+            # only until the Retrosheet career backfill exists.
+            parts.append(f"They haven't faced each other this season.\n")
 
         # Platoon
         if platoon_line:
