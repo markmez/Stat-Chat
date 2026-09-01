@@ -59,6 +59,15 @@ _PIPELINE_LOCK_PATH = "/tmp/statchat_pipeline.lock"
 _PIPELINE_LOCK_STALE_SECONDS = 5400  # 90 min — matches refresh.sh
 
 
+@router.post("/kill-h2h-build")
+async def kill_h2h_build(authorization: str | None = Header(None)):
+    """Kill a stuck build_career_h2h.py (fixed name, no arbitrary input)."""
+    verify_admin(authorization)
+    import subprocess
+    r = subprocess.run(["pkill", "-f", "build_career_h2h.py"], capture_output=True)
+    return {"status": "ok", "killed": r.returncode == 0}
+
+
 @router.post("/build-career-h2h")
 async def build_career_h2h(authorization: str | None = Header(None)):
     """Backfill career head-to-head (1920-2025) from Retrosheet plays CSVs
