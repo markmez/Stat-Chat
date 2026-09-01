@@ -2145,7 +2145,12 @@ def parse_pitcher_vs_lineup(input_str: str) -> Optional[dict]:
     name = find_player_in_text(input_str)
     if not name or not is_pitcher(name):
         return None
-    season = detect_season(input_str)
+    # Career is the DEFAULT scope for this shape (Mark 2026-09-01): a bare
+    # year token ("current lineup 2026") reads as a ROSTER qualifier, not an
+    # H2H window. Only explicit "this season/year" phrasing scopes the H2H.
+    season = None
+    if re.search(r"\bthis (?:season|year)\b", lower):
+        season = detect_season(input_str) or _current_calendar_year()
     return {"name": name, "team_code": team_code, "season": season}
 
 

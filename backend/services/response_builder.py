@@ -2172,6 +2172,10 @@ def build_pitcher_vs_lineup(name: str, team_code: str,
     faced = len(rows)
     parts.append(f"\n{display_name} has faced {faced} of the current"
                  f" {team} regulars.")
+    if season:
+        parts.append(f"\n[SEEALSO]{display_name} vs {team} lineup[/SEEALSO]")
+    else:
+        parts.append(f"\n[SEEALSO]{display_name} vs {team} lineup this season[/SEEALSO]")
     parts.append(f"\n[SUGGEST]{display_name} vs the {team}[/SUGGEST]")
     parts.append(f"[SUGGEST]{display_name} stats[/SUGGEST]")
     return "\n".join(parts)
