@@ -2132,6 +2132,23 @@ def parse_platoon_splits(input_str: str) -> Optional[dict]:
             (["career", "all time", "all-time", "lifetime"] if is_career else [])}
 
 
+def parse_pitcher_vs_lineup(input_str: str) -> Optional[dict]:
+    """'{pitcher} stats against the {team} lineup/hitters/batters' ->
+    batter-by-batter career H2H vs the team's current hitters. Answerable
+    natively since the 2026-09-01 Retrosheet H2H backfill."""
+    lower = input_str.strip().lower()
+    if not re.search(r"\b(lineup|line-up|hitters|batters|roster)\b", lower):
+        return None
+    team_code = match_team(lower)
+    if not team_code:
+        return None
+    name = find_player_in_text(input_str)
+    if not name or not is_pitcher(name):
+        return None
+    season = detect_season(input_str)
+    return {"name": name, "team_code": team_code, "season": season}
+
+
 def parse_team_h2h_recent(input_str: str) -> Optional[dict]:
     """'sox vs cubs last 5 games' / 'yankees vs red sox last 10 meetings'
     -> recent head-to-head results from team_game_results. Bare 'sox'

@@ -553,6 +553,14 @@ def try_intercept(question: str):
     # this returns None and comparison handles it. Also beats the team parsers,
     # which would return the opponent's roster (parse_team_stats misses
     # ambiguous surnames like "Judge").
+    pvl = nm.parse_pitcher_vs_lineup(trimmed)
+    if pvl:
+        response = rb.build_pitcher_vs_lineup(
+            pvl["name"], pvl["team_code"], pvl["season"])
+        if response:
+            logger.info("pitcher_vs_lineup question=%r", trimmed)
+            return response
+
     pvt = _claim(nm.parse_player_vs_team(trimmed), trimmed)
     if pvt:
         response = rb.build_player_vs_team(

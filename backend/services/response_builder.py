@@ -2128,6 +2128,55 @@ def build_platoon_splits(name: str, hand: Optional[str] = None, season=0) -> Opt
         conn.close()
 
 
+def build_pitcher_vs_lineup(name: str, team_code: str,
+                            season=None) -> Optional[str]:
+    """A pitcher's H2H line vs each current hitter on a team (career by
+    default, one season when asked). Sorted by PA against."""
+    conn = _get_db()
+    try:
+        display_name, _ = _get_player_info(conn, name)
+        roster = [r[0] for r in conn.execute(
+            "SELECT s.player_id FROM season_batting_stats s"
+            " WHERE s.season = 2026 AND (s.team = ? OR s.team LIKE ? OR s.team LIKE ?)"
+            " AND s.plate_appearances >= 50 ORDER BY s.plate_appearances DESC LIMIT 13",
+            (team_code, f"{team_code}/%", f"%/{team_code}")).fetchall()]
+        if not roster:
+            return None
+        marks = ",".join("?" * len(roster))
+        where = f"h.pitcher_id = (SELECT player_id FROM players WHERE name = ?) AND h.batter_id IN ({marks})"
+        params = [_sanitize(name)] + roster
+        scope = "Career"
+        if season:
+            where += " AND h.season = ?"
+            params.append(season)
+            scope = str(season)
+        rows = conn.execute(
+            f"SELECT p.name, SUM(h.plate_appearances) pa, SUM(h.at_bats),"
+            f" SUM(h.hits), SUM(h.home_runs), SUM(h.strikeouts)"
+            f" FROM head_to_head h JOIN players p ON p.player_id = h.batter_id"
+            f" WHERE {where} GROUP BY h.batter_id"
+            f" HAVING pa > 0 ORDER BY pa DESC", tuple(params)).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return None
+    team = _team_full_name(team_code)
+    parts = [f"**{display_name} vs {team} hitters** ({scope} head-to-head)\n"]
+    parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
+    parts.append("[LEADERBOARD]")
+    parts.append("HEADER: PA, H, HR, SO, AVG")
+    for i, (bn, pa, ab, h, hr, so) in enumerate(rows):
+        avg = f".{int(round(1000.0 * (h or 0) / ab)):03d}" if ab else "—"
+        parts.append(f"ROW {i+1}. {bn}: {pa}, {h or 0}, {hr or 0}, {so or 0}, {avg}")
+    parts.append("[/LEADERBOARD]")
+    faced = len(rows)
+    parts.append(f"\n{display_name} has faced {faced} of the current"
+                 f" {team} regulars.")
+    parts.append(f"\n[SUGGEST]{display_name} vs the {team}[/SUGGEST]")
+    parts.append(f"[SUGGEST]{display_name} stats[/SUGGEST]")
+    return "\n".join(parts)
+
+
 def build_team_h2h_recent(team_a: str, team_b: str, n: int) -> Optional[str]:
     """Last n head-to-head results between two teams (team_game_results,
     2025+). Summary record line + per-game scores, newest first."""
