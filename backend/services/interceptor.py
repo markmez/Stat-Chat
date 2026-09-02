@@ -194,7 +194,7 @@ def _claim(result, query):
     return result
 
 
-def try_intercept(question: str):
+def try_intercept(question: str, _no_split: bool = False):
     """
     Try to answer the question locally from the DB.
     Returns formatted response text (with [STATGRID], [SUGGEST], etc. tags),
@@ -213,6 +213,7 @@ def try_intercept(question: str):
     # slipped past parse_team_stats' window bail into a TEAMCARD claim).
     for _typo, _fix in (("ganes", "games"), ("gmaes", "games"), ("gamse", "games"),
                         ("clevland", "cleveland"), ("cleaveland", "cleveland"),
+                        ("pticher", "pitcher"), ("pitcer", "pitcher"), ("pither", "pitcher"),
                         ("metings", "meetings"), ("meetigns", "meetings"),
                         ("tonite", "tonight"), ("picthers", "pitchers"),
                         ("pichers", "pitchers"), ("standigns", "standings")):
@@ -1044,5 +1045,40 @@ def try_intercept(question: str):
             return response
 
     # No match — fall through to Claude
+    # Compound-query splitter (Mark 2026-09-01: "Nolan Ryan career ERA and
+    # innings pitched all-time rankings" is two questions in one). Runs ONLY
+    # after the whole query failed every parser, so single intents that
+    # contain "and" ("30 HR and 30 SB", "Judge and Soto") are untouched —
+    # they claimed the whole query above. Both halves must fully intercept
+    # or we fall through as before; guard sentinels propagate.
+    if not _no_split:
+        m = re.search(r"\s+(?:and|&|plus|;)\s+", trimmed, re.I)
+        if m:
+            left = trimmed[:m.start()].strip()
+            right = trimmed[m.end():].strip()
+            if len(left.split()) >= 2 and len(right.split()) >= 2:
+                r1 = try_intercept(left, _no_split=True)
+                if r1 == "__DIMS_DROPPED__":
+                    return r1
+                if r1:
+                    # a bare-stat right half usually inherits the subject or
+                    # scope implicitly; try as-is first, then with the left
+                    # half's first two tokens (the player name) prefixed.
+                    r2 = try_intercept(right, _no_split=True)
+                    if r2 == "__DIMS_DROPPED__":
+                        return r2
+                    if not r2:
+                        r2 = try_intercept(f"{' '.join(left.split()[:2])} {right}",
+                                           _no_split=True)
+                        if r2 == "__DIMS_DROPPED__":
+                            r2 = None
+                    if r2:
+                        logger.info("compound_split question=%r", trimmed)
+                        no_count = r1.startswith("__NO_COUNT__") or r2.startswith("__NO_COUNT__")
+                        r1 = r1.replace("__NO_COUNT__", "", 1)
+                        r2 = r2.replace("__NO_COUNT__", "", 1)
+                        combined = r1.rstrip() + "\n\n" + r2.lstrip()
+                        return ("__NO_COUNT__" + combined) if no_count else combined
+
     return None
 # QE_ERROR_HC_UUID configured via deploy workflow

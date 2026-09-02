@@ -1027,7 +1027,7 @@ def decompose(question: str) -> QueryPlan:
     # for queries like "worst hitters first at bat").
     if any(t in lower for t in ["best", "highest", "most", "top", "leaders", "leader",
                                   "leaderboard", "lowest", "who led", "who leads", "leading",
-                                  "worst", "fewest"]):
+                                  "worst", "fewest", "rankings", "ranking", "ranked"]):
         if plan.query_type not in ("count", "superlative", "team_ranking", "per_team_leaders", "team_conditional_record", "player_career_filtered"):
             plan.query_type = "leaderboard"
         _add_consumed(plan, "best highest most top leaders leader leaderboard lowest who led leads leading worst fewest")
@@ -4673,10 +4673,15 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
                 "babip": ("CAST(SUM({p}.hits) - SUM({p}.home_runs) AS REAL) / NULLIF(SUM({p}.at_bats) - SUM({p}.strikeouts) - SUM({p}.home_runs) + SUM(COALESCE({p}.sacrifice_flies, 0)), 0)",
                           "HAVING SUM({p}.at_bats) >= 5000"),
                 # Pitching rate stats
-                "era": ("9.0 * SUM({p}.earned_runs) / NULLIF(SUM({p}.ip_outs) / 3.0, 0)",
-                        "HAVING SUM({p}.ip_outs) >= 3000"),
-                "whip": ("CAST(SUM({p}.hits) + SUM({p}.walks) AS REAL) / NULLIF(SUM({p}.ip_outs) / 3.0, 0)",
-                         "HAVING SUM({p}.ip_outs) >= 3000"),
+                # ER-complete seasons only: early-era rows lack earned_runs,
+                # and summing partial ER over full IP produced 0.02 "career
+                # ERAs" (the Jake Weimer bug, 2026-09-01).
+                "era": ("9.0 * SUM(CASE WHEN {p}.earned_runs IS NOT NULL THEN {p}.earned_runs END)"
+                        " / NULLIF(SUM(CASE WHEN {p}.earned_runs IS NOT NULL THEN {p}.ip_outs END) / 3.0, 0)",
+                        "HAVING SUM(CASE WHEN {p}.earned_runs IS NOT NULL THEN {p}.ip_outs END) >= 3000"),
+                "whip": ("CAST(SUM(CASE WHEN {p}.hits IS NOT NULL AND {p}.walks IS NOT NULL THEN {p}.hits + {p}.walks END) AS REAL)"
+                         " / NULLIF(SUM(CASE WHEN {p}.hits IS NOT NULL AND {p}.walks IS NOT NULL THEN {p}.ip_outs END) / 3.0, 0)",
+                         "HAVING SUM(CASE WHEN {p}.hits IS NOT NULL AND {p}.walks IS NOT NULL THEN {p}.ip_outs END) >= 3000"),
                 "k_per_9": ("9.0 * SUM({p}.strikeouts) / NULLIF(SUM({p}.ip_outs) / 3.0, 0)",
                             "HAVING SUM({p}.ip_outs) >= 3000"),
                 "bb_per_9": ("9.0 * SUM({p}.walks) / NULLIF(SUM({p}.ip_outs) / 3.0, 0)",
