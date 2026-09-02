@@ -4126,7 +4126,15 @@ def parse_catch_all_player_stat(input_str: str) -> Optional[dict]:
     if not name:
         return None
 
-    is_career = contains_word("career", lower)
+    # "all time" / "ever" / "lifetime" mean CAREER for a single player's
+    # stat, same as the leaderboard convention ("Gil innings pitched all
+    # time" was answering this-season; Mark 2026-09-01). Explicit years
+    # still win: "Judge home runs ever" is career, "Judge home runs 2024"
+    # is that season.
+    is_career = (contains_word("career", lower)
+                 or contains_word("lifetime", lower)
+                 or contains_word("ever", lower)
+                 or "all time" in lower or "all-time" in lower)
     season = detect_season(lower, default_to_most_recent=True) or _current_calendar_year()
     if _residual_qualifier_words(lower, name):
         return None
