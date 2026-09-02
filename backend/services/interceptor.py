@@ -1114,7 +1114,22 @@ def try_intercept(question: str, _no_split: bool = False):
     left, right = trimmed[:m.start()].strip(), trimmed[m.end():].strip()
     if len(left.split()) < 2 or (len(right.split()) < 2 and not _force_split):
         return _bail()
-    r1 = _try_intercept_once(left)
+    # Trailing scope distributes across the conjunction: "Gil ERA and
+    # innings pitched all time" scopes BOTH stats to career; "Judge HR and
+    # RBI in 2024" scopes both to 2024. Only when the left half carries no
+    # scope of its own.
+    _scope_sfx = None
+    if not re.search(r"\b(career|ever|this season|this year|(?:19|20)\d{2})\b", left, re.I):
+        _sm = re.search(r"\b(career|ever|(?:in )?(?:19|20)\d{2}|this season|this year)\b\s*$", right, re.I)
+        if _sm:
+            _scope_sfx = _sm.group(1)
+    r1 = None
+    if _scope_sfx:
+        r1 = _try_intercept_once(f"{left} {_scope_sfx}")
+        if r1 == "__DIMS_DROPPED__":
+            r1 = None
+    if not r1:
+        r1 = _try_intercept_once(left)
     if r1 == "__DIMS_DROPPED__" or not r1:
         return _bail()
     # SUBJECT-FIRST (Mark 2026-09-01): "Luis Gil ERA and innings pitched all
