@@ -452,6 +452,7 @@ _STOP_WORDS = {
     "really", "actually", "currently", "recently",
     "appeared", "appearing", "recorded", "posted", "put",
     "league", "led", "leading", "leads", "leader", "leaders",
+    "rankings", "ranking", "ranked", "rank",
     "outing", "outings", "start", "starts", "appearance", "appearances",
     "baseman", "basemen", "fielder", "fielders",
     # "qualified" is redundant — every rate-stat leaderboard already enforces
@@ -1030,7 +1031,7 @@ def decompose(question: str) -> QueryPlan:
                                   "worst", "fewest", "rankings", "ranking", "ranked"]):
         if plan.query_type not in ("count", "superlative", "team_ranking", "per_team_leaders", "team_conditional_record", "player_career_filtered"):
             plan.query_type = "leaderboard"
-        _add_consumed(plan, "best highest most top leaders leader leaderboard lowest who led leads leading worst fewest")
+        _add_consumed(plan, "best highest most top leaders leader leaderboard lowest who led leads leading worst fewest rankings ranking ranked rank")
 
     # "Lowest" for rate stats is actually best (not worst)
     if "lowest" in lower:
