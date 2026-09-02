@@ -1067,7 +1067,24 @@ def try_intercept(question: str, _no_split: bool = False):
     the whole query in the first pass. Wrapper (not end-of-function code)
     because _try_intercept_once has many early return-None exits that
     would otherwise skip the splitter."""
-    result = _try_intercept_once(question)
+    # Force-split detection: a player + "and" joining two DISTINCT bare
+    # stats ("Gil ERA and innings pitched") is always two questions — the
+    # engine path would otherwise claim it as ONE stat and silently drop
+    # the other (its alias-consumption makes the second stat look
+    # explained). Small numbers nearby mean thresholds ("30 HR and 30 SB")
+    # — those stay whole-query. Whole pass remains the fallback if the
+    # split can't answer.
+    _force_split = False
+    _q = question.strip()
+    _fm = re.search(r"\s+(?:and|&)\s+", _q, re.I)
+    if not _no_split and _fm and not re.search(r"\b\d{1,3}\+?\b", _q):
+        _sl = nm.match_stat(_q[:_fm.start()])
+        _sr = nm.match_stat(_q[_fm.end():])
+        if _sl and _sr and _sl.db_column != _sr.db_column \
+                and nm.find_player_in_text(_q[:_fm.start()]):
+            _force_split = True
+
+    result = None if _force_split else _try_intercept_once(question)
     if _no_split:
         return result
     if result is not None and result != "__DIMS_DROPPED__":
@@ -1110,6 +1127,9 @@ def try_intercept(question: str, _no_split: bool = False):
             # standalone won; offer the subject reading if it answers
             _alt_pill = None
     if not r2:
+        if _force_split:
+            # split couldn't answer; fall back to the whole-query pass
+            return _try_intercept_once(question)
         return _sentinel
     logger.info("compound_split question=%r", trimmed)
     no_count = r1.startswith("__NO_COUNT__") or r2.startswith("__NO_COUNT__")
