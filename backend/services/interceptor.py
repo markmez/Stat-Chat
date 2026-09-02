@@ -188,6 +188,17 @@ def _claim(result, query):
     name = result.get("name") or result.get("player_name")
     if not name:
         return result  # no single player → no partial-answer risk to guard
+    # Multi-stat conjunction: "Luis Gil ERA and innings pitched" must not be
+    # claimed as ONE stat (the residual guard consumes every stat alias, so
+    # the dropped stat looked "explained"). Decline; the compound splitter
+    # answers both halves. Threshold shapes ("30 HR and 30 SB") never pass
+    # through _claim, so they are unaffected.
+    _cm = re.search(r"\s+(?:and|&)\s+", query, re.I)
+    if _cm:
+        _s1 = nm.match_stat(query[:_cm.start()])
+        _s2 = nm.match_stat(query[_cm.end():])
+        if _s1 and _s2 and _s1.db_column != _s2.db_column:
+            return None
     if nm._residual_qualifier_words(query.strip().lower(), name,
                                     extra_consumed=result.get("consumed", [])):
         return None
