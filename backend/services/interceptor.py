@@ -1119,8 +1119,8 @@ def try_intercept(question: str, _no_split: bool = False):
     # RBI in 2024" scopes both to 2024. Only when the left half carries no
     # scope of its own.
     _scope_sfx = None
-    if not re.search(r"\b(career|ever|this season|this year|(?:19|20)\d{2})\b", left, re.I):
-        _sm = re.search(r"\b(career|ever|(?:in )?(?:19|20)\d{2}|this season|this year)\b\s*$", right, re.I)
+    if not re.search(r"\b(career|ever|all[- ]time|all time|lifetime|this season|this year|(?:19|20)\d{2})\b", left, re.I):
+        _sm = re.search(r"\b(career|ever|(?:of )?all[- ]?time|lifetime|(?:in )?(?:19|20)\d{2}|this season|this year)\b\s*$", right, re.I)
         if _sm:
             _scope_sfx = _sm.group(1)
     r1 = None
