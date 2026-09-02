@@ -2008,8 +2008,11 @@ def parse_single_stat_lookup(input_str: str) -> Optional[dict]:
     if any(w in lower for w in leaderboard_words):
         return None
 
-    # Exclude career queries
-    if contains_word("career", lower):
+    # Exclude career queries — including the synonyms ("Judge home runs
+    # ever" was claimed here and answered this-season; Mark 2026-09-01)
+    if (contains_word("career", lower) or contains_word("ever", lower)
+            or contains_word("lifetime", lower)
+            or "all time" in lower or "all-time" in lower):
         return None
 
     stat = match_stat(lower)
