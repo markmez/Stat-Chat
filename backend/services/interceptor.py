@@ -1057,22 +1057,25 @@ def try_intercept(question: str, _no_split: bool = False):
     because _try_intercept_once has many early return-None exits that
     would otherwise skip the splitter."""
     result = _try_intercept_once(question)
-    if result is not None or _no_split:
+    if _no_split:
         return result
+    if result is not None and result != "__DIMS_DROPPED__":
+        return result
+    _sentinel = result  # None or the guard sentinel; a clean split beats both
     import re as _re
     trimmed = question.strip()
     m = _re.search(r"\s+(?:and|&|plus|;)\s+", trimmed, _re.I)
     if not m:
-        return None
+        return _sentinel
     left, right = trimmed[:m.start()].strip(), trimmed[m.end():].strip()
     if len(left.split()) < 2 or len(right.split()) < 2:
-        return None
+        return _sentinel
     r1 = _try_intercept_once(left)
     if r1 == "__DIMS_DROPPED__" or not r1:
-        return r1 if r1 else None
+        return _sentinel
     r2 = _try_intercept_once(right)
     if r2 == "__DIMS_DROPPED__":
-        return r2
+        r2 = None
     if not r2:
         # bare right halves often inherit the subject: retry with the left
         # half's leading name tokens prefixed
@@ -1080,7 +1083,7 @@ def try_intercept(question: str, _no_split: bool = False):
         if r2 == "__DIMS_DROPPED__":
             r2 = None
     if not r2:
-        return None
+        return _sentinel
     logger.info("compound_split question=%r", trimmed)
     no_count = r1.startswith("__NO_COUNT__") or r2.startswith("__NO_COUNT__")
     r1 = r1.replace("__NO_COUNT__", "", 1)

@@ -2635,10 +2635,17 @@ def _format_val(stat_col: str, value, is_rate: bool = False) -> str:
             except (ValueError, TypeError):
                 return str(value)
         return _format_rate(value)
-    if stat_col in ("ip_outs", "innings_pitched"):
+    if stat_col == "ip_outs":
         try:
             outs = int(value)
             return f"{outs // 3}.{outs % 3}"
+        except (ValueError, TypeError):
+            return str(value)
+    if stat_col == "innings_pitched":
+        # stored in decimal-thirds notation (346.1) — print as-is, never /3
+        try:
+            fv = float(value)
+            return str(int(fv)) if fv == int(fv) else f"{fv:.1f}"
         except (ValueError, TypeError):
             return str(value)
     # Derived percentage stats
@@ -4725,10 +4732,15 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
                 tuple(query_params + [plan.limit]),
             )
         else:
-            # Career counting stat — simple SUM
+            # Career counting stat — simple SUM. Innings sum as OUTS:
+            # innings_pitched is decimal-thirds (346.1 = 346 1/3) and does
+            # not add arithmetically — the old sum-then-/3 showed Walter
+            # Johnson with "1970.0" career IP.
+            _career_cnt_col = ("ip_outs" if plan.stat.db_column == "innings_pitched"
+                               else plan.stat.db_column)
             cur = conn.cursor()
             cur.execute(
-                f"SELECT p.name, SUM({prefix}.{plan.stat.db_column}) AS stat_val "
+                f"SELECT p.name, SUM({prefix}.{_career_cnt_col}) AS stat_val "
                 f"FROM {table} {prefix} "
                 f"JOIN players p ON {prefix}.player_id = p.player_id "
                 f"{where} "
@@ -4800,6 +4812,8 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
     parts.append("[TIP]Tap a player name for their full profile.[/TIP]")
     parts.append("[LEADERBOARD]")
     stat_col_key = plan.stat.db_column if plan.stat else (plan.derived_stat or "")
+    if plan.scope == "career" and stat_col_key == "innings_pitched":
+        stat_col_key = "ip_outs"  # career innings summed as outs (see above)
     has_age_col = (plan.age_max or plan.age_min) and not has_year
     n_extra = len(plan.extra_filters)
     extra_headers = [ef["stat"].display_abbrev for ef in plan.extra_filters if ef.get("stat")]
