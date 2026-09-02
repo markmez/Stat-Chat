@@ -16,6 +16,19 @@ Platoon splits via Chadwick Bureau retrosplits (Open Database License).
 - bats (TEXT) — batting hand: "R" (right), "L" (left), or "B" (both/switch-hitter)
 - throws (TEXT) — throwing hand: "R" (right) or "L" (left)
 
+## CRITICAL DATA + SEMANTICS WARNINGS
+1. EARLY-ERA EARNED RUNS ARE STORED AS ZERO, NOT NULL: pre-~1910 pitching
+   seasons have earned_runs=0 / era=0.0 meaning MISSING, not perfect. Any
+   career or historical ERA/WHIP ranking MUST filter to era > 0 seasons —
+   otherwise the board fills with fake 0.00 ERAs (Mathewson 1903 et al.).
+2. "best/greatest {player-type} ever / of all time" means CAREER aggregates
+   (career ERA leaders, career HR leaders), NOT best single seasons. Use
+   single-season records only when the query says "in a season"/"single
+   season". This matches the structural engine's convention.
+3. ip_outs is outs (divide by 3 for innings and format as 464.1-style
+   thirds); innings_pitched is TEXT thirds notation and must never be
+   SUMmed arithmetically.
+
 ### season_batting_stats
 - player_id (TEXT) — references players table
 - season (INTEGER) — year (e.g., 2024)
