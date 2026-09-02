@@ -2202,6 +2202,8 @@ def parse_team_h2h_recent(input_str: str) -> Optional[dict]:
 _SPELL_VOCAB: Optional[set] = None
 _SPELL_NAME_TOKENS: Optional[set] = None
 
+_SPELL_CORE = None  # set(_SPELL_KEYWORDS), built below
+
 _SPELL_KEYWORDS = """
 best worst most fewest top highest lowest leaders leader leaderboard rankings
 ranking ranked career season seasons ever pitcher pitchers hitter hitters
@@ -2212,6 +2214,7 @@ history historical rookie veteran active playoff playoffs series schedule
 probable probables compare comparison between since before after during
 first last next current all time lifetime home away leads led homer homers
 """.split()
+_SPELL_CORE = set(_SPELL_KEYWORDS)
 
 
 def _spell_sets():
@@ -2270,12 +2273,19 @@ def spellfix(text: str):
             continue
         neigh = _edits1(low)
         cands = neigh & vocab
-        if len(cands) == 1 and not (neigh & names):
+        if len(cands) == 1:
             fixed = next(iter(cands))
-            out_tokens.append(fixed)
-            fixes += 1
-        else:
-            out_tokens.append(tok)
+            # Name veto — but CORE keywords override it: nearly every short
+            # token is edit-1 from SOME historical surname (est~Best 1985,
+            # carrer~Carter), which made the veto near-total. A unique match
+            # to a core query keyword is far stronger evidence than
+            # proximity to an obscure name; alias-derived vocab (team/stat
+            # words) still defers to names.
+            if fixed in _SPELL_CORE or not (neigh & names):
+                out_tokens.append(fixed)
+                fixes += 1
+                continue
+        out_tokens.append(tok)
     return "".join(out_tokens), fixes
 
 
