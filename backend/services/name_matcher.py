@@ -1790,6 +1790,11 @@ def parse_season_lookup(input_str: str) -> Optional[dict]:
     """Detect season lookup queries. Returns dict with name, season."""
     lower = input_str.strip().lower()
 
+    # career-scope words mean this is NOT a single-season card ("Judge home
+    # runs ever" fell through to here and rendered the 2026 season grid)
+    if (contains_word("career", lower) or contains_word("ever", lower)):
+        return None
+
     # Reject game-log-style queries — these need the query engine, not a season summary
     if re.search(r'games?\s+with\s+\d|multi[- ]?(hit|homer|hr)|(\d+)\+?\s*[- ]?\s*hit\s+games?|\d+\+\s+\w+\s+games?', lower):
         return None

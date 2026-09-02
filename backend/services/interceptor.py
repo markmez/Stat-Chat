@@ -226,10 +226,21 @@ def _try_intercept_once(question: str):
     for _typo, _fix in (("ganes", "games"), ("gmaes", "games"), ("gamse", "games"),
                         ("clevland", "cleveland"), ("cleaveland", "cleveland"),
                         ("pticher", "pitcher"), ("pitcer", "pitcher"), ("pither", "pitcher"),
+                        ("all-time", "career"), ("lifetime", "career"),
                         ("metings", "meetings"), ("meetigns", "meetings"),
                         ("tonite", "tonight"), ("picthers", "pitchers"),
                         ("pichers", "pitchers"), ("standigns", "standings")):
         trimmed = re.sub(rf"\b{_typo}\b", _fix, trimmed, flags=re.I)
+
+    # Career-synonym normalization: "all time"/"all-time"/"lifetime" mean
+    # career in every phrasing this app sees; folding them here means every
+    # parser inherits the well-tested "career" paths instead of each one
+    # re-learning the synonyms ("Gil innings pitched all time" answered
+    # this-season through TWO successive claimers before this).
+    # "ever" is deliberately NOT folded — "has X ever ..." question forms
+    # depend on it (cross-season count parsers).
+    trimmed = re.sub(r"\bof all time\b", "career", trimmed, flags=re.I)
+    trimmed = re.sub(r"\ball time\b", "career", trimmed, flags=re.I)
 
     lower = trimmed.lower()
 
