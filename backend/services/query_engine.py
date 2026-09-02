@@ -4676,12 +4676,16 @@ def _execute_leaderboard(conn, plan: QueryPlan) -> Optional[str]:
                 # ER-complete seasons only: early-era rows lack earned_runs,
                 # and summing partial ER over full IP produced 0.02 "career
                 # ERAs" (the Jake Weimer bug, 2026-09-01).
-                "era": ("9.0 * SUM(CASE WHEN {p}.earned_runs IS NOT NULL THEN {p}.earned_runs END)"
-                        " / NULLIF(SUM(CASE WHEN {p}.earned_runs IS NOT NULL THEN {p}.ip_outs END) / 3.0, 0)",
-                        "HAVING SUM(CASE WHEN {p}.earned_runs IS NOT NULL THEN {p}.ip_outs END) >= 3000"),
-                "whip": ("CAST(SUM(CASE WHEN {p}.hits IS NOT NULL AND {p}.walks IS NOT NULL THEN {p}.hits + {p}.walks END) AS REAL)"
-                         " / NULLIF(SUM(CASE WHEN {p}.hits IS NOT NULL AND {p}.walks IS NOT NULL THEN {p}.ip_outs END) / 3.0, 0)",
-                         "HAVING SUM(CASE WHEN {p}.hits IS NOT NULL AND {p}.walks IS NOT NULL THEN {p}.ip_outs END) >= 3000"),
+                # Early-era seasons store missing earned runs as ZERO (Weimer
+                # 1903-08: er=0, era=0.0), so the completeness test is era>0,
+                # not IS NOT NULL. A pitcher whose ER-complete innings fall
+                # under the 3000-out floor drops off the board entirely.
+                "era": ("9.0 * SUM(CASE WHEN {p}.era > 0 THEN {p}.earned_runs END)"
+                        " / NULLIF(SUM(CASE WHEN {p}.era > 0 THEN {p}.ip_outs END) / 3.0, 0)",
+                        "HAVING SUM(CASE WHEN {p}.era > 0 THEN {p}.ip_outs END) >= 3000"),
+                "whip": ("CAST(SUM(CASE WHEN {p}.era > 0 THEN {p}.hits + {p}.walks END) AS REAL)"
+                         " / NULLIF(SUM(CASE WHEN {p}.era > 0 THEN {p}.ip_outs END) / 3.0, 0)",
+                         "HAVING SUM(CASE WHEN {p}.era > 0 THEN {p}.ip_outs END) >= 3000"),
                 "k_per_9": ("9.0 * SUM({p}.strikeouts) / NULLIF(SUM({p}.ip_outs) / 3.0, 0)",
                             "HAVING SUM({p}.ip_outs) >= 3000"),
                 "bb_per_9": ("9.0 * SUM({p}.walks) / NULLIF(SUM({p}.ip_outs) / 3.0, 0)",
