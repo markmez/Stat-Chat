@@ -2635,17 +2635,14 @@ def _format_val(stat_col: str, value, is_rate: bool = False) -> str:
             except (ValueError, TypeError):
                 return str(value)
         return _format_rate(value)
-    if stat_col == "ip_outs":
+    if stat_col in ("ip_outs", "innings_pitched"):
+        # Every numeric IP value reaching this formatter is OUTS: leaderboard
+        # SELECTs swap to ip_outs for sane numeric ORDER BY (the TEXT thirds
+        # column never flows here). Verified 2026-09-01: Walsh 1908 = 1393
+        # outs -> "464.1".
         try:
-            outs = int(value)
+            outs = int(float(value))
             return f"{outs // 3}.{outs % 3}"
-        except (ValueError, TypeError):
-            return str(value)
-    if stat_col == "innings_pitched":
-        # stored in decimal-thirds notation (346.1) — print as-is, never /3
-        try:
-            fv = float(value)
-            return str(int(fv)) if fv == int(fv) else f"{fv:.1f}"
         except (ValueError, TypeError):
             return str(value)
     # Derived percentage stats
