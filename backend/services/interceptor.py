@@ -1094,14 +1094,18 @@ def try_intercept(question: str, _no_split: bool = False):
     import re as _re
     trimmed = question.strip()
     m = _re.search(r"\s+(?:and|&|plus|;)\s+", trimmed, _re.I)
+    def _bail():
+        # force-split skipped the whole pass; run it now so an unsplittable
+        # query never regresses to silence
+        return _try_intercept_once(question) if _force_split else _sentinel
     if not m:
-        return _sentinel
+        return _bail()
     left, right = trimmed[:m.start()].strip(), trimmed[m.end():].strip()
-    if len(left.split()) < 2 or len(right.split()) < 2:
-        return _sentinel
+    if len(left.split()) < 2 or (len(right.split()) < 2 and not _force_split):
+        return _bail()
     r1 = _try_intercept_once(left)
     if r1 == "__DIMS_DROPPED__" or not r1:
-        return _sentinel
+        return _bail()
     # SUBJECT-FIRST (Mark 2026-09-01): "Luis Gil ERA and innings pitched all
     # time" means GIL'S innings, not the league board — a conjoined fragment
     # inherits the sentence's subject, same convention as follow-up
@@ -1128,10 +1132,7 @@ def try_intercept(question: str, _no_split: bool = False):
             # standalone won; offer the subject reading if it answers
             _alt_pill = None
     if not r2:
-        if _force_split:
-            # split couldn't answer; fall back to the whole-query pass
-            return _try_intercept_once(question)
-        return _sentinel
+        return _bail()
     logger.info("compound_split question=%r", trimmed)
     no_count = r1.startswith("__NO_COUNT__") or r2.startswith("__NO_COUNT__")
     r1 = r1.replace("__NO_COUNT__", "", 1)
