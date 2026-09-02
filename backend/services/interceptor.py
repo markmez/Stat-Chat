@@ -1073,15 +1073,31 @@ def try_intercept(question: str, _no_split: bool = False):
     r1 = _try_intercept_once(left)
     if r1 == "__DIMS_DROPPED__" or not r1:
         return _sentinel
-    r2 = _try_intercept_once(right)
-    if r2 == "__DIMS_DROPPED__":
-        r2 = None
-    if not r2:
-        # bare right halves often inherit the subject: retry with the left
-        # half's leading name tokens prefixed
-        r2 = _try_intercept_once(f"{' '.join(left.split()[:2])} {right}")
+    # SUBJECT-FIRST (Mark 2026-09-01): "Luis Gil ERA and innings pitched all
+    # time" means GIL'S innings, not the league board — a conjoined fragment
+    # inherits the sentence's subject, same convention as follow-up
+    # fragments. When both readings answer, the other becomes a SEEALSO
+    # (scope-inference convention generalized: the engine's choice among
+    # plausible readings always surfaces the road not taken).
+    _subj = nm.find_player_in_text(left)
+    r2 = None
+    _alt_pill = None
+    if _subj:
+        _subj_q = f"{_subj} {right}"
+        r2 = _try_intercept_once(_subj_q)
         if r2 == "__DIMS_DROPPED__":
             r2 = None
+        if r2:
+            _alt = _try_intercept_once(right)
+            if _alt and _alt != "__DIMS_DROPPED__" and _alt != r2:
+                _alt_pill = right  # league-wide reading, one tap away
+    if not r2:
+        r2 = _try_intercept_once(right)
+        if r2 == "__DIMS_DROPPED__":
+            r2 = None
+        if r2 and _subj:
+            # standalone won; offer the subject reading if it answers
+            _alt_pill = None
     if not r2:
         return _sentinel
     logger.info("compound_split question=%r", trimmed)
@@ -1089,6 +1105,8 @@ def try_intercept(question: str, _no_split: bool = False):
     r1 = r1.replace("__NO_COUNT__", "", 1)
     r2 = r2.replace("__NO_COUNT__", "", 1)
     combined = r1.rstrip() + "\n\n" + r2.lstrip()
+    if _alt_pill:
+        combined += f"\n\n[SEEALSO]{_alt_pill}[/SEEALSO]"
     return ("__NO_COUNT__" + combined) if no_count else combined
 
 
