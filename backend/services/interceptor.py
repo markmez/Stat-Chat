@@ -10,6 +10,7 @@ This mirrors the iOS AppState.sendQuestion() intercept chain exactly.
 """
 
 import logging
+import re
 from datetime import date, datetime
 
 from services import name_matcher as nm
