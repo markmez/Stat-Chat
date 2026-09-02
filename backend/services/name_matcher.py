@@ -2187,6 +2187,98 @@ def parse_team_h2h_recent(input_str: str) -> Optional[dict]:
     return {"team_a": team_a, "team_b": team_b, "n": n}
 
 
+# ---------------------------------------------------------------------------
+# Native spell correction (Mark 2026-09-02: "est pitcher ever" -> Haiku
+# garbage). Norvig-style edit-distance-1, but DOMAIN-SCOPED and vetoed:
+#   - candidates come only from OUR vocabulary (stat aliases, team aliases,
+#     query keywords) — never free English, never player names
+#   - a token is corrected only when exactly ONE candidate matches
+#   - hard veto when the typo is also edit-1 from any PLAYER-NAME token
+#     (the fuzzyMatch trap: "ganes" ~ "Gomes"); the curated typo map in the
+#     interceptor runs first and wins for those
+# Max 2 corrections per query; every fix is logged upstream.
+# ---------------------------------------------------------------------------
+
+_SPELL_VOCAB: Optional[set] = None
+_SPELL_NAME_TOKENS: Optional[set] = None
+
+_SPELL_KEYWORDS = """
+best worst most fewest top highest lowest leaders leader leaderboard rankings
+ranking ranked career season seasons ever pitcher pitchers hitter hitters
+batter batters player players team teams game games start starts inning
+innings streak streaks record stats statistics against versus lefties
+righties lineup tonight today tomorrow yesterday month week year years
+history historical rookie veteran active playoff playoffs series schedule
+probable probables compare comparison between since before after during
+first last next current all time lifetime home away leads led homer homers
+""".split()
+
+
+def _spell_sets():
+    global _SPELL_VOCAB, _SPELL_NAME_TOKENS
+    if _SPELL_VOCAB is not None:
+        return _SPELL_VOCAB, _SPELL_NAME_TOKENS
+    vocab = set(_SPELL_KEYWORDS)
+    for alias in stat_alias_map:
+        for tok in alias.replace("-", " ").split():
+            if len(tok) >= 3 and tok.isalpha():
+                vocab.add(tok)
+    for alias in team_alias_map:
+        for tok in alias.replace("-", " ").split():
+            if len(tok) >= 3 and tok.isalpha():
+                vocab.add(tok)
+    names = set()
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        for (n,) in conn.execute("SELECT DISTINCT name FROM players"):
+            for tok in (n or "").lower().replace("-", " ").split():
+                if len(tok) >= 3:
+                    names.add(tok)
+        conn.close()
+    except Exception:
+        pass
+    _SPELL_VOCAB, _SPELL_NAME_TOKENS = vocab, names
+    return vocab, names
+
+
+def _edits1(w: str) -> set:
+    letters = "abcdefghijklmnopqrstuvwxyz"
+    splits = [(w[:i], w[i:]) for i in range(len(w) + 1)]
+    out = set()
+    for a, b in splits:
+        if b:
+            out.add(a + b[1:])                      # delete
+            if len(b) > 1:
+                out.add(a + b[1] + b[0] + b[2:])    # transpose
+            for c in letters:
+                out.add(a + c + b[1:])              # replace
+        for c in letters:
+            out.add(a + c + b)                      # insert
+    return out
+
+
+def spellfix(text: str):
+    """Return (corrected_text, n_fixes). Conservative by construction."""
+    vocab, names = _spell_sets()
+    fixes = 0
+    out_tokens = []
+    for tok in re.split(r"(\W+)", text):
+        low = tok.lower()
+        if (fixes >= 2 or not tok.isalpha() or len(tok) < 3
+                or low in vocab or low in names):
+            out_tokens.append(tok)
+            continue
+        neigh = _edits1(low)
+        cands = neigh & vocab
+        if len(cands) == 1 and not (neigh & names):
+            fixed = next(iter(cands))
+            out_tokens.append(fixed)
+            fixes += 1
+        else:
+            out_tokens.append(tok)
+    return "".join(out_tokens), fixes
+
+
 def parse_probables(input_str: str) -> Optional[dict]:
     """'whos pitching tonight' / 'probable pitchers today' / 'who is
     starting for the yankees tomorrow' / 'pitchers today mlb'."""

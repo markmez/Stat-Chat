@@ -242,6 +242,16 @@ def _try_intercept_once(question: str):
     trimmed = re.sub(r"\bof all time\b", "career", trimmed, flags=re.I)
     trimmed = re.sub(r"\ball time\b", "career", trimmed, flags=re.I)
 
+    # Native spell correction — domain-scoped, name-vetoed (see
+    # nm.spellfix). Runs after the curated map so explicit fixes win.
+    try:
+        _fixed, _nfix = nm.spellfix(trimmed)
+        if _nfix:
+            logger.info("spellfix %r -> %r", trimmed, _fixed)
+            trimmed = _fixed
+    except Exception as _sfe:
+        logger.warning("spellfix error: %s", _sfe)
+
     lower = trimmed.lower()
 
     # Game-event qualifiers we don't model structurally — see
