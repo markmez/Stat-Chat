@@ -194,7 +194,7 @@ def _claim(result, query):
     return result
 
 
-def try_intercept(question: str, _no_split: bool = False):
+def _try_intercept_once(question: str):
     """
     Try to answer the question locally from the DB.
     Returns formatted response text (with [STATGRID], [SUGGEST], etc. tags),
@@ -1045,40 +1045,48 @@ def try_intercept(question: str, _no_split: bool = False):
             return response
 
     # No match — fall through to Claude
-    # Compound-query splitter (Mark 2026-09-01: "Nolan Ryan career ERA and
-    # innings pitched all-time rankings" is two questions in one). Runs ONLY
-    # after the whole query failed every parser, so single intents that
-    # contain "and" ("30 HR and 30 SB", "Judge and Soto") are untouched —
-    # they claimed the whole query above. Both halves must fully intercept
-    # or we fall through as before; guard sentinels propagate.
-    if not _no_split:
-        m = re.search(r"\s+(?:and|&|plus|;)\s+", trimmed, re.I)
-        if m:
-            left = trimmed[:m.start()].strip()
-            right = trimmed[m.end():].strip()
-            if len(left.split()) >= 2 and len(right.split()) >= 2:
-                r1 = try_intercept(left, _no_split=True)
-                if r1 == "__DIMS_DROPPED__":
-                    return r1
-                if r1:
-                    # a bare-stat right half usually inherits the subject or
-                    # scope implicitly; try as-is first, then with the left
-                    # half's first two tokens (the player name) prefixed.
-                    r2 = try_intercept(right, _no_split=True)
-                    if r2 == "__DIMS_DROPPED__":
-                        return r2
-                    if not r2:
-                        r2 = try_intercept(f"{' '.join(left.split()[:2])} {right}",
-                                           _no_split=True)
-                        if r2 == "__DIMS_DROPPED__":
-                            r2 = None
-                    if r2:
-                        logger.info("compound_split question=%r", trimmed)
-                        no_count = r1.startswith("__NO_COUNT__") or r2.startswith("__NO_COUNT__")
-                        r1 = r1.replace("__NO_COUNT__", "", 1)
-                        r2 = r2.replace("__NO_COUNT__", "", 1)
-                        combined = r1.rstrip() + "\n\n" + r2.lstrip()
-                        return ("__NO_COUNT__" + combined) if no_count else combined
-
     return None
+
+
+def try_intercept(question: str, _no_split: bool = False):
+    """Public entry: one full parser pass; on a total miss, the compound
+    splitter tries the query as TWO questions joined by and/&/plus (Mark
+    2026-09-01: "Nolan Ryan career ERA and innings pitched all-time
+    rankings"). Single intents containing "and" are untouched — they claim
+    the whole query in the first pass. Wrapper (not end-of-function code)
+    because _try_intercept_once has many early return-None exits that
+    would otherwise skip the splitter."""
+    result = _try_intercept_once(question)
+    if result is not None or _no_split:
+        return result
+    import re as _re
+    trimmed = question.strip()
+    m = _re.search(r"\s+(?:and|&|plus|;)\s+", trimmed, _re.I)
+    if not m:
+        return None
+    left, right = trimmed[:m.start()].strip(), trimmed[m.end():].strip()
+    if len(left.split()) < 2 or len(right.split()) < 2:
+        return None
+    r1 = _try_intercept_once(left)
+    if r1 == "__DIMS_DROPPED__" or not r1:
+        return r1 if r1 else None
+    r2 = _try_intercept_once(right)
+    if r2 == "__DIMS_DROPPED__":
+        return r2
+    if not r2:
+        # bare right halves often inherit the subject: retry with the left
+        # half's leading name tokens prefixed
+        r2 = _try_intercept_once(f"{' '.join(left.split()[:2])} {right}")
+        if r2 == "__DIMS_DROPPED__":
+            r2 = None
+    if not r2:
+        return None
+    logger.info("compound_split question=%r", trimmed)
+    no_count = r1.startswith("__NO_COUNT__") or r2.startswith("__NO_COUNT__")
+    r1 = r1.replace("__NO_COUNT__", "", 1)
+    r2 = r2.replace("__NO_COUNT__", "", 1)
+    combined = r1.rstrip() + "\n\n" + r2.lstrip()
+    return ("__NO_COUNT__" + combined) if no_count else combined
+
+
 # QE_ERROR_HC_UUID configured via deploy workflow
