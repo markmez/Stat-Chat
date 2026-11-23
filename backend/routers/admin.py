@@ -1622,7 +1622,39 @@ async def volume_usage(authorization: str | None = Header(None)):
     except Exception as e:
         return {"error": str(e)}
     files.sort(key=lambda x: x["size_mb"], reverse=True)
-    return {"total_mb": round(total / 1_000_000, 1), "files": files}
+    import shutil
+    du = shutil.disk_usage(data_dir)
+    return {"total_mb": round(total / 1_000_000, 1), "files": files,
+            "disk_total_mb": round(du.total / 1_000_000, 1),
+            "disk_free_mb": round(du.free / 1_000_000, 1)}
+
+
+@router.post("/refresh-detached")
+async def refresh_detached(
+    full_refresh: bool = False,
+    authorization: str | None = Header(None),
+):
+    """Launch deploy/refresh.sh fully detached — for multi-hour runs (e.g. the
+    end-of-season finalize re-pull, 8-11h) that /admin/refresh's 30-min
+    subprocess timeout would kill. Same path cron uses: refresh.sh owns the
+    lock file + Healthchecks pings, pull_live_stats.py's flock prevents
+    overlap. Output appends to /data/refresh.log; watch /admin/refresh-log."""
+    verify_admin(authorization)
+    try:
+        lock_age = time.time() - os.path.getmtime(_PIPELINE_LOCK_PATH)
+        if lock_age < _PIPELINE_LOCK_STALE_SECONDS:
+            return {"status": "skipped", "reason": "pipeline already running",
+                    "lock_age_seconds": int(lock_age)}
+    except OSError:
+        pass
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), "deploy", "refresh.sh")
+    cmd = ["/bin/bash", script] + (["--full-refresh"] if full_refresh else [])
+    log_path = os.path.join(os.path.dirname(DB_PATH), "refresh.log")
+    with open(log_path, "ab") as logf:
+        proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT,
+                                close_fds=True, start_new_session=True)
+    return {"status": "launched", "pid": proc.pid, "cmd": cmd, "log": log_path}
 
 
 @router.delete("/volume-cleanup")
@@ -1662,6 +1694,8 @@ async def data_freshness():
         row = cursor.fetchone()
         cursor.execute("SELECT MAX(date) FROM game_batting_logs")
         game_row = cursor.fetchone()
+        cursor.execute("SELECT updated_at FROM data_freshness WHERE key = 'season_phase'")
+        phase_row = cursor.fetchone()
         conn.close()
         last_game_date = game_row[0] if game_row else None
         last_updated = row[0] if row else None
@@ -1669,6 +1703,10 @@ async def data_freshness():
         return {
             "last_updated": last_updated,
             "season": season,
+            # Written by pull_live_stats.py: preseason | regular | finalizing
+            # | postseason | offseason. healthcheck.sh only enforces data
+            # freshness in preseason/regular.
+            "phase": phase_row[0] if phase_row else None,
             "last_game_date": last_game_date,
             # Hard-coded key kept for the currently-deployed healthcheck.sh,
             # which greps the literal string. Drop once that script is updated
