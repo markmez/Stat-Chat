@@ -120,6 +120,17 @@ fi
 FRESHNESS=$(curl -fsS -m 10 "$API_BASE/admin/freshness" -H "$AUTH_HDR" 2>&1)
 LATEST_GAME_DATE=$(echo "$FRESHNESS" | grep -oE '"last_game_date_2026"[^"]*"[0-9-]+"' | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)
 
+# No daily games outside preseason/regular season (postseason is stored
+# separately and doesn't advance game logs or the feed), so staleness is
+# expected — don't trigger kill/refresh recovery against a paused feed.
+PHASE=$(echo "$FRESHNESS" | grep -oE '"phase":"[a-z]+"' | cut -d'"' -f4 || true)
+case "$PHASE" in
+    offseason|postseason|finalizing)
+        ping_ok "ok (${PHASE}, freshness unenforced; data=${LATEST_GAME_DATE})"
+        exit 0
+        ;;
+esac
+
 # Feed freshness — most recent event game_date.
 FEED_LATEST=$(curl -fsS -m 10 "$API_BASE/notable-events?limit=1" 2>/dev/null | grep -oE '"game_date":"[0-9-]+"' | head -1 | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)
 

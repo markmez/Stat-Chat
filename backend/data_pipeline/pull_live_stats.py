@@ -375,8 +375,12 @@ def _merge_traded_entries(totals):
     return result
 
 
-def pull_season_batting(conn, season_str):
-    """Pull season batting stats from MySportsFeeds."""
+def pull_season_batting(conn, season_str, table="season_batting_stats", by_team=True):
+    """Pull season batting stats from MySportsFeeds.
+
+    table/by_team: postseason totals go to postseason_batting_stats with no
+    per-team component rows (2026-11-23 — playoff pulls used to overwrite
+    the regular-season rows)."""
     season_year = detect_season(season_str)
     print(f"  Pulling season batting stats for {season_str}...")
 
@@ -392,7 +396,7 @@ def pull_season_batting(conn, season_str):
     count = 0
 
     # Delete existing data for this season (full replace)
-    cursor.execute("DELETE FROM season_batting_stats WHERE season = ?", (season_year,))
+    cursor.execute(f"DELETE FROM {table} WHERE season = ?", (season_year,))
 
     # Per-team component rows (2026-08-07): league leaderboards need
     # LEAGUE-ACCRUED stats for traded players (MLB convention — Garcia
@@ -409,8 +413,9 @@ def pull_season_batting(conn, season_str):
             UNIQUE(player_id, season, team)
         )
     """)
-    cursor.execute("DELETE FROM season_batting_by_team WHERE season = ?", (season_year,))
-    for entry in raw_totals:
+    if by_team:
+        cursor.execute("DELETE FROM season_batting_by_team WHERE season = ?", (season_year,))
+    for entry in (raw_totals if by_team else []):
         player = entry.get("player", {})
         stats = (entry.get("stats") or {}).get("batting", {})
         if not stats:
@@ -457,8 +462,8 @@ def pull_season_batting(conn, season_str):
 
         pa, avg, obp, slg, ops, iso, babip = compute_rate_stats(h, ab, bb, hbp, sf, doubles, triples, hr, so)
 
-        cursor.execute("""
-            INSERT OR REPLACE INTO season_batting_stats
+        cursor.execute(f"""
+            INSERT OR REPLACE INTO {table}
             (player_id, season, team, games, plate_appearances, at_bats, hits, doubles,
              triples, home_runs, runs, rbi, stolen_bases, caught_stealing, walks,
              strikeouts, hit_by_pitch, sacrifice_flies, intentional_walks,
@@ -483,8 +488,9 @@ def pull_season_batting(conn, season_str):
     return count
 
 
-def pull_season_pitching(conn, season_str):
-    """Pull season pitching stats from MySportsFeeds."""
+def pull_season_pitching(conn, season_str, table="season_pitching_stats", by_team=True):
+    """Pull season pitching stats from MySportsFeeds (see pull_season_batting
+    for table/by_team)."""
     season_year = detect_season(season_str)
     print(f"  Pulling season pitching stats for {season_str}...")
 
@@ -498,7 +504,7 @@ def pull_season_pitching(conn, season_str):
     cursor = conn.cursor()
     count = 0
 
-    cursor.execute("DELETE FROM season_pitching_stats WHERE season = ?", (season_year,))
+    cursor.execute(f"DELETE FROM {table} WHERE season = ?", (season_year,))
 
     # Per-team pitching components (league-accrued leaderboards; see
     # season_batting_by_team comment).
@@ -511,8 +517,9 @@ def pull_season_pitching(conn, season_str):
             UNIQUE(player_id, season, team)
         )
     """)
-    cursor.execute("DELETE FROM season_pitching_by_team WHERE season = ?", (season_year,))
-    for entry in raw_totals:
+    if by_team:
+        cursor.execute("DELETE FROM season_pitching_by_team WHERE season = ?", (season_year,))
+    for entry in (raw_totals if by_team else []):
         player = entry.get("player", {})
         stats = (entry.get("stats") or {}).get("pitching", {})
         if not stats:
@@ -578,8 +585,8 @@ def pull_season_pitching(conn, season_str):
         ab_approx = bf - bb - hbp - sac_flies - sac_bunts
         baa = h / ab_approx if ab_approx > 0 else None
 
-        cursor.execute("""
-            INSERT OR REPLACE INTO season_pitching_stats
+        cursor.execute(f"""
+            INSERT OR REPLACE INTO {table}
             (player_id, season, team, games, games_started, games_finished, complete_games,
              wins, losses, saves, ip_outs, innings_pitched, hits, runs, earned_runs,
              home_runs, walks, intentional_walks, strikeouts, hit_by_pitch, wild_pitches,
@@ -886,7 +893,7 @@ def pull_game_logs(conn, season_str, full_refresh=False):
     return bat_count, pitch_count
 
 
-def pull_team_game_results(conn, season_str):
+def pull_team_game_results(conn, season_str, gametype="regular"):
     """Pull per-team per-game results from MSF games.json.
 
     Stores TWO rows per game (one per team) for symmetric querying — a
@@ -1050,7 +1057,7 @@ def pull_team_game_results(conn, season_str):
                   t_runs, o_runs, result, innings_played,
                   start[:19] + "Z" if start else None,
                   attendance, duration_min, venue, weather,
-                  daynight, "regular"))
+                  daynight, gametype))
             inserted += 1
 
     conn.commit()
@@ -2662,6 +2669,88 @@ def compute_pitching_league_averages(conn, season_year):
     conn.commit()
 
 
+# ── Season phase (2026-11-23) ────────────────────────────────────────────
+# The old auto-detect switched to "{year}-playoff" on Oct 1 and wrote playoff
+# numbers into the same season=YEAR rows, wiping the regular season (the
+# weekly --full-refresh then deleted every regular-season game log). Calendar
+# cutoffs are wrong both ways — 2026's postseason began Sep 29; other years
+# it starts in October — so the phase is read from MSF's own schedules:
+#
+#   regular season    last scheduled regular game >= today - GRACE  → normal pull
+#   regular finished  once, a --full-refresh regular pull ("finalize") so the
+#                     stored season is the final, corrected one; then flagged
+#   postseason        totals only, into postseason_*_stats (never the regular
+#                     tables); team_game_results rows tagged gametype='playoff'
+#   offseason         both flags set → exit before any MSF call
+PHASE_GRACE_DAYS = 2
+
+
+def _flag(conn, key):
+    try:
+        row = conn.execute("SELECT updated_at FROM data_freshness WHERE key = ?",
+                           (key,)).fetchone()
+        return row[0] if row else None
+    except sqlite3.OperationalError:
+        return None
+
+
+def _set_flag(conn, key, value, season):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS data_freshness (
+            key TEXT PRIMARY KEY, updated_at TEXT NOT NULL, season TEXT
+        )
+    """)
+    conn.execute("INSERT OR REPLACE INTO data_freshness (key, updated_at, season) "
+                 "VALUES (?, ?, ?)", (key, value, str(season)))
+    conn.commit()
+
+
+def _schedule_dates(season_str):
+    """All local game dates on an MSF season schedule (past and future)."""
+    data = msf_get(f"{season_str}/games.json") or {}
+    dates = set()
+    for game in data.get("games", []):
+        start = (game.get("schedule") or {}).get("startTime", "")
+        if not start:
+            continue
+        dt = datetime.strptime(start[:19], "%Y-%m-%dT%H:%M:%S")
+        if dt.hour < 6:  # evening US game, UTC next day (see get_game_dates)
+            dt -= timedelta(days=1)
+        dates.add(dt.date())
+    return sorted(dates)
+
+
+def _ensure_postseason_tables(conn):
+    """postseason_{batting,pitching}_stats: same schema as the season tables.
+    Stored only — nothing in the query layer reads them (yet)."""
+    for kind in ("batting", "pitching"):
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name = ?",
+                        (f"postseason_{kind}_stats",)).fetchone():
+            continue
+        ddl = conn.execute("SELECT sql FROM sqlite_master WHERE name = ?",
+                           (f"season_{kind}_stats",)).fetchone()[0]
+        conn.execute(ddl.replace(f"season_{kind}_stats",
+                                 f"postseason_{kind}_stats", 1))
+    conn.commit()
+
+
+def pull_postseason(conn, year):
+    """Postseason totals + team results. Returns True once the postseason is
+    over (past the grace window) so the caller can stop pulling it."""
+    season_str = f"{year}-playoff"
+    dates = _schedule_dates(season_str)
+    today = date.today()
+    if not dates or dates[0] > today:
+        print(f"  No {season_str} games played yet")
+        return False
+    print(f"\nPulling postseason {season_str} → postseason_*_stats")
+    _ensure_postseason_tables(conn)
+    pull_season_batting(conn, season_str, table="postseason_batting_stats", by_team=False)
+    pull_season_pitching(conn, season_str, table="postseason_pitching_stats", by_team=False)
+    pull_team_game_results(conn, season_str, gametype="playoff")
+    return dates[-1] < today - timedelta(days=PHASE_GRACE_DAYS)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Pull live MLB stats from MySportsFeeds")
     parser.add_argument("--season", default=None,
@@ -2687,15 +2776,77 @@ def main():
         print("Another pipeline run holds the lock — exiting (not an error).")
         return
 
+    finalize = False
+    if not MSF_API_KEY:
+        print("ERROR: Set MSF_API_KEY environment variable")
+        return
+
+    # Explicit playoff request (e.g. /admin/refresh?season=2026-playoff):
+    # postseason tables only — never the regular-season ones.
+    if args.season and args.season.endswith("-playoff"):
+        conn = sqlite3.connect(args.db)
+        try:
+            pull_postseason(conn, detect_season(args.season))
+        finally:
+            conn.close()
+        return
+
     # Auto-detect season
     if args.season is None:
-        year = date.today().year
-        month = date.today().month
-        day = date.today().day
+        today = date.today()
+        year = today.year
+        month = today.month
+        day = today.day
+        if month < 2 or (month == 2 and day < 15):
+            # Before any possible spring-training game: nothing to pull, and
+            # MSF may be paused for the winter. Exit without an API call.
+            conn = sqlite3.connect(args.db)
+            _set_flag(conn, "season_phase", "offseason", year)
+            conn.close()
+            print("Offseason (before spring training) — nothing to pull.")
+            return
         if month < 3 or (month == 3 and day < 25):
             args.season = f"{year}-preseason"
-        elif month >= 10:
-            args.season = f"{year}-playoff"
+        elif month >= 4 or day > 27:
+            # Regular season / postseason / offseason, read from MSF schedules
+            # (see PHASE_GRACE_DAYS block above main).
+            conn = sqlite3.connect(args.db)
+            try:
+                reg_final = _flag(conn, f"regular_final_{year}")
+                post_final = _flag(conn, f"postseason_final_{year}")
+                if reg_final and post_final:
+                    _set_flag(conn, "season_phase", "offseason", year)
+                    print(f"Offseason — {year} regular season and postseason both "
+                          f"finalized. Nothing to pull.")
+                    return
+                regular_active = False
+                if not reg_final:
+                    reg_dates = _schedule_dates(f"{year}-regular")
+                    grace_floor = today - timedelta(days=PHASE_GRACE_DAYS)
+                    regular_active = bool(reg_dates) and reg_dates[-1] >= grace_floor
+                    regular_over = bool(reg_dates) and reg_dates[-1] < today
+                else:
+                    regular_over = True
+                if regular_over and not post_final:
+                    if pull_postseason(conn, year):
+                        _set_flag(conn, f"postseason_final_{year}",
+                                  today.isoformat(), year)
+                        print(f"  {year} postseason over — flagged final")
+                if regular_active:
+                    args.season = f"{year}-regular"
+                elif not reg_final:
+                    # Season's over: one last full re-pull of the regular
+                    # season so stored numbers include late corrections.
+                    args.season = f"{year}-regular"
+                    args.full_refresh = True
+                    finalize = True
+                    print(f"{year} regular season over — finalizing (full refresh)")
+                else:
+                    _set_flag(conn, "season_phase", "postseason", year)
+                    print(f"Postseason phase — regular season already final.")
+                    return
+            finally:
+                conn.close()
         elif month == 3 and day <= 27:
             # Opening Day window (March 25-27): only switch to regular once
             # MSF actually has regular season data. Avoids wiping spring training
@@ -2712,17 +2863,14 @@ def main():
             except Exception:
                 args.season = f"{year}-preseason"
                 print(f"Could not probe regular season — staying on preseason")
-        else:
-            args.season = f"{year}-regular"
         print(f"Auto-detected season: {args.season}")
-
-    if not MSF_API_KEY:
-        print("ERROR: Set MSF_API_KEY environment variable")
-        return
 
     print(f"Pulling live stats for {args.season} into {args.db}")
     conn = sqlite3.connect(args.db)
     conn.execute("PRAGMA journal_mode=WAL")
+    _phase = ("finalizing" if finalize
+              else args.season.split("-", 1)[1] if "-" in args.season else "regular")
+    _set_flag(conn, "season_phase", _phase, detect_season(args.season))
 
     try:
         t0 = time.time()
@@ -2873,6 +3021,18 @@ def main():
             print(result.stdout)
         else:
             print(f"Streak detection failed: {result.stderr}")
+
+        if finalize:
+            # Feed detection + AI insights describe "yesterday's games";
+            # a post-season re-pull has none, and re-running them would
+            # republish late-September cards.
+            _c = sqlite3.connect(args.db)
+            _set_flag(_c, f"regular_final_{season_year}",
+                      date.today().isoformat(), season_year)
+            _c.close()
+            print(f"\n{season_year} regular season finalized — skipping feed "
+                  f"detection and AI insights. Done in {time.time() - t0:.1f}s")
+            return
 
         # Detect notable events
         print(f"\nDetecting notable events for {season_year}...")
