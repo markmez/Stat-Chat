@@ -157,9 +157,12 @@ async def build_history_shelves(authorization: str | None = Header(None)):
 async def refresh_live_data(
     season: str | None = None,
     full_refresh: bool = False,
+    gap_fill_splits: bool = False,
     authorization: str | None = Header(None),
 ):
-    """Trigger a live data refresh from MySportsFeeds."""
+    """Trigger a live data refresh from MySportsFeeds.
+    gap_fill_splits=true (with season): fetch PBP only for games missing
+    from game_split_logs and rebuild that season's split tables."""
     verify_admin(authorization)
 
     # Defensive: refresh.sh owns pipeline-lock lifecycle (touch on start,
@@ -192,6 +195,8 @@ async def refresh_live_data(
         cmd.extend(["--season", season])
     if full_refresh:
         cmd.append("--full-refresh")
+    if gap_fill_splits:
+        cmd.append("--gap-fill-splits")
     print(f"REFRESH CMD: {cmd}")
     try:
         result = await _run_subprocess(cmd, timeout=1800)

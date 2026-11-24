@@ -1544,7 +1544,7 @@ def compute_pitching_home_away_splits(conn, season_year):
     return count
 
 
-def compute_platoon_splits(conn, season_str, full_refresh=False):
+def compute_platoon_splits(conn, season_str, full_refresh=False, gap_fill=False):
     """Compute platoon, pitch type, and count splits from play-by-play data.
 
     All three split types are collected in a single pass over the play-by-play API
@@ -1620,6 +1620,13 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
                                - _td2(days=3)).strftime("%Y-%m-%d")
         except sqlite3.OperationalError:
             seed_cutoff = None
+    if gap_fill:
+        # Gap-fill (2026-11-24): seed from EVERY stored per-game row, delete
+        # nothing, and fetch PBP only for completed games with no stored
+        # rows (e.g. a burst of MSF 403s skipped them mid-crawl). Rides the
+        # incremental seeding path, so season tables come out identical to
+        # a full replay.
+        seed_cutoff = "9999-12-31"
 
     # Get all game IDs for this season
     data = msf_get(f"{season_str}/games.json")
@@ -1661,7 +1668,14 @@ def compute_platoon_splits(conn, season_str, full_refresh=False):
                 dt = dt - timedelta(days=1)
             gdate = dt.strftime("%Y-%m-%d")
         games.append((sched.get("id"), gdate))
-    if seed_cutoff:
+    if gap_fill:
+        total_completed = len(games)
+        _have = {str(r[0]) for r in conn.execute(
+            "SELECT DISTINCT game_id FROM game_split_logs WHERE season = ?",
+            (season_year,))}
+        games = [(gid, gd) for gid, gd in games if str(gid) not in _have]
+        print(f"    Gap-fill: {len(games)} of {total_completed} completed games have no stored split rows")
+    elif seed_cutoff:
         total_completed = len(games)
         games = [(gid, gd) for gid, gd in games if gd and gd >= seed_cutoff]
         print(f"    Incremental: {len(games)} of {total_completed} games since {seed_cutoff}")
@@ -2758,6 +2772,9 @@ def main():
     parser.add_argument("--db", default=DB_PATH, help="Path to SQLite database")
     parser.add_argument("--full-refresh", action="store_true",
                         help="Wipe and re-pull all game logs (weekly reconciliation)")
+    parser.add_argument("--gap-fill-splits", action="store_true",
+                        help="Only fetch PBP for games missing from game_split_logs, "
+                             "then rebuild the season split tables (needs --season)")
     args = parser.parse_args()
 
     # Single-pipeline lock (2026-08-07): overlapping runs (cron + healthcheck
@@ -2779,6 +2796,17 @@ def main():
     finalize = False
     if not MSF_API_KEY:
         print("ERROR: Set MSF_API_KEY environment variable")
+        return
+
+    if args.gap_fill_splits:
+        if not args.season or not args.season.endswith("-regular"):
+            print("ERROR: --gap-fill-splits needs --season YYYY-regular")
+            return
+        conn = sqlite3.connect(args.db, timeout=120)
+        try:
+            compute_platoon_splits(conn, args.season, gap_fill=True)
+        finally:
+            conn.close()
         return
 
     # Explicit playoff request (e.g. /admin/refresh?season=2026-playoff):
