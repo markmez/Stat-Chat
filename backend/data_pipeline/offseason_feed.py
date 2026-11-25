@@ -549,21 +549,22 @@ def fam_big_games(conn, season):
 # Nov–mid-Feb ≈ 40 cards) ────────────────────────────────────────────────
 
 MILESTONES = [  # (table, season col, log table, log col, thresholds, noun, ordinal_safe_from)
-    ("season_batting_stats", "home_runs", "game_batting_logs", "home_runs", [200, 300, 400, 500, 600, 700], "home run", 0),
-    ("season_batting_stats", "hits", "game_batting_logs", "hits", [1500, 2000, 2500, 3000], "hit", None),
+    ("season_batting_stats", "home_runs", "game_batting_logs", "home_runs", [300, 400, 500, 600, 700], "home run", 0),
+    ("season_batting_stats", "hits", "game_batting_logs", "hits", [2000, 2500, 3000], "hit", None),
     ("season_batting_stats", "rbi", "game_batting_logs", "rbi", [1000, 1500, 2000], "RBI", None),
-    ("season_batting_stats", "stolen_bases", "game_batting_logs", "stolen_bases", [200, 300, 400, 500], "stolen base", None),
-    ("season_pitching_stats", "strikeouts", "game_pitching_logs", "strikeouts", [1500, 2000, 2500, 3000, 3500], "strikeout", 3000),
+    ("season_batting_stats", "stolen_bases", "game_batting_logs", "stolen_bases", [300, 400, 500], "stolen base", None),
+    ("season_pitching_stats", "strikeouts", "game_pitching_logs", "strikeouts", [2000, 2500, 3000, 3500], "strikeout", 3000),
     ("season_pitching_stats", "wins", "game_pitching_logs", "win", [150, 200, 250], "win", None),
-    ("season_pitching_stats", "saves", "game_pitching_logs", "save", [200, 300, 400, 500], "save", 0),
+    ("season_pitching_stats", "saves", "game_pitching_logs", "save", [300, 400, 500], "save", 0),
 ]
 
 
 def fam_milestones(conn, season):
     """Career round numbers crossed during the season, dated from game logs.
-    'Nth player ever' only where the DB's 1898 start can't undercount (HR,
-    saves, 3,000+ K: no 19th-century player is missing from those clubs)."""
-    cards = []
+    Three or more players crossing the same mark share one card. 'Nth player
+    ever' only where the DB's 1898 start can't undercount (HR, saves, 3,000+
+    K) and the club is small enough for the ordinal to mean something."""
+    crossings = {}  # (col, t) -> [(date or '', pid, noun, safe)]
     for table, col, ltable, lcol, ths, noun, safe_from in MILESTONES:
         rows = conn.execute(f"""
             SELECT player_id, SUM(CASE WHEN season < :s THEN {col} ELSE 0 END) pre,
@@ -574,22 +575,36 @@ def fam_milestones(conn, season):
             for t in ths:
                 if not (pre < t <= pre + cur):
                     continue
-                run, when = pre, None
+                run, when = pre, ""
                 for d, v in conn.execute(f"""SELECT date, {lcol} FROM {ltable} WHERE player_id = ? AND season = ?
                                             ORDER BY date, game_number""", (pid, season)):
                     run += v or 0
                     if run >= t:
-                        when = datetime.strptime(d, "%Y-%m-%d").strftime("%B %-d")
+                        when = d
                         break
-                name = _names(conn, [pid])[pid]
-                h = (f"{name} reached {t:,} career {noun}{'s' if noun != 'RBI' else ''}"
-                     + (f" on {when}." if when else " this past season."))
-                d = ""
-                if safe_from is not None and t >= safe_from:
-                    before = conn.execute(f"""SELECT COUNT(*) FROM (SELECT SUM({col}) v FROM {table}
-                        WHERE season < ? GROUP BY player_id) WHERE v >= ?""", (season, t)).fetchone()[0]
-                    d = f"He's the {ordinal(before + 1)} player ever to get there."
-                cards.append(_review(h, d, [name], f"milestone_{col}", 18 + t / max(ths) * 14))
+                crossings.setdefault((table, col, t, noun, safe_from), []).append((when, pid))
+    cards = []
+    for (table, col, t, noun, safe_from), who in crossings.items():
+        who.sort()
+        plural = noun + ("s" if noun != "RBI" else "")
+        nm = _names(conn, [p for _, p in who])
+        weight = 18 + t / max(m[4][-1] for m in MILESTONES if m[1] == col) * 14
+        if len(who) >= 3:
+            cards.append(_review(
+                f"{len(who)} players reached {t:,} career {plural} this past season.",
+                "In order: " + _join([nm[p] for _, p in who]) + ".",
+                [nm[p] for _, p in who], f"milestone_{col}", weight + 4))
+            continue
+        before = None
+        if safe_from is not None and t >= safe_from:
+            before = conn.execute(f"""SELECT COUNT(*) FROM (SELECT SUM({col}) v FROM {table}
+                WHERE season < ? GROUP BY player_id) WHERE v >= ?""", (season, t)).fetchone()[0]
+        for i, (d, pid) in enumerate(who):
+            when = datetime.strptime(d, "%Y-%m-%d").strftime("%B %-d") if d else None
+            h = f"{nm[pid]} reached {t:,} career {plural}" + (f" on {when}." if when else " this past season.")
+            dd = (f"He's the {ordinal(before + i + 1)} player ever to get there."
+                  if before is not None and before < 30 else "")
+            cards.append(_review(h, dd, [nm[pid]], f"milestone_{col}", weight))
     return cards
 
 
@@ -745,6 +760,18 @@ def _alltime(headline, detail, players, family, score, teams=None):
             "team_names": teams or [], "family": family, "score": round(score, 1), "priority": 2}
 
 
+HISTORIC_NAMES = {"CLE": [(2022, "Indians")], "TBA": [(2008, "Devil Rays")],
+                  "WAS": [(2005, "Expos")], "MON": [(2005, "Expos")]}
+
+
+def team_then(code, season):
+    """Franchise name as it was in `season` (2017 Cleveland = Indians)."""
+    for until, name in HISTORIC_NAMES.get((code or "").split("/")[0], []):
+        if season < until:
+            return name
+    return team_name(code) or code
+
+
 def _join(names):
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + f" and {names[-1]}"
 
@@ -772,19 +799,8 @@ def at_season_records(conn):
              f"The most {noun} in a season {era} is {rec}, set by {who}.")
         d = f"Next on the list: {nm[nxt[0]]} with {nxt[2]} in {nxt[1]}." if nxt else ""
         cards.append(_alltime(h, d, [nm[p] for p, _ in holders], f"at_season_{col}", 30))
-    r = conn.execute("""SELECT player_id, season, SUM(earned_runs)*27.0/SUM(ip_outs) e FROM season_pitching_stats
-        WHERE season >= 1920 GROUP BY player_id, season HAVING SUM(ip_outs) >= 162*3 ORDER BY e LIMIT 2""").fetchall()
-    if len(r) == 2:
-        nm = _names(conn, [r[0][0], r[1][0]])
-        cards.append(_alltime(f"The lowest ERA by a qualified pitcher since 1920 is {r[0][2]:.2f}, by {nm[r[0][0]]} in {r[0][1]}.",
-                              f"Next: {nm[r[1][0]]} at {r[1][2]:.2f} in {r[1][1]}.", [nm[r[0][0]]], "at_season_era", 32))
-    r = conn.execute("""SELECT player_id, season, SUM(hits)*1.0/SUM(at_bats) a FROM season_batting_stats
-        WHERE season >= 1901 GROUP BY player_id, season HAVING SUM(at_bats)+SUM(walks) >= 3.1*154
-        ORDER BY a DESC LIMIT 2""").fetchall()
-    if len(r) == 2:
-        nm = _names(conn, [r[0][0], r[1][0]])
-        cards.append(_alltime(f"The highest batting average of the modern era is {fmt_rate(r[0][2])}, by {nm[r[0][0]]} in {r[0][1]}.",
-                              f"Next: {nm[r[1][0]]} at {fmt_rate(r[1][2])} in {r[1][1]}.", [nm[r[0][0]]], "at_season_avg", 32))
+    # No all-time ERA / AVG records: MLB now counts the Negro Leagues, whose
+    # short seasons break a games-based qualifier (0.44 ERA "records").
     return cards
 
 
@@ -826,8 +842,10 @@ def at_game_records(conn):
     cards = []
     for table, col, noun in [("game_batting_logs", "rbi", "RBI"), ("game_batting_logs", "hits", "hits"),
                              ("game_batting_logs", "home_runs", "home runs"), ("game_pitching_logs", "strikeouts", "strikeouts")]:
-        rec = conn.execute(f"SELECT MAX({col}) FROM {table}").fetchone()[0]
-        rows = conn.execute(f"SELECT player_id, date FROM {table} WHERE {col} = ? ORDER BY date", (rec,)).fetchall()
+        sane = "hits <= at_bats" if table == "game_batting_logs" else "ip_outs > 0"
+        rec = conn.execute(f"SELECT MAX({col}) FROM {table} WHERE {sane}").fetchone()[0]
+        rows = conn.execute(f"SELECT player_id, date FROM {table} WHERE {col} = ? AND {sane} ORDER BY date",
+                            (rec,)).fetchall()
         nm = _names(conn, list({p for p, _ in rows}))
         if len(rows) <= 3:
             who = _join([f"{nm[p]} ({d[:4]})" for p, d in rows])
@@ -921,7 +939,7 @@ def at_teams(conn):
         GROUP BY season, team ORDER BY w DESC LIMIT 3""").fetchall()
     if r:
         top = [x for x in r if x[2] == r[0][2]]
-        who = _join([f"the {x[0]} {team_name(x[1]) or x[1]} ({x[2]}-{x[3]})" for x in top])
+        who = _join([f"the {x[0]} {team_then(x[1], x[0])} ({x[2]}-{x[3]})" for x in top])
         cards.append(_alltime(f"The most wins in a season in the modern era is {r[0][2]}, by {who}.", "", [],
                               "at_team_wins", 28, teams=[team_name(x[1]) or x[1] for x in top]))
     seq = conn.execute(f"SELECT season, team, date, result {base} AND season >= 1920 ORDER BY team, season, date, game_number")
@@ -934,12 +952,12 @@ def at_teams(conn):
             best = (run, s, t, d)
     if best[0]:
         n, s, t, _ = best
-        cards.append(_alltime(f"The longest winning streak since 1920 is {n} games, by the {s} {team_name(t) or t}.", "",
+        cards.append(_alltime(f"The longest winning streak since 1920 is {n} games, by the {s} {team_then(t, s)}.", "",
                               [], "at_team_streak", 26, teams=[team_name(t) or t]))
     r = conn.execute(f"SELECT season, date, team, opponent, team_runs, opp_runs {base} AND season >= 1920 ORDER BY team_runs DESC LIMIT 1").fetchone()
     if r:
         s, d, t, o, tr, orr = r
-        tn, on = team_name(t) or t, team_name(o) or o
+        tn, on = team_then(t, s), team_then(o, s)
         when = datetime.strptime(d, "%Y-%m-%d").strftime("%B %-d, %Y")
         cards.append(_alltime(f"The most runs by one team in a game since 1920 is {tr}: the {tn} beat the {on} {tr}-{orr} on {when}.",
                               "", [], "at_team_runs", 26, teams=[tn, on]))
