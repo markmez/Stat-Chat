@@ -35,6 +35,7 @@ DB_PATH = os.getenv("DB_PATH", "/data/baseball_stats_full.db")
 OFF_PHASES = {"offseason", "postseason", "finalizing"}
 RETENTION_DAYS = 14
 BORN_ACTIVE_MIN_PROMINENCE = 2500   # second Born Today card for an active star
+BORN_MIN_PROMINENCE = 2000          # below this (5 dates a year, e.g. Feb 16) skip the day
 REVIEW_TYPE, BORN_TYPE = "season_review", "born_today"
 
 
@@ -146,7 +147,7 @@ def born_today_cards(conn, today, season):
         FROM players WHERE substr(birthdate, 6, 5) = ? AND birthdate LIKE '____-__-__'
           AND prominence_score > 0
         ORDER BY prominence_score DESC LIMIT 25""", (md,)).fetchall()
-    if not rows:
+    if not rows or rows[0][3] < BORN_MIN_PROMINENCE:
         return []
     picks = [rows[0]]
     active = [r for r in rows if (r[4] or 0) >= season and r[3] >= BORN_ACTIVE_MIN_PROMINENCE]
