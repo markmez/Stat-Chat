@@ -1634,6 +1634,32 @@ async def volume_usage(authorization: str | None = Header(None)):
             "disk_free_mb": round(du.free / 1_000_000, 1)}
 
 
+@router.post("/offseason-feed")
+async def offseason_feed(
+    action: str = "preview",
+    date: str | None = None,
+    authorization: str | None = Header(None),
+):
+    """Offseason feed (Born Today + Season in Review), see
+    data_pipeline/offseason_feed.py. action: preview (JSON, writes nothing) |
+    build-queue | publish (what the daily cron runs)."""
+    verify_admin(authorization)
+    if action not in ("preview", "build-queue", "publish"):
+        raise HTTPException(400, "action must be preview | build-queue | publish")
+    script = os.path.join(os.path.dirname(PIPELINE_SCRIPT), "offseason_feed.py")
+    cmd = [sys.executable, script, "--db", DB_PATH, f"--{action}"]
+    if date:
+        cmd += ["--date", date]
+    result = await _run_subprocess(cmd, timeout=900)
+    if action == "preview" and result.returncode == 0:
+        try:
+            return json.loads(result.stdout)
+        except Exception:
+            pass
+    return {"returncode": result.returncode, "stdout": result.stdout[-8000:],
+            "stderr": result.stderr[-4000:]}
+
+
 @router.post("/refresh-detached")
 async def refresh_detached(
     full_refresh: bool = False,
