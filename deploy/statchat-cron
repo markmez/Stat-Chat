@@ -46,6 +46,10 @@ PATH=/usr/local/bin:/usr/bin:/bin
 
 # Weekly records rebuild: Tuesday 3:00 AM ET (07:00 UTC) — ~2-3 min with
 # indexed teams-lookup + franchise grouping (was 2+ hours before the refactor).
+# Offseason feed (Born Today + Season in Review): 6:05am ET daily. Idle
+# in season (checks season_phase itself); zero MySportsFeeds calls.
+5 11 * * * statchat flock -w 600 /data/pipeline.lock /opt/statchat/venv/bin/python /opt/statchat/repo/backend/data_pipeline/offseason_feed.py --db /data/baseball_stats_full.db --publish >> /data/refresh.log 2>&1
+
 # Weekly rebuilds share the pipeline's flock (/data/pipeline.lock): they wait
 # up to an hour for a running pipeline, else skip the week. They write for
 # minutes at a time, and on 2026-11-24 build_records killed an 8h crawl.

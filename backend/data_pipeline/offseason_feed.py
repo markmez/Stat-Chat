@@ -411,12 +411,12 @@ def fam_streaks(conn, season):
             WHERE streak_type = 'hitting' AND length > ? AND end_season >= ?""", (n, season - 10)).fetchone()[0]
         sd = datetime.strptime(s, "%Y-%m-%d")
         ed = datetime.strptime(e, "%Y-%m-%d")
-        span = (f"from {sd.strftime('%B %-d')} to {ed.strftime('%B %-d')}" if sd.year == ed.year
-                else f"from {sd.strftime('%B %-d, %Y')} into {ed.strftime('%B %-d')}")
-        if sd.year != ed.year:
-            h = f"{name}'s {n}-game hitting streak, carried over {span}, was the longest of {season}."
+        if sd.year == ed.year:
+            h = (f"{name} hit safely in {n} straight games from {sd.strftime('%B %-d')} to "
+                 f"{ed.strftime('%B %-d')}, the longest hitting streak of {season}.")
         else:
-            h = f"{name}'s {n}-game hitting streak, {span}, was the longest of {season}."
+            h = (f"{name} hit safely in {n} straight games, a streak that began {sd.strftime('%B %-d, %Y')} "
+                 f"and ran to {ed.strftime('%B %-d')}, the longest hitting streak of {season}.")
         d = (f"Only {longer} longer streak{'s' if longer != 1 else ''} in the last decade." if longer < 10 else "")
         cards.append(_review(h, d, [name], "streak_hit", 25 + max(0, n - 20) * 2))
     return cards
