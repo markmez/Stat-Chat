@@ -559,6 +559,9 @@ MILESTONES = [  # (table, season col, log table, log col, thresholds, noun, ordi
 ]
 
 
+NUMWORDS = {3: "Three", 4: "Four", 5: "Five", 6: "Six", 7: "Seven", 8: "Eight", 9: "Nine"}
+
+
 def fam_milestones(conn, season):
     """Career round numbers crossed during the season, dated from game logs.
     Three or more players crossing the same mark share one card. 'Nth player
@@ -591,7 +594,7 @@ def fam_milestones(conn, season):
         weight = 18 + t / max(m[4][-1] for m in MILESTONES if m[1] == col) * 14
         if len(who) >= 3:
             cards.append(_review(
-                f"{len(who)} players reached {t:,} career {plural} this past season.",
+                f"{NUMWORDS.get(len(who), str(len(who)))} players reached {t:,} career {plural} this past season.",
                 "In order: " + _join([nm[p] for _, p in who]) + ".",
                 [nm[p] for _, p in who], f"milestone_{col}", weight + 4))
             continue
@@ -935,12 +938,12 @@ def at_ages(conn):
 def at_teams(conn):
     cards = []
     base = "FROM team_game_results WHERE COALESCE(gametype,'regular') = 'regular'"
-    r = conn.execute(f"""SELECT season, team, SUM(result='W') w, SUM(result='L') l {base} AND season >= 1901
+    r = conn.execute(f"""SELECT season, team, SUM(result='W') w, SUM(result='L') l {base} AND season >= 1920
         GROUP BY season, team ORDER BY w DESC LIMIT 3""").fetchall()
     if r:
         top = [x for x in r if x[2] == r[0][2]]
         who = _join([f"the {x[0]} {team_then(x[1], x[0])} ({x[2]}-{x[3]})" for x in top])
-        cards.append(_alltime(f"The most wins in a season in the modern era is {r[0][2]}, by {who}.", "", [],
+        cards.append(_alltime(f"The most wins in a season since 1920 is {r[0][2]}, by {who}.", "", [],
                               "at_team_wins", 28, teams=[team_name(x[1]) or x[1] for x in top]))
     seq = conn.execute(f"SELECT season, team, date, result {base} AND season >= 1920 ORDER BY team, season, date, game_number")
     best, key, run = (0, None, None, None), None, 0
