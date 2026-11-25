@@ -692,9 +692,15 @@ def fam_ages(conn, season):
                SELECT player_id, date FROM game_batting_logs WHERE season = :s AND plate_appearances > 0
                UNION ALL SELECT player_id, date FROM game_pitching_logs WHERE season = :s)
              GROUP BY player_id) g USING(player_id)
-           WHERE p.birthdate LIKE '____-__-__'"""
+           WHERE p.birthdate LIKE '____-__-__' AND substr(p.birthdate, 6, 2) BETWEEN '01' AND '12'
+             AND substr(p.birthdate, 9, 2) BETWEEN '01' AND '31'"""
+    def valid(r):
+        try:
+            date.fromisoformat(r[2]); return True
+        except ValueError:
+            return False
     for agg, label, fam in [("MIN", "youngest", "age_young"), ("MAX", "oldest", "age_old")]:
-        rows = conn.execute(q.format(agg=agg), {"s": season}).fetchall()
+        rows = [r for r in conn.execute(q.format(agg=agg), {"s": season}).fetchall() if valid(r)]
         if not rows:
             continue
         def age_days(r):
