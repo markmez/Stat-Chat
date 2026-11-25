@@ -10,6 +10,15 @@ DB=/data/baseball_stats_full.db
 
 echo "=== VACUUM starting at $(date) ==="
 
+# Never stop the service under a pipeline run (it would kill a run launched
+# from the API, and VACUUM needs the DB to itself anyway). Same flock the
+# pipeline takes; wait up to an hour, else skip this time.
+exec 9>/data/pipeline.lock
+if ! flock -w 3600 9; then
+    echo "SKIP: pipeline still running after 1h — no VACUUM this time"
+    exit 0
+fi
+
 # Check free disk space (need at least 2x DB size)
 DB_SIZE_KB=$(du -k "$DB" | cut -f1)
 FREE_KB=$(df --output=avail /data | tail -1 | tr -d ' ')

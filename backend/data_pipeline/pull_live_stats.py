@@ -1685,13 +1685,21 @@ def compute_platoon_splits(conn, season_str, full_refresh=False, gap_fill=False)
         conn.execute("""CREATE TABLE IF NOT EXISTS upcoming_games (
             game_id INTEGER PRIMARY KEY, date TEXT, start_utc TEXT,
             home TEXT, away TEXT, venue TEXT)""")
+        # Named columns (2026-11-24): update_probables.py adds home_probable /
+        # away_probable, and the old positional 6-value insert failed on the
+        # 8-column table from 2026-08-27 on, after the DELETE had already
+        # run, so the slate sat empty for the last month of the season. The
+        # probables columns stay NULL here; update_probables.py fills them.
+        rows = [u for u in upcoming if u[1] >= date.today().isoformat()][:250]
         conn.execute("DELETE FROM upcoming_games")
         conn.executemany(
-            "INSERT OR REPLACE INTO upcoming_games VALUES (?,?,?,?,?,?)",
-            [u for u in upcoming if u[1] >= date.today().isoformat()][:250])
+            "INSERT OR REPLACE INTO upcoming_games "
+            "(game_id, date, start_utc, home, away, venue) VALUES (?,?,?,?,?,?)",
+            rows)
         conn.commit()
-        print(f"    Upcoming slate: {min(len(upcoming), 250)} scheduled games stored")
+        print(f"    Upcoming slate: {len(rows)} scheduled games stored")
     except Exception as e:
+        conn.rollback()  # never leave the DELETE pending for a later commit
         print(f"    Upcoming slate store failed: {e}")
 
     # Accumulators
@@ -2765,6 +2773,13 @@ def pull_postseason(conn, year):
     return dates[-1] < today - timedelta(days=PHASE_GRACE_DAYS)
 
 
+# How long a pipeline write waits on another writer before failing. sqlite3's
+# default is 5s; on 2026-11-24 the weekly build_records.py held a write lock
+# longer than that and killed an 8-hour finalize crawl ("database is locked").
+# Cron jobs now also take the pipeline lock (deploy/statchat-cron), so this is
+# the second line of defense: ad-hoc admin writes, the API, anything else.
+DB_BUSY_TIMEOUT = 600
+
 def main():
     parser = argparse.ArgumentParser(description="Pull live MLB stats from MySportsFeeds")
     parser.add_argument("--season", default=None,
@@ -2812,7 +2827,7 @@ def main():
     # Explicit playoff request (e.g. /admin/refresh?season=2026-playoff):
     # postseason tables only — never the regular-season ones.
     if args.season and args.season.endswith("-playoff"):
-        conn = sqlite3.connect(args.db)
+        conn = sqlite3.connect(args.db, timeout=DB_BUSY_TIMEOUT)
         try:
             pull_postseason(conn, detect_season(args.season))
         finally:
@@ -2828,7 +2843,7 @@ def main():
         if month < 2 or (month == 2 and day < 15):
             # Before any possible spring-training game: nothing to pull, and
             # MSF may be paused for the winter. Exit without an API call.
-            conn = sqlite3.connect(args.db)
+            conn = sqlite3.connect(args.db, timeout=DB_BUSY_TIMEOUT)
             _set_flag(conn, "season_phase", "offseason", year)
             conn.close()
             print("Offseason (before spring training) — nothing to pull.")
@@ -2838,7 +2853,7 @@ def main():
         elif month >= 4 or day > 27:
             # Regular season / postseason / offseason, read from MSF schedules
             # (see PHASE_GRACE_DAYS block above main).
-            conn = sqlite3.connect(args.db)
+            conn = sqlite3.connect(args.db, timeout=DB_BUSY_TIMEOUT)
             try:
                 reg_final = _flag(conn, f"regular_final_{year}")
                 post_final = _flag(conn, f"postseason_final_{year}")
@@ -2894,7 +2909,7 @@ def main():
         print(f"Auto-detected season: {args.season}")
 
     print(f"Pulling live stats for {args.season} into {args.db}")
-    conn = sqlite3.connect(args.db)
+    conn = sqlite3.connect(args.db, timeout=DB_BUSY_TIMEOUT)
     conn.execute("PRAGMA journal_mode=WAL")
     _phase = ("finalizing" if finalize
               else args.season.split("-", 1)[1] if "-" in args.season else "regular")
@@ -3054,7 +3069,7 @@ def main():
             # Feed detection + AI insights describe "yesterday's games";
             # a post-season re-pull has none, and re-running them would
             # republish late-September cards.
-            _c = sqlite3.connect(args.db)
+            _c = sqlite3.connect(args.db, timeout=DB_BUSY_TIMEOUT)
             _set_flag(_c, f"regular_final_{season_year}",
                       date.today().isoformat(), season_year)
             _c.close()
