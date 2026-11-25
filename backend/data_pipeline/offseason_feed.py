@@ -36,7 +36,7 @@ OFF_PHASES = {"offseason", "postseason", "finalizing"}
 RETENTION_DAYS = 14
 BORN_ACTIVE_MIN_PROMINENCE = 2500   # second Born Today card for an active star
 BORN_MIN_PROMINENCE = 2000          # below this (5 dates a year, e.g. Feb 16) skip the day
-REVIEW_TYPE, BORN_TYPE = "season_review", "born_today"
+REVIEW_TYPE, BORN_TYPE, ALLTIME_TYPE = "season_review", "born_today", "alltime_fact"
 
 
 def et_today():
@@ -242,7 +242,7 @@ def fam_count_leaders(conn, season):
             verb_obj = f"won {v} games"
         elif col == "saves":
             verb_obj = f"saved {v} games"
-        headline = f"{name} {verb_obj} in {season}, most in the majors"
+        headline = f"{name} {verb_obj} this past season, most in the majors"
         if since is None:
             headline += f", and the most in a season in MLB history."
         elif since[2] == v:
@@ -250,7 +250,7 @@ def fam_count_leaders(conn, season):
         else:
             headline += f", and the most in a season since {since[1]} had {since[2]} in {since[0]}."
         lead = runner[1] if runner else 0
-        detail = f"The next-closest total in {season} was {lead}." if runner and v - lead >= 3 else ""
+        detail = f"The next-closest total this past season was {lead}." if runner and v - lead >= 3 else ""
         if beat < 100:
             detail += (f" Only {beat} player-season{'s' if beat != 1 else ''} in history topped it."
                        if beat else " No one has ever topped it.")
@@ -282,9 +282,9 @@ def fam_rate_leaders(conn, season):
         gap = season - prev[0] if prev else 999
         if gap >= 4:
             pn = _names(conn, [prev[1]])[prev[1]] if prev else None
-            h = (f"{name} hit {fmt_rate(avg)} in {season} to win the batting title, the highest qualified "
+            h = (f"{name} hit {fmt_rate(avg)} this past season to win the batting title, the highest qualified "
                  f"average since {pn} hit {fmt_rate(prev[2])} in {prev[0]}." if prev else
-                 f"{name} hit {fmt_rate(avg)} in {season}, the highest qualified average of the modern era.")
+                 f"{name} hit {fmt_rate(avg)} this past season, the highest qualified average of the modern era.")
             cards.append(_review(h, "", [name], "lead_avg", min(gap, 60)))
     # ERA (qualified)
     r = conn.execute("""
@@ -302,9 +302,9 @@ def fam_rate_leaders(conn, season):
         gap = season - prev[0] if prev else 999
         if gap >= 4:
             pn = _names(conn, [prev[1]])[prev[1]] if prev else None
-            h = (f"{name} posted a {era:.2f} ERA in {season} to lead the majors, the lowest by a qualified "
+            h = (f"{name} posted a {era:.2f} ERA this past season to lead the majors, the lowest by a qualified "
                  f"pitcher since {pn}'s {prev[2]:.2f} in {prev[0]}." if prev else
-                 f"{name} posted a {era:.2f} ERA in {season}, the lowest by a qualified pitcher since 1920.")
+                 f"{name} posted a {era:.2f} ERA this past season, the lowest by a qualified pitcher since 1920.")
             cards.append(_review(h, "", [name], "lead_era", min(gap, 60)))
     return cards
 
@@ -331,7 +331,7 @@ def fam_clubs(conn, season):
                 continue  # 30-30 is common enough to skip unless rare
             for pid, x, y in rows:
                 name = _names(conn, [pid])[pid]
-                h = (f"{name} hit {x} home runs and stole {y} bases in {season}, "
+                h = (f"{name} hit {x} home runs and stole {y} bases this past season, "
                      f"joining the {ta}-{tb} club.")
                 d = (f"It's happened only {before} other time{'s' if before != 1 else ''} in MLB history."
                      if before < 60 else "")
@@ -356,7 +356,7 @@ def fam_month(conn, season):
             (season, v)).fetchone()
         gap = season - prev[0] if prev else 999
         name = _names(conn, [pid])[pid]
-        h = f"{name}'s {v} {noun} in {months.get(m, m)} were the most by any player in a single month in {season}"
+        h = f"{name}'s {v} {noun} in {months.get(m, m)} were the most by any player in a single month this past season"
         if gap < 5:
             cards.append(_review(h + ".", "", [name], f"month_{col}", 8))
             continue
@@ -381,7 +381,7 @@ def fam_single_game(conn, season):
         gap = season - prev[0] if prev else 999
         name = _names(conn, [pid])[pid]
         when = datetime.strptime(d, "%Y-%m-%d").strftime("%B %-d")
-        h = f"{name} struck out {k} on {when}, the most in a game in {season}"
+        h = f"{name} struck out {k} on {when}, the most in a game this past season"
         if prev and gap >= 3:
             pn = _names(conn, [prev[1]])[prev[1]]
             h += f", and the most since {pn} struck out {prev[2]} in {prev[0]}."
@@ -396,7 +396,7 @@ def fam_single_game(conn, season):
         ever = conn.execute("SELECT COUNT(*) FROM game_batting_logs WHERE home_runs >= 4 AND season < ?",
                             (season,)).fetchone()[0]
         when = datetime.strptime(d, "%Y-%m-%d").strftime("%B %-d")
-        cards.append(_review(f"{name} hit {n} home runs in one game on {when}, the only {n}-homer game of {season}.",
+        cards.append(_review(f"{name} hit {n} home runs in one game on {when}, the only {n}-homer game of this past season.",
                              f"It's been done {ever} times since 1920.", [name], "game_hr", 55))
     return cards
 
@@ -414,10 +414,10 @@ def fam_streaks(conn, season):
         ed = datetime.strptime(e, "%Y-%m-%d")
         if sd.year == ed.year:
             h = (f"{name} hit safely in {n} straight games from {sd.strftime('%B %-d')} to "
-                 f"{ed.strftime('%B %-d')}, the longest hitting streak of {season}.")
+                 f"{ed.strftime('%B %-d')}, the longest hitting streak of this past season.")
         else:
             h = (f"{name} hit safely in {n} straight games, a streak that began {sd.strftime('%B %-d, %Y')} "
-                 f"and ran to {ed.strftime('%B %-d')}, the longest hitting streak of {season}.")
+                 f"and ran to {ed.strftime('%B %-d')}, the longest hitting streak of this past season.")
         d = (f"Only {longer} longer streak{'s' if longer != 1 else ''} in the last decade." if longer < 10 else "")
         cards.append(_review(h, d, [name], "streak_hit", 25 + max(0, n - 20) * 2))
     return cards
@@ -435,7 +435,7 @@ def fam_team(conn, season):
               WHERE season < ? AND COALESCE(gametype,'regular') = 'regular' GROUP BY season, team)
             WHERE w >= ? ORDER BY season DESC LIMIT 1""", (season, w)).fetchone()
         tn = team_name(t) or t
-        h = f"The {tn} went {w}-{l} in {season}, the best record in baseball"
+        h = f"The {tn} went {w}-{l} this past season, the best record in baseball"
         if prev and season - prev[0] >= 3:
             h += f", and the most wins since the {prev[0]} {team_name(prev[1]) or prev[1]} won {prev[2]}."
             score = 20 + min(season - prev[0], 40)
@@ -466,7 +466,7 @@ def fam_team(conn, season):
         sd, ed = (datetime.strptime(x, "%Y-%m-%d") for x in (s, e))
         cards.append(_review(
             f"The {tn} won {n} straight games from {sd.strftime('%B %-d')} to {ed.strftime('%B %-d')}, "
-            f"the longest winning streak of {season}.", "", [], "team_streak", 15 + (n - 10) * 3, teams=[tn]))
+            f"the longest winning streak of this past season.", "", [], "team_streak", 15 + (n - 10) * 3, teams=[tn]))
     return cards
 
 
@@ -485,26 +485,10 @@ def fam_plain_leaders(conn, season):
             continue
         names = _names(conn, [top[0][0], top[1][0]])
         lead, nxt = top[0][1], top[1][1]
-        h = f"{names[top[0][0]]} led the majors with {lead} {noun} in {season}."
+        h = f"{names[top[0][0]]} led the majors with {lead} {noun} this past season."
         d = (f"{names[top[1][0]]} was next with {nxt}." if lead - nxt <= 2
              else f"That was {lead - nxt} more than anyone else; {names[top[1][0]]} was next with {nxt}.")
         cards.append(_review(h, d, [names[top[0][0]]], f"lead_{col}", 6 + min(lead - nxt, 6)))
-    return cards
-
-
-def fam_milestones(conn, season):
-    """Career milestones reached during the season (historic_moments)."""
-    cards = []
-    nouns = {"home_runs": "home run", "hits": "hit", "rbi": "RBI", "stolen_bases": "stolen base",
-             "strikeouts": "strikeout", "wins": "win", "saves": "save"}
-    for pid, name, stat, thr, d, ctx in conn.execute("""SELECT player_id, player_name, stat, threshold,
-            date, context FROM historic_moments WHERE season = ? ORDER BY date""", (season,)).fetchall():
-        before = conn.execute("""SELECT COUNT(DISTINCT player_id) FROM historic_moments
-            WHERE stat = ? AND threshold = ? AND date < ?""", (stat, thr, d)).fetchone()[0]
-        when = datetime.strptime(d, "%Y-%m-%d").strftime("%B %-d")
-        h = f"{name} {ctx} on {when}." if ctx else f"{name} reached {thr:,} career {nouns.get(stat, stat)}s on {when}."
-        dd = f"He became the {ordinal(before + 1)} player ever to get there." if before < 40 else ""
-        cards.append(_review(h, dd, [name], f"milestone_{stat}", 35 - min(before, 25) / 2))
     return cards
 
 
@@ -517,7 +501,7 @@ def fam_onbase_streak(conn, season):
     name, n, s, e = r[0]
     sd, ed = (datetime.strptime(x, "%Y-%m-%d") for x in (s, e))
     return [_review(f"{name} reached base in {n} straight games from {sd.strftime('%B %-d')} to "
-                    f"{ed.strftime('%B %-d')}, the longest on-base streak of {season}.", "",
+                    f"{ed.strftime('%B %-d')}, the longest on-base streak of this past season.", "",
                     [name], "streak_ob", 14 + max(0, n - 30))]
 
 
@@ -537,7 +521,7 @@ def fam_first_year(conn, season):
             continue
         nm = _names(conn, [top[0][0], top[1][0]])
         cards.append(_review(
-            f"{nm[top[0][0]]} led all first-year players with {top[0][1]} {noun} in {season}.",
+            f"{nm[top[0][0]]} led all first-year players with {top[0][1]} {noun} this past season.",
             f"{nm[top[1][0]]} was next with {top[1][1]}.", [nm[top[0][0]]], f"first_{col}", 12))
     return cards
 
@@ -559,6 +543,413 @@ def fam_big_games(conn, season):
     return cards
 
 
+
+
+# ── More Season in Review families (2026-11-25: enough for every other day,
+# Nov–mid-Feb ≈ 40 cards) ────────────────────────────────────────────────
+
+MILESTONES = [  # (table, season col, log table, log col, thresholds, noun, ordinal_safe_from)
+    ("season_batting_stats", "home_runs", "game_batting_logs", "home_runs", [200, 300, 400, 500, 600, 700], "home run", 0),
+    ("season_batting_stats", "hits", "game_batting_logs", "hits", [1500, 2000, 2500, 3000], "hit", None),
+    ("season_batting_stats", "rbi", "game_batting_logs", "rbi", [1000, 1500, 2000], "RBI", None),
+    ("season_batting_stats", "stolen_bases", "game_batting_logs", "stolen_bases", [200, 300, 400, 500], "stolen base", None),
+    ("season_pitching_stats", "strikeouts", "game_pitching_logs", "strikeouts", [1500, 2000, 2500, 3000, 3500], "strikeout", 3000),
+    ("season_pitching_stats", "wins", "game_pitching_logs", "win", [150, 200, 250], "win", None),
+    ("season_pitching_stats", "saves", "game_pitching_logs", "save", [200, 300, 400, 500], "save", 0),
+]
+
+
+def fam_milestones(conn, season):
+    """Career round numbers crossed during the season, dated from game logs.
+    'Nth player ever' only where the DB's 1898 start can't undercount (HR,
+    saves, 3,000+ K: no 19th-century player is missing from those clubs)."""
+    cards = []
+    for table, col, ltable, lcol, ths, noun, safe_from in MILESTONES:
+        rows = conn.execute(f"""
+            SELECT player_id, SUM(CASE WHEN season < :s THEN {col} ELSE 0 END) pre,
+                   SUM(CASE WHEN season = :s THEN {col} ELSE 0 END) cur
+            FROM {table} WHERE player_id IN (SELECT player_id FROM {table} WHERE season = :s AND {col} > 0)
+            GROUP BY player_id""", {"s": season}).fetchall()
+        for pid, pre, cur in rows:
+            for t in ths:
+                if not (pre < t <= pre + cur):
+                    continue
+                run, when = pre, None
+                for d, v in conn.execute(f"""SELECT date, {lcol} FROM {ltable} WHERE player_id = ? AND season = ?
+                                            ORDER BY date, game_number""", (pid, season)):
+                    run += v or 0
+                    if run >= t:
+                        when = datetime.strptime(d, "%Y-%m-%d").strftime("%B %-d")
+                        break
+                name = _names(conn, [pid])[pid]
+                h = (f"{name} reached {t:,} career {noun}{'s' if noun != 'RBI' else ''}"
+                     + (f" on {when}." if when else " this past season."))
+                d = ""
+                if safe_from is not None and t >= safe_from:
+                    before = conn.execute(f"""SELECT COUNT(*) FROM (SELECT SUM({col}) v FROM {table}
+                        WHERE season < ? GROUP BY player_id) WHERE v >= ?""", (season, t)).fetchone()[0]
+                    d = f"He's the {ordinal(before + 1)} player ever to get there."
+                cards.append(_review(h, d, [name], f"milestone_{col}", 18 + t / max(ths) * 14))
+    return cards
+
+
+def fam_more_leaders(conn, season):
+    """Rate leaders (qualified OPS, WHIP) and the remaining counting leaders."""
+    cards = []
+    games = conn.execute("""SELECT MAX(n) FROM (SELECT COUNT(*) n FROM team_game_results
+        WHERE season = ? AND COALESCE(gametype,'regular') = 'regular' GROUP BY team)""",
+        (season,)).fetchone()[0] or 162
+    r = conn.execute("""
+        SELECT player_id, (SUM(hits)+SUM(walks)+SUM(hit_by_pitch))*1.0/(SUM(at_bats)+SUM(walks)+SUM(hit_by_pitch)+SUM(sacrifice_flies))
+             + (SUM(hits)+SUM(doubles)+2*SUM(triples)+3*SUM(home_runs))*1.0/SUM(at_bats) ops
+        FROM season_batting_stats WHERE season = ? GROUP BY player_id
+        HAVING SUM(plate_appearances) >= ? ORDER BY ops DESC LIMIT 2""", (season, round(3.1 * games))).fetchall()
+    if len(r) == 2:
+        nm = _names(conn, [r[0][0], r[1][0]])
+        cards.append(_review(f"{nm[r[0][0]]} led all qualified hitters with a {fmt_rate(r[0][1])} OPS this past season.",
+                             f"{nm[r[1][0]]} was next at {fmt_rate(r[1][1])}.", [nm[r[0][0]]], "lead_ops", 11))
+    r = conn.execute("""SELECT player_id, (SUM(hits)+SUM(walks))*3.0/SUM(ip_outs) w FROM season_pitching_stats
+        WHERE season = ? GROUP BY player_id HAVING SUM(ip_outs) >= ? ORDER BY w ASC LIMIT 2""",
+        (season, games * 3)).fetchall()
+    if len(r) == 2:
+        nm = _names(conn, [r[0][0], r[1][0]])
+        cards.append(_review(f"{nm[r[0][0]]} led all qualified pitchers with a {r[0][1]:.2f} WHIP this past season.",
+                             f"{nm[r[1][0]]} was next at {r[1][1]:.2f}.", [nm[r[0][0]]], "lead_whip", 9))
+    for table, col, noun in [("season_batting_stats", "doubles", "doubles"), ("season_batting_stats", "triples", "triples"),
+                             ("season_batting_stats", "walks", "walks"), ("season_batting_stats", "runs", "runs"),
+                             ("season_pitching_stats", "ip_outs", "innings")]:
+        top = conn.execute(f"""SELECT player_id, SUM({col}) v FROM {table} WHERE season = ?
+            GROUP BY player_id ORDER BY v DESC LIMIT 2""", (season,)).fetchall()
+        if len(top) < 2 or top[0][1] == top[1][1]:
+            continue
+        nm = _names(conn, [top[0][0], top[1][0]])
+        fmt = (lambda o: f"{o // 3}{'.' + str(o % 3) if o % 3 else ''}") if col == "ip_outs" else str
+        lead = f"pitched {fmt(top[0][1])} innings" if col == "ip_outs" else f"had {top[0][1]} {noun}"
+        cards.append(_review(f"{nm[top[0][0]]} {lead}, the most in the majors this past season.",
+                             f"{nm[top[1][0]]} was next with {fmt(top[1][1])}.", [nm[top[0][0]]], f"lead_{col}", 7))
+    return cards
+
+
+def fam_team_more(conn, season):
+    cards = []
+    base = "FROM team_game_results WHERE season = ? AND COALESCE(gametype,'regular') = 'regular'"
+    for sql, tmpl, fam in [
+        (f"SELECT team, SUM(team_runs) v {base} GROUP BY team ORDER BY v DESC LIMIT 2",
+         "The {t} scored {v} runs this past season, the most in baseball.", "team_runs"),
+        (f"SELECT team, SUM(opp_runs) v {base} GROUP BY team ORDER BY v ASC LIMIT 2",
+         "The {t} allowed {v} runs this past season, the fewest in baseball.", "team_ra"),
+        (f"SELECT team, SUM(team_runs) - SUM(opp_runs) v {base} GROUP BY team ORDER BY v DESC LIMIT 2",
+         "The {t} outscored opponents by {v} runs this past season, the best run differential in baseball.", "team_diff"),
+    ]:
+        r = conn.execute(sql, (season,)).fetchall()
+        if len(r) == 2 and r[0][1] != r[1][1]:
+            t = team_name(r[0][0]) or r[0][0]
+            cards.append(_review(tmpl.format(t=t, v=r[0][1]), "", [], fam, 10, teams=[t]))
+    seq = conn.execute(f"SELECT team, date, result {base} ORDER BY team, date, game_number", (season,)).fetchall()
+    best, cur_team, run, start = (0, None, None, None), None, 0, None
+    for t, d, res in seq:
+        if t != cur_team:
+            cur_team, run = t, 0
+        if res == "L":
+            run += 1
+            start = d if run == 1 else start
+            if run > best[0]:
+                best = (run, t, start, d)
+        else:
+            run = 0
+    if best[0] >= 10:
+        n, t, s, e = best
+        tn = team_name(t) or t
+        sd, ed = (datetime.strptime(x, "%Y-%m-%d") for x in (s, e))
+        cards.append(_review(f"The {tn} lost {n} straight games from {sd.strftime('%B %-d')} to {ed.strftime('%B %-d')}, "
+                             f"the longest losing streak of this past season.", "", [], "team_skid", 9, teams=[tn]))
+    return cards
+
+
+def fam_ages(conn, season):
+    """Youngest and oldest players to appear."""
+    cards = []
+    q = """SELECT p.player_id, p.name, p.birthdate, g.d FROM players p JOIN (
+             SELECT player_id, {agg}(date) d FROM (
+               SELECT player_id, date FROM game_batting_logs WHERE season = :s AND plate_appearances > 0
+               UNION ALL SELECT player_id, date FROM game_pitching_logs WHERE season = :s)
+             GROUP BY player_id) g USING(player_id)
+           WHERE p.birthdate LIKE '____-__-__'"""
+    for agg, label, fam in [("MIN", "youngest", "age_young"), ("MAX", "oldest", "age_old")]:
+        rows = conn.execute(q.format(agg=agg), {"s": season}).fetchall()
+        if not rows:
+            continue
+        def age_days(r):
+            return (date.fromisoformat(r[3]) - date.fromisoformat(r[2])).days
+        rows.sort(key=age_days, reverse=(label == "oldest"))
+        pid, name, b, d = rows[0]
+        bd, gd = date.fromisoformat(b), date.fromisoformat(d)
+        years = gd.year - bd.year - ((gd.month, gd.day) < (bd.month, bd.day))
+        last_bd = bd.replace(year=bd.year + years) if not (bd.month == 2 and bd.day == 29) else date(bd.year + years, 3, 1)
+        days = (gd - last_bd).days
+        when = gd.strftime("%B %-d")
+        verb = "debuted" if label == "youngest" and not conn.execute(
+            "SELECT 1 FROM season_batting_stats WHERE player_id = ? AND season < ? UNION "
+            "SELECT 1 FROM season_pitching_stats WHERE player_id = ? AND season < ?", (pid, season, pid, season)).fetchone() \
+            else ("first played" if label == "youngest" else "last played")
+        cards.append(_review(f"{name} was the {label} player in the majors this past season.",
+                             f"He {verb} on {when} at {years} years, {days} days old.", [name], fam, 13))
+    return cards
+
+
+def fam_hot_stretch(conn, season):
+    """The season's hottest stretch (PELT hot segments, ≥15 games)."""
+    r = conn.execute("""SELECT player_id, start_date, end_date, num_games, batting_avg, obp, slg, home_runs
+        FROM streaks WHERE season = ? AND performance = 'hot' AND num_games >= 15 AND at_bats >= 50
+        ORDER BY ops DESC LIMIT 1""", (season,)).fetchone()
+    if not r:
+        return []
+    pid, s, e, n, avg, obp, slg, hr = r
+    name = _names(conn, [pid])[pid]
+    sd, ed = (datetime.strptime(x, "%Y-%m-%d") for x in (s, e))
+    return [_review(f"{name} hit {fmt_rate(avg)}/{fmt_rate(obp)}/{fmt_rate(slg)} with {hr} home runs over {n} games "
+                    f"from {sd.strftime('%B %-d')} to {ed.strftime('%B %-d')}, the hottest stretch of this past season.",
+                    "", [name], "hot_stretch", 20)]
+
+
+def fam_multi_hr(conn, season):
+    r = conn.execute("""SELECT player_id, COUNT(*) n FROM game_batting_logs WHERE season = ? AND home_runs >= 2
+        GROUP BY player_id ORDER BY n DESC LIMIT 2""", (season,)).fetchall()
+    if len(r) < 2 or r[0][1] == r[1][1]:
+        return []
+    nm = _names(conn, [r[0][0], r[1][0]])
+    return [_review(f"{nm[r[0][0]]} had {r[0][1]} multi-homer games this past season, the most in the majors.",
+                    f"{nm[r[1][0]]} was next with {r[1][1]}.", [nm[r[0][0]]], "multi_hr", 12)]
+
+
+def fam_month_pitching(conn, season):
+    months = {3: "March", 4: "April", 5: "May", 6: "June", 7: "July", 8: "August", 9: "September"}
+    r = conn.execute("""SELECT player_id, month, strikeouts FROM monthly_pitching_aggregates
+        WHERE season = ? ORDER BY strikeouts DESC LIMIT 2""", (season,)).fetchall()
+    if len(r) < 2 or r[0][2] == r[1][2]:
+        return []
+    pid, m, k = r[0]
+    name = _names(conn, [pid])[pid]
+    return [_review(f"{name}'s {k} strikeouts in {months.get(m, m)} were the most by any pitcher in a single month "
+                    f"this past season.", "", [name], "month_k", 9)]
+
+
+# ── All-time tidbits (alternate days) ─────────────────────────────────────
+# Records claims are bounded to where the DB is complete: season stats from
+# 1901 ("the modern era"), game logs from 1920. Career leaders only when the
+# leader's whole career is in the DB (debut after 1898).
+
+def _alltime(headline, detail, players, family, score, teams=None):
+    return {"headline": headline, "detail": detail, "category": "All-Time",
+            "detection_type": ALLTIME_TYPE, "player_names": players,
+            "team_names": teams or [], "family": family, "score": round(score, 1), "priority": 2}
+
+
+def _join(names):
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + f" and {names[-1]}"
+
+
+def at_season_records(conn):
+    cards = []
+    specs = [("season_batting_stats", "home_runs", "home runs", 1901), ("season_batting_stats", "hits", "hits", 1901),
+             ("season_batting_stats", "rbi", "RBI", 1920), ("season_batting_stats", "stolen_bases", "stolen bases", 1901),
+             ("season_batting_stats", "doubles", "doubles", 1901), ("season_batting_stats", "triples", "triples", 1901),
+             ("season_batting_stats", "walks", "walks", 1901), ("season_batting_stats", "runs", "runs", 1901),
+             ("season_pitching_stats", "strikeouts", "strikeouts", 1901), ("season_pitching_stats", "wins", "wins", 1901),
+             ("season_pitching_stats", "saves", "saves", 1901)]
+    for table, col, noun, since in specs:
+        top = conn.execute(f"""SELECT player_id, season, SUM({col}) v FROM {table} WHERE season >= ?
+            GROUP BY player_id, season ORDER BY v DESC LIMIT 4""", (since,)).fetchall()
+        if not top:
+            continue
+        rec = top[0][2]
+        holders = [(p, s) for p, s, v in top if v == rec]
+        nxt = next(((p, s, v) for p, s, v in top if v < rec), None)
+        nm = _names(conn, [p for p, _ in holders] + ([nxt[0]] if nxt else []))
+        era = "in the modern era" if since == 1901 else f"since {since}"
+        who = _join([f"{nm[p]} in {s}" for p, s in holders])
+        h = (f"The most {noun} in a season {era} is {rec}, by {who}." if len(holders) > 1 else
+             f"The most {noun} in a season {era} is {rec}, set by {who}.")
+        d = f"Next on the list: {nm[nxt[0]]} with {nxt[2]} in {nxt[1]}." if nxt else ""
+        cards.append(_alltime(h, d, [nm[p] for p, _ in holders], f"at_season_{col}", 30))
+    r = conn.execute("""SELECT player_id, season, SUM(earned_runs)*27.0/SUM(ip_outs) e FROM season_pitching_stats
+        WHERE season >= 1920 GROUP BY player_id, season HAVING SUM(ip_outs) >= 162*3 ORDER BY e LIMIT 2""").fetchall()
+    if len(r) == 2:
+        nm = _names(conn, [r[0][0], r[1][0]])
+        cards.append(_alltime(f"The lowest ERA by a qualified pitcher since 1920 is {r[0][2]:.2f}, by {nm[r[0][0]]} in {r[0][1]}.",
+                              f"Next: {nm[r[1][0]]} at {r[1][2]:.2f} in {r[1][1]}.", [nm[r[0][0]]], "at_season_era", 32))
+    r = conn.execute("""SELECT player_id, season, SUM(hits)*1.0/SUM(at_bats) a FROM season_batting_stats
+        WHERE season >= 1901 GROUP BY player_id, season HAVING SUM(at_bats)+SUM(walks) >= 3.1*154
+        ORDER BY a DESC LIMIT 2""").fetchall()
+    if len(r) == 2:
+        nm = _names(conn, [r[0][0], r[1][0]])
+        cards.append(_alltime(f"The highest batting average of the modern era is {fmt_rate(r[0][2])}, by {nm[r[0][0]]} in {r[0][1]}.",
+                              f"Next: {nm[r[1][0]]} at {fmt_rate(r[1][2])} in {r[1][1]}.", [nm[r[0][0]]], "at_season_avg", 32))
+    return cards
+
+
+def at_career_leaders(conn):
+    cards = []
+    for table, col, noun in [("season_batting_stats", "home_runs", "home runs"), ("season_batting_stats", "hits", "hits"),
+                             ("season_batting_stats", "stolen_bases", "stolen bases"), ("season_batting_stats", "walks", "walks"),
+                             ("season_pitching_stats", "strikeouts", "strikeouts"), ("season_pitching_stats", "saves", "saves")]:
+        top = conn.execute(f"""SELECT player_id, SUM({col}) v, MIN(season) f FROM {table}
+            GROUP BY player_id ORDER BY v DESC LIMIT 2""").fetchall()
+        if len(top) < 2 or top[0][2] <= 1898 or top[1][2] <= 1898:
+            continue  # a career that started before the DB does would be undercounted
+        nm = _names(conn, [top[0][0], top[1][0]])
+        cards.append(_alltime(f"{nm[top[0][0]]} holds the career record with {top[0][1]:,} {noun}.",
+                              f"{nm[top[1][0]]} is second with {top[1][1]:,}.", [nm[top[0][0]]], f"at_career_{col}", 26))
+    return cards
+
+
+def at_month_records(conn):
+    months = {3: "March", 4: "April", 5: "May", 6: "June", 7: "July", 8: "August", 9: "September", 10: "October"}
+    cards = []
+    for table, col, noun in [("monthly_batting_aggregates", "home_runs", "home runs"),
+                             ("monthly_batting_aggregates", "hits", "hits"),
+                             ("monthly_batting_aggregates", "stolen_bases", "stolen bases"),
+                             ("monthly_pitching_aggregates", "strikeouts", "strikeouts")]:
+        top = conn.execute(f"SELECT player_id, season, month, {col} FROM {table} ORDER BY {col} DESC LIMIT 3").fetchall()
+        if not top:
+            continue
+        rec = top[0][3]
+        holders = [t for t in top if t[3] == rec]
+        nm = _names(conn, [t[0] for t in holders])
+        who = _join([f"{nm[p]} ({months.get(m, m)} {s})" for p, s, m, _ in holders])
+        cards.append(_alltime(f"The most {noun} in a single calendar month since 1920 is {rec}, by {who}.", "",
+                              [nm[t[0]] for t in holders], f"at_month_{col}", 24))
+    return cards
+
+
+def at_game_records(conn):
+    cards = []
+    for table, col, noun in [("game_batting_logs", "rbi", "RBI"), ("game_batting_logs", "hits", "hits"),
+                             ("game_batting_logs", "home_runs", "home runs"), ("game_pitching_logs", "strikeouts", "strikeouts")]:
+        rec = conn.execute(f"SELECT MAX({col}) FROM {table}").fetchone()[0]
+        rows = conn.execute(f"SELECT player_id, date FROM {table} WHERE {col} = ? ORDER BY date", (rec,)).fetchall()
+        nm = _names(conn, list({p for p, _ in rows}))
+        if len(rows) <= 3:
+            who = _join([f"{nm[p]} ({d[:4]})" for p, d in rows])
+            h = f"The most {noun} in a game since 1920 is {rec}, by {who}."
+        else:
+            last = rows[-1]
+            h = (f"{rec} {noun} in one game is the record since 1920. It's been done {len(rows)} times, "
+                 f"most recently by {nm[last[0]]} in {last[1][:4]}.")
+        cards.append(_alltime(h, "", [nm[p] for p, _ in rows[-3:]], f"at_game_{col}", 28))
+    return cards
+
+
+def at_streaks(conn):
+    cards = []
+    for st, noun in [("hitting", "hitting streak"), ("on_base", "on-base streak")]:
+        r = conn.execute("""SELECT player_name, length, start_season, end_season FROM historical_streaks
+            WHERE streak_type = ? ORDER BY length DESC LIMIT 2""", (st,)).fetchall()
+        if len(r) < 2:
+            continue
+        yr = str(r[0][2]) if r[0][2] == r[0][3] else f"{r[0][2]}–{r[0][3]}"
+        cards.append(_alltime(f"The longest {noun} since 1920 is {r[0][1]} games, by {r[0][0]} in {yr}.",
+                              f"Next: {r[1][0]} with {r[1][1]}.", [r[0][0]], f"at_streak_{st}", 34))
+    return cards
+
+
+def at_clubs(conn):
+    cards = []
+    ps = "(SELECT player_id, season, SUM(home_runs) hr, SUM(stolen_bases) sb, SUM(hits) h FROM season_batting_stats WHERE season >= 1901 GROUP BY player_id, season)"
+    rows = conn.execute(f"SELECT player_id, season, hr, sb FROM {ps} WHERE hr >= 40 AND sb >= 40 ORDER BY season").fetchall()
+    if rows:
+        nm = _names(conn, [r[0] for r in rows])
+        cards.append(_alltime(f"There have been {len(rows)} 40-40 seasons in MLB history.",
+                              "By " + _join([f"{nm[p]} ({s})" for p, s, _, _ in rows]) + ".",
+                              list(dict.fromkeys(nm[r[0]] for r in rows)), "at_club_4040", 30))
+    r = conn.execute(f"""SELECT player_id, COUNT(*) n FROM {ps} WHERE hr >= 30 AND sb >= 30
+        GROUP BY player_id ORDER BY n DESC LIMIT 2""").fetchall()
+    if len(r) == 2 and r[0][1] > r[1][1]:
+        nm = _names(conn, [r[0][0], r[1][0]])
+        cards.append(_alltime(f"{nm[r[0][0]]} had {r[0][1]} seasons with 30 home runs and 30 stolen bases, the most ever.",
+                              f"{nm[r[1][0]]} is next with {r[1][1]}.", [nm[r[0][0]]], "at_club_3030", 22))
+    r = conn.execute(f"""SELECT player_id, COUNT(*) n FROM {ps} WHERE h >= 200
+        GROUP BY player_id ORDER BY n DESC LIMIT 3""").fetchall()
+    if r:
+        top = [x for x in r if x[1] == r[0][1]]
+        nm = _names(conn, [x[0] for x in top])
+        cards.append(_alltime(f"The most 200-hit seasons in a career is {r[0][1]}, by {_join([nm[x[0]] for x in top])}.",
+                              "", [nm[x[0]] for x in top], "at_club_200h", 24))
+    r = conn.execute(f"""SELECT player_id, COUNT(*) n FROM {ps} WHERE hr >= 50
+        GROUP BY player_id ORDER BY n DESC LIMIT 4""").fetchall()
+    if r:
+        top = [x for x in r if x[1] == r[0][1]]
+        total = conn.execute(f"SELECT COUNT(*) FROM {ps} WHERE hr >= 50").fetchone()[0]
+        nm = _names(conn, [x[0] for x in top])
+        cards.append(_alltime(f"There have been {total} 50-homer seasons in MLB history.",
+                              f"The most by one player is {r[0][1]}, by {_join([nm[x[0]] for x in top])}.",
+                              [nm[x[0]] for x in top], "at_club_50hr", 24))
+    rows = conn.execute("""SELECT player_id, SUM(home_runs) hr, SUM(hits) h, MIN(season) f FROM season_batting_stats
+        GROUP BY player_id HAVING hr >= 500 AND h >= 3000 ORDER BY hr DESC""").fetchall()
+    if rows and min(r[3] for r in rows) > 1898:
+        nm = _names(conn, [r[0] for r in rows])
+        cards.append(_alltime(f"Only {len(rows)} players have 500 home runs and 3,000 hits.",
+                              _join([nm[r[0]] for r in rows]) + ".", [nm[r[0]] for r in rows], "at_club_500_3000", 30))
+    return cards
+
+
+def at_ages(conn):
+    """Oldest and youngest 40-homer seasons (age as of June 30, MLB's convention)."""
+    cards = []
+    rows = conn.execute("""SELECT s.player_id, s.season, SUM(s.home_runs) hr, p.birthdate FROM season_batting_stats s
+        JOIN players p USING(player_id) WHERE s.season >= 1901 AND p.birthdate LIKE '____-__-__'
+        GROUP BY s.player_id, s.season HAVING hr >= 40""").fetchall()
+    def age(r):
+        b = date.fromisoformat(r[3])
+        ref = date(r[1], 6, 30)
+        return ref.year - b.year - ((ref.month, ref.day) < (b.month, b.day))
+    if rows:
+        for label, pick in [("oldest", max), ("youngest", min)]:
+            a = pick(age(r) for r in rows)
+            who = [r for r in rows if age(r) == a]
+            nm = _names(conn, [r[0] for r in who])
+            cards.append(_alltime(f"The {label} player to hit 40 home runs in a season was {a}: "
+                                  + _join([f"{nm[r[0]]} ({r[2]} in {r[1]})" for r in who]) + ".", "",
+                                  [nm[r[0]] for r in who], f"at_age_{label}", 26))
+    return cards
+
+
+def at_teams(conn):
+    cards = []
+    base = "FROM team_game_results WHERE COALESCE(gametype,'regular') = 'regular'"
+    r = conn.execute(f"""SELECT season, team, SUM(result='W') w, SUM(result='L') l {base} AND season >= 1901
+        GROUP BY season, team ORDER BY w DESC LIMIT 3""").fetchall()
+    if r:
+        top = [x for x in r if x[2] == r[0][2]]
+        who = _join([f"the {x[0]} {team_name(x[1]) or x[1]} ({x[2]}-{x[3]})" for x in top])
+        cards.append(_alltime(f"The most wins in a season in the modern era is {r[0][2]}, by {who}.", "", [],
+                              "at_team_wins", 28, teams=[team_name(x[1]) or x[1] for x in top]))
+    seq = conn.execute(f"SELECT season, team, date, result {base} AND season >= 1920 ORDER BY team, season, date, game_number")
+    best, key, run = (0, None, None, None), None, 0
+    for s, t, d, res in seq:
+        if (s, t) != key:
+            key, run = (s, t), 0
+        run = run + 1 if res == "W" else 0
+        if run > best[0]:
+            best = (run, s, t, d)
+    if best[0]:
+        n, s, t, _ = best
+        cards.append(_alltime(f"The longest winning streak since 1920 is {n} games, by the {s} {team_name(t) or t}.", "",
+                              [], "at_team_streak", 26, teams=[team_name(t) or t]))
+    r = conn.execute(f"SELECT season, date, team, opponent, team_runs, opp_runs {base} AND season >= 1920 ORDER BY team_runs DESC LIMIT 1").fetchone()
+    if r:
+        s, d, t, o, tr, orr = r
+        tn, on = team_name(t) or t, team_name(o) or o
+        when = datetime.strptime(d, "%Y-%m-%d").strftime("%B %-d, %Y")
+        cards.append(_alltime(f"The most runs by one team in a game since 1920 is {tr}: the {tn} beat the {on} {tr}-{orr} on {when}.",
+                              "", [], "at_team_runs", 26, teams=[tn, on]))
+    return cards
+
+
+ALLTIME_FAMILIES = [at_season_records, at_career_leaders, at_month_records, at_game_records,
+                    at_streaks, at_clubs, at_ages, at_teams]
+
+
 def _review(headline, detail, players, family, score, teams=None):
     return {"headline": headline, "detail": detail, "category": "Season in Review",
             "detection_type": REVIEW_TYPE, "player_names": players,
@@ -567,34 +958,48 @@ def _review(headline, detail, players, family, score, teams=None):
 
 FAMILIES = [fam_count_leaders, fam_rate_leaders, fam_clubs, fam_month,
             fam_single_game, fam_streaks, fam_team, fam_plain_leaders, fam_milestones,
-            fam_onbase_streak, fam_first_year, fam_big_games]
+            fam_onbase_streak, fam_first_year, fam_big_games, fam_more_leaders,
+            fam_team_more, fam_ages, fam_hot_stretch, fam_multi_hr, fam_month_pitching]
 
 
-def build_review(conn, season):
-    cards = []
-    for fam in FAMILIES:
-        try:
-            cards.extend(fam(conn, season))
-        except Exception as e:
-            print(f"  {fam.__name__} failed: {e}")
-    # A plain leader card yields to a historic one for the same stat.
-    best = {}
-    for c in sorted(cards, key=lambda c: -c["score"]):
-        best.setdefault(c["family"], c)
-    cards = [c for c in cards if not c["family"].startswith("lead_") or best[c["family"]] is c]
-    # Order: best first, but never the same family or player twice in a row
-    # within a 3-card window.
+def _order(cards):
+    """Best first, never the same family or a repeated player within 3 cards."""
     pool = sorted(cards, key=lambda c: -c["score"])
     ordered = []
     while pool:
         recent = ordered[-3:]
-        pick = next((c for c in pool if all(
-            c["family"].split("_")[0] != r["family"].split("_")[0] or c["family"] != r["family"]
-            for r in recent) and not any(set(c["player_names"]) & set(r["player_names"]) for r in recent)),
-            pool[0])
+        pick = next((c for c in pool if all(c["family"] != r["family"] for r in recent)
+                     and not any(set(c["player_names"]) & set(r["player_names"]) for r in recent)), pool[0])
         ordered.append(pick)
         pool.remove(pick)
     return ordered
+
+
+def _run(fams, *args):
+    cards = []
+    for fam in fams:
+        try:
+            cards.extend(fam(*args))
+        except Exception as e:
+            print(f"  {fam.__name__} failed: {e}", file=sys.stderr)
+    return cards
+
+
+def build_review(conn, season):
+    cards = _run(FAMILIES, conn, season)
+    # A plain leader card yields to a historic one for the same stat; a
+    # milestone appears once per player+stat (highest threshold).
+    best = {}
+    for c in sorted(cards, key=lambda c: -c["score"]):
+        key = c["family"] if c["family"].startswith("lead_") else (c["family"], tuple(c["player_names"])) \
+            if c["family"].startswith("milestone_") else id(c)
+        best.setdefault(key, c)
+    keep = {id(c) for c in best.values()}
+    return _order([c for c in cards if id(c) in keep])
+
+
+def build_alltime(conn):
+    return _order(_run(ALLTIME_FAMILIES, conn))
 
 
 def ensure_queue(conn):
@@ -602,11 +1007,18 @@ def ensure_queue(conn):
         id INTEGER PRIMARY KEY AUTOINCREMENT, season INTEGER NOT NULL, position INTEGER NOT NULL,
         family TEXT, score REAL, card TEXT NOT NULL, published_date TEXT,
         UNIQUE(season, position))""")
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(offseason_review_queue)")}
+    if "kind" not in cols:
+        conn.execute("ALTER TABLE offseason_review_queue ADD COLUMN kind TEXT DEFAULT 'review'")
 
 
-def store_queue(conn, season, cards):
+def store_queue(conn, season, cards, kind):
+    """Replace this season's unpublished cards of `kind`; published ones stay
+    (and aren't re-queued). All-time cards are keyed to the season too, so a
+    new offseason starts a fresh all-time pass."""
     ensure_queue(conn)
-    conn.execute("DELETE FROM offseason_review_queue WHERE season = ? AND published_date IS NULL", (season,))
+    conn.execute("DELETE FROM offseason_review_queue WHERE season = ? AND kind = ? AND published_date IS NULL",
+                 (season, kind))
     start = conn.execute("SELECT COALESCE(MAX(position), 0) FROM offseason_review_queue WHERE season = ?",
                          (season,)).fetchone()[0]
     published = {json.loads(r[0])["headline"] for r in conn.execute(
@@ -616,8 +1028,8 @@ def store_queue(conn, season, cards):
         if c["headline"] in published:
             continue
         n += 1
-        conn.execute("INSERT INTO offseason_review_queue (season, position, family, score, card) VALUES (?,?,?,?,?)",
-                     (season, start + n, c["family"], c["score"], json.dumps(c)))
+        conn.execute("INSERT INTO offseason_review_queue (season, position, family, score, card, kind) VALUES (?,?,?,?,?,?)",
+                     (season, start + n, c["family"], c["score"], json.dumps(c), kind))
     conn.commit()
     return n
 
@@ -645,6 +1057,9 @@ def insert_event(conn, card, game_date):
          card["detection_type"], card.get("priority", 2), card.get("game_context", "")))
 
 
+CONTEXT = {"review": "Season in Review", "alltime": "From the record books"}
+
+
 def publish(conn, today):
     phase = _flag(conn, "season_phase")
     if phase not in OFF_PHASES:
@@ -657,31 +1072,38 @@ def publish(conn, today):
         print(f"  born_today: {c['headline']}")
     if season:
         ensure_queue(conn)
-        done_today = conn.execute(
-            "SELECT 1 FROM offseason_review_queue WHERE published_date = ?", (gd,)).fetchone()
-        if not done_today:
+        if not conn.execute("SELECT 1 FROM offseason_review_queue WHERE published_date = ?", (gd,)).fetchone():
+            # Alternate: whichever kind didn't go out last; fall back to the
+            # other kind when one queue runs dry.
+            last = conn.execute("""SELECT kind FROM offseason_review_queue WHERE published_date IS NOT NULL
+                                   ORDER BY published_date DESC LIMIT 1""").fetchone()
+            order = ["alltime", "review"] if last and last[0] == "review" else ["review", "alltime"]
             today_players = {p for (pn,) in conn.execute(
                 "SELECT player_names FROM notable_events WHERE game_date = ?", (gd,)) for p in json.loads(pn or "[]")}
             nxt = None
-            for qid, card in conn.execute("""SELECT id, card FROM offseason_review_queue
-                    WHERE season = ? AND published_date IS NULL ORDER BY position LIMIT 5""", (season,)):
-                c = json.loads(card)
-                if not set(c["player_names"]) & today_players:  # the feed API would merge same-player cards
-                    nxt = (qid, c)
+            for kind in order:
+                for qid, card in conn.execute("""SELECT id, card FROM offseason_review_queue
+                        WHERE season = ? AND kind = ? AND published_date IS NULL ORDER BY position LIMIT 5""",
+                        (season, kind)):
+                    c = json.loads(card)
+                    if not set(c["player_names"]) & today_players:  # feed API merges same-player cards
+                        nxt = (qid, kind, c)
+                        break
+                if nxt:
                     break
             if nxt:
-                qid, c = nxt
-                c["game_context"] = f"{season} Season in Review"
+                qid, kind, c = nxt
+                c["game_context"] = CONTEXT[kind]
                 insert_event(conn, c, gd)
                 conn.execute("UPDATE offseason_review_queue SET published_date = ? WHERE id = ?", (gd, qid))
-                print(f"  season_review: {c['headline']}")
+                print(f"  {kind}: {c['headline']}")
             else:
-                print("  season_review: queue empty")
+                print("  review/all-time queues empty")
     cutoff = (today - timedelta(days=RETENTION_DAYS)).isoformat()
-    conn.execute("DELETE FROM notable_events WHERE detection_type IN (?, ?) AND game_date < ?",
-                 (BORN_TYPE, REVIEW_TYPE, cutoff))
-    _set = "INSERT OR REPLACE INTO data_freshness (key, updated_at, season) VALUES ('offseason_feed_last', ?, ?)"
-    conn.execute(_set, (gd, str(season or "")))
+    conn.execute("DELETE FROM notable_events WHERE detection_type IN (?, ?, ?) AND game_date < ?",
+                 (BORN_TYPE, REVIEW_TYPE, ALLTIME_TYPE, cutoff))
+    conn.execute("INSERT OR REPLACE INTO data_freshness (key, updated_at, season) VALUES ('offseason_feed_last', ?, ?)",
+                 (gd, str(season or "")))
     conn.commit()
 
 
@@ -699,13 +1121,16 @@ def main():
     if a.preview:
         out = {"today": today.isoformat(), "season": season,
                "born_today": born_today_cards(conn, today, season or today.year),
-               "review": build_review(conn, season) if season else []}
+               "review": build_review(conn, season) if season else [],
+               "alltime": build_alltime(conn)}
         print(json.dumps(out, indent=1, ensure_ascii=False))
     if a.build_queue:
         if not season:
             print("No finalized season yet.")
         else:
-            print(f"Queued {store_queue(conn, season, build_review(conn, season))} review cards for {season}")
+            n1 = store_queue(conn, season, build_review(conn, season), "review")
+            n2 = store_queue(conn, season, build_alltime(conn), "alltime")
+            print(f"Queued {n1} season-review + {n2} all-time cards for {season}")
     if a.publish:
         publish(conn, today)
     conn.close()
