@@ -161,12 +161,13 @@ def born_today_cards(conn, today, season):
         if not built:
             continue
         detail, teams = built
-        headline = (f"{name} turns {today.year - year} today." if is_active
-                    else f"{name} was born on this date in {year}.")
+        born_on = f"{today.strftime('%B')} {today.day}, {year}"
+        headline = (f"{name} turns {today.year - year} today (born {born_on})." if is_active
+                    else f"{name} was born on {born_on}.")
         cards.append({
             "headline": headline, "detail": detail,
             "category": "Born Today", "detection_type": BORN_TYPE,
-            "game_context": "Born on this date", "player_names": [name],
+            "game_context": f"Born on this date, {today.strftime('%B')} {today.day}", "player_names": [name],
             "team_names": teams, "priority": 2,
         })
     return cards
@@ -1094,6 +1095,8 @@ def publish(conn, today):
         return
     season = final_season(conn)
     gd = today.isoformat()
+    # Replace (not duplicate) today's Born Today cards on a re-run.
+    conn.execute("DELETE FROM notable_events WHERE game_date = ? AND detection_type = ?", (gd, BORN_TYPE))
     for c in born_today_cards(conn, today, season or today.year):
         insert_event(conn, c, gd)
         print(f"  born_today: {c['headline']}")
